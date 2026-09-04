@@ -148,6 +148,72 @@ const snapshot = {
   },
 } satisfies DatabaseTrustBoundarySnapshot;
 
+const hardenedSnapshot = {
+  ...snapshot,
+  tables: snapshot.tables.slice(0, 1),
+  trustedContext: {
+    ...snapshot.trustedContext,
+    legalEntitySettingSettable: false,
+    tenantSettingSettable: false,
+  },
+} satisfies DatabaseTrustBoundarySnapshot;
+
+const buildHardenedReport = (overrides: Partial<DatabaseTrustBoundarySnapshot> = {}) =>
+  buildDatabaseTrustBoundaryReport({ ...hardenedSnapshot, ...overrides });
+
+type RoleMembership = DatabaseTrustBoundarySnapshot['memberships'][number];
+type RoutinePrivilege = DatabaseTrustBoundarySnapshot['routines'][number];
+
+const reachableRole = (overrides: Partial<RoleMembership>): RoleMembership => ({
+  attributes: ordinaryRole,
+  canAdministerRole: false,
+  canInheritRole: false,
+  canSetRole: true,
+  createSchemas: [],
+  databaseCreate: false,
+  ownedRelations: [],
+  ownedRoutines: [],
+  ownedSchemas: [],
+  ownedTypes: [],
+  relationPrivilegeSchemas: [],
+  securityDefinerRoutines: [],
+  ...overrides,
+  role: overrides.role ?? 'reachable_role',
+});
+
+const securityDefinerRoutine = (overrides: Partial<RoutinePrivilege>): RoutinePrivilege => ({
+  executable: false,
+  eventTriggerBindings: [],
+  identityArguments: '',
+  kind: 'function',
+  owner: 'ontos_admin',
+  policyBindings: [],
+  routine: 'privileged_routine',
+  schema: 'private',
+  securityDefiner: true,
+  storedExpressionBindings: [],
+  triggerBindings: [],
+  ...overrides,
+});
+
+const findingCodes = (report: ReturnType<typeof buildDatabaseTrustBoundaryReport>) =>
+  report.findings.map(({ code }) => code);
+
+const assertSourceContains = (source: string, patterns: ReadonlyArray<RegExp>) => {
+  for (const pattern of patterns) {
+    assert.match(source, pattern);
+  }
+};
+
+const assertSourceOccurrences = (
+  source: string,
+  expectations: ReadonlyArray<readonly [pattern: RegExp, count: number]>,
+) => {
+  for (const [pattern, count] of expectations) {
+    assert.equal(source.match(pattern)?.length ?? 0, count, `${pattern}`);
+  }
+};
+
 test('builds deterministic current-state evidence and identifies the material trust gaps', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
@@ -257,21 +323,9 @@ test('reports privilege escalation paths without embedding credentials or contex
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
     memberships: [
-      {
-        attributes: ordinaryRole,
-        canAdministerRole: false,
-        canInheritRole: false,
-        canSetRole: true,
-        createSchemas: [],
-        databaseCreate: false,
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedTypes: [],
-        relationPrivilegeSchemas: [],
+      reachableRole({
         role: 'ontos_admin',
-        securityDefinerRoutines: [],
-      },
+      }),
     ],
     role: { ...snapshot.role, bypassRls: true },
     schemas: [
@@ -280,132 +334,68 @@ test('reports privilege escalation paths without embedding credentials or contex
     ],
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    [
-      'runtime_role_is_privileged',
-      'runtime_role_can_assume_administrative_role',
-      'runtime_role_has_ddl_authority',
-      'runtime_role_can_forge_trusted_context',
-      'runtime_role_has_cross_schema_dml',
-    ],
-  );
+  assert.deepEqual(findingCodes(report), [
+    'runtime_role_is_privileged',
+    'runtime_role_can_assume_administrative_role',
+    'runtime_role_has_ddl_authority',
+    'runtime_role_can_forge_trusted_context',
+    'runtime_role_has_cross_schema_dml',
+  ]);
   assert.doesNotMatch(JSON.stringify(report), /postgresql:|password|secret|tenant-id|entity-id/iu);
 });
 
 test('flags database-level CREATE even when no existing schema is writable', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
+  const report = buildHardenedReport({
     databasePrivileges: { ...snapshot.databasePrivileges, create: true },
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_has_ddl_authority'],
-  );
+  assert.deepEqual(findingCodes(report), ['runtime_role_has_ddl_authority']);
 });
 
 test('flags current database ownership even when CREATE was revoked', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
+  const report = buildHardenedReport({
     databasePrivileges: { ...snapshot.databasePrivileges, owner: true },
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_has_ddl_authority'],
-  );
+  assert.deepEqual(findingCodes(report), ['runtime_role_has_ddl_authority']);
 });
 
 test('classifies reachable predefined PostgreSQL roles as privileged', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
+  const report = buildHardenedReport({
     memberships: [
-      {
-        attributes: ordinaryRole,
-        canAdministerRole: false,
+      reachableRole({
         canInheritRole: true,
         canSetRole: false,
-        createSchemas: [],
-        databaseCreate: false,
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedTypes: [],
         parameterPrivileges: [],
         predefinedRole: true,
-        relationPrivilegeSchemas: [],
         role: 'pg_execute_server_program',
-        securityDefinerRoutines: [],
-      },
+      }),
     ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_assume_privileged_role'],
-  );
+  assert.deepEqual(findingCodes(report), ['runtime_role_can_assume_privileged_role']);
 });
 
 test('classifies a directly authenticated predefined PostgreSQL role as privileged', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
+  const report = buildHardenedReport({
     role: { ...ordinaryRole, predefinedRole: true },
     runtimeRole: 'pg_execute_server_program',
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_is_privileged'],
-  );
+  assert.deepEqual(findingCodes(report), ['runtime_role_is_privileged']);
 });
 
 test('flags effective configuration parameter authority', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
+  const report = buildHardenedReport({
     parameterPrivileges: [{ alterSystem: false, parameter: 'session_replication_role', set: true }],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_has_parameter_authority'],
-  );
+  assert.deepEqual(findingCodes(report), ['runtime_role_has_parameter_authority']);
   assert.equal(report.summary.parameterPrivilegeCount, 1);
 });
 
 test('flags grant options on current objects as persistent authority', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
+  const report = buildHardenedReport({
     grantOptions: [
       {
         authority: 'relation:contacts.customers:SELECT',
@@ -413,43 +403,23 @@ test('flags grant options on current objects as persistent authority', () => {
         source: 'direct',
       },
     ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_has_grant_authority'],
-  );
+  assert.deepEqual(findingCodes(report), ['runtime_role_has_grant_authority']);
   assert.equal(report.summary.grantOptionCount, 1);
 });
 
 test('flags creator-default grant options as persistent authority', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
+  const report = buildHardenedReport({
     defaultPrivileges: [{ ...snapshot.defaultPrivileges[1], grantable: true }],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_has_grant_authority'],
-  );
+  assert.deepEqual(findingCodes(report), ['runtime_role_has_grant_authority']);
   assert.equal(report.summary.grantOptionCount, 1);
 });
 
 test('classifies grant options held by a reachable role as privileged membership authority', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
+  const report = buildHardenedReport({
     grantOptions: [
       {
         authority: 'database:ontos:CONNECT',
@@ -458,40 +428,18 @@ test('classifies grant options held by a reachable role as privileged membership
       },
     ],
     memberships: [
-      {
-        attributes: ordinaryRole,
-        canAdministerRole: false,
-        canInheritRole: false,
-        canSetRole: true,
-        createSchemas: [],
-        databaseCreate: false,
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedTypes: [],
-        relationPrivilegeSchemas: [],
+      reachableRole({
         role: 'grant_delegate',
-        securityDefinerRoutines: [],
-      },
+      }),
     ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_assume_privileged_role'],
-  );
+  assert.deepEqual(findingCodes(report), ['runtime_role_can_assume_privileged_role']);
   assert.equal(report.summary.grantOptionCount, 1);
 });
 
 test('does not treat inheritance-only grant options as exercisable', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
+  const report = buildHardenedReport({
     defaultPrivileges: [
       {
         ...snapshot.defaultPrivileges[0],
@@ -501,34 +449,15 @@ test('does not treat inheritance-only grant options as exercisable', () => {
       },
     ],
     memberships: [
-      {
-        attributes: ordinaryRole,
-        canAdministerRole: false,
+      reachableRole({
         canInheritRole: true,
         canSetRole: false,
-        createSchemas: [],
-        databaseCreate: false,
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedTypes: [],
-        relationPrivilegeSchemas: [],
         role: 'inherited_reader',
-        securityDefinerRoutines: [],
-      },
+      }),
     ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_assume_other_role'],
-  );
+  assert.deepEqual(findingCodes(report), ['runtime_role_can_assume_other_role']);
   assert.equal(report.summary.grantOptionCount, 0);
 });
 
@@ -615,10 +544,7 @@ test('preserves nested owner-context RLS bypasses through security-invoker views
     },
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_select_privileged_owner_view'],
-  );
+  assert.deepEqual(findingCodes(report), ['runtime_role_can_select_privileged_owner_view']);
   assert.equal(report.summary.privilegedOwnerViewCount, 1);
 });
 
@@ -651,33 +577,19 @@ test('flags ownership of an audited relation as DDL authority', () => {
   });
 
   assert.equal(report.tables[0]?.kind, 'materialized-view');
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_has_ddl_authority'],
-  );
+  assert.deepEqual(findingCodes(report), ['runtime_role_has_ddl_authority']);
 });
 
 test('flags ownership of an otherwise non-writable schema as DDL authority', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
+  const report = buildHardenedReport({
     schemas: [{ create: false, owner: snapshot.runtimeRole, schema: 'runtime_owned' }],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_has_ddl_authority'],
-  );
+  assert.deepEqual(findingCodes(report), ['runtime_role_has_ddl_authority']);
 });
 
 test('flags ownership of an audited routine as DDL authority', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
+  const report = buildHardenedReport({
     routines: [
       {
         eventTriggerBindings: [],
@@ -693,299 +605,82 @@ test('flags ownership of an audited routine as DDL authority', () => {
         triggerBindings: [],
       },
     ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_has_ddl_authority'],
-  );
+  assert.deepEqual(findingCodes(report), ['runtime_role_has_ddl_authority']);
 });
 
-test('flags direct extension ownership as DDL authority', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    extensions: [{ extension: 'pgcrypto', owner: snapshot.runtimeRole, schema: 'public' }],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
+const directOwnershipCases = [
+  {
+    label: 'extension',
+    overrides: {
+      extensions: [{ extension: 'pgcrypto', owner: snapshot.runtimeRole, schema: 'public' }],
     },
-  });
-
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_has_ddl_authority'],
-  );
-  assert.equal(report.summary.extensionCount, 1);
-});
-
-test('classifies an assumable extension owner as privileged', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    memberships: [
-      {
-        attributes: ordinaryRole,
-        canAdministerRole: false,
-        canInheritRole: false,
-        canSetRole: true,
-        createSchemas: [],
-        databaseCreate: false,
-        ownedExtensions: ['pgcrypto'],
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedTypes: [],
-        relationPrivilegeSchemas: [],
-        role: 'extension_owner',
-        securityDefinerRoutines: [],
-      },
-    ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
+    summary: 'extensionCount',
+  },
+  {
+    label: 'publication',
+    overrides: {
+      publications: [{ owner: snapshot.runtimeRole, publication: 'tenant_changes' }],
     },
-  });
-
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_assume_privileged_role'],
-  );
-});
-
-test('flags direct publication ownership as DDL authority', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    publications: [{ owner: snapshot.runtimeRole, publication: 'tenant_changes' }],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
+    summary: 'publicationCount',
+  },
+  {
+    label: 'subscription',
+    overrides: {
+      subscriptions: [{ owner: snapshot.runtimeRole, subscription: 'tenant_changes' }],
     },
-  });
-
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_has_ddl_authority'],
-  );
-  assert.equal(report.summary.publicationCount, 1);
-});
-
-test('classifies an assumable publication owner as privileged', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    memberships: [
-      {
-        attributes: ordinaryRole,
-        canAdministerRole: false,
-        canInheritRole: false,
-        canSetRole: true,
-        createSchemas: [],
-        databaseCreate: false,
-        ownedPublications: ['tenant_changes'],
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedTypes: [],
-        relationPrivilegeSchemas: [],
-        role: 'publication_owner',
-        securityDefinerRoutines: [],
-      },
-    ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
+    summary: 'subscriptionCount',
+  },
+  {
+    label: 'foreign-server',
+    overrides: {
+      foreignServers: [{ owner: snapshot.runtimeRole, server: 'customer_warehouse' }],
     },
-  });
-
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_assume_privileged_role'],
-  );
-});
-
-test('flags direct subscription ownership as DDL authority', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    subscriptions: [{ owner: snapshot.runtimeRole, subscription: 'tenant_changes' }],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
+    summary: 'foreignServerCount',
+  },
+  {
+    label: 'foreign-data-wrapper',
+    overrides: {
+      foreignDataWrappers: [{ owner: snapshot.runtimeRole, wrapper: 'customer_connector' }],
     },
+    summary: 'foreignDataWrapperCount',
+  },
+] satisfies ReadonlyArray<{
+  readonly label: string;
+  readonly overrides: Partial<DatabaseTrustBoundarySnapshot>;
+  readonly summary: keyof ReturnType<typeof buildDatabaseTrustBoundaryReport>['summary'];
+}>;
+
+for (const { label, overrides, summary } of directOwnershipCases) {
+  test(`flags direct ${label} ownership as DDL authority`, () => {
+    const report = buildHardenedReport(overrides);
+
+    assert.deepEqual(findingCodes(report), ['runtime_role_has_ddl_authority']);
+    assert.equal(report.summary[summary], 1);
   });
+}
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_has_ddl_authority'],
-  );
-  assert.equal(report.summary.subscriptionCount, 1);
-});
+const reachableOwnershipCases = [
+  { label: 'extension', ownedExtensions: ['pgcrypto'] },
+  { label: 'publication', ownedPublications: ['tenant_changes'] },
+  { label: 'subscription', ownedSubscriptions: ['tenant_changes'] },
+  { label: 'foreign-server', ownedForeignServers: ['customer_warehouse'] },
+  { label: 'foreign-data-wrapper', ownedForeignDataWrappers: ['customer_connector'] },
+] satisfies ReadonlyArray<Partial<RoleMembership> & { readonly label: string }>;
 
-test('classifies an assumable subscription owner as privileged', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    memberships: [
-      {
-        attributes: ordinaryRole,
-        canAdministerRole: false,
-        canInheritRole: false,
-        canSetRole: true,
-        createSchemas: [],
-        databaseCreate: false,
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedSubscriptions: ['tenant_changes'],
-        ownedTypes: [],
-        relationPrivilegeSchemas: [],
-        role: 'subscription_owner',
-        securityDefinerRoutines: [],
-      },
-    ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
+for (const { label, ...ownership } of reachableOwnershipCases) {
+  test(`classifies an assumable ${label} owner as privileged`, () => {
+    const report = buildHardenedReport({
+      memberships: [reachableRole({ ...ownership, role: `${label}_owner` })],
+    });
+
+    assert.deepEqual(findingCodes(report), ['runtime_role_can_assume_privileged_role']);
   });
-
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_assume_privileged_role'],
-  );
-});
-
-test('flags direct foreign-server ownership as DDL authority', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    foreignServers: [{ owner: snapshot.runtimeRole, server: 'customer_warehouse' }],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
-  });
-
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_has_ddl_authority'],
-  );
-  assert.equal(report.summary.foreignServerCount, 1);
-});
-
-test('classifies an assumable foreign-server owner as privileged', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    memberships: [
-      {
-        attributes: ordinaryRole,
-        canAdministerRole: false,
-        canInheritRole: false,
-        canSetRole: true,
-        createSchemas: [],
-        databaseCreate: false,
-        ownedForeignServers: ['customer_warehouse'],
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedTypes: [],
-        relationPrivilegeSchemas: [],
-        role: 'foreign_server_owner',
-        securityDefinerRoutines: [],
-      },
-    ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
-  });
-
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_assume_privileged_role'],
-  );
-});
-
-test('flags direct foreign-data-wrapper ownership as DDL authority', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    foreignDataWrappers: [{ owner: snapshot.runtimeRole, wrapper: 'customer_connector' }],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
-  });
-
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_has_ddl_authority'],
-  );
-  assert.equal(report.summary.foreignDataWrapperCount, 1);
-});
-
-test('classifies an assumable foreign-data-wrapper owner as privileged', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    memberships: [
-      {
-        attributes: ordinaryRole,
-        canAdministerRole: false,
-        canInheritRole: false,
-        canSetRole: true,
-        createSchemas: [],
-        databaseCreate: false,
-        ownedForeignDataWrappers: ['customer_connector'],
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedTypes: [],
-        relationPrivilegeSchemas: [],
-        role: 'foreign_data_wrapper_owner',
-        securityDefinerRoutines: [],
-      },
-    ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
-  });
-
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_assume_privileged_role'],
-  );
-});
+}
 
 test('flags ownership of an audited application type as DDL authority', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
+  const report = buildHardenedReport({
     types: [
       {
         kind: 'range',
@@ -996,30 +691,19 @@ test('flags ownership of an audited application type as DDL authority', () => {
     ],
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_has_ddl_authority'],
-  );
+  assert.deepEqual(findingCodes(report), ['runtime_role_has_ddl_authority']);
   assert.equal(report.summary.typeCount, 1);
 });
 
 test('flags direct relation control and executable security-definer authority', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
+  const report = buildHardenedReport({
     routines: [
-      {
+      securityDefinerRoutine({
         executable: true,
-        eventTriggerBindings: [],
         identityArguments: 'uuid',
-        kind: 'function',
-        owner: 'ontos_admin',
-        policyBindings: [],
         routine: 'enter_trusted_scope',
         schema: 'contacts',
-        securityDefiner: true,
-        storedExpressionBindings: [],
-        triggerBindings: [],
-      },
+      }),
     ],
     tables: [
       {
@@ -1027,548 +711,206 @@ test('flags direct relation control and executable security-definer authority', 
         privileges: { ...snapshot.tables[0].privileges, maintain: true },
       },
     ],
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_has_relation_control_authority', 'runtime_role_can_execute_security_definer'],
-  );
+  assert.deepEqual(findingCodes(report), [
+    'runtime_role_has_relation_control_authority',
+    'runtime_role_can_execute_security_definer',
+  ]);
   assert.equal(report.summary.securityDefinerExecutableCount, 1);
 });
 
-test('flags security-definer routines invocable only through table triggers', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    routines: [
-      {
-        executable: false,
-        eventTriggerBindings: [],
-        identityArguments: '',
-        kind: 'function',
-        owner: 'ontos_admin',
-        policyBindings: [],
-        routine: 'capture_customer_change',
-        schema: 'contacts',
-        securityDefiner: true,
-        storedExpressionBindings: [],
-        triggerBindings: ['contacts.customers:capture_customer_change'],
-      },
-    ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
+const runtimeSecurityDefinerCases = [
+  {
+    label: 'table triggers',
+    routine: {
+      routine: 'capture_customer_change',
+      schema: 'contacts',
+      triggerBindings: ['contacts.customers:capture_customer_change'],
     },
-  });
-
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_execute_security_definer'],
-  );
-  assert.equal(report.summary.securityDefinerExecutableCount, 1);
-});
-
-test('flags security-definer routines invocable through accessible operators', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    routines: [
-      {
-        executable: false,
-        eventTriggerBindings: [],
-        identityArguments: 'integer, integer',
-        kind: 'function',
-        operatorBindings: ['operator:public.##(integer,integer)'],
-        owner: 'ontos_admin',
-        policyBindings: [],
-        routine: 'private_integer_equal',
-        schema: 'private',
-        securityDefiner: true,
-        storedExpressionBindings: [],
-        triggerBindings: [],
-      },
-    ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
+  },
+  {
+    label: 'accessible operators',
+    routine: {
+      identityArguments: 'integer, integer',
+      operatorBindings: ['operator:public.##(integer,integer)'],
+      routine: 'private_integer_equal',
     },
-  });
-
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_execute_security_definer'],
-  );
-  assert.equal(report.summary.securityDefinerExecutableCount, 1);
-});
-
-test('flags security-definer routines invocable through accessible aggregate support paths', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    routines: [
-      {
-        aggregateBindings: ['aggregate:public.audit_sum(integer):transition'],
-        executable: false,
-        eventTriggerBindings: [],
-        identityArguments: 'integer, integer',
-        kind: 'function',
-        owner: 'ontos_admin',
-        policyBindings: [],
-        routine: 'private_sum_transition',
-        schema: 'private',
-        securityDefiner: true,
-        storedExpressionBindings: [],
-        triggerBindings: [],
-      },
-    ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
+  },
+  {
+    label: 'accessible aggregate support paths',
+    routine: {
+      aggregateBindings: ['aggregate:public.audit_sum(integer):transition'],
+      identityArguments: 'integer, integer',
+      routine: 'private_sum_transition',
     },
-  });
-
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_execute_security_definer'],
-  );
-  assert.equal(report.summary.securityDefinerExecutableCount, 1);
-});
-
-test('flags security-definer routines invoked through applicable RLS policies', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    routines: [
-      {
-        executable: false,
-        eventTriggerBindings: [],
-        identityArguments: 'uuid',
-        kind: 'function',
-        owner: 'ontos_admin',
-        policyBindings: ['contacts.customers:tenant_isolation'],
-        routine: 'can_access_tenant',
-        schema: 'private',
-        securityDefiner: true,
-        storedExpressionBindings: [],
-        triggerBindings: [],
-      },
-    ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
+  },
+  {
+    label: 'applicable RLS policies',
+    routine: {
+      identityArguments: 'uuid',
+      policyBindings: ['contacts.customers:tenant_isolation'],
+      routine: 'can_access_tenant',
     },
-  });
-
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_execute_security_definer'],
-  );
-  assert.equal(report.summary.securityDefinerExecutableCount, 1);
-});
-
-test('flags security-definer routines invoked through stored expressions', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    routines: [
-      {
-        executable: false,
-        eventTriggerBindings: [],
-        identityArguments: '',
-        kind: 'function',
-        owner: 'ontos_admin',
-        policyBindings: [],
-        routine: 'normalize_customer',
-        schema: 'private',
-        securityDefiner: true,
-        storedExpressionBindings: [
-          'contacts.customer_labels:domain-constraint:contacts.nonempty_text:nonempty_text_check',
-          'contacts.customers:generated-column:normalized_name',
-          'contacts.customers:expression-index:customers_normalized_name_idx',
-          'contacts.customer_overview:view-expression',
-        ],
-        triggerBindings: [],
-      },
-    ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
+  },
+  {
+    label: 'stored expressions',
+    routine: {
+      routine: 'normalize_customer',
+      storedExpressionBindings: [
+        'contacts.customer_labels:domain-constraint:contacts.nonempty_text:nonempty_text_check',
+        'contacts.customers:generated-column:normalized_name',
+        'contacts.customers:expression-index:customers_normalized_name_idx',
+        'contacts.customer_overview:view-expression',
+      ],
     },
-  });
-
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_execute_security_definer'],
-  );
-  assert.equal(report.summary.securityDefinerExecutableCount, 1);
-});
-
-test('flags security-definer routines invoked through applicable event triggers', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    routines: [
-      {
-        eventTriggerBindings: ['event-trigger:audit_ddl:ddl_command_end[ALTER DEFAULT PRIVILEGES]'],
-        executable: false,
-        identityArguments: '',
-        kind: 'function',
-        owner: 'ontos_admin',
-        policyBindings: [],
-        routine: 'audit_ddl',
-        schema: 'private',
-        securityDefiner: true,
-        storedExpressionBindings: [],
-        triggerBindings: [],
-      },
-    ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
+  },
+  {
+    label: 'applicable event triggers',
+    routine: {
+      eventTriggerBindings: ['event-trigger:audit_ddl:ddl_command_end[ALTER DEFAULT PRIVILEGES]'],
+      routine: 'audit_ddl',
     },
+  },
+] satisfies ReadonlyArray<{
+  readonly label: string;
+  readonly routine: Partial<RoutinePrivilege>;
+}>;
+
+for (const { label, routine } of runtimeSecurityDefinerCases) {
+  test(`flags security-definer routines invocable through ${label}`, () => {
+    const report = buildHardenedReport({
+      routines: [securityDefinerRoutine(routine)],
+    });
+
+    assert.deepEqual(findingCodes(report), ['runtime_role_can_execute_security_definer']);
+    assert.equal(report.summary.securityDefinerExecutableCount, 1);
   });
+}
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_execute_security_definer'],
-  );
-  assert.equal(report.summary.securityDefinerExecutableCount, 1);
-});
-
-test('classifies reachable roles that invoke security-definer stored expressions as privileged', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    memberships: [
-      {
-        attributes: ordinaryRole,
-        canAdministerRole: false,
-        canInheritRole: false,
-        canSetRole: true,
-        createSchemas: [],
-        databaseCreate: false,
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedTypes: [],
-        relationPrivilegeSchemas: [],
-        role: 'expression_writer',
-        securityDefinerRoutines: [],
-        securityDefinerStoredExpressionBindings: [
-          'contacts.customers:check-constraint:customers_valid->private.validate_customer()',
-        ],
-      },
-    ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
+const reachableSecurityDefinerCases = [
+  {
+    label: 'stored expressions',
+    role: {
+      role: 'expression_writer',
+      securityDefinerStoredExpressionBindings: [
+        'contacts.customers:check-constraint:customers_valid->private.validate_customer()',
+      ],
     },
-  });
-
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_assume_privileged_role'],
-  );
-});
-
-test('classifies reachable roles that invoke security-definer operators as privileged', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    memberships: [
-      {
-        attributes: ordinaryRole,
-        canAdministerRole: false,
-        canInheritRole: false,
-        canSetRole: true,
-        createSchemas: [],
-        databaseCreate: false,
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedTypes: [],
-        relationPrivilegeSchemas: [],
-        role: 'operator_user',
-        securityDefinerOperatorBindings: [
-          'operator:public.##(integer,integer)->private.private_integer_equal(integer, integer)',
-        ],
-        securityDefinerRoutines: [],
-      },
-    ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
+  },
+  {
+    label: 'operators',
+    role: {
+      role: 'operator_user',
+      securityDefinerOperatorBindings: [
+        'operator:public.##(integer,integer)->private.private_integer_equal(integer, integer)',
+      ],
     },
-  });
-
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_assume_privileged_role'],
-  );
-});
-
-test('classifies reachable roles that invoke security-definer aggregate support paths as privileged', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    memberships: [
-      {
-        attributes: ordinaryRole,
-        canAdministerRole: false,
-        canInheritRole: false,
-        canSetRole: true,
-        createSchemas: [],
-        databaseCreate: false,
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedTypes: [],
-        relationPrivilegeSchemas: [],
-        role: 'aggregate_user',
-        securityDefinerAggregateBindings: [
-          'aggregate:public.audit_sum(integer):transition->private.private_sum_transition(integer, integer)',
-        ],
-        securityDefinerRoutines: [],
-      },
-    ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
+  },
+  {
+    label: 'aggregate support paths',
+    role: {
+      role: 'aggregate_user',
+      securityDefinerAggregateBindings: [
+        'aggregate:public.audit_sum(integer):transition->private.private_sum_transition(integer, integer)',
+      ],
     },
-  });
-
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_assume_privileged_role'],
-  );
-});
-
-test('classifies reachable roles that invoke security-definer RLS policies as privileged', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    memberships: [
-      {
-        attributes: ordinaryRole,
-        canAdministerRole: false,
-        canInheritRole: false,
-        canSetRole: true,
-        createSchemas: [],
-        databaseCreate: false,
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedTypes: [],
-        relationPrivilegeSchemas: [],
-        role: 'policy_reader',
-        securityDefinerPolicyBindings: [
-          'contacts.customers:tenant_isolation->private.can_access_tenant(uuid)',
-        ],
-        securityDefinerRoutines: [],
-      },
-    ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
+  },
+  {
+    label: 'RLS policies',
+    role: {
+      role: 'policy_reader',
+      securityDefinerPolicyBindings: [
+        'contacts.customers:tenant_isolation->private.can_access_tenant(uuid)',
+      ],
     },
-  });
-
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_assume_privileged_role'],
-  );
-});
-
-test('classifies reachable roles that can fire security-definer triggers as privileged', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    memberships: [
-      {
-        attributes: ordinaryRole,
-        canAdministerRole: false,
-        canInheritRole: false,
-        canSetRole: true,
-        createSchemas: [],
-        databaseCreate: false,
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedTypes: [],
-        relationPrivilegeSchemas: [],
-        role: 'trigger_writer',
-        securityDefinerRoutines: [],
-        securityDefinerTriggerBindings: [
-          'contacts.customers:capture_customer_change->contacts.capture_customer_change()',
-        ],
-      },
-    ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
+  },
+  {
+    label: 'triggers',
+    role: {
+      role: 'trigger_writer',
+      securityDefinerTriggerBindings: [
+        'contacts.customers:capture_customer_change->contacts.capture_customer_change()',
+      ],
     },
-  });
-
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_assume_privileged_role'],
-  );
-});
-
-test('classifies reachable roles that can fire security-definer event triggers as privileged', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
-    memberships: [
-      {
-        attributes: ordinaryRole,
-        canAdministerRole: false,
-        canInheritRole: false,
-        canSetRole: true,
-        createSchemas: [],
-        databaseCreate: false,
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedTypes: [],
-        relationPrivilegeSchemas: [],
-        role: 'ddl_operator',
-        securityDefinerEventTriggerBindings: [
-          'event-trigger:audit_ddl:ddl_command_end[ALTER DEFAULT PRIVILEGES]->private.audit_ddl()',
-        ],
-        securityDefinerRoutines: [],
-      },
-    ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
+  },
+  {
+    label: 'event triggers',
+    role: {
+      role: 'ddl_operator',
+      securityDefinerEventTriggerBindings: [
+        'event-trigger:audit_ddl:ddl_command_end[ALTER DEFAULT PRIVILEGES]->private.audit_ddl()',
+      ],
     },
-  });
+  },
+] satisfies ReadonlyArray<{
+  readonly label: string;
+  readonly role: Partial<RoleMembership>;
+}>;
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_assume_privileged_role'],
-  );
-});
+for (const { label, role } of reachableSecurityDefinerCases) {
+  test(`classifies reachable roles that invoke security-definer ${label} as privileged`, () => {
+    const report = buildHardenedReport({
+      memberships: [reachableRole(role)],
+    });
+
+    assert.deepEqual(findingCodes(report), ['runtime_role_can_assume_privileged_role']);
+  });
+}
 
 test('flags direct sequence mutation authority', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
+  const report = buildHardenedReport({
     sequences: [
       {
         ...snapshot.sequences[0],
         privileges: { ...snapshot.sequences[0].privileges, update: true },
       },
     ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_has_sequence_mutation_authority'],
-  );
+  assert.deepEqual(findingCodes(report), ['runtime_role_has_sequence_mutation_authority']);
 });
 
 test('classifies every assumable role and escalates relation authority', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
     memberships: [
-      {
-        attributes: ordinaryRole,
-        canAdministerRole: false,
-        canInheritRole: false,
-        canSetRole: true,
-        createSchemas: [],
-        databaseCreate: false,
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedTypes: [],
+      reachableRole({
         relationPrivilegeSchemas: ['private'],
         role: 'table_truncator',
-        securityDefinerRoutines: [],
-      },
-      {
-        attributes: ordinaryRole,
-        canAdministerRole: false,
-        canInheritRole: false,
-        canSetRole: true,
-        createSchemas: [],
-        databaseCreate: false,
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedTypes: [],
-        relationPrivilegeSchemas: [],
+      }),
+      reachableRole({
         role: 'report_reader',
-        securityDefinerRoutines: [],
-      },
+      }),
     ],
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    [
-      'runtime_role_can_assume_privileged_role',
-      'runtime_role_can_assume_other_role',
-      'runtime_role_can_forge_trusted_context',
-      'runtime_role_has_cross_schema_dml',
-    ],
-  );
+  assert.deepEqual(findingCodes(report), [
+    'runtime_role_can_assume_privileged_role',
+    'runtime_role_can_assume_other_role',
+    'runtime_role_can_forge_trusted_context',
+    'runtime_role_has_cross_schema_dml',
+  ]);
 });
 
 test('treats ADMIN OPTION as an escalation path when SET OPTION is false', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
     memberships: [
-      {
-        attributes: ordinaryRole,
+      reachableRole({
         canAdministerRole: true,
-        canInheritRole: false,
         canSetRole: false,
-        createSchemas: [],
-        databaseCreate: false,
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
         ownedTypes: ['contacts.contact_status'],
-        relationPrivilegeSchemas: [],
         role: 'tenant_bypass',
-        securityDefinerRoutines: [],
-      },
+      }),
     ],
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    [
-      'runtime_role_can_assume_privileged_role',
-      'runtime_role_can_forge_trusted_context',
-      'runtime_role_has_cross_schema_dml',
-    ],
-  );
+  assert.deepEqual(findingCodes(report), [
+    'runtime_role_can_assume_privileged_role',
+    'runtime_role_can_forge_trusted_context',
+    'runtime_role_has_cross_schema_dml',
+  ]);
 });
 
 test('traverses SET OPTION descendants after every ADMIN OPTION role', async () => {
@@ -1577,304 +919,210 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
     'utf-8',
   );
 
-  assert.equal(
-    source.match(/where membership\.admin_option or membership\.set_option/gu)?.length,
-    1,
-  );
-  assert.equal(source.match(/\$\{reachableRolesCte\}/gu)?.length, 3);
-  assert.match(
-    source,
-    /candidate\.oid in \(select role_oid from reachable_roles\) as can_set_role/u,
-  );
+  assertSourceOccurrences(source, [
+    [/where membership\.admin_option or membership\.set_option/gu, 1],
+    [/\$\{reachableRolesCte\}/gu, 3],
+    [/pg_catalog\.pg_options_to_table\([^)]*\.reloptions\)/gu, 6],
+    [/from pg_catalog\.pg_trigger as audited_trigger/gu, 3],
+    [/join trigger_routine_dependencies as trigger_dependency/gu, 2],
+    [/audited_trigger\.tgenabled in \('O', 'A'\)/gu, 2],
+    [/audited_trigger\.tgenabled = 'R'/gu, 2],
+    [/pg_catalog\.pg_partition_ancestors\(relation\.oid\)/gu, 9],
+    [
+      /select relation\.oid\s+union\s+select ancestor\.oid\s+from pg_catalog\.pg_partition_ancestors\(relation\.oid\)/gu,
+      8,
+    ],
+    [/from pg_catalog\.pg_policy as policy/gu, 3],
+    [/\$\{storedExpressionDependenciesCte\}/gu, 2],
+    [/\$\{referentialWritePathsCte\}/gu, 2],
+    [/\$\{roleDdlCommandTagsCte\}/gu, 2],
+    [/from dml_rule_write_paths as rule_write/gu, 4],
+    [/policy\.polcmd in \('a', '\*'\)/gu, 2],
+    [/from writable_view_paths as writable_view/gu, 8],
+    [/from writable_view_paths as rule_view/gu, 4],
+    [/from writable_view_columns as writable_column/gu, 6],
+    [/from view_access_paths as view_access/gu, 2],
+    [/from unnest\(stored_expression\.select_columns\) as selected\(attnum\)/gu, 2],
+    [/stored_expression\.binding !~ '\^dml-rule:'/gu, 12],
+    [/stored_expression\.binding ~ '\^dml-rule:INSERT:'/gu, 4],
+    [/stored_expression\.binding ~ '\^dml-rule:UPDATE:'/gu, 4],
+    [/stored_expression\.binding ~ '\^dml-rule:DELETE:'/gu, 6],
+    [/from pg_catalog\.pg_trigger as before_update_trigger/gu, 2],
+    [/cascade\.affected_oid = stored_expression\.invocation_oid/gu, 2],
+    [/stored_expression\.binding !~ '\^column-default:'/gu, 2],
+    [/from pg_catalog\.pg_event_trigger as event_trigger/gu, 2],
+    [/from pg_catalog\.pg_operator as audited_operator/gu, 2],
+    [/event_trigger\.evttags is null/gu, 4],
+    [/from pg_catalog\.pg_partitioned_table as partitioned/gu, 4],
+    [/audited_trigger\.tgtype & 12 <> 0/gu, 4],
+    [/stored_expression\.selectable/gu, 10],
+    [/cardinality\(audited_trigger\.tgattr::smallint\[\]\) = 0/gu, 6],
+    [/from unnest\(audited_trigger\.tgattr::smallint\[\]\) as watched\(attnum\)/gu, 2],
+  ]);
+
   assert.doesNotMatch(
     source,
     /or pg_has_role\(\$1, grantee\.oid, 'SET'\)\s+or grantee\.oid in \(select role_oid from administrable_roles\)/u,
   );
-  assert.match(source, /view_dependencies\(view_oid, referenced_oid, effective_owner_oid\)/u);
-  assert.match(source, /referenced_relation\.relowner = dependency\.effective_owner_oid/u);
-  assert.match(source, /effective_owner\.rolbypassrls/u);
-  assert.match(source, /effective_owner\.rolsuper/u);
-  assert.equal(source.match(/pg_catalog\.pg_options_to_table\([^)]*\.reloptions\)/gu)?.length, 6);
-  assert.match(source, /select audited_role\.role, audited_role\.source, authority\.grant_option/u);
-  assert.equal(source.match(/from pg_catalog\.pg_trigger as audited_trigger/gu)?.length, 3);
-  assert.match(source, /trigger_routine_dependencies\(\s+trigger_oid,\s+routine_oid\s+\)/u);
-  assert.match(source, /dependency\.refobjid = audited_trigger\.tgfoid/u);
-  assert.match(source, /audited_trigger\.tgqual::text/u);
-  assert.equal(
-    source.match(/join trigger_routine_dependencies as trigger_dependency/gu)?.length,
-    2,
-  );
-  assert.equal(source.match(/audited_trigger\.tgenabled in \('O', 'A'\)/gu)?.length, 2);
-  assert.equal(source.match(/audited_trigger\.tgenabled = 'R'/gu)?.length, 2);
-  assert.match(
-    source,
+
+  assertSourceContains(source, [
+    /candidate\.oid in \(select role_oid from reachable_roles\) as can_set_role/u,
+    /view_dependencies\(view_oid, referenced_oid, effective_owner_oid\)/u,
+    /referenced_relation\.relowner = dependency\.effective_owner_oid/u,
+    /effective_owner\.rolbypassrls/u,
+    /effective_owner\.rolsuper/u,
+    /select audited_role\.role, audited_role\.source, authority\.grant_option/u,
+    /trigger_routine_dependencies\(\s+trigger_oid,\s+routine_oid\s+\)/u,
+    /dependency\.refobjid = audited_trigger\.tgfoid/u,
+    /audited_trigger\.tgqual::text/u,
     /has_parameter_privilege\(\s+candidate\.oid,\s+'session_replication_role',\s+'SET'\s+\)/u,
-  );
-  assert.match(source, /has_parameter_privilege\(\$1, 'session_replication_role', 'SET'\)/u);
-  assert.equal(source.match(/pg_catalog\.pg_partition_ancestors\(relation\.oid\)/gu)?.length, 9);
-  assert.equal(
-    source.match(
-      /select relation\.oid\s+union\s+select ancestor\.oid\s+from pg_catalog\.pg_partition_ancestors\(relation\.oid\)/gu,
-    )?.length,
-    8,
-  );
-  assert.equal(source.match(/from pg_catalog\.pg_policy as policy/gu)?.length, 3);
-  assert.match(source, /policy_routine_dependencies\(/u);
-  assert.match(source, /used_by_using/u);
-  assert.match(source, /used_by_with_check/u);
-  assert.match(source, /policy\.polwithcheck is null/u);
-  assert.equal(source.match(/\$\{storedExpressionDependenciesCte\}/gu)?.length, 2);
-  assert.equal(source.match(/\$\{referentialWritePathsCte\}/gu)?.length, 2);
-  assert.equal(source.match(/\$\{roleDdlCommandTagsCte\}/gu)?.length, 2);
-  assert.match(source, /from pg_catalog\.pg_attrdef as expression/u);
-  assert.match(source, /from pg_catalog\.pg_constraint as expression/u);
-  assert.match(source, /from pg_catalog\.pg_index as stored_index/u);
-  assert.match(source, /pg_catalog\.pg_rewrite as expression/u);
-  assert.match(source, /view_invocation_paths\(invocation_oid, dependency_oid\)/u);
-  assert.match(source, /view_access_paths\(invocation_oid, affected_oid, effective_owner_oid\)/u);
-  assert.match(source, /direct_view_access_columns\(/u);
-  assert.match(source, /view_access_columns\(invocation_oid, affected_oid/u);
-  assert.match(source, /access\.affected_attnum = target\.fields\[1\]::smallint/u);
-  assert.match(
-    source,
+    /has_parameter_privilege\(\$1, 'session_replication_role', 'SET'\)/u,
+    /policy_routine_dependencies\(/u,
+    /used_by_using/u,
+    /used_by_with_check/u,
+    /policy\.polwithcheck is null/u,
+    /from pg_catalog\.pg_attrdef as expression/u,
+    /from pg_catalog\.pg_constraint as expression/u,
+    /from pg_catalog\.pg_index as stored_index/u,
+    /pg_catalog\.pg_rewrite as expression/u,
+    /view_invocation_paths\(invocation_oid, dependency_oid\)/u,
+    /view_access_paths\(invocation_oid, affected_oid, effective_owner_oid\)/u,
+    /direct_view_access_columns\(/u,
+    /view_access_columns\(invocation_oid, affected_oid/u,
+    /access\.affected_attnum = target\.fields\[1\]::smallint/u,
     /writable_view_rewrites\(view_oid, affected_oid, actions, target_list, effective_owner_oid\)/u,
-  );
-  assert.match(source, /direct_writable_view_paths\(invocation_oid, affected_oid, actions/u);
-  assert.match(source, /direct_writable_view_columns\(/u);
-  assert.match(source, /writable_view_columns\(/u);
-  assert.match(
-    source,
+    /direct_writable_view_paths\(invocation_oid, affected_oid, actions/u,
+    /direct_writable_view_columns\(/u,
+    /writable_view_columns\(/u,
     /writable_view_paths\(invocation_oid, affected_oid, actions, effective_owner_oid\)/u,
-  );
-  assert.match(source, /:resorigtbl \(\[1-9\]\[0-9\]\*\) :resorigcol/u);
-  assert.match(source, /split_part\(rewrite\.ev_action::text, ':rteperminfos', 1\)/u);
-  assert.match(source, /cross join lateral regexp_matches\(/u);
-  assert.match(source, /affected_relation\.oid <> view_relation\.oid/u);
-  assert.match(source, /pg_catalog\.pg_relation_is_updatable/u);
-  assert.match(source, /direct_dml_rule_write_paths\(/u);
-  assert.match(source, /dml_rule_write_paths\(/u);
-  assert.match(source, /:commandType \(\[234\]\).*:resultRelation/u);
-  assert.match(source, /action\.fields\[2\]::integer \+ 1/u);
-  assert.match(source, /path\.allowed_modes & nested\.allowed_modes/u);
-  assert.equal(source.match(/from dml_rule_write_paths as rule_write/gu)?.length, 4);
-  assert.equal(source.match(/policy\.polcmd in \('a', '\*'\)/gu)?.length, 2);
-  assert.equal(source.match(/from writable_view_paths as writable_view/gu)?.length, 8);
-  assert.equal(source.match(/from writable_view_paths as rule_view/gu)?.length, 4);
-  assert.equal(source.match(/from writable_view_columns as writable_column/gu)?.length, 6);
-  assert.equal(source.match(/from view_access_paths as view_access/gu)?.length, 2);
-  assert.match(source, /relation_invocation_paths\(invocation_oid, dependency_oid\)/u);
-  assert.match(source, /stored_expression\.invocation_oid/u);
-  assert.match(source, /stored_expression\.select_columns/u);
-  assert.match(source, /expression_routine\.provolatile = 'v'/u);
-  assert.equal(
-    source.match(/from unnest\(stored_expression\.select_columns\) as selected\(attnum\)/gu)
-      ?.length,
-    2,
-  );
-  assert.match(source, /nested-view-expression/u);
-  assert.match(source, /expression\.rulename <> '_RETURN'/u);
-  assert.match(source, /expression\.ev_type in \('2', '3', '4'\)/u);
-  assert.match(source, /expression\.ev_enabled in \('O', 'A', 'R'\)/u);
-  assert.match(source, /'dml-rule:%s:%s:%I'/u);
-  assert.equal(source.match(/stored_expression\.binding !~ '\^dml-rule:'/gu)?.length, 12);
-  assert.equal(source.match(/stored_expression\.binding ~ '\^dml-rule:INSERT:'/gu)?.length, 4);
-  assert.equal(source.match(/stored_expression\.binding ~ '\^dml-rule:UPDATE:'/gu)?.length, 4);
-  assert.equal(source.match(/stored_expression\.binding ~ '\^dml-rule:DELETE:'/gu)?.length, 6);
-  assert.match(source, /expression\.contypid/u);
-  assert.equal(source.match(/from pg_catalog\.pg_trigger as before_update_trigger/gu)?.length, 2);
-  assert.match(source, /before_update_trigger\.tgrelid = expression\.adrelid/u);
-  assert.match(source, /before_update_trigger\.tgrelid = stored_index\.indrelid/u);
-  assert.match(source, /before_update_trigger\.tgtype & 1 <> 0/u);
-  assert.match(source, /before_update_trigger\.tgtype & 2 <> 0/u);
-  assert.match(source, /before_update_trigger\.tgtype & 16 <> 0/u);
-  assert.match(source, /referential_write_paths\(/u);
-  assert.match(source, /foreign_key\.confdeltype/u);
-  assert.match(source, /foreign_key\.confupdtype/u);
-  assert.match(source, /foreign_key\.confdelsetcols/u);
-  assert.match(source, /changed\.attnum = any\(coalesce\(foreign_key\.confkey/u);
-  assert.match(source, /cascade\.affected_action/u);
-  assert.match(source, /cascade\.affected_uses_default/u);
-  assert.equal(
-    source.match(/cascade\.affected_oid = stored_expression\.invocation_oid/gu)?.length,
-    2,
-  );
-  assert.equal(source.match(/stored_expression\.binding !~ '\^column-default:'/gu)?.length, 2);
-  assert.equal(source.match(/from pg_catalog\.pg_event_trigger as event_trigger/gu)?.length, 2);
-  assert.match(source, /join pg_catalog\.pg_extension as extension/u);
-  assert.match(source, /join pg_catalog\.pg_foreign_data_wrapper as foreign_data_wrapper/u);
-  assert.match(source, /join pg_catalog\.pg_foreign_server as foreign_server/u);
-  assert.match(source, /from pg_catalog\.pg_publication as publication/u);
-  assert.match(source, /publication\.pubowner = candidate\.oid/u);
-  assert.match(source, /from pg_catalog\.pg_subscription as subscription/u);
-  assert.match(source, /subscription\.subowner = candidate\.oid/u);
-  assert.match(source, /'ddl_command_end'::text, 'ALTER SUBSCRIPTION'::text/u);
-  assert.match(source, /has_database_privilege\(role\.oid, current_database\(\), 'TEMPORARY'\)/u);
-  assert.match(source, /cross join \(values \('GRANT'::text\), \('REVOKE'::text\)\)/u);
-  assert.match(source, /event_trigger\.evtevent = 'ddl_command_start'/u);
-  assert.match(source, /has_table_privilege\(role\.oid, relation\.oid, 'TRIGGER'\)/u);
-  assert.match(source, /trigger_routine\.prorettype = 'pg_catalog\.trigger'::regtype/u);
-  assert.match(source, /'ddl_command_end'::text, 'CREATE TRIGGER'::text/u);
-  assert.match(source, /'CREATE COLLATION'::text/u);
-  assert.equal(source.match(/from pg_catalog\.pg_operator as audited_operator/gu)?.length, 2);
-  assert.match(source, /audited_operator\.oprcode = routine\.oid/u);
-  assert.match(source, /security_definer_operator_bindings/u);
-  assert.match(source, /operator_bindings/u);
-  assert.match(source, /aggregate_routine_dependencies\(/u);
-  assert.match(source, /aggregate\.aggtransfn/u);
-  assert.match(source, /aggregate\.aggfinalfn/u);
-  assert.match(source, /aggregate\.aggcombinefn/u);
-  assert.match(source, /aggregate\.aggserialfn/u);
-  assert.match(source, /aggregate\.aggdeserialfn/u);
-  assert.match(source, /aggregate\.aggmtransfn/u);
-  assert.match(source, /aggregate\.aggminvtransfn/u);
-  assert.match(source, /aggregate\.aggmfinalfn/u);
-  assert.match(source, /security_definer_aggregate_bindings/u);
-  assert.match(source, /aggregate_bindings/u);
-  assert.match(source, /'ddl_command_end'::text, 'ALTER PUBLICATION'::text/u);
-  assert.match(
-    source,
+    /:resorigtbl \(\[1-9\]\[0-9\]\*\) :resorigcol/u,
+    /split_part\(rewrite\.ev_action::text, ':rteperminfos', 1\)/u,
+    /cross join lateral regexp_matches\(/u,
+    /affected_relation\.oid <> view_relation\.oid/u,
+    /pg_catalog\.pg_relation_is_updatable/u,
+    /direct_dml_rule_write_paths\(/u,
+    /dml_rule_write_paths\(/u,
+    /:commandType \(\[234\]\).*:resultRelation/u,
+    /action\.fields\[2\]::integer \+ 1/u,
+    /path\.allowed_modes & nested\.allowed_modes/u,
+    /relation_invocation_paths\(invocation_oid, dependency_oid\)/u,
+    /stored_expression\.invocation_oid/u,
+    /stored_expression\.select_columns/u,
+    /expression_routine\.provolatile = 'v'/u,
+    /nested-view-expression/u,
+    /expression\.rulename <> '_RETURN'/u,
+    /expression\.ev_type in \('2', '3', '4'\)/u,
+    /expression\.ev_enabled in \('O', 'A', 'R'\)/u,
+    /'dml-rule:%s:%s:%I'/u,
+    /expression\.contypid/u,
+    /before_update_trigger\.tgrelid = expression\.adrelid/u,
+    /before_update_trigger\.tgrelid = stored_index\.indrelid/u,
+    /before_update_trigger\.tgtype & 1 <> 0/u,
+    /before_update_trigger\.tgtype & 2 <> 0/u,
+    /before_update_trigger\.tgtype & 16 <> 0/u,
+    /referential_write_paths\(/u,
+    /foreign_key\.confdeltype/u,
+    /foreign_key\.confupdtype/u,
+    /foreign_key\.confdelsetcols/u,
+    /changed\.attnum = any\(coalesce\(foreign_key\.confkey/u,
+    /cascade\.affected_action/u,
+    /cascade\.affected_uses_default/u,
+    /join pg_catalog\.pg_extension as extension/u,
+    /join pg_catalog\.pg_foreign_data_wrapper as foreign_data_wrapper/u,
+    /join pg_catalog\.pg_foreign_server as foreign_server/u,
+    /from pg_catalog\.pg_publication as publication/u,
+    /publication\.pubowner = candidate\.oid/u,
+    /from pg_catalog\.pg_subscription as subscription/u,
+    /subscription\.subowner = candidate\.oid/u,
+    /'ddl_command_end'::text, 'ALTER SUBSCRIPTION'::text/u,
+    /has_database_privilege\(role\.oid, current_database\(\), 'TEMPORARY'\)/u,
+    /cross join \(values \('GRANT'::text\), \('REVOKE'::text\)\)/u,
+    /event_trigger\.evtevent = 'ddl_command_start'/u,
+    /has_table_privilege\(role\.oid, relation\.oid, 'TRIGGER'\)/u,
+    /trigger_routine\.prorettype = 'pg_catalog\.trigger'::regtype/u,
+    /'ddl_command_end'::text, 'CREATE TRIGGER'::text/u,
+    /'CREATE COLLATION'::text/u,
+    /audited_operator\.oprcode = routine\.oid/u,
+    /security_definer_operator_bindings/u,
+    /operator_bindings/u,
+    /aggregate_routine_dependencies\(/u,
+    /aggregate\.aggtransfn/u,
+    /aggregate\.aggfinalfn/u,
+    /aggregate\.aggcombinefn/u,
+    /aggregate\.aggserialfn/u,
+    /aggregate\.aggdeserialfn/u,
+    /aggregate\.aggmtransfn/u,
+    /aggregate\.aggminvtransfn/u,
+    /aggregate\.aggmfinalfn/u,
+    /security_definer_aggregate_bindings/u,
+    /aggregate_bindings/u,
+    /'ddl_command_end'::text, 'ALTER PUBLICATION'::text/u,
     /left join lateral unnest\(event_trigger\.evttags\) as configured_tag\(name\) on true/u,
-  );
-  assert.match(source, /'SELECT WITH GRANT OPTION'/u);
-  assert.match(source, /has_column_privilege\(role\.oid, attribute\.attrelid/u);
-  assert.match(
-    source,
+    /'SELECT WITH GRANT OPTION'/u,
+    /has_column_privilege\(role\.oid, attribute\.attrelid/u,
     /has_function_privilege\(role\.oid, routine\.oid, 'EXECUTE WITH GRANT OPTION'\)/u,
-  );
-  assert.equal(source.match(/event_trigger\.evttags is null/gu)?.length, 4);
-  assert.equal(source.match(/from pg_catalog\.pg_partitioned_table as partitioned/gu)?.length, 4);
-  assert.equal(source.match(/audited_trigger\.tgtype & 12 <> 0/gu)?.length, 4);
-  assert.match(
-    source,
     /format\('check-constraint:%I', expression\.conname\),\s+false,\s+array\[\]::smallint\[\]/u,
-  );
-  assert.equal(source.match(/stored_expression\.selectable/gu)?.length, 10);
-  assert.equal(
-    source.match(/cardinality\(audited_trigger\.tgattr::smallint\[\]\) = 0/gu)?.length,
-    6,
-  );
-  assert.equal(
-    source.match(/from unnest\(audited_trigger\.tgattr::smallint\[\]\) as watched\(attnum\)/gu)
-      ?.length,
-    2,
-  );
-  assert.match(source, /from pg_catalog\.pg_extension as extension/u);
-  assert.match(source, /from pg_catalog\.pg_foreign_server as foreign_server/u);
-  assert.match(source, /foreign_data_wrapper\.fdwowner/u);
-  assert.match(source, /join audit_owners as owner on owner\.oid = defaults\.defaclrole/u);
-  assert.match(source, /as can_create_schema/u);
-  assert.match(source, /as can_create_object/u);
-  assert.match(source, /object_types\.catalog_code = 'n'\s+and owner\.can_create_schema/u);
-  assert.match(source, /object_types\.catalog_code <> 'n'\s+and owner\.can_create_object/u);
-  assert.match(source, /owner\.rolname = \$1 as owner/u);
-  assert.match(source, /candidate\.oid = \(\s+select database\.datdba/u);
-  assert.match(
-    source,
+    /from pg_catalog\.pg_extension as extension/u,
+    /from pg_catalog\.pg_foreign_server as foreign_server/u,
+    /foreign_data_wrapper\.fdwowner/u,
+    /join audit_owners as owner on owner\.oid = defaults\.defaclrole/u,
+    /as can_create_schema/u,
+    /as can_create_object/u,
+    /object_types\.catalog_code = 'n'\s+and owner\.can_create_schema/u,
+    /object_types\.catalog_code <> 'n'\s+and owner\.can_create_object/u,
+    /owner\.rolname = \$1 as owner/u,
+    /candidate\.oid = \(\s+select database\.datdba/u,
     /namespace\.nspowner = owner\.oid\s+or has_schema_privilege\(owner\.oid, namespace\.oid, 'CREATE'\)/u,
-  );
+  ]);
 });
 
 test('treats inherited owner-role authority as effective runtime DDL authority', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
+  const report = buildHardenedReport({
     memberships: [
-      {
-        attributes: ordinaryRole,
-        canAdministerRole: false,
+      reachableRole({
         canInheritRole: true,
         canSetRole: false,
-        createSchemas: [],
-        databaseCreate: false,
         ownedRelations: ['contacts.customers'],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedTypes: [],
-        relationPrivilegeSchemas: [],
         role: 'contacts_owner',
-        securityDefinerRoutines: [],
-      },
+      }),
     ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_assume_privileged_role', 'runtime_role_has_ddl_authority'],
-  );
+  assert.deepEqual(findingCodes(report), [
+    'runtime_role_can_assume_privileged_role',
+    'runtime_role_has_ddl_authority',
+  ]);
 });
 
 test('treats SET-reachable database ownership as effective runtime DDL authority', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
+  const report = buildHardenedReport({
     memberships: [
-      {
-        attributes: ordinaryRole,
-        canAdministerRole: false,
-        canInheritRole: false,
-        canSetRole: true,
-        createSchemas: [],
-        databaseCreate: false,
+      reachableRole({
         databaseOwner: true,
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedTypes: [],
-        relationPrivilegeSchemas: [],
         role: 'database_owner',
-        securityDefinerRoutines: [],
-      },
+      }),
     ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_assume_privileged_role', 'runtime_role_has_ddl_authority'],
-  );
+  assert.deepEqual(findingCodes(report), [
+    'runtime_role_can_assume_privileged_role',
+    'runtime_role_has_ddl_authority',
+  ]);
 });
 
 test('does not inherit cluster attributes without SET ROLE or ADMIN OPTION', () => {
-  const report = buildDatabaseTrustBoundaryReport({
-    ...snapshot,
+  const report = buildHardenedReport({
     memberships: [
-      {
+      reachableRole({
         attributes: { ...ordinaryRole, bypassRls: true },
-        canAdministerRole: false,
         canInheritRole: true,
         canSetRole: false,
-        createSchemas: [],
-        databaseCreate: false,
-        ownedRelations: [],
-        ownedRoutines: [],
-        ownedSchemas: [],
-        ownedTypes: [],
-        relationPrivilegeSchemas: [],
         role: 'attribute_only_role',
-        securityDefinerRoutines: [],
-      },
+      }),
     ],
-    tables: snapshot.tables.slice(0, 1),
-    trustedContext: {
-      ...snapshot.trustedContext,
-      legalEntitySettingSettable: false,
-      tenantSettingSettable: false,
-    },
   });
 
-  assert.deepEqual(
-    report.findings.map(({ code }) => code),
-    ['runtime_role_can_assume_other_role'],
-  );
+  assert.deepEqual(findingCodes(report), ['runtime_role_can_assume_other_role']);
 });
 
 test('uses node-postgres effective query-parameter socket endpoints', () => {

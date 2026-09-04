@@ -1,250 +1,154 @@
 # Database Trust-Boundary Audit
 
-This document is the reproducible current-state audit for
-[TechsioCZ/ontos#370](https://github.com/TechsioCZ/ontos/issues/370). It informs, but does not make,
-the human pilot decision in [TechsioCZ/ontos#174](https://github.com/TechsioCZ/ontos/issues/174).
-It changes no database grant or credential.
+This is the reproducible current-state evidence for
+[TechsioCZ/ontos#370](https://github.com/TechsioCZ/ontos/issues/370). It informs the human decision
+in [TechsioCZ/ontos#174](https://github.com/TechsioCZ/ontos/issues/174); it does not change grants,
+credentials, or application behavior.
 
-## Evidence contract
+## Run it
 
-Evidence is classified as follows:
-
-- **VERIFIED** — established by checked-in code, an executable catalog query, or a named test.
-- **INFERRED** — a likely consequence of current composition, but not a directly observed deployed
-  fact.
-- **UNKNOWN** — controlled outside this repository or absent from the current implementation.
-
-Run the audit after migrations and runtime-role bootstrap:
+After migrations and runtime-role bootstrap:
 
 ```sh
 mise exec -- pnpm database-trust:audit
 ```
 
-It writes `.codex/reports/database/database-trust-boundary.json`. The report is intentionally
-ignored because it describes the database being inspected. It includes role names, effective
-privileges, direct/`PUBLIC`/inherited/assumable default ACL sources, ownership, RLS flags, and
-finding codes, but no URL, password, secret, tenant ID, or legal-entity ID. The command rejects an
-admin/runtime pair that resolves to a different observed server endpoint or database. When both
-connections use Unix sockets and the observed network address and port are null, it compares the
-effective node-postgres socket host and port instead, including connection-string query
-overrides. It derives both audited identities from live
-`session_user`/`current_user` evidence, rejects a startup role switch, and rejects an
-admin/runtime identity collapse even if URL query parameters override the authority user. These
-checks require no monitoring-role privilege. Its pure report uses `null` schema for a global
-default ACL. It evaluates PostgreSQL's built-in global defaults even when `pg_default_acl` has no
-stored row, including the distinct catalog and `acldefault` sequence type codes and defaults for
-future schemas created by a database-`CREATE`-capable runtime or reachable role. Report ordering
-uses locale-independent code-unit comparison. Schema-specific stored defaults are included only
-when their owner currently owns or can create in that exact schema. It includes
-column-level DML, `REFERENCES`, and
-PostgreSQL 17 `MAINTAIN`; classifies tables, partitioned tables, views, materialized views, foreign
-tables, and sequences while requiring schema `USAGE` for effective object access; inventories
-`SECURITY DEFINER` routines that are directly executable, reachable through an operator in an accessible
-schema, referenced by an applicable RLS policy,
-column default, generated column, table or domain check constraint, index expression, or selectable
-view rewrite—including a nested rewrite reachable only through an outer selectable view—or invocable
-through relation DML and an enabled user trigger function or trigger `WHEN` predicate, or through an
-applicable database event trigger. It
-separates RLS `USING` dependencies from explicit or inherited `WITH CHECK` dependencies and intersects
-each with the commands that evaluate it. For column-granted view reads, it maps stable and immutable
-target-list expressions through nested view columns; qualification expressions and volatile target
-expressions remain reachable from every read because PostgreSQL can evaluate them even when their output
-column is not selected. It
-matches event-trigger command tags to DDL the identity can issue, including temporary-object DDL,
-relation-owner commands, and `CREATE TRIGGER` when the identity has the table, schema, and trigger-function
-authority required for a successful command,
-maps leaf stored expressions and row triggers back to accessible partition ancestors, follows
-automatically writable views to stored expressions and triggers on their actual rewrite target,
-without treating read-only lookup dependencies as write targets; follows selectable owner-context
-views into read policies and automatically writable owner-context views into write policies under the
-effective view execution identity; follows recursive DML-rule action writes—including rules first reached
-through an automatically writable view—into their target stored expressions and user triggers, intersecting
-origin/replica enablement through nested rules; follows recursive foreign-key
-`CASCADE`, `SET NULL`, and `SET DEFAULT` writes into stored expressions and user triggers; includes
-leaf `INSERT` and `DELETE` row triggers reachable through partition-moving `UPDATE`; excludes leaf
-statement triggers when DML names only a partition ancestor; includes replica-enabled triggers when
-the identity can set `session_replication_role`; and matches `UPDATE OF` columns to direct, writable-view,
-or cascaded column changes, including partition keys that can move a row;
-generated columns and expression indexes follow referenced-column updates unless any `BEFORE ROW UPDATE`
-trigger can rewrite their inputs, while table checks conservatively apply to every update; inventories
-extension, foreign-data-wrapper, foreign-server, publication, and subscription ownership and user-defined base,
-standalone composite, domain, enum, range, and multirange type
-ownership; and distinguishes `SET OPTION` from direct `ADMIN OPTION` escalation paths. Its pure
-membership analysis follows every effective `SET OPTION` and `ADMIN OPTION` edge, including `SET`
-descendants reached only after an administrable role is re-granted to the runtime, and records
-ownership authority inherited without `SET ROLE`; cluster attributes are not treated as inherited.
-It classifies directly authenticated and reachable PostgreSQL predefined roles as privileged, inventories effective
-parameter-level `SET`/`ALTER SYSTEM` grants, and distinguishes security-invoker views from views
-that execute in a privileged owner's context. For nested views, it carries the effective execution
-owner across each owner-context or security-invoker boundary and detects superuser, `BYPASSRLS`,
-exact-owner, and inherited-owner exemptions from unforced row-level security. It separately inventories current-object and creator-default grant
-options on database, schema, relation, column, sequence, routine, type, parameter, language,
-foreign-data, and tablespace objects for the runtime and every `SET`/`ADMIN`-reachable role.
-Inheritance-only grant options are retained as raw default-ACL evidence but are not classified as
-exercisable authority.
-Its pure report builder and target/session validators are covered by
-`scripts/tests/audit-database-trust-boundaries.test.mts`.
+The command uses distinct admin and runtime connections to the same PostgreSQL database and writes
+`.codex/reports/database/database-trust-boundary.json`. The ignored report contains identities,
+effective authority, RLS state, trusted-context probes, and finding codes. It never contains URLs,
+passwords, secrets, tenant IDs, or legal-entity IDs.
+
+Evidence in this document is:
+
+- **VERIFIED** when established by repository code, the audit, or a named test;
+- **INFERRED** when it follows from current composition but was not observed in deployment;
+- **UNKNOWN** when it is controlled outside this repository.
+
+The audit covers current and reachable-role authority over databases, schemas, relations,
+sequences, routines, types, extensions, foreign data, publications, subscriptions, parameters,
+grant options, defaults, RLS, owner-context views, and direct or indirect `SECURITY DEFINER`
+execution. The executable report is the detailed capability inventory; this document records only
+the architectural conclusions.
 
 ## Reproduced local baseline
 
-**VERIFIED:** Against a freshly migrated local database from the issue branch's `origin/main`
-baseline, the audit reported:
+**VERIFIED** against a freshly migrated local database:
 
-| Surface           | Effective `ontos_runtime` authority                                                                                                                                                    |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cluster role      | Login; no superuser, `BYPASSRLS`, database creation, role creation, replication, inheritance, or role memberships                                                                      |
-| Database          | `CONNECT` and temporary objects; no database `CREATE`                                                                                                                                  |
-| Schemas           | `USAGE` on `core`, `auth`, `contacts`, and `public`; neither `USAGE` nor `CREATE` on `drizzle`; no `CREATE` on any non-system schema                                                   |
-| Tables            | `SELECT`, `INSERT`, `UPDATE`, and `DELETE` across 27 owner tables; no privilege on the three `drizzle` journals and no `MAINTAIN`, `TRUNCATE`, `REFERENCES`, or `TRIGGER` authority    |
-| Sequences         | `USAGE` and `SELECT` on the one application sequence; no privilege on the three `drizzle` sequences and no `UPDATE` anywhere                                                           |
-| Routines          | No routines exist in the audited non-system schemas; therefore no executable `SECURITY DEFINER` routine                                                                                |
-| Extensions        | One `plpgsql` extension owned by `ontos_admin`; the runtime owns no extension and cannot assume its owner                                                                              |
-| Foreign data      | No foreign-data wrapper or foreign server exists; therefore the runtime has no direct, inherited, or assumable ownership authority                                                     |
-| Application types | No user-defined base, standalone composite, domain, enum, range, or multirange type exists in the audited non-system schemas                                                           |
-| Future objects    | 22 effective default privileges: owner-local table DML and sequence `USAGE`/`SELECT`, plus global `PUBLIC EXECUTE` on functions and `PUBLIC USAGE` on types for relevant creator roles |
-| Ownership         | The current database, all three logical owner schemas, and their relations are physically owned by `ontos_admin`                                                                       |
-| RLS               | Two of 27 current tables have enabled and forced RLS                                                                                                                                   |
-| Parameters        | No explicit parameter-level `SET` or `ALTER SYSTEM` privilege                                                                                                                          |
-| Grant options     | No current-object or creator-default grant option on a database, schema, relation, column, sequence, routine, type, parameter, language, foreign-data, or tablespace object            |
-| Trusted settings  | The runtime role can set and read both `ontos.tenant_id` and `ontos.legal_entity_id`; transaction-local values disappear after rollback                                                |
+| Surface                            | `ontos_runtime` authority                                                                                                 |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Cluster and roles                  | Login only; no superuser, `BYPASSRLS`, database/role creation, replication, inheritance, memberships, or parameter grants |
+| Database and schemas               | `CONNECT` and temporary objects; `USAGE` on application schemas; no database or schema `CREATE`                           |
+| Relations                          | DML across 27 owner tables; no migration-journal access or relation-control privileges                                    |
+| Sequences                          | `USAGE` and `SELECT` on one application sequence; no `UPDATE`                                                             |
+| Ownership and privileged execution | No application-object ownership and no executable `SECURITY DEFINER` path                                                 |
+| RLS                                | Two tables have enabled and forced RLS                                                                                    |
+| Trusted settings                   | Can set both `ontos.tenant_id` and `ontos.legal_entity_id`; local values disappear after rollback                         |
 
-The exact counts are local-baseline evidence, not a claim about production. Re-run the command
-against any target environment before relying on them.
+Exact counts describe this local database, not production. Re-run the audit against each target
+environment.
 
-Two high-severity findings are therefore present:
+The baseline has exactly two high-severity findings:
 
-1. `runtime_role_has_cross_schema_dml` — one credential spans the `core`, `auth`, and `contacts`
-   application schemas and therefore their logical ownership boundaries.
-2. `runtime_role_can_forge_trusted_context` — code holding that credential can choose either custom
-   GUC value used by RLS.
+1. `runtime_role_has_cross_schema_dml`: one credential spans Core, Auth, and Contacts.
+2. `runtime_role_can_forge_trusted_context`: that credential can choose both custom GUC values used
+   by RLS.
 
-The first finding is a blast-radius problem. The second is a trust-root problem. Merely renaming or
-splitting roles can reduce the first; it does not, by itself, solve the second.
+The first is a blast-radius problem. The second is a trust-root problem; splitting role names alone
+does not solve it.
 
 ## Process-to-identity map
 
-| Process or boundary              | Current identity evidence                                                                                                                                                                                                       | Status                                                                                                     |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Migration/bootstrap service      | `zerops.yaml` supplies `DATABASE_ADMIN_URL`; Drizzle migration configs and role bootstrap use the administrative URL.                                                                                                           | **VERIFIED** for repository wiring; deployed secret value and rotation are **UNKNOWN**.                    |
-| Shell request process            | Auth persistence reads `DATABASE_URL`; Core persistence composes the same Core `DatabaseConfigLive`.                                                                                                                            | **VERIFIED** in code; the deployed PostgreSQL login injected into Shell is **UNKNOWN**.                    |
-| Contacts request process         | Contacts persistence and gateway-assertion redemption load the shared `DATABASE_URL`; Core runtime is a library composed into the process rather than a separate network service.                                               | **VERIFIED** in code; the deployed PostgreSQL login injected into Contacts is **UNKNOWN**.                 |
-| Core                             | Core has a package and schema boundary, not an independent process or credential boundary. It executes under its caller's pool.                                                                                                 | **VERIFIED**.                                                                                              |
-| Outbox Worker                    | Generated owner-local workers compose `DatabaseConfigLive` and `CoreDatabaseLive`. No production worker implementation is currently installed. A future worker would use `DATABASE_URL` unless its deployment contract changes. | First two statements **VERIFIED**; future credential choice **INFERRED**.                                  |
-| SpiceDB server                   | Bootstrap requires a distinct `spicedb` login and database; application processes reach SpiceDB through its gRPC endpoint and pre-shared key.                                                                                   | **VERIFIED** in bootstrap/config code; deployed datastore connection and key distribution are **UNKNOWN**. |
-| Browser/Module Federation remote | Database clients are server-only and the boundary checker rejects database imports from Actions, reads, transports, and other non-owner surfaces.                                                                               | **VERIFIED** statically; this is not evidence about a compromised server process.                          |
+| Boundary            | Current evidence                                                                         | Status                                                                          |
+| ------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Migration/bootstrap | Drizzle and role bootstrap use `DATABASE_ADMIN_URL`.                                     | Repository wiring **VERIFIED**; deployed secret and rotation **UNKNOWN**.       |
+| Shell requests      | Auth and Core persistence use the shared `DATABASE_URL`.                                 | Code **VERIFIED**; deployed login **UNKNOWN**.                                  |
+| Contacts requests   | Contacts persistence and assertion redemption use the shared `DATABASE_URL`.             | Code **VERIFIED**; deployed login **UNKNOWN**.                                  |
+| Core                | Package/schema boundary composed into its caller; no independent process or credential.  | **VERIFIED**.                                                                   |
+| Workers             | Generated workers compose the shared database layers; no production worker is installed. | Current code **VERIFIED**; future identity **INFERRED**.                        |
+| SpiceDB             | Separate datastore login; applications use gRPC plus a pre-shared key.                   | Bootstrap **VERIFIED**; deployed distribution **UNKNOWN**.                      |
+| Browser/remotes     | Boundary checks reject database imports outside server owners.                           | Static boundary **VERIFIED**; not protection from a compromised server process. |
 
-`zerops.yaml` deliberately does not prove which `DATABASE_URL` reaches each long-running runtime.
-That may be supplied by external service configuration. No production identity or secret
-distribution is inferred from its absence in the repository.
+External service configuration may supply production credentials, so their absence from
+`zerops.yaml` proves nothing about deployed identity distribution.
 
 ## Tenant-context trust path
 
-The intended request path is:
-
 ```text
 validated request context
-  -> Core scoped transaction
-  -> set_config('ontos.tenant_id' / 'ontos.legal_entity_id', value, true)
+  -> scoped transaction
+  -> set_config(..., true)
   -> verify current_setting(...)
-  -> construct owner repositories
-  -> forced RLS policies read those settings
-  -> commit or rollback clears transaction-local settings
+  -> owner repositories
+  -> forced RLS reads the settings
+  -> commit or rollback clears them
 ```
 
-**VERIFIED:** This prevents missing scope from matching RLS rows, constrains repositories to a
-transaction, and prevents context from leaking to a later transaction on the same pooled
-connection.
+**VERIFIED:** transaction scoping prevents missing context from matching rows and prevents values
+leaking to a later transaction on the same pooled connection.
 
-**VERIFIED:** PostgreSQL permits the ordinary runtime role to call `set_config` for these custom
-settings. Tests also use the runtime connection to set them directly. Therefore code that can send
-arbitrary SQL through a compromised request process can select another syntactically valid scope.
-Forced RLS still runs, but it evaluates attacker-selected context. Static import and typed-service
-boundaries reduce accidental bypasses; they do not turn a shared database credential into an
-unforgeable trust boundary.
+**VERIFIED:** the ordinary runtime role can also call `set_config` directly. Arbitrary SQL inside a
+compromised runtime can therefore choose another valid scope. Forced RLS still runs, but evaluates
+attacker-selected context. Typed services and import rules prevent accidents; they do not make a
+shared credential an unforgeable security boundary.
 
-## Existing negative evidence and gaps
+## Negative evidence and remaining gaps
 
-| Threat                                       | Existing evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Remaining gap                                                                                                                                                                     |
-| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Superuser or `BYPASSRLS` runtime             | Bootstrap verifies both are false; the audit reads effective role attributes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Production must be audited rather than inferred from bootstrap source.                                                                                                            |
-| Admin/runtime identity collapse              | Config tests reject identical URLs/users and a `postgres` runtime login; the audit validates distinct live session identities and rejects startup role switching.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Production must be audited rather than inferred from configuration text.                                                                                                          |
-| Missing or leaked transaction scope          | Core tenant-isolation integration tests verify no match for absent settings and no transaction-scope leakage; the audit treats any non-empty custom setting after rollback—including a pre-existing session value—as retained context.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | The runtime role can deliberately install a different valid value.                                                                                                                |
-| Malformed transaction scope                  | The scoped-transaction unit test rejects a mocked post-installation context mismatch; the Contacts PostgreSQL integration test proves a malformed `ontos.tenant_id` UUID fails when RLS evaluates it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | No PostgreSQL integration test currently installs a malformed `ontos.legal_entity_id` value.                                                                                      |
-| Cross-tenant rows and references             | Core tenant-isolation and Contacts database-boundary integration tests exercise RLS and same-tenant constraints.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | These tests demonstrate policy behavior under selected settings, not authenticity of the settings.                                                                                |
-| Raw database access from business boundaries | `database-access:check` rejects database imports from handlers, Actions, reads, BFFs, and hidden Core bypasses.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | A dependency exploit or arbitrary-code execution inside a permitted server process remains inside the credential boundary.                                                        |
-| Privileged routines                          | Audit inventories routines in every non-system schema and flags `SECURITY DEFINER` routines that the runtime or an assumable role can invoke directly, through an operator or aggregate in an accessible schema, through applicable RLS policies, column defaults, generated columns, table or domain checks, index expressions, direct or nested selectable view rewrites, writable-view predicates evaluated by `UPDATE` or `DELETE`, enabled DML rewrite rules, enabled DML trigger functions or `WHEN` predicates, or enabled database event triggers matching reachable DDL tags. Aggregate traversal covers transition, final, combine, serialization, deserialization, moving-transition, moving-inverse, and moving-final support functions. Policy bindings distinguish `USING` from explicit or inherited `WITH CHECK` expressions and intersect each with the commands that evaluate it. Column-level view grants are mapped through nested target-list columns for stable or immutable routines, while qualification and volatile target expressions remain reachable from every read. `ddl_command_start` reachability does not assume that the attempted command will pass its later privilege check; successful-command events such as `ddl_command_end`, `sql_drop`, and `table_rewrite` remain authority-gated, including relation-owner commands and privilege-based `CREATE TRIGGER`. It follows automatically writable views to stored expressions, base-relation triggers, write policies, and DML rules on the actual rewrite target; maps view-column grants to `UPDATE OF` trigger columns and partition keys; follows selectable owner-context views into read policies under the effective execution identity; recursive DML-rule action writes into target stored expressions and triggers; partition-routed expressions and row triggers—including row movement caused by `UPDATE`; recursive foreign-key referential writes into stored expressions and triggers; and reachable replica-mode rules or triggers. Table checks conservatively apply to every update; generated columns and expression indexes do so when a `BEFORE ROW UPDATE` trigger disables PostgreSQL's dependency optimization. | Every future privileged routine, policy, stored-expression, rule, and trigger path needs a narrow contract and hardening review; production must be audited rather than inferred. |
-| DDL and role escalation                      | Audit checks current-database ownership, database-level `CREATE`, every non-system schema, extension/foreign-data-wrapper/foreign-server/publication/subscription/relation/routine/type ownership, predefined roles, parameter ACLs, and cluster/database/schema/object authority for every reachable role; successful event-trigger tags include schema-authorized `CREATE COLLATION` and publication/subscription alter/drop authority; the baseline has no DDL authority or membership.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | There is no deployed-environment evidence until the audit is run there; executable denial probes for `SET ROLE` and representative DDL could be added to a pilot.                 |
-| Grant authority                              | Audit inventories effective current-object and creator-default grant options for the runtime and every `SET`/`ADMIN`-reachable role across all supported object classes; global default ACLs are included only when the owner can create the corresponding object class, inheritance-only grant options are not classified as exercisable, and the baseline has none.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Production must be audited rather than inferred from local grants.                                                                                                                |
-| Privileged owner-context views               | Audit records `security_invoker`, recursively follows view dependencies, and flags readable or writable views whose outer or nested owner context is administrative, `BYPASSRLS`, superuser, or owns a referenced unforced-RLS table—even through a security-invoker boundary; the baseline has no views.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | A future owner-context view requires an explicit tenant-isolation review even when its owner is not otherwise privileged.                                                         |
-| Unrelated schema DML                         | Audit enumerates every effective application table and sequence privilege.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Today denial cannot be proven: the shared role intentionally has DML in all three schemas.                                                                                        |
+| Threat                  | Current evidence                                                                                                 | Gap                                                                                   |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Cross-tenant SQL        | RLS integration tests prove filtering for selected context.                                                      | They do not prove the context is authentic.                                           |
+| Raw database access     | Static boundaries reject imports from non-owner surfaces.                                                        | Arbitrary code inside an allowed server process retains the credential.               |
+| DDL and role escalation | The audit checks effective privileges, ownership, grant authority, and reachable roles; local baseline has none. | Production needs its own audit and pilot denial probes.                               |
+| Privileged execution    | The audit follows direct and indirect privileged routine/view paths; local baseline has none.                    | Every future privileged path needs a narrow contract and review.                      |
+| Unrelated-schema DML    | The audit enumerates effective relation and sequence access.                                                     | Denial is impossible today because the shared role intentionally spans three schemas. |
 
-## Bounded pilot options
+## Pilot options
 
-### A. Process-scoped roles only
+### A. Process-scoped roles
 
-Give Shell, Contacts request handling, and installed workers distinct logins. Grant each vertical
-its owner schema plus an explicit minimum Core relation/function set; deny unrelated vertical and
-Auth schemas. Keep migration authority separate.
+Give Shell, Contacts, and workers distinct logins. Each vertical gets its owner schema plus an
+explicit minimal Core grant set; migrations remain administrative.
 
-- Benefit: immediate, measurable blast-radius reduction; straightforward catalog assertions.
-- Cost: credential provisioning/rotation per deployed process, a maintained Core grant manifest,
-  and local-development bootstrap changes.
-- Limit: every ordinary role can still forge the custom GUCs it is allowed to use. This option does
-  not satisfy the trusted-context acceptance criterion alone.
+- Benefit: measurable blast-radius reduction.
+- Cost: per-process provisioning/rotation and a maintained Core grant manifest.
+- Limit: ordinary roles can still forge trusted GUCs, so this cannot solve scope authenticity alone.
 
 ### B. Admin-owned trusted-scope entry point
 
-Stop treating custom GUCs chosen by the runtime role as authoritative. A narrowly privileged,
-admin-owned entry point validates an unforgeable scope assertion and records transaction/backend
-scope in state the ordinary role cannot write; RLS reads that trusted state. Direct table access is
-revoked where the pilot applies.
+Validate an unforgeable scope assertion in a narrow admin-owned entry point and store scope where
+the ordinary role cannot write it. RLS reads that trusted state and direct table access is revoked
+for the pilot.
 
-- Benefit: can make scope authenticity enforceable inside PostgreSQL while preserving a
-  transaction-scoped repository model.
-- Cost: careful connection-pool lifecycle, replay/audience/expiry validation, privileged-function
-  hardening, observability, and migration/rollback design.
-- Critical constraint: a `SECURITY DEFINER` function that merely accepts caller-provided tenant and
-  legal-entity IDs is still forgeable and is not an acceptable pilot.
+- Benefit: enforceable scope authenticity inside PostgreSQL.
+- Cost: privileged-function hardening, pool lifecycle, replay/audience/expiry validation,
+  observability, and rollback design.
+- Constraint: a `SECURITY DEFINER` function accepting caller-chosen IDs remains forgeable.
 
-### C. Trusted connection broker or pooler
+### C. Trusted broker or pooler
 
-A separate trusted component validates the scope assertion, selects the permitted database
-identity, and establishes authoritative context before forwarding database work. Application
-processes cannot mint broader context or connect around the broker.
+A trusted component validates scope, selects the allowed database identity, and establishes
+authoritative context before forwarding work. Applications cannot connect around it.
 
-- Benefit: centralizes identity, policy, rotation, and audit across separately deployed or
-  multi-cloud MicroVerticals.
-- Cost: a new availability-sensitive hop, provider/network integration, pooling semantics, local
+- Benefit: centralized identity, rotation, and audit across independent or multi-cloud deployments.
+- Cost: an availability-sensitive hop, network/provider integration, pooling semantics, local
   parity, and a strict no-bypass credential path.
-- Open proof: generic SQL filtering is not sufficient. The broker must establish a database fact
-  the ordinary role cannot overwrite.
+- Constraint: generic SQL filtering is insufficient; the broker must establish state the ordinary
+  role cannot overwrite.
 
-Splitting every tenant into a PostgreSQL login or database is not proposed for this pilot. It would
-create credential and connection cardinality before the simpler process boundary is measured.
+Per-tenant PostgreSQL logins or databases are outside this pilot because of credential and
+connection cardinality.
 
-## Proposed pilot decision packet
+## Proposed Contacts pilot
 
-The smallest pilot that measures both problems is Contacts-only:
+1. Create separate `shell_runtime` and `contacts_runtime` roles; keep `ontos_admin` for migrations.
+2. Deny each runtime access to the other vertical and grant only an explicit Core subset.
+3. Apply option B or C to one Contacts RLS path.
+4. Prove denial of unrelated DML/DDL, `SET ROLE`, `BYPASSRLS`, trusted-state writes, forged scope,
+   cross-tenant access, and retained context.
+5. Define provisioning, rotation, observability, rollback, and local bootstrap before expanding.
 
-1. introduce distinct `shell_runtime` and `contacts_runtime` roles while retaining
-   `ontos_admin` for migrations;
-2. deny `contacts_runtime` access to `auth`, deny `shell_runtime` access to `contacts`, and grant
-   only an enumerated Core subset required by each process;
-3. apply either option B or C to one Contacts RLS path so the ordinary role cannot choose its
-   authoritative tenant/legal-entity scope;
-4. prove denial of unrelated schema DML/DDL, `SET ROLE`, `BYPASSRLS`, direct trusted-state writes,
-   forged scope, cross-tenant access, and scope retention;
-5. document credential creation, rotation, emergency rollback, metrics, and local bootstrap before
-   considering another MicroVertical or a worker role.
+Before implementation, Petr and Jiří must decide:
 
-Before implementation, Petr and Jiří need to decide only:
-
-1. Is the pilot's trust root an admin-owned database entry point (B) or a separately operated
-   broker/pooler (C)?
-2. Is maintaining an explicit per-process Core grant manifest acceptable, or should Core database
-   access first be narrowed behind callable APIs?
-3. What rollback bound is required: role/grant rollback in place, or dual-path deployment with the
-   old shared role available for one release?
-
-No production grant, credential, or rollout should change until those choices are recorded in
-issue #174.
+1. Is the trust root an admin-owned database entry point (B) or a trusted broker/pooler (C)?
+2. Is a per-process Core grant manifest acceptable, or should Core access first move behind callable
+   APIs?
+3. Is rollback in place sufficient, or must one release support a dual path using the shared role?
