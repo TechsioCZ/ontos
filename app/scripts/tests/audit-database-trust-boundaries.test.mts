@@ -58,6 +58,7 @@ const snapshot = {
       source: 'public',
     },
   ],
+  extensions: [],
   grantOptions: [],
   memberships: [],
   parameterPrivileges: [],
@@ -171,6 +172,7 @@ test('builds deterministic current-state evidence and identifies the material tr
     defaultPrivilegeCount: 3,
     dmlSchemaCount: 3,
     dmlTableCount: 3,
+    extensionCount: 0,
     findingCount: 2,
     grantOptionCount: 0,
     parameterPrivilegeCount: 0,
@@ -639,6 +641,60 @@ test('flags ownership of an audited routine as DDL authority', () => {
   );
 });
 
+test('flags direct extension ownership as DDL authority', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    extensions: [{ extension: 'pgcrypto', owner: snapshot.runtimeRole, schema: 'public' }],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_has_ddl_authority'],
+  );
+  assert.equal(report.summary.extensionCount, 1);
+});
+
+test('classifies an assumable extension owner as privileged', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    memberships: [
+      {
+        attributes: ordinaryRole,
+        canAdministerRole: false,
+        canInheritRole: false,
+        canSetRole: true,
+        createSchemas: [],
+        databaseCreate: false,
+        ownedExtensions: ['pgcrypto'],
+        ownedRelations: [],
+        ownedRoutines: [],
+        ownedSchemas: [],
+        ownedTypes: [],
+        relationPrivilegeSchemas: [],
+        role: 'extension_owner',
+        securityDefinerRoutines: [],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_assume_privileged_role'],
+  );
+});
+
 test('flags ownership of an audited application type as DDL authority', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
@@ -896,6 +952,8 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /select audited_role\.role, audited_role\.source, authority\.grant_option/u);
   assert.equal(source.match(/from pg_catalog\.pg_trigger as audited_trigger/gu)?.length, 2);
   assert.equal(source.match(/audited_trigger\.tgenabled in \('O', 'A'\)/gu)?.length, 2);
+  assert.equal(source.match(/pg_catalog\.pg_partition_ancestors\(relation\.oid\)/gu)?.length, 2);
+  assert.match(source, /from pg_catalog\.pg_extension as extension/u);
 });
 
 test('treats inherited owner-role authority as effective runtime DDL authority', () => {

@@ -24,6 +24,12 @@ interface DefaultPrivilege {
   readonly source: 'assumable' | 'direct' | 'inherited' | 'public';
 }
 
+interface ExtensionOwnership {
+  readonly extension: string;
+  readonly owner: string;
+  readonly schema: string;
+}
+
 interface GrantOption {
   readonly authority: string;
   readonly role: string;
@@ -37,6 +43,7 @@ interface RoleMembership {
   readonly canSetRole: boolean;
   readonly createSchemas: readonly string[];
   readonly databaseCreate: boolean;
+  readonly ownedExtensions?: readonly string[];
   readonly ownedRelations: readonly string[];
   readonly ownedRoutines: readonly string[];
   readonly ownedSchemas: readonly string[];
@@ -151,6 +158,7 @@ export interface DatabaseTrustBoundarySnapshot {
   readonly database: string;
   readonly databasePrivileges: DatabasePrivileges;
   readonly defaultPrivileges: readonly DefaultPrivilege[];
+  readonly extensions: readonly ExtensionOwnership[];
   readonly grantOptions: readonly GrantOption[];
   readonly memberships: readonly RoleMembership[];
   readonly parameterPrivileges: readonly ParameterPrivilege[];
@@ -192,6 +200,7 @@ export interface DatabaseTrustBoundaryReport extends DatabaseTrustBoundarySnapsh
     readonly defaultPrivilegeCount: number;
     readonly dmlSchemaCount: number;
     readonly dmlTableCount: number;
+    readonly extensionCount: number;
     readonly findingCount: number;
     readonly grantOptionCount: number;
     readonly parameterPrivilegeCount: number;
@@ -303,6 +312,9 @@ export const buildDatabaseTrustBoundaryReport = (
       compareText(left.routine, right.routine) ||
       compareText(left.identityArguments, right.identityArguments),
   );
+  const extensions = [...snapshot.extensions].toSorted((left, right) =>
+    compareText(left.extension, right.extension),
+  );
   const types = [...snapshot.types].toSorted(
     (left, right) => compareText(left.schema, right.schema) || compareText(left.type, right.type),
   );
@@ -378,6 +390,7 @@ export const buildDatabaseTrustBoundaryReport = (
       canSetRole,
       createSchemas,
       databaseCreate,
+      ownedExtensions = [],
       ownedRelations,
       ownedRoutines,
       ownedSchemas,
@@ -393,6 +406,7 @@ export const buildDatabaseTrustBoundaryReport = (
       predefinedRole === true ||
       databaseCreate ||
       createSchemas.length > 0 ||
+      ownedExtensions.length > 0 ||
       ownedRelations.length > 0 ||
       ownedRoutines.length > 0 ||
       ownedSchemas.length > 0 ||
@@ -407,7 +421,7 @@ export const buildDatabaseTrustBoundaryReport = (
     findings.push({
       code: 'runtime_role_can_assume_privileged_role',
       evidence:
-        'The runtime role can reach a non-administrative identity with predefined-role, cluster, database, schema, relation, routine, type, parameter, or grant authority through inheritance, SET ROLE, or ADMIN OPTION.',
+        'The runtime role can reach a non-administrative identity with predefined-role, cluster, database, schema, extension, relation, routine, type, parameter, or grant authority through inheritance, SET ROLE, or ADMIN OPTION.',
       severity: 'critical',
     });
   }
@@ -423,11 +437,20 @@ export const buildDatabaseTrustBoundaryReport = (
     tables.some(({ owner }) => owner === snapshot.runtimeRole) ||
     sequences.some(({ owner }) => owner === snapshot.runtimeRole);
   const ownsRoutine = routines.some(({ owner }) => owner === snapshot.runtimeRole);
+  const ownsExtension = extensions.some(({ owner }) => owner === snapshot.runtimeRole);
   const ownsType = types.some(({ owner }) => owner === snapshot.runtimeRole);
   const inheritsOwnership = memberships.some(
-    ({ canInheritRole, ownedRelations, ownedRoutines, ownedSchemas, ownedTypes }) =>
+    ({
+      canInheritRole,
+      ownedExtensions = [],
+      ownedRelations,
+      ownedRoutines,
+      ownedSchemas,
+      ownedTypes,
+    }) =>
       canInheritRole &&
-      (ownedRelations.length > 0 ||
+      (ownedExtensions.length > 0 ||
+        ownedRelations.length > 0 ||
         ownedRoutines.length > 0 ||
         ownedSchemas.length > 0 ||
         ownedTypes.length > 0),
@@ -437,13 +460,14 @@ export const buildDatabaseTrustBoundaryReport = (
     schemas.some(({ create }) => create) ||
     ownsRelation ||
     ownsRoutine ||
+    ownsExtension ||
     ownsType ||
     inheritsOwnership
   ) {
     findings.push({
       code: 'runtime_role_has_ddl_authority',
       evidence:
-        'The runtime role has database/schema CREATE or direct/inherited ownership of an audited schema, relation, routine, or application type.',
+        'The runtime role has database/schema CREATE or direct/inherited ownership of an audited extension, schema, relation, routine, or application type.',
       severity: 'high',
     });
   }
@@ -558,6 +582,7 @@ export const buildDatabaseTrustBoundaryReport = (
   return {
     ...snapshot,
     defaultPrivileges,
+    extensions,
     findings,
     grantOptions,
     memberships,
@@ -571,6 +596,7 @@ export const buildDatabaseTrustBoundaryReport = (
       defaultPrivilegeCount: defaultPrivileges.length,
       dmlSchemaCount: dmlSchemas.size,
       dmlTableCount: dmlTables.length,
+      extensionCount: extensions.length,
       findingCount: findings.length,
       grantOptionCount: grantOptions.length + usableGrantableDefaultPrivileges.length,
       parameterPrivilegeCount: parameterPrivileges.length,
@@ -608,6 +634,7 @@ interface MembershipRow {
   readonly create_schemas: string[];
   readonly database_create: boolean;
   readonly inherit: boolean;
+  readonly owned_extensions: string[];
   readonly owned_relations: string[];
   readonly owned_routines: string[];
   readonly owned_schemas: string[];
@@ -635,6 +662,12 @@ interface DatabasePrivilegeRow {
   readonly create: boolean;
   readonly database: string;
   readonly temporary: boolean;
+}
+
+interface ExtensionOwnershipRow {
+  readonly extension: string;
+  readonly owner: string;
+  readonly schema: string;
 }
 
 interface SchemaPrivilegeRow {
@@ -855,6 +888,12 @@ const collectSnapshot = async (
          order by parameter.parname, privilege.name
        ) as parameter_privileges,
        array(
+         select extension.extname
+         from pg_catalog.pg_extension as extension
+         where extension.extowner = candidate.oid
+         order by extension.extname
+       ) as owned_extensions,
+       array(
          select namespace.nspname
          from pg_catalog.pg_namespace as namespace
          where namespace.nspname !~ '^pg_'
@@ -987,30 +1026,46 @@ const collectSnapshot = async (
            and routine_namespace.nspname <> 'information_schema'
            and routine.prosecdef
            and routine.proowner <> candidate.oid
-           and has_schema_privilege(candidate.oid, relation_namespace.oid, 'USAGE')
-           and (
-             (
-               audited_trigger.tgtype & 4 <> 0
+           and exists (
+             select 1
+             from pg_catalog.pg_partition_ancestors(relation.oid) as ancestor(oid)
+             join pg_catalog.pg_class as invocation_relation
+               on invocation_relation.oid = ancestor.oid
+             join pg_catalog.pg_namespace as invocation_namespace
+               on invocation_namespace.oid = invocation_relation.relnamespace
+             where has_schema_privilege(candidate.oid, invocation_namespace.oid, 'USAGE')
                and (
-                 has_table_privilege(candidate.oid, relation.oid, 'INSERT')
-                 or has_any_column_privilege(candidate.oid, relation.oid, 'INSERT')
+                 (
+                   audited_trigger.tgtype & 4 <> 0
+                   and (
+                     has_table_privilege(candidate.oid, invocation_relation.oid, 'INSERT')
+                     or has_any_column_privilege(
+                       candidate.oid,
+                       invocation_relation.oid,
+                       'INSERT'
+                     )
+                   )
+                 )
+                 or (
+                   audited_trigger.tgtype & 8 <> 0
+                   and has_table_privilege(candidate.oid, invocation_relation.oid, 'DELETE')
+                 )
+                 or (
+                   audited_trigger.tgtype & 16 <> 0
+                   and (
+                     has_table_privilege(candidate.oid, invocation_relation.oid, 'UPDATE')
+                     or has_any_column_privilege(
+                       candidate.oid,
+                       invocation_relation.oid,
+                       'UPDATE'
+                     )
+                   )
+                 )
+                 or (
+                   audited_trigger.tgtype & 32 <> 0
+                   and has_table_privilege(candidate.oid, invocation_relation.oid, 'TRUNCATE')
+                 )
                )
-             )
-             or (
-               audited_trigger.tgtype & 8 <> 0
-               and has_table_privilege(candidate.oid, relation.oid, 'DELETE')
-             )
-             or (
-               audited_trigger.tgtype & 16 <> 0
-               and (
-                 has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
-                 or has_any_column_privilege(candidate.oid, relation.oid, 'UPDATE')
-               )
-             )
-             or (
-               audited_trigger.tgtype & 32 <> 0
-               and has_table_privilege(candidate.oid, relation.oid, 'TRUNCATE')
-             )
            )
          order by 1
        ) as security_definer_trigger_bindings
@@ -1034,6 +1089,16 @@ const collectSnapshot = async (
   const databaseRow = database.rows[0];
   if (databaseRow === undefined) throw new Error('database privilege row is absent');
 
+  const extensions = await admin.query<ExtensionOwnershipRow>(
+    `select
+       extension.extname as extension,
+       owner.rolname as owner,
+       namespace.nspname as schema
+     from pg_catalog.pg_extension as extension
+     join pg_catalog.pg_roles as owner on owner.oid = extension.extowner
+     join pg_catalog.pg_namespace as namespace on namespace.oid = extension.extnamespace
+     order by extension.extname`,
+  );
   const schemas = await admin.query<SchemaPrivilegeRow>(
     `select
        namespace.nspname as schema,
@@ -1080,30 +1145,38 @@ const collectSnapshot = async (
            and not audited_trigger.tgisinternal
            and audited_trigger.tgenabled in ('O', 'A')
            and relation_namespace.nspname = any($2::text[])
-           and has_schema_privilege($1, relation_namespace.oid, 'USAGE')
-           and (
-             (
-               audited_trigger.tgtype & 4 <> 0
+           and exists (
+             select 1
+             from pg_catalog.pg_partition_ancestors(relation.oid) as ancestor(oid)
+             join pg_catalog.pg_class as invocation_relation
+               on invocation_relation.oid = ancestor.oid
+             join pg_catalog.pg_namespace as invocation_namespace
+               on invocation_namespace.oid = invocation_relation.relnamespace
+             where has_schema_privilege($1, invocation_namespace.oid, 'USAGE')
                and (
-                 has_table_privilege($1, relation.oid, 'INSERT')
-                 or has_any_column_privilege($1, relation.oid, 'INSERT')
+                 (
+                   audited_trigger.tgtype & 4 <> 0
+                   and (
+                     has_table_privilege($1, invocation_relation.oid, 'INSERT')
+                     or has_any_column_privilege($1, invocation_relation.oid, 'INSERT')
+                   )
+                 )
+                 or (
+                   audited_trigger.tgtype & 8 <> 0
+                   and has_table_privilege($1, invocation_relation.oid, 'DELETE')
+                 )
+                 or (
+                   audited_trigger.tgtype & 16 <> 0
+                   and (
+                     has_table_privilege($1, invocation_relation.oid, 'UPDATE')
+                     or has_any_column_privilege($1, invocation_relation.oid, 'UPDATE')
+                   )
+                 )
+                 or (
+                   audited_trigger.tgtype & 32 <> 0
+                   and has_table_privilege($1, invocation_relation.oid, 'TRUNCATE')
+                 )
                )
-             )
-             or (
-               audited_trigger.tgtype & 8 <> 0
-               and has_table_privilege($1, relation.oid, 'DELETE')
-             )
-             or (
-               audited_trigger.tgtype & 16 <> 0
-               and (
-                 has_table_privilege($1, relation.oid, 'UPDATE')
-                 or has_any_column_privilege($1, relation.oid, 'UPDATE')
-               )
-             )
-             or (
-               audited_trigger.tgtype & 32 <> 0
-               and has_table_privilege($1, relation.oid, 'TRUNCATE')
-             )
            )
          order by 1
        ) as trigger_bindings
@@ -1687,6 +1760,7 @@ const collectSnapshot = async (
       schema: privilege.schema,
       source: privilege.source,
     })),
+    extensions: extensions.rows,
     grantOptions: grantOptions.rows.map(({ grant_option, role, source }) => ({
       authority: grant_option,
       role,
@@ -1707,6 +1781,7 @@ const collectSnapshot = async (
       canSetRole: membership.can_set_role,
       createSchemas: membership.create_schemas,
       databaseCreate: membership.database_create,
+      ownedExtensions: membership.owned_extensions,
       ownedRelations: membership.owned_relations,
       ownedRoutines: membership.owned_routines,
       ownedSchemas: membership.owned_schemas,
