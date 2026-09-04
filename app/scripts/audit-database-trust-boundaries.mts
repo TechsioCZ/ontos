@@ -11,6 +11,7 @@ import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/conf
 interface DatabasePrivileges {
   readonly connect: boolean;
   readonly create: boolean;
+  readonly owner: boolean;
   readonly temporary: boolean;
 }
 
@@ -53,6 +54,7 @@ interface RoleMembership {
   readonly canSetRole: boolean;
   readonly createSchemas: readonly string[];
   readonly databaseCreate: boolean;
+  readonly databaseOwner?: boolean;
   readonly ownedExtensions?: readonly string[];
   readonly ownedForeignDataWrappers?: readonly string[];
   readonly ownedForeignServers?: readonly string[];
@@ -418,6 +420,7 @@ export const buildDatabaseTrustBoundaryReport = (
       canSetRole,
       createSchemas,
       databaseCreate,
+      databaseOwner = false,
       ownedExtensions = [],
       ownedForeignDataWrappers = [],
       ownedForeignServers = [],
@@ -438,6 +441,7 @@ export const buildDatabaseTrustBoundaryReport = (
       ((canSetRole || canAdministerRole) && hasClusterPrivilege(attributes)) ||
       predefinedRole === true ||
       databaseCreate ||
+      databaseOwner ||
       createSchemas.length > 0 ||
       ownedExtensions.length > 0 ||
       ownedForeignDataWrappers.length > 0 ||
@@ -485,6 +489,7 @@ export const buildDatabaseTrustBoundaryReport = (
   const inheritsOwnership = memberships.some(
     ({
       canInheritRole,
+      databaseOwner = false,
       ownedExtensions = [],
       ownedForeignDataWrappers = [],
       ownedForeignServers = [],
@@ -494,7 +499,8 @@ export const buildDatabaseTrustBoundaryReport = (
       ownedTypes,
     }) =>
       canInheritRole &&
-      (ownedExtensions.length > 0 ||
+      (databaseOwner ||
+        ownedExtensions.length > 0 ||
         ownedForeignDataWrappers.length > 0 ||
         ownedForeignServers.length > 0 ||
         ownedRelations.length > 0 ||
@@ -502,8 +508,13 @@ export const buildDatabaseTrustBoundaryReport = (
         ownedSchemas.length > 0 ||
         ownedTypes.length > 0),
   );
+  const hasReachableDatabaseOwnership = memberships.some(
+    ({ canAdministerRole, canInheritRole, canSetRole, databaseOwner = false }) =>
+      databaseOwner && (canAdministerRole || canInheritRole || canSetRole),
+  );
   if (
     snapshot.databasePrivileges.create ||
+    snapshot.databasePrivileges.owner ||
     schemas.some(({ create }) => create) ||
     ownsRelation ||
     ownsRoutine ||
@@ -512,12 +523,13 @@ export const buildDatabaseTrustBoundaryReport = (
     ownsForeignServer ||
     ownsSchema ||
     ownsType ||
-    inheritsOwnership
+    inheritsOwnership ||
+    hasReachableDatabaseOwnership
   ) {
     findings.push({
       code: 'runtime_role_has_ddl_authority',
       evidence:
-        'The runtime role has database/schema CREATE or direct/inherited ownership of an audited extension, foreign-data wrapper or server, schema, relation, routine, or application type.',
+        'The runtime role has database/schema CREATE, direct/reachable ownership of the current database, or direct/inherited ownership of an audited extension, foreign-data wrapper or server, schema, relation, routine, or application type.',
       severity: 'high',
     });
   }
@@ -699,6 +711,7 @@ interface MembershipRow {
   readonly can_login: boolean;
   readonly create_schemas: string[];
   readonly database_create: boolean;
+  readonly database_owner: boolean;
   readonly inherit: boolean;
   readonly owned_extensions: string[];
   readonly owned_foreign_data_wrappers: string[];
@@ -732,6 +745,7 @@ interface DatabasePrivilegeRow {
   readonly connect: boolean;
   readonly create: boolean;
   readonly database: string;
+  readonly owner: boolean;
   readonly temporary: boolean;
 }
 
@@ -1374,6 +1388,15 @@ export const referentialWritePathsCte = `referential_write_paths(
 )`;
 
 export const roleDdlCommandTagsCte = `role_ddl_command_tags(role_oid, event, tag) as (
+  select distinct
+    role.oid,
+    'ddl_command_start'::text,
+    coalesce(configured_tag.name, 'ALTER DEFAULT PRIVILEGES'::text)
+  from pg_catalog.pg_roles as role
+  join pg_catalog.pg_event_trigger as event_trigger
+    on event_trigger.evtevent = 'ddl_command_start'
+  left join lateral unnest(event_trigger.evttags) as configured_tag(name) on true
+  union
   select role.oid, event.name, 'ALTER DEFAULT PRIVILEGES'::text
   from pg_catalog.pg_roles as role
   cross join (values ('ddl_command_start'::text), ('ddl_command_end'::text)) as event(name)
@@ -1772,6 +1795,11 @@ const collectSnapshot = async (
        candidate.oid in (select role_oid from reachable_roles) as can_set_role,
        pg_has_role($1, candidate.oid, 'USAGE') as can_inherit_role,
        candidate.oid in (select role_oid from administrable_roles) as can_administer_role,
+       candidate.oid = (
+         select database.datdba
+         from pg_catalog.pg_database as database
+         where database.datname = current_database()
+       ) as database_owner,
        candidate.rolbypassrls as bypass_rls,
        candidate.rolcreatedb as can_create_databases,
        candidate.rolcreaterole as can_create_roles,
@@ -2051,6 +2079,58 @@ const collectSnapshot = async (
                and (
                  has_table_privilege(candidate.oid, invocation_relation.oid, 'SELECT')
                  or has_any_column_privilege(candidate.oid, invocation_relation.oid, 'SELECT')
+                 or exists (
+                   select 1
+                   from writable_view_paths as writable_view
+                   join pg_catalog.pg_roles as effective_owner
+                     on effective_owner.oid = coalesce(
+                       writable_view.effective_owner_oid,
+                       candidate.oid
+                     )
+                   where writable_view.invocation_oid = stored_expression.invocation_oid
+                     and (
+                       (
+                         writable_view.actions & 4 <> 0
+                         and (
+                           has_table_privilege(
+                             candidate.oid,
+                             invocation_relation.oid,
+                             'UPDATE'
+                           )
+                           or has_any_column_privilege(
+                             candidate.oid,
+                             invocation_relation.oid,
+                             'UPDATE'
+                           )
+                         )
+                         and (
+                           has_table_privilege(
+                             effective_owner.oid,
+                             writable_view.affected_oid,
+                             'UPDATE'
+                           )
+                           or has_any_column_privilege(
+                             effective_owner.oid,
+                             writable_view.affected_oid,
+                             'UPDATE'
+                           )
+                         )
+                       )
+                       or (
+                         writable_view.actions & 16 <> 0
+                         and has_table_privilege(
+                           candidate.oid,
+                           invocation_relation.oid,
+                           'DELETE'
+                         )
+                         and has_table_privilege(
+                           effective_owner.oid,
+                           writable_view.affected_oid,
+                           'DELETE'
+                         )
+                       )
+                     )
+                 )
                )
              )
              or (
@@ -2719,7 +2799,11 @@ const collectSnapshot = async (
        current_database() as database,
        has_database_privilege($1, current_database(), 'CONNECT') as connect,
        has_database_privilege($1, current_database(), 'CREATE') as create,
-       has_database_privilege($1, current_database(), 'TEMPORARY') as temporary`,
+       owner.rolname = $1 as owner,
+       has_database_privilege($1, current_database(), 'TEMPORARY') as temporary
+     from pg_catalog.pg_database as database
+     join pg_catalog.pg_roles as owner on owner.oid = database.datdba
+     where database.datname = current_database()`,
     [runtimeRole],
   );
   const databaseRow = database.rows[0];
@@ -2923,6 +3007,50 @@ const collectSnapshot = async (
                and (
                  has_table_privilege($1, invocation_relation.oid, 'SELECT')
                  or has_any_column_privilege($1, invocation_relation.oid, 'SELECT')
+                 or exists (
+                   select 1
+                   from writable_view_paths as writable_view
+                   join pg_catalog.pg_roles as effective_owner
+                     on effective_owner.oid = coalesce(
+                       writable_view.effective_owner_oid,
+                       runtime_role.oid
+                     )
+                   where writable_view.invocation_oid = stored_expression.invocation_oid
+                     and (
+                       (
+                         writable_view.actions & 4 <> 0
+                         and (
+                           has_table_privilege($1, invocation_relation.oid, 'UPDATE')
+                           or has_any_column_privilege(
+                             $1,
+                             invocation_relation.oid,
+                             'UPDATE'
+                           )
+                         )
+                         and (
+                           has_table_privilege(
+                             effective_owner.oid,
+                             writable_view.affected_oid,
+                             'UPDATE'
+                           )
+                           or has_any_column_privilege(
+                             effective_owner.oid,
+                             writable_view.affected_oid,
+                             'UPDATE'
+                           )
+                         )
+                       )
+                       or (
+                         writable_view.actions & 16 <> 0
+                         and has_table_privilege($1, invocation_relation.oid, 'DELETE')
+                         and has_table_privilege(
+                           effective_owner.oid,
+                           writable_view.affected_oid,
+                           'DELETE'
+                         )
+                       )
+                     )
+                 )
                )
              )
              or (
@@ -3899,7 +4027,21 @@ const collectSnapshot = async (
   const defaultPrivileges = await admin.query<DefaultPrivilegeRow>(
     `with recursive ${reachableRolesCte},
      audit_owners as (
-       select candidate.oid, candidate.rolname
+       select
+         candidate.oid,
+         candidate.rolname,
+         has_database_privilege(candidate.oid, current_database(), 'CREATE')
+           as can_create_schema,
+         has_database_privilege(candidate.oid, current_database(), 'CREATE')
+           or exists (
+             select 1
+             from pg_catalog.pg_namespace as namespace
+             where namespace.nspname = any($2::text[])
+               and (
+                 namespace.nspowner = candidate.oid
+                 or has_schema_privilege(candidate.oid, namespace.oid, 'CREATE')
+               )
+           ) as can_create_object
        from pg_catalog.pg_roles as candidate
        where has_database_privilege(candidate.oid, current_database(), 'CREATE')
           or exists (
@@ -3935,6 +4077,13 @@ const collectSnapshot = async (
          on defaults.defaclrole = owner.oid
         and defaults.defaclnamespace = 0
         and defaults.defaclobjtype = object_types.catalog_code
+       where (
+         object_types.catalog_code = 'n'
+         and owner.can_create_schema
+       ) or (
+         object_types.catalog_code <> 'n'
+         and owner.can_create_object
+       )
      ),
      schema_acl as (
        select
@@ -4019,6 +4168,7 @@ const collectSnapshot = async (
     databasePrivileges: {
       connect: databaseRow.connect,
       create: databaseRow.create,
+      owner: databaseRow.owner,
       temporary: databaseRow.temporary,
     },
     defaultPrivileges: defaultPrivileges.rows.map((privilege) => ({
@@ -4053,6 +4203,7 @@ const collectSnapshot = async (
       canSetRole: membership.can_set_role,
       createSchemas: membership.create_schemas,
       databaseCreate: membership.database_create,
+      databaseOwner: membership.database_owner,
       ownedExtensions: membership.owned_extensions,
       ownedForeignDataWrappers: membership.owned_foreign_data_wrappers,
       ownedForeignServers: membership.owned_foreign_servers,

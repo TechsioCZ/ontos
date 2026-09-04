@@ -28,7 +28,7 @@ const ordinaryRole = {
 const snapshot = {
   administrativeRole: 'ontos_admin',
   database: 'ontos',
-  databasePrivileges: { connect: true, create: false, temporary: true },
+  databasePrivileges: { connect: true, create: false, owner: false, temporary: true },
   defaultPrivileges: [
     {
       grantee: 'analytics_reader',
@@ -293,6 +293,24 @@ test('flags database-level CREATE even when no existing schema is writable', () 
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
     databasePrivileges: { ...snapshot.databasePrivileges, create: true },
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_has_ddl_authority'],
+  );
+});
+
+test('flags current database ownership even when CREATE was revoked', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    databasePrivileges: { ...snapshot.databasePrivileges, owner: true },
     tables: snapshot.tables.slice(0, 1),
     trustedContext: {
       ...snapshot.trustedContext,
@@ -1365,7 +1383,7 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /cross join lateral regexp_matches\(/u);
   assert.match(source, /affected_relation\.oid <> view_relation\.oid/u);
   assert.match(source, /pg_catalog\.pg_relation_is_updatable/u);
-  assert.equal(source.match(/from writable_view_paths as writable_view/gu)?.length, 4);
+  assert.equal(source.match(/from writable_view_paths as writable_view/gu)?.length, 6);
   assert.equal(source.match(/from writable_view_columns as writable_column/gu)?.length, 2);
   assert.equal(source.match(/from view_access_paths as view_access/gu)?.length, 2);
   assert.match(source, /relation_invocation_paths\(invocation_oid, dependency_oid\)/u);
@@ -1403,6 +1421,11 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /join pg_catalog\.pg_foreign_server as foreign_server/u);
   assert.match(source, /has_database_privilege\(role\.oid, current_database\(\), 'TEMPORARY'\)/u);
   assert.match(source, /cross join \(values \('GRANT'::text\), \('REVOKE'::text\)\)/u);
+  assert.match(source, /event_trigger\.evtevent = 'ddl_command_start'/u);
+  assert.match(
+    source,
+    /left join lateral unnest\(event_trigger\.evttags\) as configured_tag\(name\) on true/u,
+  );
   assert.match(source, /'SELECT WITH GRANT OPTION'/u);
   assert.match(source, /has_column_privilege\(role\.oid, attribute\.attrelid/u);
   assert.match(
@@ -1430,6 +1453,12 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /from pg_catalog\.pg_foreign_server as foreign_server/u);
   assert.match(source, /foreign_data_wrapper\.fdwowner/u);
   assert.match(source, /join audit_owners as owner on owner\.oid = defaults\.defaclrole/u);
+  assert.match(source, /as can_create_schema/u);
+  assert.match(source, /as can_create_object/u);
+  assert.match(source, /object_types\.catalog_code = 'n'\s+and owner\.can_create_schema/u);
+  assert.match(source, /object_types\.catalog_code <> 'n'\s+and owner\.can_create_object/u);
+  assert.match(source, /owner\.rolname = \$1 as owner/u);
+  assert.match(source, /candidate\.oid = \(\s+select database\.datdba/u);
   assert.match(
     source,
     /namespace\.nspowner = owner\.oid\s+or has_schema_privilege\(owner\.oid, namespace\.oid, 'CREATE'\)/u,
@@ -1453,6 +1482,41 @@ test('treats inherited owner-role authority as effective runtime DDL authority',
         ownedTypes: [],
         relationPrivilegeSchemas: [],
         role: 'contacts_owner',
+        securityDefinerRoutines: [],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_assume_privileged_role', 'runtime_role_has_ddl_authority'],
+  );
+});
+
+test('treats SET-reachable database ownership as effective runtime DDL authority', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    memberships: [
+      {
+        attributes: ordinaryRole,
+        canAdministerRole: false,
+        canInheritRole: false,
+        canSetRole: true,
+        createSchemas: [],
+        databaseCreate: false,
+        databaseOwner: true,
+        ownedRelations: [],
+        ownedRoutines: [],
+        ownedSchemas: [],
+        ownedTypes: [],
+        relationPrivilegeSchemas: [],
+        role: 'database_owner',
         securityDefinerRoutines: [],
       },
     ],
