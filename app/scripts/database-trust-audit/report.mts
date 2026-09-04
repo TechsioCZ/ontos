@@ -84,6 +84,7 @@ interface TablePrivilege {
   readonly kind: 'foreign-table' | 'materialized-view' | 'partitioned-table' | 'table' | 'view';
   readonly owner: string;
   readonly ownerBypassRls?: boolean;
+  readonly ownerContextPrivileged?: boolean;
   readonly ownerContextRlsBypass?: boolean;
   readonly ownerSuperuser?: boolean;
   readonly privileges: {
@@ -437,6 +438,7 @@ export const buildDatabaseTrustBoundaryReport = (
       kind,
       owner,
       ownerBypassRls,
+      ownerContextPrivileged,
       ownerContextRlsBypass,
       ownerSuperuser,
       privileges,
@@ -447,6 +449,7 @@ export const buildDatabaseTrustBoundaryReport = (
       securityInvoker !== true &&
       (owner === snapshot.administrativeRole ||
         ownerBypassRls === true ||
+        ownerContextPrivileged === true ||
         ownerContextRlsBypass === true ||
         ownerSuperuser === true),
   );
@@ -454,7 +457,7 @@ export const buildDatabaseTrustBoundaryReport = (
     findings.push({
       code: 'runtime_role_can_select_privileged_owner_view',
       evidence:
-        'The runtime role can select an owner-context view whose owner is administrative, BYPASSRLS, superuser, or owns a referenced RLS relation without FORCE ROW LEVEL SECURITY.',
+        'The runtime role can select an owner-context view with an administrative, BYPASSRLS, superuser, or RLS-bypassing owner in its dependency chain.',
       severity: 'high',
     });
   }
