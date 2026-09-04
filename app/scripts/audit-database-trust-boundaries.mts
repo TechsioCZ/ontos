@@ -1093,6 +1093,105 @@ writable_view_columns(
    and nested.invocation_attnum = path.affected_attnum
   where path.actions & nested.actions <> 0
 ),
+direct_dml_rule_write_paths(
+  invocation_oid,
+  invocation_action,
+  affected_oid,
+  affected_action,
+  allowed_modes,
+  effective_owner_oid
+) as (
+  select
+    source_relation.oid,
+    case rewrite.ev_type
+      when '2' then 'UPDATE'::text
+      when '3' then 'INSERT'::text
+      when '4' then 'DELETE'::text
+    end,
+    target_relation.oid,
+    case action.fields[1]
+      when '2' then 'UPDATE'::text
+      when '3' then 'INSERT'::text
+      when '4' then 'DELETE'::text
+    end,
+    case rewrite.ev_enabled
+      when 'O' then 1
+      when 'R' then 2
+      when 'A' then 3
+    end,
+    source_relation.relowner
+  from pg_catalog.pg_rewrite as rewrite
+  join pg_catalog.pg_class as source_relation on source_relation.oid = rewrite.ev_class
+  join pg_catalog.pg_namespace as source_namespace
+    on source_namespace.oid = source_relation.relnamespace
+  cross join lateral regexp_matches(
+    rewrite.ev_action::text,
+    ':commandType ([234]).*?:resultRelation ([1-9][0-9]*).*?:rtable \\((.*?)\\) :rteperminfos',
+    'g'
+  ) as action(fields)
+  cross join lateral regexp_match(
+    (string_to_array(action.fields[3], '{RANGETBLENTRY'))[
+      action.fields[2]::integer + 1
+    ],
+    ':rtekind 0 :relid ([1-9][0-9]*)'
+  ) as target(fields)
+  join pg_catalog.pg_class as target_relation on target_relation.oid = target.fields[1]::oid
+  join pg_catalog.pg_namespace as target_namespace
+    on target_namespace.oid = target_relation.relnamespace
+  join pg_catalog.pg_roles as effective_owner on effective_owner.oid = source_relation.relowner
+  where rewrite.rulename <> '_RETURN'
+    and rewrite.ev_type in ('2', '3', '4')
+    and rewrite.ev_enabled in ('O', 'A', 'R')
+    and source_namespace.nspname !~ '^pg_'
+    and source_namespace.nspname <> 'information_schema'
+    and target_namespace.nspname !~ '^pg_'
+    and target_namespace.nspname <> 'information_schema'
+    and case action.fields[1]
+      when '2' then
+        has_table_privilege(effective_owner.oid, target_relation.oid, 'UPDATE')
+        or has_any_column_privilege(effective_owner.oid, target_relation.oid, 'UPDATE')
+      when '3' then
+        has_table_privilege(effective_owner.oid, target_relation.oid, 'INSERT')
+        or has_any_column_privilege(effective_owner.oid, target_relation.oid, 'INSERT')
+      when '4' then has_table_privilege(effective_owner.oid, target_relation.oid, 'DELETE')
+      else false
+    end
+),
+dml_rule_write_paths(
+  invocation_oid,
+  invocation_action,
+  affected_oid,
+  affected_action,
+  allowed_modes,
+  effective_owner_oid,
+  visited
+) as (
+  select
+    path.invocation_oid,
+    path.invocation_action,
+    path.affected_oid,
+    path.affected_action,
+    path.allowed_modes,
+    path.effective_owner_oid,
+    array[format('%s:%s', path.invocation_oid, path.invocation_action),
+      format('%s:%s', path.affected_oid, path.affected_action)]
+  from direct_dml_rule_write_paths as path
+  union all
+  select
+    path.invocation_oid,
+    path.invocation_action,
+    nested.affected_oid,
+    nested.affected_action,
+    path.allowed_modes & nested.allowed_modes,
+    nested.effective_owner_oid,
+    path.visited || format('%s:%s', nested.affected_oid, nested.affected_action)
+  from dml_rule_write_paths as path
+  join direct_dml_rule_write_paths as nested
+    on nested.invocation_oid = path.affected_oid
+   and nested.invocation_action = path.affected_action
+  where path.allowed_modes & nested.allowed_modes <> 0
+    and format('%s:%s', nested.affected_oid, nested.affected_action) <> all(path.visited)
+),
 stored_expression_dependencies(
   invocation_oid,
   relation_oid,
@@ -1453,37 +1552,108 @@ export const roleDdlCommandTagsCte = `role_ddl_command_tags(role_oid, event, tag
       ('r'::"char", 'ddl_command_start'::text, 'DROP TABLE'::text),
       ('r'::"char", 'ddl_command_end'::text, 'DROP TABLE'::text),
       ('r'::"char", 'sql_drop'::text, 'DROP TABLE'::text),
+      ('r'::"char", 'ddl_command_end'::text, 'CREATE INDEX'::text),
+      ('r'::"char", 'ddl_command_end'::text, 'CREATE POLICY'::text),
+      ('r'::"char", 'ddl_command_end'::text, 'ALTER POLICY'::text),
+      ('r'::"char", 'ddl_command_end'::text, 'DROP POLICY'::text),
+      ('r'::"char", 'sql_drop'::text, 'DROP POLICY'::text),
+      ('r'::"char", 'ddl_command_end'::text, 'CREATE RULE'::text),
+      ('r'::"char", 'ddl_command_end'::text, 'DROP RULE'::text),
+      ('r'::"char", 'sql_drop'::text, 'DROP RULE'::text),
+      ('r'::"char", 'ddl_command_end'::text, 'CREATE TRIGGER'::text),
+      ('r'::"char", 'ddl_command_end'::text, 'ALTER TRIGGER'::text),
+      ('r'::"char", 'ddl_command_end'::text, 'DROP TRIGGER'::text),
+      ('r'::"char", 'sql_drop'::text, 'DROP TRIGGER'::text),
+      ('r'::"char", 'ddl_command_end'::text, 'COMMENT'::text),
+      ('r'::"char", 'ddl_command_end'::text, 'SECURITY LABEL'::text),
+      ('r'::"char", 'ddl_command_end'::text, 'REINDEX'::text),
       ('p'::"char", 'ddl_command_start'::text, 'ALTER TABLE'::text),
       ('p'::"char", 'ddl_command_end'::text, 'ALTER TABLE'::text),
       ('p'::"char", 'table_rewrite'::text, 'ALTER TABLE'::text),
       ('p'::"char", 'ddl_command_start'::text, 'DROP TABLE'::text),
       ('p'::"char", 'ddl_command_end'::text, 'DROP TABLE'::text),
       ('p'::"char", 'sql_drop'::text, 'DROP TABLE'::text),
+      ('p'::"char", 'ddl_command_end'::text, 'CREATE INDEX'::text),
+      ('p'::"char", 'ddl_command_end'::text, 'CREATE POLICY'::text),
+      ('p'::"char", 'ddl_command_end'::text, 'ALTER POLICY'::text),
+      ('p'::"char", 'ddl_command_end'::text, 'DROP POLICY'::text),
+      ('p'::"char", 'sql_drop'::text, 'DROP POLICY'::text),
+      ('p'::"char", 'ddl_command_end'::text, 'CREATE RULE'::text),
+      ('p'::"char", 'ddl_command_end'::text, 'DROP RULE'::text),
+      ('p'::"char", 'sql_drop'::text, 'DROP RULE'::text),
+      ('p'::"char", 'ddl_command_end'::text, 'CREATE TRIGGER'::text),
+      ('p'::"char", 'ddl_command_end'::text, 'ALTER TRIGGER'::text),
+      ('p'::"char", 'ddl_command_end'::text, 'DROP TRIGGER'::text),
+      ('p'::"char", 'sql_drop'::text, 'DROP TRIGGER'::text),
+      ('p'::"char", 'ddl_command_end'::text, 'COMMENT'::text),
+      ('p'::"char", 'ddl_command_end'::text, 'SECURITY LABEL'::text),
+      ('p'::"char", 'ddl_command_end'::text, 'REINDEX'::text),
       ('f'::"char", 'ddl_command_start'::text, 'ALTER FOREIGN TABLE'::text),
       ('f'::"char", 'ddl_command_end'::text, 'ALTER FOREIGN TABLE'::text),
       ('f'::"char", 'ddl_command_start'::text, 'DROP FOREIGN TABLE'::text),
       ('f'::"char", 'ddl_command_end'::text, 'DROP FOREIGN TABLE'::text),
       ('f'::"char", 'sql_drop'::text, 'DROP FOREIGN TABLE'::text),
+      ('f'::"char", 'ddl_command_end'::text, 'CREATE TRIGGER'::text),
+      ('f'::"char", 'ddl_command_end'::text, 'ALTER TRIGGER'::text),
+      ('f'::"char", 'ddl_command_end'::text, 'DROP TRIGGER'::text),
+      ('f'::"char", 'sql_drop'::text, 'DROP TRIGGER'::text),
+      ('f'::"char", 'ddl_command_end'::text, 'COMMENT'::text),
+      ('f'::"char", 'ddl_command_end'::text, 'SECURITY LABEL'::text),
       ('v'::"char", 'ddl_command_start'::text, 'ALTER VIEW'::text),
       ('v'::"char", 'ddl_command_end'::text, 'ALTER VIEW'::text),
       ('v'::"char", 'ddl_command_start'::text, 'DROP VIEW'::text),
       ('v'::"char", 'ddl_command_end'::text, 'DROP VIEW'::text),
       ('v'::"char", 'sql_drop'::text, 'DROP VIEW'::text),
+      ('v'::"char", 'ddl_command_end'::text, 'CREATE RULE'::text),
+      ('v'::"char", 'ddl_command_end'::text, 'DROP RULE'::text),
+      ('v'::"char", 'sql_drop'::text, 'DROP RULE'::text),
+      ('v'::"char", 'ddl_command_end'::text, 'CREATE TRIGGER'::text),
+      ('v'::"char", 'ddl_command_end'::text, 'ALTER TRIGGER'::text),
+      ('v'::"char", 'ddl_command_end'::text, 'DROP TRIGGER'::text),
+      ('v'::"char", 'sql_drop'::text, 'DROP TRIGGER'::text),
+      ('v'::"char", 'ddl_command_end'::text, 'COMMENT'::text),
+      ('v'::"char", 'ddl_command_end'::text, 'SECURITY LABEL'::text),
       ('m'::"char", 'ddl_command_start'::text, 'ALTER MATERIALIZED VIEW'::text),
       ('m'::"char", 'ddl_command_end'::text, 'ALTER MATERIALIZED VIEW'::text),
       ('m'::"char", 'table_rewrite'::text, 'ALTER MATERIALIZED VIEW'::text),
       ('m'::"char", 'ddl_command_start'::text, 'DROP MATERIALIZED VIEW'::text),
       ('m'::"char", 'ddl_command_end'::text, 'DROP MATERIALIZED VIEW'::text),
       ('m'::"char", 'sql_drop'::text, 'DROP MATERIALIZED VIEW'::text),
+      ('m'::"char", 'ddl_command_end'::text, 'CREATE INDEX'::text),
+      ('m'::"char", 'ddl_command_end'::text, 'REFRESH MATERIALIZED VIEW'::text),
+      ('m'::"char", 'ddl_command_end'::text, 'COMMENT'::text),
+      ('m'::"char", 'ddl_command_end'::text, 'SECURITY LABEL'::text),
+      ('m'::"char", 'ddl_command_end'::text, 'REINDEX'::text),
       ('S'::"char", 'ddl_command_start'::text, 'ALTER SEQUENCE'::text),
       ('S'::"char", 'ddl_command_end'::text, 'ALTER SEQUENCE'::text),
       ('S'::"char", 'ddl_command_start'::text, 'DROP SEQUENCE'::text),
       ('S'::"char", 'ddl_command_end'::text, 'DROP SEQUENCE'::text),
-      ('S'::"char", 'sql_drop'::text, 'DROP SEQUENCE'::text)
+      ('S'::"char", 'sql_drop'::text, 'DROP SEQUENCE'::text),
+      ('S'::"char", 'ddl_command_end'::text, 'COMMENT'::text),
+      ('S'::"char", 'ddl_command_end'::text, 'SECURITY LABEL'::text)
   ) as command(relkind, event, tag)
   where relation.relkind = command.relkind
     and namespace.nspname !~ '^pg_'
     and namespace.nspname <> 'information_schema'
+  union
+  select role.oid, 'ddl_command_end'::text, 'CREATE TRIGGER'::text
+  from pg_catalog.pg_roles as role
+  join pg_catalog.pg_class as relation
+    on relation.relkind in ('r', 'p', 'f', 'v')
+   and has_table_privilege(role.oid, relation.oid, 'TRIGGER')
+  join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+  where namespace.nspname !~ '^pg_'
+    and namespace.nspname <> 'information_schema'
+    and has_schema_privilege(role.oid, namespace.oid, 'USAGE')
+    and exists (
+      select 1
+      from pg_catalog.pg_proc as trigger_routine
+      join pg_catalog.pg_namespace as routine_namespace
+        on routine_namespace.oid = trigger_routine.pronamespace
+      where trigger_routine.prorettype = 'pg_catalog.trigger'::regtype
+        and has_function_privilege(role.oid, trigger_routine.oid, 'EXECUTE')
+        and has_schema_privilege(role.oid, routine_namespace.oid, 'USAGE')
+    )
   union
   select role.oid, command.event, command.tag
   from pg_catalog.pg_roles as role
@@ -2043,6 +2213,72 @@ const collectSnapshot = async (
                    )
                  )
              )
+             or exists (
+               select 1
+               from writable_view_paths as writable_view
+               join pg_catalog.pg_class as invocation_view
+                 on invocation_view.oid = writable_view.invocation_oid
+               join pg_catalog.pg_namespace as invocation_namespace
+                 on invocation_namespace.oid = invocation_view.relnamespace
+               join pg_catalog.pg_roles as effective_owner
+                 on effective_owner.oid = coalesce(
+                   writable_view.effective_owner_oid,
+                   candidate.oid
+                 )
+               where writable_view.affected_oid = relation.oid
+                 and has_schema_privilege(candidate.oid, invocation_namespace.oid, 'USAGE')
+                 and has_function_privilege(candidate.oid, routine.oid, 'EXECUTE')
+                 and not effective_owner.rolbypassrls
+                 and not effective_owner.rolsuper
+                 and (
+                   relation.relforcerowsecurity
+                   or not pg_has_role(effective_owner.oid, relation.relowner, 'USAGE')
+                 )
+                 and (
+                   0::oid = any(policy.polroles)
+                   or exists (
+                     select 1
+                     from unnest(policy.polroles) as policy_role(oid)
+                     where policy_role.oid <> 0
+                       and (
+                         policy_role.oid = effective_owner.oid
+                         or pg_has_role(effective_owner.oid, policy_role.oid, 'MEMBER')
+                       )
+                   )
+                 )
+                 and (
+                   (
+                     policy.polcmd in ('a', '*')
+                     and writable_view.actions & 8 <> 0
+                     and (
+                       has_table_privilege(candidate.oid, invocation_view.oid, 'INSERT')
+                       or has_any_column_privilege(candidate.oid, invocation_view.oid, 'INSERT')
+                     )
+                     and (
+                       has_table_privilege(effective_owner.oid, relation.oid, 'INSERT')
+                       or has_any_column_privilege(effective_owner.oid, relation.oid, 'INSERT')
+                     )
+                   )
+                   or (
+                     policy.polcmd in ('w', '*')
+                     and writable_view.actions & 4 <> 0
+                     and (
+                       has_table_privilege(candidate.oid, invocation_view.oid, 'UPDATE')
+                       or has_any_column_privilege(candidate.oid, invocation_view.oid, 'UPDATE')
+                     )
+                     and (
+                       has_table_privilege(effective_owner.oid, relation.oid, 'UPDATE')
+                       or has_any_column_privilege(effective_owner.oid, relation.oid, 'UPDATE')
+                     )
+                   )
+                   or (
+                     policy.polcmd in ('d', '*')
+                     and writable_view.actions & 16 <> 0
+                     and has_table_privilege(candidate.oid, invocation_view.oid, 'DELETE')
+                     and has_table_privilege(effective_owner.oid, relation.oid, 'DELETE')
+                   )
+                 )
+             )
            )
          order by 1
        ) as security_definer_policy_bindings,
@@ -2315,6 +2551,74 @@ const collectSnapshot = async (
                          'UPDATE'
                        )
                      )
+                   )
+                 )
+             )
+             or exists (
+               select 1
+               from dml_rule_write_paths as rule_write
+               join pg_catalog.pg_class as root_invocation_relation
+                 on root_invocation_relation.oid = rule_write.invocation_oid
+               join pg_catalog.pg_namespace as root_invocation_namespace
+                 on root_invocation_namespace.oid = root_invocation_relation.relnamespace
+               where not stored_expression.selectable
+                 and rule_write.affected_oid = stored_expression.invocation_oid
+                 and has_schema_privilege(
+                   candidate.oid,
+                   root_invocation_namespace.oid,
+                   'USAGE'
+                 )
+                 and case rule_write.invocation_action
+                   when 'INSERT' then
+                     has_table_privilege(candidate.oid, root_invocation_relation.oid, 'INSERT')
+                     or has_any_column_privilege(
+                       candidate.oid,
+                       root_invocation_relation.oid,
+                       'INSERT'
+                     )
+                   when 'UPDATE' then
+                     has_table_privilege(candidate.oid, root_invocation_relation.oid, 'UPDATE')
+                     or has_any_column_privilege(
+                       candidate.oid,
+                       root_invocation_relation.oid,
+                       'UPDATE'
+                     )
+                   when 'DELETE' then
+                     has_table_privilege(candidate.oid, root_invocation_relation.oid, 'DELETE')
+                   else false
+                 end
+                 and (
+                   rule_write.allowed_modes & 1 <> 0
+                   or (
+                     rule_write.allowed_modes & 2 <> 0
+                     and has_parameter_privilege(
+                       candidate.oid,
+                       'session_replication_role',
+                       'SET'
+                     )
+                   )
+                 )
+                 and (
+                   (
+                     stored_expression.binding !~ '^dml-rule:'
+                     and rule_write.affected_action in ('INSERT', 'UPDATE')
+                   )
+                   or (
+                     stored_expression.binding ~ '^dml-rule:'
+                     and split_part(stored_expression.binding, ':', 2)
+                       = rule_write.affected_action
+                     and case split_part(stored_expression.binding, ':', 3)
+                       when 'O' then rule_write.allowed_modes & 1 <> 0
+                       when 'R' then
+                         rule_write.allowed_modes & 2 <> 0
+                         and has_parameter_privilege(
+                           candidate.oid,
+                           'session_replication_role',
+                           'SET'
+                         )
+                       when 'A' then true
+                       else false
+                     end
                    )
                  )
              )
@@ -2667,6 +2971,80 @@ const collectSnapshot = async (
              )
              or exists (
                select 1
+               from dml_rule_write_paths as rule_write
+               join pg_catalog.pg_class as root_invocation_relation
+                 on root_invocation_relation.oid = rule_write.invocation_oid
+               join pg_catalog.pg_namespace as root_invocation_namespace
+                 on root_invocation_namespace.oid = root_invocation_relation.relnamespace
+               where rule_write.affected_oid in (
+                   select relation.oid
+                   union
+                   select ancestor.oid
+                   from pg_catalog.pg_partition_ancestors(relation.oid) as ancestor(oid)
+                 )
+                 and (
+                   rule_write.affected_oid = relation.oid
+                   or audited_trigger.tgtype & 1 <> 0
+                 )
+                 and has_schema_privilege(
+                   candidate.oid,
+                   root_invocation_namespace.oid,
+                   'USAGE'
+                 )
+                 and case rule_write.invocation_action
+                   when 'INSERT' then
+                     has_table_privilege(candidate.oid, root_invocation_relation.oid, 'INSERT')
+                     or has_any_column_privilege(
+                       candidate.oid,
+                       root_invocation_relation.oid,
+                       'INSERT'
+                     )
+                   when 'UPDATE' then
+                     has_table_privilege(candidate.oid, root_invocation_relation.oid, 'UPDATE')
+                     or has_any_column_privilege(
+                       candidate.oid,
+                       root_invocation_relation.oid,
+                       'UPDATE'
+                     )
+                   when 'DELETE' then
+                     has_table_privilege(candidate.oid, root_invocation_relation.oid, 'DELETE')
+                   else false
+                 end
+                 and case audited_trigger.tgenabled
+                   when 'O' then rule_write.allowed_modes & 1 <> 0
+                   when 'R' then
+                     rule_write.allowed_modes & 2 <> 0
+                     and has_parameter_privilege(
+                       candidate.oid,
+                       'session_replication_role',
+                       'SET'
+                     )
+                   when 'A' then
+                     rule_write.allowed_modes & 1 <> 0
+                     or (
+                       rule_write.allowed_modes & 2 <> 0
+                       and has_parameter_privilege(
+                         candidate.oid,
+                         'session_replication_role',
+                         'SET'
+                       )
+                     )
+                   else false
+                 end
+                 and (
+                   (rule_write.affected_action = 'INSERT' and audited_trigger.tgtype & 4 <> 0)
+                   or (
+                     rule_write.affected_action = 'DELETE'
+                     and audited_trigger.tgtype & 8 <> 0
+                   )
+                   or (
+                     rule_write.affected_action = 'UPDATE'
+                     and audited_trigger.tgtype & 16 <> 0
+                   )
+                 )
+             )
+             or exists (
+               select 1
                from referential_write_paths as cascade
                join pg_catalog.pg_class as invocation_relation
                  on invocation_relation.oid = cascade.invocation_oid
@@ -2977,6 +3355,72 @@ const collectSnapshot = async (
                    )
                  )
              )
+             or exists (
+               select 1
+               from writable_view_paths as writable_view
+               join pg_catalog.pg_class as invocation_view
+                 on invocation_view.oid = writable_view.invocation_oid
+               join pg_catalog.pg_namespace as invocation_namespace
+                 on invocation_namespace.oid = invocation_view.relnamespace
+               join pg_catalog.pg_roles as effective_owner
+                 on effective_owner.oid = coalesce(
+                   writable_view.effective_owner_oid,
+                   runtime_role.oid
+                 )
+               where writable_view.affected_oid = relation.oid
+                 and has_schema_privilege($1, invocation_namespace.oid, 'USAGE')
+                 and has_function_privilege($1, routine.oid, 'EXECUTE')
+                 and not effective_owner.rolbypassrls
+                 and not effective_owner.rolsuper
+                 and (
+                   relation.relforcerowsecurity
+                   or not pg_has_role(effective_owner.oid, relation.relowner, 'USAGE')
+                 )
+                 and (
+                   0::oid = any(policy.polroles)
+                   or exists (
+                     select 1
+                     from unnest(policy.polroles) as policy_role(oid)
+                     where policy_role.oid <> 0
+                       and (
+                         policy_role.oid = effective_owner.oid
+                         or pg_has_role(effective_owner.oid, policy_role.oid, 'MEMBER')
+                       )
+                   )
+                 )
+                 and (
+                   (
+                     policy.polcmd in ('a', '*')
+                     and writable_view.actions & 8 <> 0
+                     and (
+                       has_table_privilege($1, invocation_view.oid, 'INSERT')
+                       or has_any_column_privilege($1, invocation_view.oid, 'INSERT')
+                     )
+                     and (
+                       has_table_privilege(effective_owner.oid, relation.oid, 'INSERT')
+                       or has_any_column_privilege(effective_owner.oid, relation.oid, 'INSERT')
+                     )
+                   )
+                   or (
+                     policy.polcmd in ('w', '*')
+                     and writable_view.actions & 4 <> 0
+                     and (
+                       has_table_privilege($1, invocation_view.oid, 'UPDATE')
+                       or has_any_column_privilege($1, invocation_view.oid, 'UPDATE')
+                     )
+                     and (
+                       has_table_privilege(effective_owner.oid, relation.oid, 'UPDATE')
+                       or has_any_column_privilege(effective_owner.oid, relation.oid, 'UPDATE')
+                     )
+                   )
+                   or (
+                     policy.polcmd in ('d', '*')
+                     and writable_view.actions & 16 <> 0
+                     and has_table_privilege($1, invocation_view.oid, 'DELETE')
+                     and has_table_privilege(effective_owner.oid, relation.oid, 'DELETE')
+                   )
+                 )
+             )
            )
          order by 1
        ) as policy_bindings,
@@ -3215,6 +3659,54 @@ const collectSnapshot = async (
                          'UPDATE'
                        )
                      )
+                   )
+                 )
+             )
+             or exists (
+               select 1
+               from dml_rule_write_paths as rule_write
+               join pg_catalog.pg_class as root_invocation_relation
+                 on root_invocation_relation.oid = rule_write.invocation_oid
+               join pg_catalog.pg_namespace as root_invocation_namespace
+                 on root_invocation_namespace.oid = root_invocation_relation.relnamespace
+               where not stored_expression.selectable
+                 and rule_write.affected_oid = stored_expression.invocation_oid
+                 and has_schema_privilege($1, root_invocation_namespace.oid, 'USAGE')
+                 and case rule_write.invocation_action
+                   when 'INSERT' then
+                     has_table_privilege($1, root_invocation_relation.oid, 'INSERT')
+                     or has_any_column_privilege($1, root_invocation_relation.oid, 'INSERT')
+                   when 'UPDATE' then
+                     has_table_privilege($1, root_invocation_relation.oid, 'UPDATE')
+                     or has_any_column_privilege($1, root_invocation_relation.oid, 'UPDATE')
+                   when 'DELETE' then
+                     has_table_privilege($1, root_invocation_relation.oid, 'DELETE')
+                   else false
+                 end
+                 and (
+                   rule_write.allowed_modes & 1 <> 0
+                   or (
+                     rule_write.allowed_modes & 2 <> 0
+                     and has_parameter_privilege($1, 'session_replication_role', 'SET')
+                   )
+                 )
+                 and (
+                   (
+                     stored_expression.binding !~ '^dml-rule:'
+                     and rule_write.affected_action in ('INSERT', 'UPDATE')
+                   )
+                   or (
+                     stored_expression.binding ~ '^dml-rule:'
+                     and split_part(stored_expression.binding, ':', 2)
+                       = rule_write.affected_action
+                     and case split_part(stored_expression.binding, ':', 3)
+                       when 'O' then rule_write.allowed_modes & 1 <> 0
+                       when 'R' then
+                         rule_write.allowed_modes & 2 <> 0
+                         and has_parameter_privilege($1, 'session_replication_role', 'SET')
+                       when 'A' then true
+                       else false
+                     end
                    )
                  )
              )
@@ -3495,6 +3987,60 @@ const collectSnapshot = async (
                          'UPDATE'
                        )
                      )
+                   )
+                 )
+             )
+             or exists (
+               select 1
+               from dml_rule_write_paths as rule_write
+               join pg_catalog.pg_class as root_invocation_relation
+                 on root_invocation_relation.oid = rule_write.invocation_oid
+               join pg_catalog.pg_namespace as root_invocation_namespace
+                 on root_invocation_namespace.oid = root_invocation_relation.relnamespace
+               where rule_write.affected_oid in (
+                   select relation.oid
+                   union
+                   select ancestor.oid
+                   from pg_catalog.pg_partition_ancestors(relation.oid) as ancestor(oid)
+                 )
+                 and (
+                   rule_write.affected_oid = relation.oid
+                   or audited_trigger.tgtype & 1 <> 0
+                 )
+                 and has_schema_privilege($1, root_invocation_namespace.oid, 'USAGE')
+                 and case rule_write.invocation_action
+                   when 'INSERT' then
+                     has_table_privilege($1, root_invocation_relation.oid, 'INSERT')
+                     or has_any_column_privilege($1, root_invocation_relation.oid, 'INSERT')
+                   when 'UPDATE' then
+                     has_table_privilege($1, root_invocation_relation.oid, 'UPDATE')
+                     or has_any_column_privilege($1, root_invocation_relation.oid, 'UPDATE')
+                   when 'DELETE' then
+                     has_table_privilege($1, root_invocation_relation.oid, 'DELETE')
+                   else false
+                 end
+                 and case audited_trigger.tgenabled
+                   when 'O' then rule_write.allowed_modes & 1 <> 0
+                   when 'R' then
+                     rule_write.allowed_modes & 2 <> 0
+                     and has_parameter_privilege($1, 'session_replication_role', 'SET')
+                   when 'A' then
+                     rule_write.allowed_modes & 1 <> 0
+                     or (
+                       rule_write.allowed_modes & 2 <> 0
+                       and has_parameter_privilege($1, 'session_replication_role', 'SET')
+                     )
+                   else false
+                 end
+                 and (
+                   (rule_write.affected_action = 'INSERT' and audited_trigger.tgtype & 4 <> 0)
+                   or (
+                     rule_write.affected_action = 'DELETE'
+                     and audited_trigger.tgtype & 8 <> 0
+                   )
+                   or (
+                     rule_write.affected_action = 'UPDATE'
+                     and audited_trigger.tgtype & 16 <> 0
                    )
                  )
              )

@@ -1350,12 +1350,12 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
     /has_parameter_privilege\(\s+candidate\.oid,\s+'session_replication_role',\s+'SET'\s+\)/u,
   );
   assert.match(source, /has_parameter_privilege\(\$1, 'session_replication_role', 'SET'\)/u);
-  assert.equal(source.match(/pg_catalog\.pg_partition_ancestors\(relation\.oid\)/gu)?.length, 7);
+  assert.equal(source.match(/pg_catalog\.pg_partition_ancestors\(relation\.oid\)/gu)?.length, 9);
   assert.equal(
     source.match(
       /select relation\.oid\s+union\s+select ancestor\.oid\s+from pg_catalog\.pg_partition_ancestors\(relation\.oid\)/gu,
     )?.length,
-    6,
+    8,
   );
   assert.equal(source.match(/from pg_catalog\.pg_policy as policy/gu)?.length, 2);
   assert.equal(source.match(/\$\{storedExpressionDependenciesCte\}/gu)?.length, 2);
@@ -1383,7 +1383,14 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /cross join lateral regexp_matches\(/u);
   assert.match(source, /affected_relation\.oid <> view_relation\.oid/u);
   assert.match(source, /pg_catalog\.pg_relation_is_updatable/u);
-  assert.equal(source.match(/from writable_view_paths as writable_view/gu)?.length, 6);
+  assert.match(source, /direct_dml_rule_write_paths\(/u);
+  assert.match(source, /dml_rule_write_paths\(/u);
+  assert.match(source, /:commandType \(\[234\]\).*:resultRelation/u);
+  assert.match(source, /action\.fields\[2\]::integer \+ 1/u);
+  assert.match(source, /path\.allowed_modes & nested\.allowed_modes/u);
+  assert.equal(source.match(/from dml_rule_write_paths as rule_write/gu)?.length, 4);
+  assert.equal(source.match(/policy\.polcmd in \('a', '\*'\)/gu)?.length, 2);
+  assert.equal(source.match(/from writable_view_paths as writable_view/gu)?.length, 8);
   assert.equal(source.match(/from writable_view_columns as writable_column/gu)?.length, 2);
   assert.equal(source.match(/from view_access_paths as view_access/gu)?.length, 2);
   assert.match(source, /relation_invocation_paths\(invocation_oid, dependency_oid\)/u);
@@ -1393,7 +1400,7 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /expression\.ev_type in \('2', '3', '4'\)/u);
   assert.match(source, /expression\.ev_enabled in \('O', 'A', 'R'\)/u);
   assert.match(source, /'dml-rule:%s:%s:%I'/u);
-  assert.equal(source.match(/stored_expression\.binding !~ '\^dml-rule:'/gu)?.length, 6);
+  assert.equal(source.match(/stored_expression\.binding !~ '\^dml-rule:'/gu)?.length, 8);
   assert.equal(source.match(/stored_expression\.binding ~ '\^dml-rule:INSERT:'/gu)?.length, 2);
   assert.equal(source.match(/stored_expression\.binding ~ '\^dml-rule:UPDATE:'/gu)?.length, 2);
   assert.equal(source.match(/stored_expression\.binding ~ '\^dml-rule:DELETE:'/gu)?.length, 4);
@@ -1422,6 +1429,9 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /has_database_privilege\(role\.oid, current_database\(\), 'TEMPORARY'\)/u);
   assert.match(source, /cross join \(values \('GRANT'::text\), \('REVOKE'::text\)\)/u);
   assert.match(source, /event_trigger\.evtevent = 'ddl_command_start'/u);
+  assert.match(source, /has_table_privilege\(role\.oid, relation\.oid, 'TRIGGER'\)/u);
+  assert.match(source, /trigger_routine\.prorettype = 'pg_catalog\.trigger'::regtype/u);
+  assert.match(source, /'ddl_command_end'::text, 'CREATE TRIGGER'::text/u);
   assert.match(
     source,
     /left join lateral unnest\(event_trigger\.evttags\) as configured_tag\(name\) on true/u,
@@ -1439,7 +1449,7 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
     source,
     /format\('check-constraint:%I', expression\.conname\),\s+false,\s+array\[\]::smallint\[\]/u,
   );
-  assert.equal(source.match(/stored_expression\.selectable/gu)?.length, 8);
+  assert.equal(source.match(/stored_expression\.selectable/gu)?.length, 10);
   assert.equal(
     source.match(/cardinality\(audited_trigger\.tgattr::smallint\[\]\) = 0/gu)?.length,
     4,
