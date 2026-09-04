@@ -1220,20 +1220,23 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
     /has_parameter_privilege\(\s+candidate\.oid,\s+'session_replication_role',\s+'SET'\s+\)/u,
   );
   assert.match(source, /has_parameter_privilege\(\$1, 'session_replication_role', 'SET'\)/u);
-  assert.equal(source.match(/pg_catalog\.pg_partition_ancestors\(relation\.oid\)/gu)?.length, 2);
+  assert.equal(source.match(/pg_catalog\.pg_partition_ancestors\(relation\.oid\)/gu)?.length, 5);
   assert.equal(
     source.match(
       /select relation\.oid\s+union\s+select ancestor\.oid\s+from pg_catalog\.pg_partition_ancestors\(relation\.oid\)/gu,
     )?.length,
-    2,
+    4,
   );
   assert.equal(source.match(/from pg_catalog\.pg_policy as policy/gu)?.length, 2);
   assert.equal(source.match(/\$\{storedExpressionDependenciesCte\}/gu)?.length, 2);
+  assert.equal(source.match(/\$\{referentialWritePathsCte\}/gu)?.length, 2);
   assert.match(source, /from pg_catalog\.pg_attrdef as expression/u);
   assert.match(source, /from pg_catalog\.pg_constraint as expression/u);
   assert.match(source, /from pg_catalog\.pg_index as stored_index/u);
   assert.match(source, /pg_catalog\.pg_rewrite as expression/u);
   assert.match(source, /view_invocation_paths\(invocation_oid, dependency_oid\)/u);
+  assert.match(source, /relation_invocation_paths\(invocation_oid, dependency_oid\)/u);
+  assert.match(source, /stored_expression\.invocation_oid/u);
   assert.match(source, /nested-view-expression/u);
   assert.match(source, /expression\.contypid/u);
   assert.match(source, /from pg_catalog\.pg_trigger as before_update_trigger/u);
@@ -1241,6 +1244,12 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /before_update_trigger\.tgtype & 1 <> 0/u);
   assert.match(source, /before_update_trigger\.tgtype & 2 <> 0/u);
   assert.match(source, /before_update_trigger\.tgtype & 16 <> 0/u);
+  assert.match(source, /referential_write_paths\(/u);
+  assert.match(source, /foreign_key\.confdeltype/u);
+  assert.match(source, /foreign_key\.confupdtype/u);
+  assert.match(source, /foreign_key\.confdelsetcols/u);
+  assert.match(source, /changed\.attnum = any\(coalesce\(foreign_key\.confkey/u);
+  assert.match(source, /cascade\.affected_action/u);
   assert.match(
     source,
     /format\('check-constraint:%I', expression\.conname\),\s+false,\s+array\[\]::smallint\[\]/u,
@@ -1248,7 +1257,7 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.equal(source.match(/stored_expression\.selectable/gu)?.length, 4);
   assert.equal(
     source.match(/cardinality\(audited_trigger\.tgattr::smallint\[\]\) = 0/gu)?.length,
-    2,
+    4,
   );
   assert.equal(
     source.match(/from unnest\(audited_trigger\.tgattr::smallint\[\]\) as watched\(attnum\)/gu)

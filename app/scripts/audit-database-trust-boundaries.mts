@@ -867,7 +867,23 @@ export const reachableRolesCte = `reachable_roles(role_oid) as (
   where membership.admin_option or membership.set_option
 )`;
 
-export const storedExpressionDependenciesCte = `view_invocation_paths(invocation_oid, dependency_oid) as (
+export const storedExpressionDependenciesCte = `relation_invocation_paths(invocation_oid, dependency_oid) as (
+  select relation.oid, relation.oid
+  from pg_catalog.pg_class as relation
+  join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+  where relation.relkind in ('r', 'p', 'f')
+    and namespace.nspname !~ '^pg_'
+    and namespace.nspname <> 'information_schema'
+  union
+  select ancestor.oid, relation.oid
+  from pg_catalog.pg_class as relation
+  join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+  cross join lateral pg_catalog.pg_partition_ancestors(relation.oid) as ancestor(oid)
+  where relation.relkind in ('r', 'p', 'f')
+    and namespace.nspname !~ '^pg_'
+    and namespace.nspname <> 'information_schema'
+),
+view_invocation_paths(invocation_oid, dependency_oid) as (
   select relation.oid, relation.oid
   from pg_catalog.pg_class as relation
   join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
@@ -890,6 +906,7 @@ export const storedExpressionDependenciesCte = `view_invocation_paths(invocation
     and nested_view.oid <> expression.ev_class
 ),
 stored_expression_dependencies(
+  invocation_oid,
   relation_oid,
   routine_oid,
   binding,
@@ -897,6 +914,7 @@ stored_expression_dependencies(
   update_columns
 ) as (
   select
+    invocation.invocation_oid,
     expression.adrelid,
     routine_dependency.refobjid,
     case
@@ -926,6 +944,7 @@ stored_expression_dependencies(
       )
     end
   from pg_catalog.pg_attrdef as expression
+  join relation_invocation_paths as invocation on invocation.dependency_oid = expression.adrelid
   join pg_catalog.pg_attribute as attribute
     on attribute.attrelid = expression.adrelid
    and attribute.attnum = expression.adnum
@@ -939,14 +958,17 @@ stored_expression_dependencies(
   where namespace.nspname !~ '^pg_'
     and namespace.nspname <> 'information_schema'
     and relation.relkind in ('r', 'p', 'f')
+    and (attribute.attgenerated <> '' or invocation.invocation_oid = invocation.dependency_oid)
   union all
   select
+    invocation.invocation_oid,
     expression.conrelid,
     routine_dependency.refobjid,
     format('check-constraint:%I', expression.conname),
     false,
     array[]::smallint[]
   from pg_catalog.pg_constraint as expression
+  join relation_invocation_paths as invocation on invocation.dependency_oid = expression.conrelid
   join pg_catalog.pg_class as relation on relation.oid = expression.conrelid
   join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
   join pg_catalog.pg_depend as routine_dependency
@@ -960,6 +982,7 @@ stored_expression_dependencies(
     and relation.relkind in ('r', 'p', 'f')
   union all
   select
+    invocation.invocation_oid,
     attribute.attrelid,
     routine_dependency.refobjid,
     format(
@@ -975,6 +998,7 @@ stored_expression_dependencies(
   join pg_catalog.pg_namespace as domain_namespace
     on domain_namespace.oid = domain_type.typnamespace
   join pg_catalog.pg_attribute as attribute on attribute.atttypid = domain_type.oid
+  join relation_invocation_paths as invocation on invocation.dependency_oid = attribute.attrelid
   join pg_catalog.pg_class as relation on relation.oid = attribute.attrelid
   join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
   join pg_catalog.pg_depend as routine_dependency
@@ -991,6 +1015,7 @@ stored_expression_dependencies(
     and relation.relkind in ('r', 'p', 'f')
   union all
   select
+    invocation.invocation_oid,
     stored_index.indrelid,
     routine_dependency.refobjid,
     format('expression-index:%I', index_relation.relname),
@@ -1006,6 +1031,7 @@ stored_expression_dependencies(
       order by column_dependency.refobjsubid::smallint
     )
   from pg_catalog.pg_index as stored_index
+  join relation_invocation_paths as invocation on invocation.dependency_oid = stored_index.indrelid
   join pg_catalog.pg_class as index_relation on index_relation.oid = stored_index.indexrelid
   join pg_catalog.pg_class as relation on relation.oid = stored_index.indrelid
   join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
@@ -1019,6 +1045,7 @@ stored_expression_dependencies(
     and namespace.nspname <> 'information_schema'
   union all
   select
+    invocation.invocation_oid,
     invocation.invocation_oid,
     routine_dependency.refobjid,
     case
@@ -1043,6 +1070,96 @@ stored_expression_dependencies(
    and routine_dependency.objid = expression.oid
    and routine_dependency.refclassid = 'pg_catalog.pg_proc'::regclass
    and routine_dependency.deptype = 'n'
+)`;
+
+export const referentialWritePathsCte = `referential_write_paths(
+  invocation_oid,
+  invocation_relation_oid,
+  invocation_action,
+  invocation_columns,
+  affected_oid,
+  affected_action,
+  affected_columns
+) as (
+  select
+    invocation.invocation_oid,
+    foreign_key.confrelid,
+    action.invocation_action,
+    case
+      when action.invocation_action = 'UPDATE' then coalesce(foreign_key.confkey, array[]::smallint[])
+      else array[]::smallint[]
+    end,
+    foreign_key.conrelid,
+    action.affected_action,
+    action.affected_columns
+  from pg_catalog.pg_constraint as foreign_key
+  join relation_invocation_paths as invocation
+    on invocation.dependency_oid = foreign_key.confrelid
+  cross join lateral (
+    select
+      'DELETE'::text as invocation_action,
+      foreign_key.confdeltype as action_type,
+      case when foreign_key.confdeltype = 'c' then 'DELETE'::text else 'UPDATE'::text end
+        as affected_action,
+      case
+        when foreign_key.confdeltype = 'c' then array[]::smallint[]
+        else coalesce(
+          foreign_key.confdelsetcols,
+          foreign_key.conkey,
+          array[]::smallint[]
+        )
+      end as affected_columns
+    union all
+    select
+      'UPDATE'::text,
+      foreign_key.confupdtype,
+      'UPDATE'::text,
+      coalesce(foreign_key.conkey, array[]::smallint[])
+  ) as action
+  where foreign_key.contype = 'f'
+    and action.action_type in ('c', 'n', 'd')
+  union
+  select
+    path.invocation_oid,
+    path.invocation_relation_oid,
+    path.invocation_action,
+    path.invocation_columns,
+    foreign_key.conrelid,
+    action.affected_action,
+    action.affected_columns
+  from referential_write_paths as path
+  join pg_catalog.pg_constraint as foreign_key on foreign_key.confrelid = path.affected_oid
+  cross join lateral (
+    select
+      foreign_key.confdeltype as action_type,
+      case when foreign_key.confdeltype = 'c' then 'DELETE'::text else 'UPDATE'::text end
+        as affected_action,
+      case
+        when foreign_key.confdeltype = 'c' then array[]::smallint[]
+        else coalesce(
+          foreign_key.confdelsetcols,
+          foreign_key.conkey,
+          array[]::smallint[]
+        )
+      end as affected_columns
+    where path.affected_action = 'DELETE'
+    union all
+    select
+      foreign_key.confupdtype,
+      'UPDATE'::text,
+      coalesce(foreign_key.conkey, array[]::smallint[])
+    where path.affected_action = 'UPDATE'
+  ) as action
+  where foreign_key.contype = 'f'
+    and action.action_type in ('c', 'n', 'd')
+    and (
+      path.affected_action = 'DELETE'
+      or exists (
+        select 1
+        from unnest(path.affected_columns) as changed(attnum)
+        where changed.attnum = any(coalesce(foreign_key.confkey, array[]::smallint[]))
+      )
+    )
 )`;
 
 const collectSnapshot = async (
@@ -1113,6 +1230,7 @@ const collectSnapshot = async (
   const memberships = await admin.query<MembershipRow>(
     `with recursive ${reachableRolesCte},
      ${storedExpressionDependenciesCte},
+     ${referentialWritePathsCte},
      administrable_roles(role_oid) as (
        select distinct membership.roleid
        from pg_catalog.pg_auth_members as membership
@@ -1337,6 +1455,10 @@ const collectSnapshot = async (
          join pg_catalog.pg_class as relation on relation.oid = stored_expression.relation_oid
          join pg_catalog.pg_namespace as relation_namespace
            on relation_namespace.oid = relation.relnamespace
+         join pg_catalog.pg_class as invocation_relation
+           on invocation_relation.oid = stored_expression.invocation_oid
+         join pg_catalog.pg_namespace as invocation_namespace
+           on invocation_namespace.oid = invocation_relation.relnamespace
          join pg_catalog.pg_proc as routine on routine.oid = stored_expression.routine_oid
          join pg_catalog.pg_namespace as routine_namespace
            on routine_namespace.oid = routine.pronamespace
@@ -1345,46 +1467,46 @@ const collectSnapshot = async (
            and routine.prosecdef
            and routine.proowner <> candidate.oid
            and has_function_privilege(candidate.oid, routine.oid, 'EXECUTE')
-           and has_schema_privilege(candidate.oid, relation_namespace.oid, 'USAGE')
+           and has_schema_privilege(candidate.oid, invocation_namespace.oid, 'USAGE')
            and (
              (
                stored_expression.selectable
                and (
-                 has_table_privilege(candidate.oid, relation.oid, 'SELECT')
-                 or has_any_column_privilege(candidate.oid, relation.oid, 'SELECT')
+                 has_table_privilege(candidate.oid, invocation_relation.oid, 'SELECT')
+                 or has_any_column_privilege(candidate.oid, invocation_relation.oid, 'SELECT')
                )
              )
              or (
                not stored_expression.selectable
                and (
-                 has_table_privilege(candidate.oid, relation.oid, 'INSERT')
+                 has_table_privilege(candidate.oid, invocation_relation.oid, 'INSERT')
                  or exists (
                    select 1
                    from pg_catalog.pg_attribute as writable_column
-                   where writable_column.attrelid = relation.oid
+                   where writable_column.attrelid = invocation_relation.oid
                      and writable_column.attnum > 0
                      and not writable_column.attisdropped
                      and writable_column.attgenerated = ''
                      and has_column_privilege(
                        candidate.oid,
-                       relation.oid,
+                       invocation_relation.oid,
                        writable_column.attnum,
                        'INSERT'
                      )
                  )
-                 or has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
+                 or has_table_privilege(candidate.oid, invocation_relation.oid, 'UPDATE')
                  or (
                    cardinality(stored_expression.update_columns) = 0
                    and exists (
                      select 1
                      from pg_catalog.pg_attribute as writable_column
-                     where writable_column.attrelid = relation.oid
+                     where writable_column.attrelid = invocation_relation.oid
                        and writable_column.attnum > 0
                        and not writable_column.attisdropped
                        and writable_column.attgenerated = ''
                        and has_column_privilege(
                          candidate.oid,
-                         relation.oid,
+                         invocation_relation.oid,
                          writable_column.attnum,
                          'UPDATE'
                        )
@@ -1393,10 +1515,16 @@ const collectSnapshot = async (
                  or exists (
                    select 1
                    from unnest(stored_expression.update_columns) as watched(attnum)
+                   join pg_catalog.pg_attribute as expression_column
+                     on expression_column.attrelid = relation.oid
+                    and expression_column.attnum = watched.attnum
+                   join pg_catalog.pg_attribute as invocation_column
+                     on invocation_column.attrelid = invocation_relation.oid
+                    and invocation_column.attname = expression_column.attname
                    where has_column_privilege(
                      candidate.oid,
-                     relation.oid,
-                     watched.attnum,
+                     invocation_relation.oid,
+                     invocation_column.attnum,
                      'UPDATE'
                    )
                  )
@@ -1457,7 +1585,8 @@ const collectSnapshot = async (
            and routine_namespace.nspname <> 'information_schema'
            and routine.prosecdef
            and routine.proowner <> candidate.oid
-           and exists (
+           and (
+             exists (
              select 1
              from (
                select relation.oid
@@ -1521,6 +1650,76 @@ const collectSnapshot = async (
                    and has_table_privilege(candidate.oid, invocation_relation.oid, 'TRUNCATE')
                  )
                )
+             )
+             or exists (
+               select 1
+               from referential_write_paths as cascade
+               join pg_catalog.pg_class as invocation_relation
+                 on invocation_relation.oid = cascade.invocation_oid
+               join pg_catalog.pg_namespace as invocation_namespace
+                 on invocation_namespace.oid = invocation_relation.relnamespace
+               where cascade.affected_oid in (
+                   select relation.oid
+                   union
+                   select ancestor.oid
+                   from pg_catalog.pg_partition_ancestors(relation.oid) as ancestor(oid)
+                 )
+                 and has_schema_privilege(candidate.oid, invocation_namespace.oid, 'USAGE')
+                 and (
+                   (
+                     cascade.invocation_action = 'DELETE'
+                     and has_table_privilege(candidate.oid, invocation_relation.oid, 'DELETE')
+                   )
+                   or (
+                     cascade.invocation_action = 'UPDATE'
+                     and (
+                       has_table_privilege(candidate.oid, invocation_relation.oid, 'UPDATE')
+                       or exists (
+                         select 1
+                         from unnest(cascade.invocation_columns) as changed(attnum)
+                         join pg_catalog.pg_attribute as referenced_column
+                           on referenced_column.attrelid = cascade.invocation_relation_oid
+                          and referenced_column.attnum = changed.attnum
+                         join pg_catalog.pg_attribute as invocation_column
+                           on invocation_column.attrelid = invocation_relation.oid
+                          and invocation_column.attname = referenced_column.attname
+                         where has_column_privilege(
+                           candidate.oid,
+                           invocation_relation.oid,
+                           invocation_column.attnum,
+                           'UPDATE'
+                         )
+                       )
+                     )
+                   )
+                 )
+                 and (
+                   (
+                     cascade.affected_action = 'DELETE'
+                     and audited_trigger.tgtype & 8 <> 0
+                   )
+                   or (
+                     cascade.affected_action = 'UPDATE'
+                     and audited_trigger.tgtype & 16 <> 0
+                     and (
+                       cardinality(audited_trigger.tgattr::smallint[]) = 0
+                       or exists (
+                         select 1
+                         from unnest(cascade.affected_columns) as changed(attnum)
+                         join pg_catalog.pg_attribute as affected_column
+                           on affected_column.attrelid = cascade.affected_oid
+                          and affected_column.attnum = changed.attnum
+                         join pg_catalog.pg_attribute as trigger_column
+                           on trigger_column.attrelid = relation.oid
+                          and trigger_column.attname = affected_column.attname
+                         where trigger_column.attnum = any(
+                           audited_trigger.tgattr::smallint[]
+                         )
+                       )
+                     )
+                   )
+                 )
+             )
            )
          order by 1
        ) as security_definer_trigger_bindings
@@ -1585,7 +1784,8 @@ const collectSnapshot = async (
   );
   const schemaNames = schemas.rows.map(({ schema }) => schema);
   const routines = await admin.query<RoutinePrivilegeRow>(
-    `with recursive ${storedExpressionDependenciesCte}
+    `with recursive ${storedExpressionDependenciesCte},
+     ${referentialWritePathsCte}
      select
        namespace.nspname as schema,
        routine.proname as routine,
@@ -1677,51 +1877,55 @@ const collectSnapshot = async (
          join pg_catalog.pg_class as relation on relation.oid = stored_expression.relation_oid
          join pg_catalog.pg_namespace as relation_namespace
            on relation_namespace.oid = relation.relnamespace
+         join pg_catalog.pg_class as invocation_relation
+           on invocation_relation.oid = stored_expression.invocation_oid
+         join pg_catalog.pg_namespace as invocation_namespace
+           on invocation_namespace.oid = invocation_relation.relnamespace
          where stored_expression.routine_oid = routine.oid
            and relation_namespace.nspname = any($2::text[])
            and routine.prosecdef
            and routine.proowner <> runtime_role.oid
            and has_function_privilege($1, routine.oid, 'EXECUTE')
-           and has_schema_privilege($1, relation_namespace.oid, 'USAGE')
+           and has_schema_privilege($1, invocation_namespace.oid, 'USAGE')
            and (
              (
                stored_expression.selectable
                and (
-                 has_table_privilege($1, relation.oid, 'SELECT')
-                 or has_any_column_privilege($1, relation.oid, 'SELECT')
+                 has_table_privilege($1, invocation_relation.oid, 'SELECT')
+                 or has_any_column_privilege($1, invocation_relation.oid, 'SELECT')
                )
              )
              or (
                not stored_expression.selectable
                and (
-                 has_table_privilege($1, relation.oid, 'INSERT')
+                 has_table_privilege($1, invocation_relation.oid, 'INSERT')
                  or exists (
                    select 1
                    from pg_catalog.pg_attribute as writable_column
-                   where writable_column.attrelid = relation.oid
+                   where writable_column.attrelid = invocation_relation.oid
                      and writable_column.attnum > 0
                      and not writable_column.attisdropped
                      and writable_column.attgenerated = ''
                      and has_column_privilege(
                        $1,
-                       relation.oid,
+                       invocation_relation.oid,
                        writable_column.attnum,
                        'INSERT'
                      )
                  )
-                 or has_table_privilege($1, relation.oid, 'UPDATE')
+                 or has_table_privilege($1, invocation_relation.oid, 'UPDATE')
                  or (
                    cardinality(stored_expression.update_columns) = 0
                    and exists (
                      select 1
                      from pg_catalog.pg_attribute as writable_column
-                     where writable_column.attrelid = relation.oid
+                     where writable_column.attrelid = invocation_relation.oid
                        and writable_column.attnum > 0
                        and not writable_column.attisdropped
                        and writable_column.attgenerated = ''
                        and has_column_privilege(
                          $1,
-                         relation.oid,
+                         invocation_relation.oid,
                          writable_column.attnum,
                          'UPDATE'
                        )
@@ -1730,10 +1934,16 @@ const collectSnapshot = async (
                  or exists (
                    select 1
                    from unnest(stored_expression.update_columns) as watched(attnum)
+                   join pg_catalog.pg_attribute as expression_column
+                     on expression_column.attrelid = relation.oid
+                    and expression_column.attnum = watched.attnum
+                   join pg_catalog.pg_attribute as invocation_column
+                     on invocation_column.attrelid = invocation_relation.oid
+                    and invocation_column.attname = expression_column.attname
                    where has_column_privilege(
                      $1,
-                     relation.oid,
-                     watched.attnum,
+                     invocation_relation.oid,
+                     invocation_column.attnum,
                      'UPDATE'
                    )
                  )
@@ -1763,7 +1973,8 @@ const collectSnapshot = async (
              )
            )
            and relation_namespace.nspname = any($2::text[])
-           and exists (
+           and (
+             exists (
              select 1
              from (
                select relation.oid
@@ -1819,6 +2030,76 @@ const collectSnapshot = async (
                    and has_table_privilege($1, invocation_relation.oid, 'TRUNCATE')
                  )
                )
+             )
+             or exists (
+               select 1
+               from referential_write_paths as cascade
+               join pg_catalog.pg_class as invocation_relation
+                 on invocation_relation.oid = cascade.invocation_oid
+               join pg_catalog.pg_namespace as invocation_namespace
+                 on invocation_namespace.oid = invocation_relation.relnamespace
+               where cascade.affected_oid in (
+                   select relation.oid
+                   union
+                   select ancestor.oid
+                   from pg_catalog.pg_partition_ancestors(relation.oid) as ancestor(oid)
+                 )
+                 and has_schema_privilege($1, invocation_namespace.oid, 'USAGE')
+                 and (
+                   (
+                     cascade.invocation_action = 'DELETE'
+                     and has_table_privilege($1, invocation_relation.oid, 'DELETE')
+                   )
+                   or (
+                     cascade.invocation_action = 'UPDATE'
+                     and (
+                       has_table_privilege($1, invocation_relation.oid, 'UPDATE')
+                       or exists (
+                         select 1
+                         from unnest(cascade.invocation_columns) as changed(attnum)
+                         join pg_catalog.pg_attribute as referenced_column
+                           on referenced_column.attrelid = cascade.invocation_relation_oid
+                          and referenced_column.attnum = changed.attnum
+                         join pg_catalog.pg_attribute as invocation_column
+                           on invocation_column.attrelid = invocation_relation.oid
+                          and invocation_column.attname = referenced_column.attname
+                         where has_column_privilege(
+                           $1,
+                           invocation_relation.oid,
+                           invocation_column.attnum,
+                           'UPDATE'
+                         )
+                       )
+                     )
+                   )
+                 )
+                 and (
+                   (
+                     cascade.affected_action = 'DELETE'
+                     and audited_trigger.tgtype & 8 <> 0
+                   )
+                   or (
+                     cascade.affected_action = 'UPDATE'
+                     and audited_trigger.tgtype & 16 <> 0
+                     and (
+                       cardinality(audited_trigger.tgattr::smallint[]) = 0
+                       or exists (
+                         select 1
+                         from unnest(cascade.affected_columns) as changed(attnum)
+                         join pg_catalog.pg_attribute as affected_column
+                           on affected_column.attrelid = cascade.affected_oid
+                          and affected_column.attnum = changed.attnum
+                         join pg_catalog.pg_attribute as trigger_column
+                           on trigger_column.attrelid = relation.oid
+                          and trigger_column.attname = affected_column.attname
+                         where trigger_column.attnum = any(
+                           audited_trigger.tgattr::smallint[]
+                         )
+                       )
+                     )
+                   )
+                 )
+             )
            )
          order by 1
        ) as trigger_bindings
