@@ -30,6 +30,11 @@ interface ExtensionOwnership {
   readonly schema: string;
 }
 
+interface ForeignServerOwnership {
+  readonly owner: string;
+  readonly server: string;
+}
+
 interface GrantOption {
   readonly authority: string;
   readonly role: string;
@@ -44,6 +49,7 @@ interface RoleMembership {
   readonly createSchemas: readonly string[];
   readonly databaseCreate: boolean;
   readonly ownedExtensions?: readonly string[];
+  readonly ownedForeignServers?: readonly string[];
   readonly ownedRelations: readonly string[];
   readonly ownedRoutines: readonly string[];
   readonly ownedSchemas: readonly string[];
@@ -54,6 +60,7 @@ interface RoleMembership {
   readonly role: string;
   readonly securityDefinerPolicyBindings?: readonly string[];
   readonly securityDefinerRoutines: readonly string[];
+  readonly securityDefinerStoredExpressionBindings?: readonly string[];
   readonly securityDefinerTriggerBindings?: readonly string[];
 }
 
@@ -90,6 +97,7 @@ interface RoutinePrivilege {
   readonly routine: string;
   readonly schema: string;
   readonly securityDefiner: boolean;
+  readonly storedExpressionBindings: readonly string[];
   readonly triggerBindings: readonly string[];
 }
 
@@ -161,6 +169,7 @@ export interface DatabaseTrustBoundarySnapshot {
   readonly databasePrivileges: DatabasePrivileges;
   readonly defaultPrivileges: readonly DefaultPrivilege[];
   readonly extensions: readonly ExtensionOwnership[];
+  readonly foreignServers: readonly ForeignServerOwnership[];
   readonly grantOptions: readonly GrantOption[];
   readonly memberships: readonly RoleMembership[];
   readonly parameterPrivileges: readonly ParameterPrivilege[];
@@ -204,6 +213,7 @@ export interface DatabaseTrustBoundaryReport extends DatabaseTrustBoundarySnapsh
     readonly dmlTableCount: number;
     readonly extensionCount: number;
     readonly findingCount: number;
+    readonly foreignServerCount: number;
     readonly grantOptionCount: number;
     readonly parameterPrivilegeCount: number;
     readonly privilegedOwnerViewCount: number;
@@ -317,6 +327,9 @@ export const buildDatabaseTrustBoundaryReport = (
   const extensions = [...snapshot.extensions].toSorted((left, right) =>
     compareText(left.extension, right.extension),
   );
+  const foreignServers = [...snapshot.foreignServers].toSorted((left, right) =>
+    compareText(left.server, right.server),
+  );
   const types = [...snapshot.types].toSorted(
     (left, right) => compareText(left.schema, right.schema) || compareText(left.type, right.type),
   );
@@ -393,6 +406,7 @@ export const buildDatabaseTrustBoundaryReport = (
       createSchemas,
       databaseCreate,
       ownedExtensions = [],
+      ownedForeignServers = [],
       ownedRelations,
       ownedRoutines,
       ownedSchemas,
@@ -403,6 +417,7 @@ export const buildDatabaseTrustBoundaryReport = (
       role,
       securityDefinerPolicyBindings = [],
       securityDefinerRoutines,
+      securityDefinerStoredExpressionBindings = [],
       securityDefinerTriggerBindings = [],
     }) =>
       ((canSetRole || canAdministerRole) && hasClusterPrivilege(attributes)) ||
@@ -410,6 +425,7 @@ export const buildDatabaseTrustBoundaryReport = (
       databaseCreate ||
       createSchemas.length > 0 ||
       ownedExtensions.length > 0 ||
+      ownedForeignServers.length > 0 ||
       ownedRelations.length > 0 ||
       ownedRoutines.length > 0 ||
       ownedSchemas.length > 0 ||
@@ -419,13 +435,14 @@ export const buildDatabaseTrustBoundaryReport = (
       relationPrivilegeSchemas.length > 0 ||
       securityDefinerPolicyBindings.length > 0 ||
       securityDefinerRoutines.length > 0 ||
+      securityDefinerStoredExpressionBindings.length > 0 ||
       securityDefinerTriggerBindings.length > 0,
   );
   if (privilegedMemberships.length > 0) {
     findings.push({
       code: 'runtime_role_can_assume_privileged_role',
       evidence:
-        'The runtime role can reach a non-administrative identity with predefined-role, cluster, database, schema, extension, relation, routine, type, parameter, or grant authority through inheritance, SET ROLE, or ADMIN OPTION.',
+        'The runtime role can reach a non-administrative identity with predefined-role, cluster, database, schema, extension, foreign-server, relation, routine, type, parameter, or grant authority through inheritance, SET ROLE, or ADMIN OPTION.',
       severity: 'critical',
     });
   }
@@ -442,11 +459,13 @@ export const buildDatabaseTrustBoundaryReport = (
     sequences.some(({ owner }) => owner === snapshot.runtimeRole);
   const ownsRoutine = routines.some(({ owner }) => owner === snapshot.runtimeRole);
   const ownsExtension = extensions.some(({ owner }) => owner === snapshot.runtimeRole);
+  const ownsForeignServer = foreignServers.some(({ owner }) => owner === snapshot.runtimeRole);
   const ownsType = types.some(({ owner }) => owner === snapshot.runtimeRole);
   const inheritsOwnership = memberships.some(
     ({
       canInheritRole,
       ownedExtensions = [],
+      ownedForeignServers = [],
       ownedRelations,
       ownedRoutines,
       ownedSchemas,
@@ -454,6 +473,7 @@ export const buildDatabaseTrustBoundaryReport = (
     }) =>
       canInheritRole &&
       (ownedExtensions.length > 0 ||
+        ownedForeignServers.length > 0 ||
         ownedRelations.length > 0 ||
         ownedRoutines.length > 0 ||
         ownedSchemas.length > 0 ||
@@ -465,13 +485,14 @@ export const buildDatabaseTrustBoundaryReport = (
     ownsRelation ||
     ownsRoutine ||
     ownsExtension ||
+    ownsForeignServer ||
     ownsType ||
     inheritsOwnership
   ) {
     findings.push({
       code: 'runtime_role_has_ddl_authority',
       evidence:
-        'The runtime role has database/schema CREATE or direct/inherited ownership of an audited extension, schema, relation, routine, or application type.',
+        'The runtime role has database/schema CREATE or direct/inherited ownership of an audited extension, foreign server, schema, relation, routine, or application type.',
       severity: 'high',
     });
   }
@@ -488,8 +509,18 @@ export const buildDatabaseTrustBoundaryReport = (
     });
   }
   const executableSecurityDefiners = routines.filter(
-    ({ executable, owner, policyBindings, securityDefiner, triggerBindings }) =>
-      (executable || policyBindings.length > 0 || triggerBindings.length > 0) &&
+    ({
+      executable,
+      owner,
+      policyBindings,
+      securityDefiner,
+      storedExpressionBindings,
+      triggerBindings,
+    }) =>
+      (executable ||
+        policyBindings.length > 0 ||
+        storedExpressionBindings.length > 0 ||
+        triggerBindings.length > 0) &&
       securityDefiner &&
       owner !== snapshot.runtimeRole,
   );
@@ -497,7 +528,7 @@ export const buildDatabaseTrustBoundaryReport = (
     findings.push({
       code: 'runtime_role_can_execute_security_definer',
       evidence:
-        'The runtime role can directly execute, or invoke through an applicable RLS policy or table DML and an enabled trigger, a SECURITY DEFINER routine owned by another role in an audited schema.',
+        'The runtime role can directly execute, or invoke through an applicable RLS policy, stored relation expression, or table DML and an enabled trigger, a SECURITY DEFINER routine owned by another role in an audited schema.',
       severity: 'high',
     });
   }
@@ -588,6 +619,7 @@ export const buildDatabaseTrustBoundaryReport = (
     defaultPrivileges,
     extensions,
     findings,
+    foreignServers,
     grantOptions,
     memberships,
     parameterPrivileges,
@@ -602,6 +634,7 @@ export const buildDatabaseTrustBoundaryReport = (
       dmlTableCount: dmlTables.length,
       extensionCount: extensions.length,
       findingCount: findings.length,
+      foreignServerCount: foreignServers.length,
       grantOptionCount: grantOptions.length + usableGrantableDefaultPrivileges.length,
       parameterPrivilegeCount: parameterPrivileges.length,
       privilegedOwnerViewCount: privilegedOwnerViews.length,
@@ -639,6 +672,7 @@ interface MembershipRow {
   readonly database_create: boolean;
   readonly inherit: boolean;
   readonly owned_extensions: string[];
+  readonly owned_foreign_servers: string[];
   readonly owned_relations: string[];
   readonly owned_routines: string[];
   readonly owned_schemas: string[];
@@ -650,6 +684,7 @@ interface MembershipRow {
   readonly role: string;
   readonly security_definer_policy_bindings: string[];
   readonly security_definer_routines: string[];
+  readonly security_definer_stored_expression_bindings: string[];
   readonly security_definer_trigger_bindings: string[];
   readonly superuser: boolean;
 }
@@ -675,6 +710,11 @@ interface ExtensionOwnershipRow {
   readonly schema: string;
 }
 
+interface ForeignServerOwnershipRow {
+  readonly owner: string;
+  readonly server: string;
+}
+
 interface SchemaPrivilegeRow {
   readonly create: boolean;
   readonly owner: string;
@@ -691,6 +731,7 @@ interface RoutinePrivilegeRow {
   readonly routine: string;
   readonly schema: string;
   readonly security_definer: boolean;
+  readonly stored_expression_bindings: string[];
   readonly trigger_bindings: string[];
 }
 
@@ -799,6 +840,93 @@ export const reachableRolesCte = `reachable_roles(role_oid) as (
   where membership.admin_option or membership.set_option
 )`;
 
+export const storedExpressionDependenciesCte = `stored_expression_dependencies(
+  relation_oid,
+  routine_oid,
+  binding,
+  update_columns
+) as (
+  select
+    expression.adrelid,
+    routine_dependency.refobjid,
+    case
+      when attribute.attgenerated <> '' then format('generated-column:%I', attribute.attname)
+      else format('column-default:%I', attribute.attname)
+    end,
+    case
+      when attribute.attgenerated = '' then array[attribute.attnum]
+      else array(
+        select distinct column_dependency.refobjsubid::smallint
+        from pg_catalog.pg_depend as column_dependency
+        where column_dependency.classid = 'pg_catalog.pg_attrdef'::regclass
+          and column_dependency.objid = expression.oid
+          and column_dependency.refclassid = 'pg_catalog.pg_class'::regclass
+          and column_dependency.refobjid = expression.adrelid
+          and column_dependency.refobjsubid > 0
+        order by column_dependency.refobjsubid::smallint
+      )
+    end
+  from pg_catalog.pg_attrdef as expression
+  join pg_catalog.pg_attribute as attribute
+    on attribute.attrelid = expression.adrelid
+   and attribute.attnum = expression.adnum
+  join pg_catalog.pg_class as relation on relation.oid = expression.adrelid
+  join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+  join pg_catalog.pg_depend as routine_dependency
+    on routine_dependency.classid = 'pg_catalog.pg_attrdef'::regclass
+   and routine_dependency.objid = expression.oid
+   and routine_dependency.refclassid = 'pg_catalog.pg_proc'::regclass
+   and routine_dependency.deptype = 'n'
+  where namespace.nspname !~ '^pg_'
+    and namespace.nspname <> 'information_schema'
+    and relation.relkind in ('r', 'p', 'f')
+  union all
+  select
+    expression.conrelid,
+    routine_dependency.refobjid,
+    format('check-constraint:%I', expression.conname),
+    coalesce(expression.conkey, array[]::smallint[])
+  from pg_catalog.pg_constraint as expression
+  join pg_catalog.pg_class as relation on relation.oid = expression.conrelid
+  join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+  join pg_catalog.pg_depend as routine_dependency
+    on routine_dependency.classid = 'pg_catalog.pg_constraint'::regclass
+   and routine_dependency.objid = expression.oid
+   and routine_dependency.refclassid = 'pg_catalog.pg_proc'::regclass
+   and routine_dependency.deptype = 'n'
+  where expression.contype = 'c'
+    and namespace.nspname !~ '^pg_'
+    and namespace.nspname <> 'information_schema'
+    and relation.relkind in ('r', 'p', 'f')
+  union all
+  select
+    stored_index.indrelid,
+    routine_dependency.refobjid,
+    format('expression-index:%I', index_relation.relname),
+    array(
+      select distinct column_dependency.refobjsubid::smallint
+      from pg_catalog.pg_depend as column_dependency
+      where column_dependency.classid = 'pg_catalog.pg_class'::regclass
+        and column_dependency.objid = stored_index.indexrelid
+        and column_dependency.refclassid = 'pg_catalog.pg_class'::regclass
+        and column_dependency.refobjid = stored_index.indrelid
+        and column_dependency.refobjsubid > 0
+      order by column_dependency.refobjsubid::smallint
+    )
+  from pg_catalog.pg_index as stored_index
+  join pg_catalog.pg_class as index_relation on index_relation.oid = stored_index.indexrelid
+  join pg_catalog.pg_class as relation on relation.oid = stored_index.indrelid
+  join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+  join pg_catalog.pg_depend as routine_dependency
+    on routine_dependency.classid = 'pg_catalog.pg_class'::regclass
+   and routine_dependency.objid = stored_index.indexrelid
+   and routine_dependency.refclassid = 'pg_catalog.pg_proc'::regclass
+   and routine_dependency.deptype = 'n'
+  where (stored_index.indexprs is not null or stored_index.indpred is not null)
+    and namespace.nspname !~ '^pg_'
+    and namespace.nspname <> 'information_schema'
+)`;
+
 const collectSnapshot = async (
   admin: Client,
   runtime: Client,
@@ -866,6 +994,7 @@ const collectSnapshot = async (
 
   const memberships = await admin.query<MembershipRow>(
     `with recursive ${reachableRolesCte},
+     ${storedExpressionDependenciesCte},
      administrable_roles(role_oid) as (
        select distinct membership.roleid
        from pg_catalog.pg_auth_members as membership
@@ -901,6 +1030,12 @@ const collectSnapshot = async (
          where extension.extowner = candidate.oid
          order by extension.extname
        ) as owned_extensions,
+       array(
+         select foreign_server.srvname
+         from pg_catalog.pg_foreign_server as foreign_server
+         where foreign_server.srvowner = candidate.oid
+         order by foreign_server.srvname
+       ) as owned_foreign_servers,
        array(
          select namespace.nspname
          from pg_catalog.pg_namespace as namespace
@@ -1065,6 +1200,76 @@ const collectSnapshot = async (
          order by 1
        ) as security_definer_policy_bindings,
        array(
+         select distinct format(
+           '%I.%I:%s->%I.%I(%s)',
+           relation_namespace.nspname,
+           relation.relname,
+           stored_expression.binding,
+           routine_namespace.nspname,
+           routine.proname,
+           pg_get_function_identity_arguments(routine.oid)
+         )
+         from stored_expression_dependencies as stored_expression
+         join pg_catalog.pg_class as relation on relation.oid = stored_expression.relation_oid
+         join pg_catalog.pg_namespace as relation_namespace
+           on relation_namespace.oid = relation.relnamespace
+         join pg_catalog.pg_proc as routine on routine.oid = stored_expression.routine_oid
+         join pg_catalog.pg_namespace as routine_namespace
+           on routine_namespace.oid = routine.pronamespace
+         where routine_namespace.nspname !~ '^pg_'
+           and routine_namespace.nspname <> 'information_schema'
+           and routine.prosecdef
+           and routine.proowner <> candidate.oid
+           and has_function_privilege(candidate.oid, routine.oid, 'EXECUTE')
+           and has_schema_privilege(candidate.oid, relation_namespace.oid, 'USAGE')
+           and (
+             has_table_privilege(candidate.oid, relation.oid, 'INSERT')
+             or exists (
+               select 1
+               from pg_catalog.pg_attribute as writable_column
+               where writable_column.attrelid = relation.oid
+                 and writable_column.attnum > 0
+                 and not writable_column.attisdropped
+                 and writable_column.attgenerated = ''
+                 and has_column_privilege(
+                   candidate.oid,
+                   relation.oid,
+                   writable_column.attnum,
+                   'INSERT'
+                 )
+             )
+             or has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
+             or (
+               cardinality(stored_expression.update_columns) = 0
+               and exists (
+                 select 1
+                 from pg_catalog.pg_attribute as writable_column
+                 where writable_column.attrelid = relation.oid
+                   and writable_column.attnum > 0
+                   and not writable_column.attisdropped
+                   and writable_column.attgenerated = ''
+                   and has_column_privilege(
+                     candidate.oid,
+                     relation.oid,
+                     writable_column.attnum,
+                     'UPDATE'
+                   )
+               )
+             )
+             or exists (
+               select 1
+               from unnest(stored_expression.update_columns) as watched(attnum)
+               where has_column_privilege(
+                 candidate.oid,
+                 relation.oid,
+                 watched.attnum,
+                 'UPDATE'
+               )
+             )
+           )
+         order by 1
+       ) as security_definer_stored_expression_bindings,
+       array(
          select format(
            '%I.%I(%s)',
            namespace.nspname,
@@ -1203,6 +1408,14 @@ const collectSnapshot = async (
      join pg_catalog.pg_namespace as namespace on namespace.oid = extension.extnamespace
      order by extension.extname`,
   );
+  const foreignServers = await admin.query<ForeignServerOwnershipRow>(
+    `select
+       foreign_server.srvname as server,
+       owner.rolname as owner
+     from pg_catalog.pg_foreign_server as foreign_server
+     join pg_catalog.pg_roles as owner on owner.oid = foreign_server.srvowner
+     order by foreign_server.srvname`,
+  );
   const schemas = await admin.query<SchemaPrivilegeRow>(
     `select
        namespace.nspname as schema,
@@ -1218,7 +1431,8 @@ const collectSnapshot = async (
   );
   const schemaNames = schemas.rows.map(({ schema }) => schema);
   const routines = await admin.query<RoutinePrivilegeRow>(
-    `select
+    `with ${storedExpressionDependenciesCte}
+     select
        namespace.nspname as schema,
        routine.proname as routine,
        pg_get_function_identity_arguments(routine.oid) as identity_arguments,
@@ -1298,6 +1512,70 @@ const collectSnapshot = async (
            end
          order by 1
        ) as policy_bindings,
+       array(
+         select distinct format(
+           '%I.%I:%s',
+           relation_namespace.nspname,
+           relation.relname,
+           stored_expression.binding
+         )
+         from stored_expression_dependencies as stored_expression
+         join pg_catalog.pg_class as relation on relation.oid = stored_expression.relation_oid
+         join pg_catalog.pg_namespace as relation_namespace
+           on relation_namespace.oid = relation.relnamespace
+         where stored_expression.routine_oid = routine.oid
+           and relation_namespace.nspname = any($2::text[])
+           and routine.prosecdef
+           and routine.proowner <> runtime_role.oid
+           and has_function_privilege($1, routine.oid, 'EXECUTE')
+           and has_schema_privilege($1, relation_namespace.oid, 'USAGE')
+           and (
+             has_table_privilege($1, relation.oid, 'INSERT')
+             or exists (
+               select 1
+               from pg_catalog.pg_attribute as writable_column
+               where writable_column.attrelid = relation.oid
+                 and writable_column.attnum > 0
+                 and not writable_column.attisdropped
+                 and writable_column.attgenerated = ''
+                 and has_column_privilege(
+                   $1,
+                   relation.oid,
+                   writable_column.attnum,
+                   'INSERT'
+                 )
+             )
+             or has_table_privilege($1, relation.oid, 'UPDATE')
+             or (
+               cardinality(stored_expression.update_columns) = 0
+               and exists (
+                 select 1
+                 from pg_catalog.pg_attribute as writable_column
+                 where writable_column.attrelid = relation.oid
+                   and writable_column.attnum > 0
+                   and not writable_column.attisdropped
+                   and writable_column.attgenerated = ''
+                   and has_column_privilege(
+                     $1,
+                     relation.oid,
+                     writable_column.attnum,
+                     'UPDATE'
+                   )
+               )
+             )
+             or exists (
+               select 1
+               from unnest(stored_expression.update_columns) as watched(attnum)
+               where has_column_privilege(
+                 $1,
+                 relation.oid,
+                 watched.attnum,
+                 'UPDATE'
+               )
+             )
+           )
+         order by 1
+       ) as stored_expression_bindings,
        array(
          select distinct format(
            '%I.%I:%I',
@@ -1934,6 +2212,7 @@ const collectSnapshot = async (
       source: privilege.source,
     })),
     extensions: extensions.rows,
+    foreignServers: foreignServers.rows,
     grantOptions: grantOptions.rows.map(({ grant_option, role, source }) => ({
       authority: grant_option,
       role,
@@ -1955,6 +2234,7 @@ const collectSnapshot = async (
       createSchemas: membership.create_schemas,
       databaseCreate: membership.database_create,
       ownedExtensions: membership.owned_extensions,
+      ownedForeignServers: membership.owned_foreign_servers,
       ownedRelations: membership.owned_relations,
       ownedRoutines: membership.owned_routines,
       ownedSchemas: membership.owned_schemas,
@@ -1965,6 +2245,8 @@ const collectSnapshot = async (
       role: membership.role,
       securityDefinerPolicyBindings: membership.security_definer_policy_bindings,
       securityDefinerRoutines: membership.security_definer_routines,
+      securityDefinerStoredExpressionBindings:
+        membership.security_definer_stored_expression_bindings,
       securityDefinerTriggerBindings: membership.security_definer_trigger_bindings,
     })),
     parameterPrivileges: parameterPrivileges.rows.map((privilege) => ({
@@ -1991,6 +2273,7 @@ const collectSnapshot = async (
       routine: routine.routine,
       schema: routine.schema,
       securityDefiner: routine.security_definer,
+      storedExpressionBindings: routine.stored_expression_bindings,
       triggerBindings: routine.trigger_bindings,
     })),
     runtimeRole,
