@@ -30,6 +30,11 @@ interface ExtensionOwnership {
   readonly schema: string;
 }
 
+interface ForeignDataWrapperOwnership {
+  readonly owner: string;
+  readonly wrapper: string;
+}
+
 interface ForeignServerOwnership {
   readonly owner: string;
   readonly server: string;
@@ -49,6 +54,7 @@ interface RoleMembership {
   readonly createSchemas: readonly string[];
   readonly databaseCreate: boolean;
   readonly ownedExtensions?: readonly string[];
+  readonly ownedForeignDataWrappers?: readonly string[];
   readonly ownedForeignServers?: readonly string[];
   readonly ownedRelations: readonly string[];
   readonly ownedRoutines: readonly string[];
@@ -169,6 +175,7 @@ export interface DatabaseTrustBoundarySnapshot {
   readonly databasePrivileges: DatabasePrivileges;
   readonly defaultPrivileges: readonly DefaultPrivilege[];
   readonly extensions: readonly ExtensionOwnership[];
+  readonly foreignDataWrappers: readonly ForeignDataWrapperOwnership[];
   readonly foreignServers: readonly ForeignServerOwnership[];
   readonly grantOptions: readonly GrantOption[];
   readonly memberships: readonly RoleMembership[];
@@ -213,6 +220,7 @@ export interface DatabaseTrustBoundaryReport extends DatabaseTrustBoundarySnapsh
     readonly dmlTableCount: number;
     readonly extensionCount: number;
     readonly findingCount: number;
+    readonly foreignDataWrapperCount: number;
     readonly foreignServerCount: number;
     readonly grantOptionCount: number;
     readonly parameterPrivilegeCount: number;
@@ -327,6 +335,9 @@ export const buildDatabaseTrustBoundaryReport = (
   const extensions = [...snapshot.extensions].toSorted((left, right) =>
     compareText(left.extension, right.extension),
   );
+  const foreignDataWrappers = [...snapshot.foreignDataWrappers].toSorted((left, right) =>
+    compareText(left.wrapper, right.wrapper),
+  );
   const foreignServers = [...snapshot.foreignServers].toSorted((left, right) =>
     compareText(left.server, right.server),
   );
@@ -406,6 +417,7 @@ export const buildDatabaseTrustBoundaryReport = (
       createSchemas,
       databaseCreate,
       ownedExtensions = [],
+      ownedForeignDataWrappers = [],
       ownedForeignServers = [],
       ownedRelations,
       ownedRoutines,
@@ -425,6 +437,7 @@ export const buildDatabaseTrustBoundaryReport = (
       databaseCreate ||
       createSchemas.length > 0 ||
       ownedExtensions.length > 0 ||
+      ownedForeignDataWrappers.length > 0 ||
       ownedForeignServers.length > 0 ||
       ownedRelations.length > 0 ||
       ownedRoutines.length > 0 ||
@@ -442,7 +455,7 @@ export const buildDatabaseTrustBoundaryReport = (
     findings.push({
       code: 'runtime_role_can_assume_privileged_role',
       evidence:
-        'The runtime role can reach a non-administrative identity with predefined-role, cluster, database, schema, extension, foreign-server, relation, routine, type, parameter, or grant authority through inheritance, SET ROLE, or ADMIN OPTION.',
+        'The runtime role can reach a non-administrative identity with predefined-role, cluster, database, schema, extension, foreign-data, relation, routine, type, parameter, or grant authority through inheritance, SET ROLE, or ADMIN OPTION.',
       severity: 'critical',
     });
   }
@@ -459,12 +472,16 @@ export const buildDatabaseTrustBoundaryReport = (
     sequences.some(({ owner }) => owner === snapshot.runtimeRole);
   const ownsRoutine = routines.some(({ owner }) => owner === snapshot.runtimeRole);
   const ownsExtension = extensions.some(({ owner }) => owner === snapshot.runtimeRole);
+  const ownsForeignDataWrapper = foreignDataWrappers.some(
+    ({ owner }) => owner === snapshot.runtimeRole,
+  );
   const ownsForeignServer = foreignServers.some(({ owner }) => owner === snapshot.runtimeRole);
   const ownsType = types.some(({ owner }) => owner === snapshot.runtimeRole);
   const inheritsOwnership = memberships.some(
     ({
       canInheritRole,
       ownedExtensions = [],
+      ownedForeignDataWrappers = [],
       ownedForeignServers = [],
       ownedRelations,
       ownedRoutines,
@@ -473,6 +490,7 @@ export const buildDatabaseTrustBoundaryReport = (
     }) =>
       canInheritRole &&
       (ownedExtensions.length > 0 ||
+        ownedForeignDataWrappers.length > 0 ||
         ownedForeignServers.length > 0 ||
         ownedRelations.length > 0 ||
         ownedRoutines.length > 0 ||
@@ -485,6 +503,7 @@ export const buildDatabaseTrustBoundaryReport = (
     ownsRelation ||
     ownsRoutine ||
     ownsExtension ||
+    ownsForeignDataWrapper ||
     ownsForeignServer ||
     ownsType ||
     inheritsOwnership
@@ -492,7 +511,7 @@ export const buildDatabaseTrustBoundaryReport = (
     findings.push({
       code: 'runtime_role_has_ddl_authority',
       evidence:
-        'The runtime role has database/schema CREATE or direct/inherited ownership of an audited extension, foreign server, schema, relation, routine, or application type.',
+        'The runtime role has database/schema CREATE or direct/inherited ownership of an audited extension, foreign-data wrapper or server, schema, relation, routine, or application type.',
       severity: 'high',
     });
   }
@@ -619,6 +638,7 @@ export const buildDatabaseTrustBoundaryReport = (
     defaultPrivileges,
     extensions,
     findings,
+    foreignDataWrappers,
     foreignServers,
     grantOptions,
     memberships,
@@ -634,6 +654,7 @@ export const buildDatabaseTrustBoundaryReport = (
       dmlTableCount: dmlTables.length,
       extensionCount: extensions.length,
       findingCount: findings.length,
+      foreignDataWrapperCount: foreignDataWrappers.length,
       foreignServerCount: foreignServers.length,
       grantOptionCount: grantOptions.length + usableGrantableDefaultPrivileges.length,
       parameterPrivilegeCount: parameterPrivileges.length,
@@ -672,6 +693,7 @@ interface MembershipRow {
   readonly database_create: boolean;
   readonly inherit: boolean;
   readonly owned_extensions: string[];
+  readonly owned_foreign_data_wrappers: string[];
   readonly owned_foreign_servers: string[];
   readonly owned_relations: string[];
   readonly owned_routines: string[];
@@ -708,6 +730,11 @@ interface ExtensionOwnershipRow {
   readonly extension: string;
   readonly owner: string;
   readonly schema: string;
+}
+
+interface ForeignDataWrapperOwnershipRow {
+  readonly owner: string;
+  readonly wrapper: string;
 }
 
 interface ForeignServerOwnershipRow {
@@ -840,7 +867,29 @@ export const reachableRolesCte = `reachable_roles(role_oid) as (
   where membership.admin_option or membership.set_option
 )`;
 
-export const storedExpressionDependenciesCte = `stored_expression_dependencies(
+export const storedExpressionDependenciesCte = `view_invocation_paths(invocation_oid, dependency_oid) as (
+  select relation.oid, relation.oid
+  from pg_catalog.pg_class as relation
+  join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+  where relation.relkind = 'v'
+    and namespace.nspname !~ '^pg_'
+    and namespace.nspname <> 'information_schema'
+  union
+  select invocation.invocation_oid, nested_view.oid
+  from view_invocation_paths as invocation
+  join pg_catalog.pg_rewrite as expression
+    on expression.ev_class = invocation.dependency_oid
+   and expression.rulename = '_RETURN'
+  join pg_catalog.pg_depend as relation_dependency
+    on relation_dependency.classid = 'pg_catalog.pg_rewrite'::regclass
+   and relation_dependency.objid = expression.oid
+   and relation_dependency.refclassid = 'pg_catalog.pg_class'::regclass
+   and relation_dependency.deptype = 'n'
+  join pg_catalog.pg_class as nested_view on nested_view.oid = relation_dependency.refobjid
+  where nested_view.relkind = 'v'
+    and nested_view.oid <> expression.ev_class
+),
+stored_expression_dependencies(
   relation_oid,
   routine_oid,
   binding,
@@ -888,7 +937,7 @@ export const storedExpressionDependenciesCte = `stored_expression_dependencies(
     routine_dependency.refobjid,
     format('check-constraint:%I', expression.conname),
     false,
-    coalesce(expression.conkey, array[]::smallint[])
+    array[]::smallint[]
   from pg_catalog.pg_constraint as expression
   join pg_catalog.pg_class as relation on relation.oid = expression.conrelid
   join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
@@ -962,23 +1011,30 @@ export const storedExpressionDependenciesCte = `stored_expression_dependencies(
     and namespace.nspname <> 'information_schema'
   union all
   select
-    expression.ev_class,
+    invocation.invocation_oid,
     routine_dependency.refobjid,
-    'view-expression',
+    case
+      when invocation.invocation_oid = invocation.dependency_oid then 'view-expression'
+      else format(
+        'nested-view-expression:%I.%I',
+        dependency_namespace.nspname,
+        dependency_view.relname
+      )
+    end,
     true,
     array[]::smallint[]
-  from pg_catalog.pg_rewrite as expression
-  join pg_catalog.pg_class as relation on relation.oid = expression.ev_class
-  join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+  from view_invocation_paths as invocation
+  join pg_catalog.pg_class as dependency_view on dependency_view.oid = invocation.dependency_oid
+  join pg_catalog.pg_namespace as dependency_namespace
+    on dependency_namespace.oid = dependency_view.relnamespace
+  join pg_catalog.pg_rewrite as expression
+    on expression.ev_class = dependency_view.oid
+   and expression.rulename = '_RETURN'
   join pg_catalog.pg_depend as routine_dependency
     on routine_dependency.classid = 'pg_catalog.pg_rewrite'::regclass
    and routine_dependency.objid = expression.oid
    and routine_dependency.refclassid = 'pg_catalog.pg_proc'::regclass
    and routine_dependency.deptype = 'n'
-  where expression.rulename = '_RETURN'
-    and relation.relkind = 'v'
-    and namespace.nspname !~ '^pg_'
-    and namespace.nspname <> 'information_schema'
 )`;
 
 const collectSnapshot = async (
@@ -1084,6 +1140,12 @@ const collectSnapshot = async (
          where extension.extowner = candidate.oid
          order by extension.extname
        ) as owned_extensions,
+       array(
+         select foreign_data_wrapper.fdwname
+         from pg_catalog.pg_foreign_data_wrapper as foreign_data_wrapper
+         where foreign_data_wrapper.fdwowner = candidate.oid
+         order by foreign_data_wrapper.fdwname
+       ) as owned_foreign_data_wrappers,
        array(
          select foreign_server.srvname
          from pg_catalog.pg_foreign_server as foreign_server
@@ -1474,6 +1536,14 @@ const collectSnapshot = async (
      join pg_catalog.pg_namespace as namespace on namespace.oid = extension.extnamespace
      order by extension.extname`,
   );
+  const foreignDataWrappers = await admin.query<ForeignDataWrapperOwnershipRow>(
+    `select
+       foreign_data_wrapper.fdwname as wrapper,
+       owner.rolname as owner
+     from pg_catalog.pg_foreign_data_wrapper as foreign_data_wrapper
+     join pg_catalog.pg_roles as owner on owner.oid = foreign_data_wrapper.fdwowner
+     order by foreign_data_wrapper.fdwname`,
+  );
   const foreignServers = await admin.query<ForeignServerOwnershipRow>(
     `select
        foreign_server.srvname as server,
@@ -1497,7 +1567,7 @@ const collectSnapshot = async (
   );
   const schemaNames = schemas.rows.map(({ schema }) => schema);
   const routines = await admin.query<RoutinePrivilegeRow>(
-    `with ${storedExpressionDependenciesCte}
+    `with recursive ${storedExpressionDependenciesCte}
      select
        namespace.nspname as schema,
        routine.proname as routine,
@@ -2279,6 +2349,7 @@ const collectSnapshot = async (
       source: privilege.source,
     })),
     extensions: extensions.rows,
+    foreignDataWrappers: foreignDataWrappers.rows,
     foreignServers: foreignServers.rows,
     grantOptions: grantOptions.rows.map(({ grant_option, role, source }) => ({
       authority: grant_option,
@@ -2301,6 +2372,7 @@ const collectSnapshot = async (
       createSchemas: membership.create_schemas,
       databaseCreate: membership.database_create,
       ownedExtensions: membership.owned_extensions,
+      ownedForeignDataWrappers: membership.owned_foreign_data_wrappers,
       ownedForeignServers: membership.owned_foreign_servers,
       ownedRelations: membership.owned_relations,
       ownedRoutines: membership.owned_routines,
