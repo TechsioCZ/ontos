@@ -95,18 +95,15 @@ void test('requires distinct administrative and least-privilege runtime identiti
   );
   const queryParameterIdentities = await Effect.runPromise(
     parseDatabaseConnectionPair({
-      DATABASE_ADMIN_URL:
-        'postgresql://connection-proxy:admin@localhost:5433/ontos?user=ontos_admin',
-      DATABASE_URL: 'postgresql://connection-proxy:runtime@localhost:5433/ontos?user=ontos_runtime',
+      DATABASE_ADMIN_URL: 'postgresql://connection-proxy@localhost:5433/ontos?user=ontos_admin',
+      DATABASE_URL: 'postgresql://connection-proxy@localhost:5433/ontos?user=ontos_runtime',
     }),
   );
   const queryParameterCollision = await Effect.runPromise(
     Effect.flip(
       parseDatabaseConnectionPair({
-        DATABASE_ADMIN_URL:
-          'postgresql://admin-authority:admin@localhost:5433/ontos?user=effective_role',
-        DATABASE_URL:
-          'postgresql://runtime-authority:runtime@localhost:5433/ontos?user=effective_role',
+        DATABASE_ADMIN_URL: 'postgresql://admin-authority@localhost:5433/ontos?user=effective_role',
+        DATABASE_URL: 'postgresql://runtime-authority@localhost:5433/ontos?user=effective_role',
       }),
     ),
   );

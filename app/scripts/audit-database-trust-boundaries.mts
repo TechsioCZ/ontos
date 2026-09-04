@@ -52,6 +52,7 @@ interface RoleMembership {
   readonly predefinedRole?: boolean;
   readonly relationPrivilegeSchemas: readonly string[];
   readonly role: string;
+  readonly securityDefinerPolicyBindings?: readonly string[];
   readonly securityDefinerRoutines: readonly string[];
   readonly securityDefinerTriggerBindings?: readonly string[];
 }
@@ -85,6 +86,7 @@ interface RoutinePrivilege {
   readonly identityArguments: string;
   readonly kind: 'aggregate' | 'function' | 'procedure' | 'window';
   readonly owner: string;
+  readonly policyBindings: readonly string[];
   readonly routine: string;
   readonly schema: string;
   readonly securityDefiner: boolean;
@@ -399,6 +401,7 @@ export const buildDatabaseTrustBoundaryReport = (
       predefinedRole,
       relationPrivilegeSchemas,
       role,
+      securityDefinerPolicyBindings = [],
       securityDefinerRoutines,
       securityDefinerTriggerBindings = [],
     }) =>
@@ -414,6 +417,7 @@ export const buildDatabaseTrustBoundaryReport = (
       parameterPrivileges.length > 0 ||
       grantAuthorityRoles.has(role) ||
       relationPrivilegeSchemas.length > 0 ||
+      securityDefinerPolicyBindings.length > 0 ||
       securityDefinerRoutines.length > 0 ||
       securityDefinerTriggerBindings.length > 0,
   );
@@ -484,8 +488,8 @@ export const buildDatabaseTrustBoundaryReport = (
     });
   }
   const executableSecurityDefiners = routines.filter(
-    ({ executable, owner, securityDefiner, triggerBindings }) =>
-      (executable || triggerBindings.length > 0) &&
+    ({ executable, owner, policyBindings, securityDefiner, triggerBindings }) =>
+      (executable || policyBindings.length > 0 || triggerBindings.length > 0) &&
       securityDefiner &&
       owner !== snapshot.runtimeRole,
   );
@@ -493,7 +497,7 @@ export const buildDatabaseTrustBoundaryReport = (
     findings.push({
       code: 'runtime_role_can_execute_security_definer',
       evidence:
-        'The runtime role can directly execute, or invoke through table DML and an enabled trigger, a SECURITY DEFINER routine owned by another role in an audited schema.',
+        'The runtime role can directly execute, or invoke through an applicable RLS policy or table DML and an enabled trigger, a SECURITY DEFINER routine owned by another role in an audited schema.',
       severity: 'high',
     });
   }
@@ -509,17 +513,17 @@ export const buildDatabaseTrustBoundaryReport = (
     }) =>
       kind === 'view' &&
       privileges.select &&
-      securityInvoker !== true &&
-      (owner === snapshot.administrativeRole ||
-        ownerBypassRls === true ||
-        ownerContextRlsBypass === true ||
-        ownerSuperuser === true),
+      (ownerContextRlsBypass === true ||
+        (securityInvoker !== true &&
+          (owner === snapshot.administrativeRole ||
+            ownerBypassRls === true ||
+            ownerSuperuser === true))),
   );
   if (privilegedOwnerViews.length > 0) {
     findings.push({
       code: 'runtime_role_can_select_privileged_owner_view',
       evidence:
-        'The runtime role can select an owner-context view whose owner is administrative, BYPASSRLS, superuser, or owns a referenced RLS relation without FORCE ROW LEVEL SECURITY.',
+        'The runtime role can select a view whose outer or nested owner context is administrative, superuser, BYPASSRLS, or otherwise bypasses an unforced RLS relation.',
       severity: 'high',
     });
   }
@@ -644,6 +648,7 @@ interface MembershipRow {
   readonly relation_privilege_schemas: string[];
   readonly replication: boolean;
   readonly role: string;
+  readonly security_definer_policy_bindings: string[];
   readonly security_definer_routines: string[];
   readonly security_definer_trigger_bindings: string[];
   readonly superuser: boolean;
@@ -682,6 +687,7 @@ interface RoutinePrivilegeRow {
   readonly identity_arguments: string;
   readonly kind: 'aggregate' | 'function' | 'procedure' | 'window';
   readonly owner: string;
+  readonly policy_bindings: string[];
   readonly routine: string;
   readonly schema: string;
   readonly security_definer: boolean;
@@ -781,6 +787,18 @@ const probeSetting = async (
   };
 };
 
+export const reachableRolesCte = `reachable_roles(role_oid) as (
+  select candidate.oid
+  from pg_catalog.pg_roles as candidate
+  where candidate.rolname = $1
+     or pg_has_role($1, candidate.oid, 'SET')
+  union
+  select membership.roleid
+  from pg_catalog.pg_auth_members as membership
+  join reachable_roles as reachable on reachable.role_oid = membership.member
+  where membership.admin_option or membership.set_option
+)`;
+
 const collectSnapshot = async (
   admin: Client,
   runtime: Client,
@@ -847,17 +865,7 @@ const collectSnapshot = async (
   if (roleRow === undefined) throw new Error('runtime role is absent');
 
   const memberships = await admin.query<MembershipRow>(
-    `with recursive reachable_roles(role_oid) as (
-       select candidate.oid
-       from pg_catalog.pg_roles as candidate
-       where candidate.rolname = $1
-          or pg_has_role($1, candidate.oid, 'SET')
-       union
-       select membership.roleid
-       from pg_catalog.pg_auth_members as membership
-       join reachable_roles as reachable on reachable.role_oid = membership.member
-       where membership.admin_option or membership.set_option
-     ),
+    `with recursive ${reachableRolesCte},
      administrable_roles(role_oid) as (
        select distinct membership.roleid
        from pg_catalog.pg_auth_members as membership
@@ -985,6 +993,78 @@ const collectSnapshot = async (
          order by namespace.nspname
        ) as relation_privilege_schemas,
        array(
+         select distinct format(
+           '%I.%I:%I->%I.%I(%s)',
+           relation_namespace.nspname,
+           relation.relname,
+           policy.polname,
+           routine_namespace.nspname,
+           routine.proname,
+           pg_get_function_identity_arguments(routine.oid)
+         )
+         from pg_catalog.pg_policy as policy
+         join pg_catalog.pg_class as relation on relation.oid = policy.polrelid
+         join pg_catalog.pg_namespace as relation_namespace
+           on relation_namespace.oid = relation.relnamespace
+         join pg_catalog.pg_depend as dependency
+           on dependency.classid = 'pg_catalog.pg_policy'::regclass
+          and dependency.objid = policy.oid
+          and dependency.refclassid = 'pg_catalog.pg_proc'::regclass
+          and dependency.deptype = 'n'
+         join pg_catalog.pg_proc as routine on routine.oid = dependency.refobjid
+         join pg_catalog.pg_namespace as routine_namespace
+           on routine_namespace.oid = routine.pronamespace
+         where relation.relrowsecurity
+           and relation_namespace.nspname !~ '^pg_'
+           and relation_namespace.nspname <> 'information_schema'
+           and routine_namespace.nspname !~ '^pg_'
+           and routine_namespace.nspname <> 'information_schema'
+           and routine.prosecdef
+           and routine.proowner <> candidate.oid
+           and has_function_privilege(candidate.oid, routine.oid, 'EXECUTE')
+           and has_schema_privilege(candidate.oid, relation_namespace.oid, 'USAGE')
+           and not candidate.rolbypassrls
+           and not candidate.rolsuper
+           and (
+             relation.relforcerowsecurity
+             or not pg_has_role(candidate.oid, relation.relowner, 'USAGE')
+           )
+           and (
+             0::oid = any(policy.polroles)
+             or exists (
+               select 1
+               from unnest(policy.polroles) as policy_role(oid)
+               where policy_role.oid <> 0
+                 and (
+                   policy_role.oid = candidate.oid
+                   or pg_has_role(candidate.oid, policy_role.oid, 'MEMBER')
+                 )
+             )
+           )
+           and case policy.polcmd
+             when 'r' then
+               has_table_privilege(candidate.oid, relation.oid, 'SELECT')
+               or has_any_column_privilege(candidate.oid, relation.oid, 'SELECT')
+             when 'a' then
+               has_table_privilege(candidate.oid, relation.oid, 'INSERT')
+               or has_any_column_privilege(candidate.oid, relation.oid, 'INSERT')
+             when 'w' then
+               has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
+               or has_any_column_privilege(candidate.oid, relation.oid, 'UPDATE')
+             when 'd' then has_table_privilege(candidate.oid, relation.oid, 'DELETE')
+             when '*' then
+               has_table_privilege(candidate.oid, relation.oid, 'SELECT')
+               or has_any_column_privilege(candidate.oid, relation.oid, 'SELECT')
+               or has_table_privilege(candidate.oid, relation.oid, 'INSERT')
+               or has_any_column_privilege(candidate.oid, relation.oid, 'INSERT')
+               or has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
+               or has_any_column_privilege(candidate.oid, relation.oid, 'UPDATE')
+               or has_table_privilege(candidate.oid, relation.oid, 'DELETE')
+             else false
+           end
+         order by 1
+       ) as security_definer_policy_bindings,
+       array(
          select format(
            '%I.%I(%s)',
            namespace.nspname,
@@ -1028,7 +1108,12 @@ const collectSnapshot = async (
            and routine.proowner <> candidate.oid
            and exists (
              select 1
-             from pg_catalog.pg_partition_ancestors(relation.oid) as ancestor(oid)
+             from (
+               select relation.oid
+               union
+               select ancestor.oid
+               from pg_catalog.pg_partition_ancestors(relation.oid) as ancestor(oid)
+             ) as ancestor
              join pg_catalog.pg_class as invocation_relation
                on invocation_relation.oid = ancestor.oid
              join pg_catalog.pg_namespace as invocation_namespace
@@ -1054,10 +1139,29 @@ const collectSnapshot = async (
                    audited_trigger.tgtype & 16 <> 0
                    and (
                      has_table_privilege(candidate.oid, invocation_relation.oid, 'UPDATE')
-                     or has_any_column_privilege(
-                       candidate.oid,
-                       invocation_relation.oid,
-                       'UPDATE'
+                     or (
+                       cardinality(audited_trigger.tgattr::smallint[]) = 0
+                       and has_any_column_privilege(
+                         candidate.oid,
+                         invocation_relation.oid,
+                         'UPDATE'
+                       )
+                     )
+                     or exists (
+                       select 1
+                       from unnest(audited_trigger.tgattr::smallint[]) as watched(attnum)
+                       join pg_catalog.pg_attribute as trigger_column
+                         on trigger_column.attrelid = relation.oid
+                        and trigger_column.attnum = watched.attnum
+                       join pg_catalog.pg_attribute as invocation_column
+                         on invocation_column.attrelid = invocation_relation.oid
+                        and invocation_column.attname = trigger_column.attname
+                       where has_column_privilege(
+                         candidate.oid,
+                         invocation_relation.oid,
+                         invocation_column.attnum,
+                         'UPDATE'
+                       )
                      )
                    )
                  )
@@ -1135,6 +1239,70 @@ const collectSnapshot = async (
            '%I.%I:%I',
            relation_namespace.nspname,
            relation.relname,
+           policy.polname
+         )
+         from pg_catalog.pg_policy as policy
+         join pg_catalog.pg_class as relation on relation.oid = policy.polrelid
+         join pg_catalog.pg_namespace as relation_namespace
+           on relation_namespace.oid = relation.relnamespace
+         join pg_catalog.pg_depend as dependency
+           on dependency.classid = 'pg_catalog.pg_policy'::regclass
+          and dependency.objid = policy.oid
+          and dependency.refclassid = 'pg_catalog.pg_proc'::regclass
+          and dependency.refobjid = routine.oid
+          and dependency.deptype = 'n'
+         where relation.relrowsecurity
+           and relation_namespace.nspname = any($2::text[])
+           and routine.prosecdef
+           and routine.proowner <> runtime_role.oid
+           and has_function_privilege($1, routine.oid, 'EXECUTE')
+           and has_schema_privilege($1, relation_namespace.oid, 'USAGE')
+           and not runtime_role.rolbypassrls
+           and not runtime_role.rolsuper
+           and (
+             relation.relforcerowsecurity
+             or not pg_has_role(runtime_role.oid, relation.relowner, 'USAGE')
+           )
+           and (
+             0::oid = any(policy.polroles)
+             or exists (
+               select 1
+               from unnest(policy.polroles) as policy_role(oid)
+               where policy_role.oid <> 0
+                 and (
+                   policy_role.oid = runtime_role.oid
+                   or pg_has_role(runtime_role.oid, policy_role.oid, 'MEMBER')
+                 )
+             )
+           )
+           and case policy.polcmd
+             when 'r' then
+               has_table_privilege($1, relation.oid, 'SELECT')
+               or has_any_column_privilege($1, relation.oid, 'SELECT')
+             when 'a' then
+               has_table_privilege($1, relation.oid, 'INSERT')
+               or has_any_column_privilege($1, relation.oid, 'INSERT')
+             when 'w' then
+               has_table_privilege($1, relation.oid, 'UPDATE')
+               or has_any_column_privilege($1, relation.oid, 'UPDATE')
+             when 'd' then has_table_privilege($1, relation.oid, 'DELETE')
+             when '*' then
+               has_table_privilege($1, relation.oid, 'SELECT')
+               or has_any_column_privilege($1, relation.oid, 'SELECT')
+               or has_table_privilege($1, relation.oid, 'INSERT')
+               or has_any_column_privilege($1, relation.oid, 'INSERT')
+               or has_table_privilege($1, relation.oid, 'UPDATE')
+               or has_any_column_privilege($1, relation.oid, 'UPDATE')
+               or has_table_privilege($1, relation.oid, 'DELETE')
+             else false
+           end
+         order by 1
+       ) as policy_bindings,
+       array(
+         select distinct format(
+           '%I.%I:%I',
+           relation_namespace.nspname,
+           relation.relname,
            audited_trigger.tgname
          )
          from pg_catalog.pg_trigger as audited_trigger
@@ -1147,7 +1315,12 @@ const collectSnapshot = async (
            and relation_namespace.nspname = any($2::text[])
            and exists (
              select 1
-             from pg_catalog.pg_partition_ancestors(relation.oid) as ancestor(oid)
+             from (
+               select relation.oid
+               union
+               select ancestor.oid
+               from pg_catalog.pg_partition_ancestors(relation.oid) as ancestor(oid)
+             ) as ancestor
              join pg_catalog.pg_class as invocation_relation
                on invocation_relation.oid = ancestor.oid
              join pg_catalog.pg_namespace as invocation_namespace
@@ -1169,7 +1342,26 @@ const collectSnapshot = async (
                    audited_trigger.tgtype & 16 <> 0
                    and (
                      has_table_privilege($1, invocation_relation.oid, 'UPDATE')
-                     or has_any_column_privilege($1, invocation_relation.oid, 'UPDATE')
+                     or (
+                       cardinality(audited_trigger.tgattr::smallint[]) = 0
+                       and has_any_column_privilege($1, invocation_relation.oid, 'UPDATE')
+                     )
+                     or exists (
+                       select 1
+                       from unnest(audited_trigger.tgattr::smallint[]) as watched(attnum)
+                       join pg_catalog.pg_attribute as trigger_column
+                         on trigger_column.attrelid = relation.oid
+                        and trigger_column.attnum = watched.attnum
+                       join pg_catalog.pg_attribute as invocation_column
+                         on invocation_column.attrelid = invocation_relation.oid
+                        and invocation_column.attname = trigger_column.attname
+                       where has_column_privilege(
+                         $1,
+                         invocation_relation.oid,
+                         invocation_column.attnum,
+                         'UPDATE'
+                       )
+                     )
                    )
                  )
                  or (
@@ -1183,6 +1375,7 @@ const collectSnapshot = async (
      from pg_catalog.pg_proc as routine
      join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
      join pg_catalog.pg_roles as owner on owner.oid = routine.proowner
+     join pg_catalog.pg_roles as runtime_role on runtime_role.rolname = $1
      where namespace.nspname = any($2::text[])
      order by namespace.nspname, routine.proname, routine.oid`,
     [runtimeRole, schemaNames],
@@ -1409,17 +1602,7 @@ const collectSnapshot = async (
     [runtimeRole],
   );
   const grantOptions = await admin.query<GrantOptionRow>(
-    `with recursive reachable_roles(role_oid) as (
-       select candidate.oid
-       from pg_catalog.pg_roles as candidate
-       where candidate.rolname = $1
-          or pg_has_role($1, candidate.oid, 'SET')
-       union
-       select membership.roleid
-       from pg_catalog.pg_auth_members as membership
-       join reachable_roles as reachable on reachable.role_oid = membership.member
-       where membership.admin_option or membership.set_option
-     ),
+    `with recursive ${reachableRolesCte},
      audited_roles(role_oid, role, source) as (
        select
          candidate.oid,
@@ -1606,17 +1789,7 @@ const collectSnapshot = async (
     [runtimeRole, schemaNames],
   );
   const defaultPrivileges = await admin.query<DefaultPrivilegeRow>(
-    `with recursive reachable_roles(role_oid) as (
-       select candidate.oid
-       from pg_catalog.pg_roles as candidate
-       where candidate.rolname = $1
-          or pg_has_role($1, candidate.oid, 'SET')
-       union
-       select membership.roleid
-       from pg_catalog.pg_auth_members as membership
-       join reachable_roles as reachable on reachable.role_oid = membership.member
-       where membership.admin_option or membership.set_option
-     ),
+    `with recursive ${reachableRolesCte},
      audit_owners as (
        select candidate.oid, candidate.rolname
        from pg_catalog.pg_roles as candidate
@@ -1790,6 +1963,7 @@ const collectSnapshot = async (
       predefinedRole: membership.predefined_role,
       relationPrivilegeSchemas: membership.relation_privilege_schemas,
       role: membership.role,
+      securityDefinerPolicyBindings: membership.security_definer_policy_bindings,
       securityDefinerRoutines: membership.security_definer_routines,
       securityDefinerTriggerBindings: membership.security_definer_trigger_bindings,
     })),
@@ -1813,6 +1987,7 @@ const collectSnapshot = async (
       identityArguments: routine.identity_arguments,
       kind: routine.kind,
       owner: routine.owner,
+      policyBindings: routine.policy_bindings,
       routine: routine.routine,
       schema: routine.schema,
       securityDefiner: routine.security_definer,
