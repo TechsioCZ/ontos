@@ -85,6 +85,7 @@ const evidence = () => ({
     'https://contacts.example/mf-manifest.json': {
       exposes: ['./Navigation', './PageContacts'],
       sha256: sha256('b'),
+      sharedSingletons: structuredClone(candidate().shell.sharedSingletons),
     },
   },
   runtime: structuredClone(candidate().shell),
@@ -167,6 +168,10 @@ test('rejects candidate-wide ownership and compatibility contradictions', () => 
   ][] = [
     [(input) => onlyModule(input).dependencies.push('billing.core'), /dependency billing\.core/u],
     [(input) => onlyModule(input).dependencies.push('contacts.core'), /dependency cycle/u],
+    [
+      (input) => onlyModule(input).dependencies.push('contacts.core', 'contacts.core'),
+      /duplicate dependency/u,
+    ],
     [
       (input) => addModuleCopy(input, { moduleId: 'inventory.stock' }),
       /duplicate Shell contribution/u,
@@ -261,6 +266,14 @@ test('rejects candidate-wide ownership and compatibility contradictions', () => 
     ],
     [
       (_input, observations) => (federationManifest(observations).exposes = []),
+      /Module Federation manifest/u,
+    ],
+    [
+      (_input, observations) => {
+        const singleton = required(federationManifest(observations).sharedSingletons[0]);
+        singleton.version = '18.3.1';
+        return singleton.version;
+      },
       /Module Federation manifest/u,
     ],
   ];
