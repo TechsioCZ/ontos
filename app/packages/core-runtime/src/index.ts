@@ -444,9 +444,13 @@ export {
   OntosModuleCatalogValidationError,
   InstalledModuleCatalogService,
   buildInstalledModuleCatalog,
+  resolveInstalledModuleCatalog,
 } from './modules/catalog.ts';
 export type {
   InstalledDeploymentContractInput,
+  InstalledDeploymentFailureReason,
+  InstalledDeploymentResolutionInput,
+  InstalledDeploymentStatus,
   InstalledModuleCatalog,
   InstalledModuleCatalogServiceContract,
 } from './modules/catalog.ts';

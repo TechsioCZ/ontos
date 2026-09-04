@@ -19,6 +19,7 @@ import type {
 import { Context, Effect, Layer, Schema } from 'effect';
 import {
   ResourceRefSchema,
+  ShellCompositionSchema,
   ShellResourceResponseSchema,
   ShellSearchPayloadSchema,
   ShellSearchResponseSchema,
@@ -86,26 +87,6 @@ export class ShellGovernedReads extends Context.Service<
 >()('@app/shell-super-app/api/modules/shell-governed-reads/ShellGovernedReads') {}
 
 const emptyInput = Schema.Struct({});
-const governedShellNavigationItemSchema = Schema.Struct({
-  appId: Schema.String,
-  enabled: Schema.Boolean,
-  groupKey: Schema.String,
-  href: Schema.optionalKey(Schema.String),
-  label: Schema.String,
-  moduleId: Schema.String,
-  order: Schema.Finite.check(Schema.isInt()),
-  state: Schema.Literals(['active', 'deprecated', 'read_only']),
-  unavailable: Schema.Boolean,
-  writable: Schema.Boolean,
-});
-const governedShellCompositionSchema: Schema.Codec<ShellComposition> = Schema.Union([
-  Schema.Struct({ navigation: Schema.Tuple([]), state: Schema.Literal('access_blocked') }),
-  Schema.Struct({ navigation: Schema.Tuple([]), state: Schema.Literal('selection_required') }),
-  Schema.Struct({
-    navigation: Schema.Array(governedShellNavigationItemSchema),
-    state: Schema.Literal('available'),
-  }),
-]);
 const compositionEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'module.access' },
@@ -183,7 +164,7 @@ const makeRegistrations = (
       permissionTarget: 'legal_entity',
       policies: [],
       readKey: 'core.shell.composition',
-      resultSchema: governedShellCompositionSchema,
+      resultSchema: ShellCompositionSchema,
       schemaVersion: '1',
     },
     (_input, context) =>

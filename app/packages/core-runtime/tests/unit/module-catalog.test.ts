@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildInstalledModuleCatalog } from '../../src/modules/catalog.ts';
+import {
+  buildInstalledModuleCatalog,
+  resolveInstalledModuleCatalog,
+} from '../../src/modules/catalog.ts';
 import type { OntosOutboxSubscriptionContract } from '../../src/modules/manifest.ts';
 
 const contract = (
@@ -221,4 +224,111 @@ void test('rejects unsupported contract versions without weakening catalog safet
       },
     ]),
   );
+});
+
+void test('resolves healthy, incompatible, and unreachable deployments independently', () => {
+  const catalog = resolveInstalledModuleCatalog([
+    {
+      contract: contract('documents-center', 'documents.center'),
+      expectedAppId: 'documents-center',
+      outcome: 'fetched',
+    },
+    {
+      contract: { schemaVersion: '0' },
+      expectedAppId: 'property-registry',
+      outcome: 'fetched',
+    },
+    {
+      expectedAppId: 'reporting-center',
+      outcome: 'failed',
+      reason: 'timeout',
+    },
+    { expectedAppId: 'disabled-center', outcome: 'disabled' },
+    { expectedAppId: 'revoked-center', outcome: 'revoked' },
+  ]);
+
+  assert.deepEqual(catalog.moduleIds, ['documents.center']);
+  assert.deepEqual(catalog.deploymentStatuses, [
+    { appId: 'disabled-center', status: 'disabled' },
+    { appId: 'documents-center', moduleId: 'documents.center', status: 'available' },
+    { appId: 'property-registry', reason: 'incompatible', status: 'unavailable' },
+    { appId: 'reporting-center', reason: 'timeout', status: 'unavailable' },
+    { appId: 'revoked-center', status: 'revoked' },
+  ]);
+});
+
+void test('excludes every contradictory claimant while preserving unrelated deployments', () => {
+  const catalog = resolveInstalledModuleCatalog([
+    {
+      contract: contract('documents-center', 'shared.module'),
+      expectedAppId: 'documents-center',
+      outcome: 'fetched',
+    },
+    {
+      contract: contract('property-registry', 'shared.module'),
+      expectedAppId: 'property-registry',
+      outcome: 'fetched',
+    },
+    {
+      contract: contract('reporting-center', 'reporting.center'),
+      expectedAppId: 'reporting-center',
+      outcome: 'fetched',
+    },
+  ]);
+
+  assert.deepEqual(catalog.moduleIds, ['reporting.center']);
+  assert.deepEqual(catalog.deploymentStatuses, [
+    { appId: 'documents-center', reason: 'incompatible', status: 'unavailable' },
+    { appId: 'property-registry', reason: 'incompatible', status: 'unavailable' },
+    { appId: 'reporting-center', moduleId: 'reporting.center', status: 'available' },
+  ]);
+});
+
+void test('rejects duplicate deployment identities from tolerant candidate promotion', () => {
+  const catalog = resolveInstalledModuleCatalog([
+    {
+      contract: contract('property-registry', 'property.registry'),
+      expectedAppId: 'property-registry',
+      outcome: 'fetched',
+    },
+    {
+      contract: contract('property-registry', 'property.duplicate'),
+      expectedAppId: 'property-registry',
+      outcome: 'fetched',
+    },
+    {
+      contract: contract('documents-center', 'documents.center'),
+      expectedAppId: 'documents-center',
+      outcome: 'fetched',
+    },
+  ]);
+
+  assert.deepEqual(catalog.moduleIds, ['documents.center']);
+  assert.deepEqual(catalog.deploymentStatuses, [
+    { appId: 'documents-center', moduleId: 'documents.center', status: 'available' },
+    { appId: 'property-registry', reason: 'incompatible', status: 'unavailable' },
+  ]);
+});
+
+void test('keeps authoritative revocation ahead of a stale fetched candidate', () => {
+  const catalog = resolveInstalledModuleCatalog([
+    {
+      contract: contract('property-registry', 'property.registry'),
+      expectedAppId: 'property-registry',
+      outcome: 'fetched',
+    },
+    { expectedAppId: 'property-registry', outcome: 'disabled' },
+    { expectedAppId: 'property-registry', outcome: 'revoked' },
+    {
+      contract: contract('documents-center', 'documents.center'),
+      expectedAppId: 'documents-center',
+      outcome: 'fetched',
+    },
+  ]);
+
+  assert.deepEqual(catalog.moduleIds, ['documents.center']);
+  assert.deepEqual(catalog.deploymentStatuses, [
+    { appId: 'documents-center', moduleId: 'documents.center', status: 'available' },
+    { appId: 'property-registry', status: 'revoked' },
+  ]);
 });

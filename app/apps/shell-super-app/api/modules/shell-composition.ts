@@ -10,6 +10,7 @@ import type {
 } from '@app/core-runtime';
 import { decideModuleStateAccess } from '@app/core-runtime';
 import { Context, Effect, Layer, Schema } from 'effect';
+import type { ShellComposition, ShellNavigationItem } from '../../shared/api.ts';
 
 const withOptionalProperty = <
   Base extends object,
@@ -37,22 +38,7 @@ export interface ShellCompositionContext {
   readonly tenantId: string;
 }
 
-export interface ShellNavigationItem {
-  readonly appId: string;
-  readonly enabled: boolean;
-  readonly groupKey: string;
-  readonly href?: string;
-  readonly label: string;
-  readonly moduleId: string;
-  readonly order: number;
-  readonly state: Extract<TenantModuleState, 'active' | 'deprecated' | 'read_only'>;
-  readonly unavailable: boolean;
-  readonly writable: boolean;
-}
-
-export type ShellCompositionModel =
-  | { readonly navigation: readonly []; readonly state: 'selection_required' }
-  | { readonly navigation: readonly ShellNavigationItem[]; readonly state: 'available' };
+export type ShellCompositionModel = Exclude<ShellComposition, { readonly state: 'access_blocked' }>;
 
 export type ShellTargetResolution =
   | { readonly outcome: 'selection_required' }
@@ -172,6 +158,19 @@ export const makeShellComposition = (dependencies: ShellCompositionDependencies)
             left.moduleId.localeCompare(right.moduleId),
         ),
         state: 'available',
+        unavailableDeployments: catalog.deploymentStatuses.flatMap((deployment) =>
+          deployment.status === 'available'
+            ? []
+            : [
+                deployment.status === 'unavailable'
+                  ? {
+                      appId: deployment.appId,
+                      reason: deployment.reason,
+                      status: deployment.status,
+                    }
+                  : { appId: deployment.appId, status: deployment.status },
+              ],
+        ),
       } as const;
     });
 

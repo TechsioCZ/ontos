@@ -89,6 +89,7 @@ const installedCatalog = (moduleIds: readonly string[]): InstalledModuleCatalog 
   Object.freeze({
     contracts: Object.freeze([]),
     deploymentAppIds: Object.freeze([]),
+    deploymentStatuses: Object.freeze([]),
     getByDeploymentAppId: () => undefined,
     getByModuleId: () => undefined,
     moduleIds: Object.freeze([...moduleIds]),
@@ -581,7 +582,11 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       }),
     );
     assert.equal(activeModulesResponse.status, 200);
-    assert.deepEqual(await activeModulesResponse.json(), { navigation: [], state: 'available' });
+    assert.deepEqual(await activeModulesResponse.json(), {
+      navigation: [],
+      state: 'available',
+      unavailableDeployments: [],
+    });
     const [compositionEvidence] = await coreDatabase
       .select({
         authBindingId: dataAccessEvents.authBindingId,
@@ -1199,7 +1204,11 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     const firstModules = await runtime.handler(
       new Request(`${configuration.baseUrl}/shell/composition`, { headers: authenticatedHeaders }),
     );
-    assert.deepEqual(await firstModules.json(), { navigation: [], state: 'available' });
+    assert.deepEqual(await firstModules.json(), {
+      navigation: [],
+      state: 'available',
+      unavailableDeployments: [],
+    });
 
     const forbiddenResponse = await runtime.handler(
       new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
@@ -1384,7 +1393,11 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     const secondModules = await runtime.handler(
       new Request(`${configuration.baseUrl}/shell/composition`, { headers: authenticatedHeaders }),
     );
-    assert.deepEqual(await secondModules.json(), { navigation: [], state: 'available' });
+    assert.deepEqual(await secondModules.json(), {
+      navigation: [],
+      state: 'available',
+      unavailableDeployments: [],
+    });
     const assertionResponse = await runtime.handler(
       new Request(`${configuration.baseUrl}/auth/gateway-context`, {
         body: JSON.stringify({ audience: 'inventory-stock' }),
