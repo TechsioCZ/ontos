@@ -54,6 +54,7 @@ interface RoleAttributes {
   readonly canCreateRoles: boolean;
   readonly canLogin: boolean;
   readonly inherit: boolean;
+  readonly predefinedRole?: boolean;
   readonly replication: boolean;
   readonly superuser: boolean;
 }
@@ -90,6 +91,7 @@ interface TablePrivilege {
   readonly kind: 'foreign-table' | 'materialized-view' | 'partitioned-table' | 'table' | 'view';
   readonly owner: string;
   readonly ownerBypassRls?: boolean;
+  readonly ownerContextRlsBypass?: boolean;
   readonly ownerSuperuser?: boolean;
   readonly privileges: {
     readonly delete: boolean;
@@ -312,10 +314,11 @@ export const buildDatabaseTrustBoundaryReport = (
   const findings: DatabaseTrustBoundaryFinding[] = [];
   const dmlTables = tables.filter(hasDml);
 
-  if (hasClusterPrivilege(snapshot.role)) {
+  if (hasClusterPrivilege(snapshot.role) || snapshot.role.predefinedRole === true) {
     findings.push({
       code: 'runtime_role_is_privileged',
-      evidence: 'The runtime role has a PostgreSQL cluster-level privilege.',
+      evidence:
+        'The runtime role has a PostgreSQL cluster-level privilege or is a predefined PostgreSQL role.',
       severity: 'critical',
     });
   }
@@ -432,17 +435,28 @@ export const buildDatabaseTrustBoundaryReport = (
     });
   }
   const privilegedOwnerViews = tables.filter(
-    ({ kind, owner, ownerBypassRls, ownerSuperuser, privileges, securityInvoker }) =>
+    ({
+      kind,
+      owner,
+      ownerBypassRls,
+      ownerContextRlsBypass,
+      ownerSuperuser,
+      privileges,
+      securityInvoker,
+    }) =>
       kind === 'view' &&
       privileges.select &&
       securityInvoker !== true &&
-      (owner === snapshot.administrativeRole || ownerBypassRls === true || ownerSuperuser === true),
+      (owner === snapshot.administrativeRole ||
+        ownerBypassRls === true ||
+        ownerContextRlsBypass === true ||
+        ownerSuperuser === true),
   );
   if (privilegedOwnerViews.length > 0) {
     findings.push({
       code: 'runtime_role_can_select_privileged_owner_view',
       evidence:
-        'The runtime role can select an owner-context view whose owner is administrative, BYPASSRLS, or superuser.',
+        'The runtime role can select an owner-context view whose owner is administrative, BYPASSRLS, superuser, or owns a referenced RLS relation without FORCE ROW LEVEL SECURITY.',
       severity: 'high',
     });
   }
@@ -526,6 +540,7 @@ interface RoleRow {
   readonly can_create_roles: boolean;
   readonly can_login: boolean;
   readonly inherit: boolean;
+  readonly predefined_role: boolean;
   readonly replication: boolean;
   readonly superuser: boolean;
 }
@@ -592,6 +607,7 @@ interface TablePrivilegeRow {
   readonly kind: 'foreign-table' | 'materialized-view' | 'partitioned-table' | 'table' | 'view';
   readonly owner: string;
   readonly owner_bypass_rls: boolean;
+  readonly owner_context_rls_bypass: boolean;
   readonly owner_superuser: boolean;
   readonly maintain: boolean;
   readonly references: boolean;
@@ -727,6 +743,7 @@ const collectSnapshot = async (
        rolcreaterole as can_create_roles,
        rolcanlogin as can_login,
        rolinherit as inherit,
+       rolname ~ '^pg_' as predefined_role,
        rolreplication as replication,
        rolsuper as superuser
      from pg_catalog.pg_roles
@@ -746,7 +763,7 @@ const collectSnapshot = async (
        select membership.roleid
        from pg_catalog.pg_auth_members as membership
        join reachable_roles as reachable on reachable.role_oid = membership.member
-       where membership.admin_option
+       where membership.admin_option or membership.set_option
      ),
      administrable_roles(role_oid) as (
        select distinct membership.roleid
@@ -756,7 +773,7 @@ const collectSnapshot = async (
      )
      select
        candidate.rolname as role,
-       pg_has_role($1, candidate.oid, 'SET') as can_set_role,
+       candidate.oid in (select role_oid from reachable_roles) as can_set_role,
        pg_has_role($1, candidate.oid, 'USAGE') as can_inherit_role,
        candidate.oid in (select role_oid from administrable_roles) as can_administer_role,
        candidate.rolbypassrls as bypass_rls,
@@ -944,7 +961,32 @@ const collectSnapshot = async (
     [runtimeRole, schemaNames],
   );
   const tables = await admin.query<TablePrivilegeRow>(
-    `select
+    `with recursive view_dependencies(view_oid, referenced_oid) as (
+       select rewrite.ev_class, dependency.refobjid
+       from pg_catalog.pg_rewrite as rewrite
+       join pg_catalog.pg_depend as dependency
+         on dependency.classid = 'pg_catalog.pg_rewrite'::regclass
+        and dependency.objid = rewrite.oid
+        and dependency.refclassid = 'pg_catalog.pg_class'::regclass
+       where rewrite.rulename = '_RETURN'
+         and dependency.deptype = 'n'
+         and dependency.refobjid <> rewrite.ev_class
+       union
+       select dependency.view_oid, nested_dependency.refobjid
+       from view_dependencies as dependency
+       join pg_catalog.pg_class as nested_view on nested_view.oid = dependency.referenced_oid
+       join pg_catalog.pg_rewrite as nested_rewrite
+         on nested_rewrite.ev_class = nested_view.oid
+        and nested_rewrite.rulename = '_RETURN'
+       join pg_catalog.pg_depend as nested_dependency
+         on nested_dependency.classid = 'pg_catalog.pg_rewrite'::regclass
+        and nested_dependency.objid = nested_rewrite.oid
+        and nested_dependency.refclassid = 'pg_catalog.pg_class'::regclass
+       where nested_view.relkind = 'v'
+         and nested_dependency.deptype = 'n'
+         and nested_dependency.refobjid <> nested_view.oid
+     )
+     select
        namespace.nspname as schema,
        relation.relname as table,
        case relation.relkind
@@ -956,6 +998,17 @@ const collectSnapshot = async (
        end as kind,
        owner.rolname as owner,
        owner.rolbypassrls as owner_bypass_rls,
+       exists (
+         select 1
+         from view_dependencies as dependency
+         join pg_catalog.pg_class as referenced_relation
+           on referenced_relation.oid = dependency.referenced_oid
+         where dependency.view_oid = relation.oid
+           and referenced_relation.relkind in ('r', 'p')
+           and referenced_relation.relowner = relation.relowner
+           and referenced_relation.relrowsecurity
+           and not referenced_relation.relforcerowsecurity
+       ) as owner_context_rls_bypass,
        owner.rolsuper as owner_superuser,
        relation.relrowsecurity as rls_enabled,
        relation.relforcerowsecurity as rls_forced,
@@ -1090,13 +1143,7 @@ const collectSnapshot = async (
        select membership.roleid
        from pg_catalog.pg_auth_members as membership
        join reachable_roles as reachable on reachable.role_oid = membership.member
-       where membership.admin_option
-     ),
-     administrable_roles(role_oid) as (
-       select distinct membership.roleid
-       from pg_catalog.pg_auth_members as membership
-       join reachable_roles as reachable on reachable.role_oid = membership.member
-       where membership.admin_option
+       where membership.admin_option or membership.set_option
      ),
      audit_owners as (
        select candidate.oid, candidate.rolname
@@ -1202,8 +1249,7 @@ const collectSnapshot = async (
      where expanded.grantee = 0
          or grantee.rolname = $1
          or pg_has_role($1, grantee.oid, 'USAGE')
-         or pg_has_role($1, grantee.oid, 'SET')
-         or grantee.oid in (select role_oid from administrable_roles)
+         or grantee.oid in (select role_oid from reachable_roles)
      order by
        expanded.schema nulls first,
        expanded.owner,
@@ -1278,6 +1324,7 @@ const collectSnapshot = async (
       canCreateRoles: roleRow.can_create_roles,
       canLogin: roleRow.can_login,
       inherit: roleRow.inherit,
+      predefinedRole: roleRow.predefined_role,
       replication: roleRow.replication,
       superuser: roleRow.superuser,
     },
@@ -1306,6 +1353,7 @@ const collectSnapshot = async (
       kind: table.kind,
       owner: table.owner,
       ownerBypassRls: table.owner_bypass_rls,
+      ownerContextRlsBypass: table.owner_context_rls_bypass,
       ownerSuperuser: table.owner_superuser,
       privileges: {
         delete: table.delete,

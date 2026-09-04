@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { Cause } from 'effect';
 import { Client } from 'pg';
@@ -19,6 +20,7 @@ const ordinaryRole = {
   canCreateRoles: false,
   canLogin: true,
   inherit: false,
+  predefinedRole: false,
   replication: false,
   superuser: false,
 };
@@ -333,6 +335,25 @@ test('classifies reachable predefined PostgreSQL roles as privileged', () => {
   );
 });
 
+test('classifies a directly authenticated predefined PostgreSQL role as privileged', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    role: { ...ordinaryRole, predefinedRole: true },
+    runtimeRole: 'pg_execute_server_program',
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_is_privileged'],
+  );
+});
+
 test('flags effective configuration parameter authority', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
@@ -393,6 +414,34 @@ test('flags selectable privileged owner-context views but accepts security invok
     tables: [{ ...ownerContextView, securityInvoker: true }],
   });
   assert.deepEqual(invokerReport.findings, []);
+});
+
+test('flags owner-context views that bypass RLS through owner-matched dependencies', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    tables: [
+      {
+        ...snapshot.tables[0],
+        kind: 'view',
+        owner: 'reporting_owner',
+        ownerBypassRls: false,
+        ownerContextRlsBypass: true,
+        ownerSuperuser: false,
+        securityInvoker: false,
+      },
+    ],
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_select_privileged_owner_view'],
+  );
+  assert.equal(report.summary.privilegedOwnerViewCount, 1);
 });
 
 test('flags ownership of an audited relation as DDL authority', () => {
@@ -618,6 +667,26 @@ test('treats ADMIN OPTION as an escalation path when SET OPTION is false', () =>
       'runtime_role_can_forge_trusted_context',
       'runtime_role_has_cross_schema_dml',
     ],
+  );
+});
+
+test('traverses SET OPTION descendants after every ADMIN OPTION role', async () => {
+  const source = await readFile(
+    new URL('../audit-database-trust-boundaries.mts', import.meta.url),
+    'utf-8',
+  );
+
+  assert.equal(
+    source.match(/where membership\.admin_option or membership\.set_option/gu)?.length,
+    2,
+  );
+  assert.match(
+    source,
+    /candidate\.oid in \(select role_oid from reachable_roles\) as can_set_role/u,
+  );
+  assert.doesNotMatch(
+    source,
+    /or pg_has_role\(\$1, grantee\.oid, 'SET'\)\s+or grantee\.oid in \(select role_oid from administrable_roles\)/u,
   );
 });
 
