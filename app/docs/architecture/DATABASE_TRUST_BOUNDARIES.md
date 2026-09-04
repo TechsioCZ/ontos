@@ -36,7 +36,8 @@ stored row, including the distinct catalog and `acldefault` sequence type codes 
 future schemas. Report ordering uses locale-independent code-unit comparison. It includes
 column-level DML, `REFERENCES`, and
 PostgreSQL 17 `MAINTAIN`; classifies tables, partitioned tables, views, materialized views, foreign
-tables, and sequences; inventories executable `SECURITY DEFINER` routines and user-defined base,
+tables, and sequences while requiring schema `USAGE` for effective object access; inventories
+executable `SECURITY DEFINER` routines and user-defined base,
 standalone composite, domain, enum, range, and multirange type
 ownership; and distinguishes `SET OPTION` from direct `ADMIN OPTION` escalation paths. Its pure
 membership analysis also follows `ADMIN OPTION` edges reachable after `SET ROLE` and records
