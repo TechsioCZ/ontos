@@ -41,6 +41,11 @@ interface ForeignServerOwnership {
   readonly server: string;
 }
 
+interface PublicationOwnership {
+  readonly owner: string;
+  readonly publication: string;
+}
+
 interface GrantOption {
   readonly authority: string;
   readonly role: string;
@@ -58,6 +63,7 @@ interface RoleMembership {
   readonly ownedExtensions?: readonly string[];
   readonly ownedForeignDataWrappers?: readonly string[];
   readonly ownedForeignServers?: readonly string[];
+  readonly ownedPublications?: readonly string[];
   readonly ownedRelations: readonly string[];
   readonly ownedRoutines: readonly string[];
   readonly ownedSchemas: readonly string[];
@@ -184,6 +190,7 @@ export interface DatabaseTrustBoundarySnapshot {
   readonly grantOptions: readonly GrantOption[];
   readonly memberships: readonly RoleMembership[];
   readonly parameterPrivileges: readonly ParameterPrivilege[];
+  readonly publications: readonly PublicationOwnership[];
   readonly role: RoleAttributes;
   readonly routines: readonly RoutinePrivilege[];
   readonly runtimeRole: string;
@@ -228,6 +235,7 @@ export interface DatabaseTrustBoundaryReport extends DatabaseTrustBoundarySnapsh
     readonly foreignServerCount: number;
     readonly grantOptionCount: number;
     readonly parameterPrivilegeCount: number;
+    readonly publicationCount: number;
     readonly privilegedOwnerViewCount: number;
     readonly routineCount: number;
     readonly securityDefinerExecutableCount: number;
@@ -345,6 +353,9 @@ export const buildDatabaseTrustBoundaryReport = (
   const foreignServers = [...snapshot.foreignServers].toSorted((left, right) =>
     compareText(left.server, right.server),
   );
+  const publications = [...snapshot.publications].toSorted((left, right) =>
+    compareText(left.publication, right.publication),
+  );
   const types = [...snapshot.types].toSorted(
     (left, right) => compareText(left.schema, right.schema) || compareText(left.type, right.type),
   );
@@ -424,6 +435,7 @@ export const buildDatabaseTrustBoundaryReport = (
       ownedExtensions = [],
       ownedForeignDataWrappers = [],
       ownedForeignServers = [],
+      ownedPublications = [],
       ownedRelations,
       ownedRoutines,
       ownedSchemas,
@@ -446,6 +458,7 @@ export const buildDatabaseTrustBoundaryReport = (
       ownedExtensions.length > 0 ||
       ownedForeignDataWrappers.length > 0 ||
       ownedForeignServers.length > 0 ||
+      ownedPublications.length > 0 ||
       ownedRelations.length > 0 ||
       ownedRoutines.length > 0 ||
       ownedSchemas.length > 0 ||
@@ -463,7 +476,7 @@ export const buildDatabaseTrustBoundaryReport = (
     findings.push({
       code: 'runtime_role_can_assume_privileged_role',
       evidence:
-        'The runtime role can reach a non-administrative identity with predefined-role, cluster, database, schema, extension, foreign-data, relation, routine, type, parameter, or grant authority through inheritance, SET ROLE, or ADMIN OPTION.',
+        'The runtime role can reach a non-administrative identity with predefined-role, cluster, database, schema, extension, foreign-data, publication, relation, routine, type, parameter, or grant authority through inheritance, SET ROLE, or ADMIN OPTION.',
       severity: 'critical',
     });
   }
@@ -485,6 +498,7 @@ export const buildDatabaseTrustBoundaryReport = (
     ({ owner }) => owner === snapshot.runtimeRole,
   );
   const ownsForeignServer = foreignServers.some(({ owner }) => owner === snapshot.runtimeRole);
+  const ownsPublication = publications.some(({ owner }) => owner === snapshot.runtimeRole);
   const ownsType = types.some(({ owner }) => owner === snapshot.runtimeRole);
   const inheritsOwnership = memberships.some(
     ({
@@ -493,6 +507,7 @@ export const buildDatabaseTrustBoundaryReport = (
       ownedExtensions = [],
       ownedForeignDataWrappers = [],
       ownedForeignServers = [],
+      ownedPublications = [],
       ownedRelations,
       ownedRoutines,
       ownedSchemas,
@@ -503,6 +518,7 @@ export const buildDatabaseTrustBoundaryReport = (
         ownedExtensions.length > 0 ||
         ownedForeignDataWrappers.length > 0 ||
         ownedForeignServers.length > 0 ||
+        ownedPublications.length > 0 ||
         ownedRelations.length > 0 ||
         ownedRoutines.length > 0 ||
         ownedSchemas.length > 0 ||
@@ -521,6 +537,7 @@ export const buildDatabaseTrustBoundaryReport = (
     ownsExtension ||
     ownsForeignDataWrapper ||
     ownsForeignServer ||
+    ownsPublication ||
     ownsSchema ||
     ownsType ||
     inheritsOwnership ||
@@ -529,7 +546,7 @@ export const buildDatabaseTrustBoundaryReport = (
     findings.push({
       code: 'runtime_role_has_ddl_authority',
       evidence:
-        'The runtime role has database/schema CREATE, direct/reachable ownership of the current database, or direct/inherited ownership of an audited extension, foreign-data wrapper or server, schema, relation, routine, or application type.',
+        'The runtime role has database/schema CREATE, direct/reachable ownership of the current database, or direct/inherited ownership of an audited extension, foreign-data wrapper or server, publication, schema, relation, routine, or application type.',
       severity: 'high',
     });
   }
@@ -663,6 +680,7 @@ export const buildDatabaseTrustBoundaryReport = (
     grantOptions,
     memberships,
     parameterPrivileges,
+    publications,
     routines,
     schemaVersion: 1,
     schemas,
@@ -678,6 +696,7 @@ export const buildDatabaseTrustBoundaryReport = (
       foreignServerCount: foreignServers.length,
       grantOptionCount: grantOptions.length + usableGrantableDefaultPrivileges.length,
       parameterPrivilegeCount: parameterPrivileges.length,
+      publicationCount: publications.length,
       privilegedOwnerViewCount: privilegedOwnerViews.length,
       routineCount: routines.length,
       securityDefinerExecutableCount: executableSecurityDefiners.length,
@@ -716,6 +735,7 @@ interface MembershipRow {
   readonly owned_extensions: string[];
   readonly owned_foreign_data_wrappers: string[];
   readonly owned_foreign_servers: string[];
+  readonly owned_publications: string[];
   readonly owned_relations: string[];
   readonly owned_routines: string[];
   readonly owned_schemas: string[];
@@ -763,6 +783,11 @@ interface ForeignDataWrapperOwnershipRow {
 interface ForeignServerOwnershipRow {
   readonly owner: string;
   readonly server: string;
+}
+
+interface PublicationOwnershipRow {
+  readonly owner: string;
+  readonly publication: string;
 }
 
 interface SchemaPrivilegeRow {
@@ -1637,6 +1662,11 @@ export const roleDdlCommandTagsCte = `role_ddl_command_tags(role_oid, event, tag
   cross join (values ('ddl_command_start'::text), ('ddl_command_end'::text)) as event(name)
   where has_database_privilege(role.oid, current_database(), 'CREATE')
   union
+  select role.oid, event.name, 'CREATE PUBLICATION'::text
+  from pg_catalog.pg_roles as role
+  cross join (values ('ddl_command_start'::text), ('ddl_command_end'::text)) as event(name)
+  where has_database_privilege(role.oid, current_database(), 'CREATE')
+  union
   select role.oid, event.name, command.tag
   from pg_catalog.pg_roles as role
   cross join (values ('ddl_command_start'::text), ('ddl_command_end'::text)) as event(name)
@@ -1654,6 +1684,7 @@ export const roleDdlCommandTagsCte = `role_ddl_command_tags(role_oid, event, tag
   cross join (
     values
       ('CREATE AGGREGATE'::text),
+      ('CREATE COLLATION'::text),
       ('CREATE DOMAIN'::text),
       ('CREATE FUNCTION'::text),
       ('CREATE MATERIALIZED VIEW'::text),
@@ -1869,6 +1900,19 @@ export const roleDdlCommandTagsCte = `role_ddl_command_tags(role_oid, event, tag
   ) as command(event, tag)
   where namespace.nspname !~ '^pg_'
     and namespace.nspname <> 'information_schema'
+  union
+  select role.oid, command.event, command.tag
+  from pg_catalog.pg_roles as role
+  join pg_catalog.pg_publication as publication
+    on pg_has_role(role.oid, publication.pubowner, 'USAGE')
+  cross join lateral (
+    values
+      ('ddl_command_start'::text, 'ALTER PUBLICATION'::text),
+      ('ddl_command_end'::text, 'ALTER PUBLICATION'::text),
+      ('ddl_command_start'::text, 'DROP PUBLICATION'::text),
+      ('ddl_command_end'::text, 'DROP PUBLICATION'::text),
+      ('sql_drop'::text, 'DROP PUBLICATION'::text)
+  ) as command(event, tag)
   union
   select role.oid, command.event, command.tag
   from pg_catalog.pg_roles as role
@@ -2138,6 +2182,12 @@ const collectSnapshot = async (
          where foreign_server.srvowner = candidate.oid
          order by foreign_server.srvname
        ) as owned_foreign_servers,
+       array(
+         select publication.pubname
+         from pg_catalog.pg_publication as publication
+         where publication.pubowner = candidate.oid
+         order by publication.pubname
+       ) as owned_publications,
        array(
          select namespace.nspname
          from pg_catalog.pg_namespace as namespace
@@ -3385,6 +3435,14 @@ const collectSnapshot = async (
      from pg_catalog.pg_foreign_server as foreign_server
      join pg_catalog.pg_roles as owner on owner.oid = foreign_server.srvowner
      order by foreign_server.srvname`,
+  );
+  const publications = await admin.query<PublicationOwnershipRow>(
+    `select
+       publication.pubname as publication,
+       owner.rolname as owner
+     from pg_catalog.pg_publication as publication
+     join pg_catalog.pg_roles as owner on owner.oid = publication.pubowner
+     order by publication.pubname`,
   );
   const schemas = await admin.query<SchemaPrivilegeRow>(
     `select
@@ -4963,6 +5021,7 @@ const collectSnapshot = async (
       ownedExtensions: membership.owned_extensions,
       ownedForeignDataWrappers: membership.owned_foreign_data_wrappers,
       ownedForeignServers: membership.owned_foreign_servers,
+      ownedPublications: membership.owned_publications,
       ownedRelations: membership.owned_relations,
       ownedRoutines: membership.owned_routines,
       ownedSchemas: membership.owned_schemas,
@@ -4983,6 +5042,7 @@ const collectSnapshot = async (
       parameter: privilege.parameter,
       set: privilege.set,
     })),
+    publications: publications.rows,
     role: {
       bypassRls: roleRow.bypass_rls,
       canCreateDatabases: roleRow.can_create_databases,
