@@ -143,6 +143,7 @@ export interface DatabaseTrustBoundarySnapshot {
   readonly database: string;
   readonly databasePrivileges: DatabasePrivileges;
   readonly defaultPrivileges: readonly DefaultPrivilege[];
+  readonly grantOptions: readonly string[];
   readonly memberships: readonly RoleMembership[];
   readonly parameterPrivileges: readonly ParameterPrivilege[];
   readonly role: RoleAttributes;
@@ -164,6 +165,7 @@ interface DatabaseTrustBoundaryFinding {
     | 'runtime_role_can_execute_security_definer'
     | 'runtime_role_can_select_privileged_owner_view'
     | 'runtime_role_has_ddl_authority'
+    | 'runtime_role_has_grant_authority'
     | 'runtime_role_has_cross_schema_dml'
     | 'runtime_role_has_parameter_authority'
     | 'runtime_role_has_relation_control_authority'
@@ -183,6 +185,7 @@ export interface DatabaseTrustBoundaryReport extends DatabaseTrustBoundarySnapsh
     readonly dmlSchemaCount: number;
     readonly dmlTableCount: number;
     readonly findingCount: number;
+    readonly grantOptionCount: number;
     readonly parameterPrivilegeCount: number;
     readonly privilegedOwnerViewCount: number;
     readonly routineCount: number;
@@ -308,6 +311,8 @@ export const buildDatabaseTrustBoundaryReport = (
   const memberships = [...snapshot.memberships].toSorted((left, right) =>
     compareText(left.role, right.role),
   );
+  const grantOptions = [...snapshot.grantOptions].toSorted(compareText);
+  const grantableDefaultPrivileges = defaultPrivileges.filter(({ grantable }) => grantable);
   const parameterPrivileges = [...snapshot.parameterPrivileges].toSorted((left, right) =>
     compareText(left.parameter, right.parameter),
   );
@@ -468,6 +473,14 @@ export const buildDatabaseTrustBoundaryReport = (
       severity: 'critical',
     });
   }
+  if (grantOptions.length > 0 || grantableDefaultPrivileges.length > 0) {
+    findings.push({
+      code: 'runtime_role_has_grant_authority',
+      evidence:
+        'The runtime role has a grant option on at least one existing or creator-default database object privilege.',
+      severity: 'high',
+    });
+  }
   if (sequences.some(({ privileges }) => privileges.update)) {
     findings.push({
       code: 'runtime_role_has_sequence_mutation_authority',
@@ -509,6 +522,7 @@ export const buildDatabaseTrustBoundaryReport = (
     ...snapshot,
     defaultPrivileges,
     findings,
+    grantOptions,
     memberships,
     parameterPrivileges,
     routines,
@@ -521,6 +535,7 @@ export const buildDatabaseTrustBoundaryReport = (
       dmlSchemaCount: dmlSchemas.size,
       dmlTableCount: dmlTables.length,
       findingCount: findings.length,
+      grantOptionCount: grantOptions.length + grantableDefaultPrivileges.length,
       parameterPrivilegeCount: parameterPrivileges.length,
       privilegedOwnerViewCount: privilegedOwnerViews.length,
       routineCount: routines.length,
@@ -652,6 +667,10 @@ interface DefaultPrivilegeRow {
   readonly privilege: string;
   readonly schema: string | null;
   readonly source: 'assumable' | 'direct' | 'inherited' | 'public';
+}
+
+interface GrantOptionRow {
+  readonly grant_option: string;
 }
 
 interface SettingRow {
@@ -961,9 +980,18 @@ const collectSnapshot = async (
     [runtimeRole, schemaNames],
   );
   const tables = await admin.query<TablePrivilegeRow>(
-    `with recursive view_dependencies(view_oid, referenced_oid) as (
-       select rewrite.ev_class, dependency.refobjid
+    `with recursive view_dependencies(view_oid, referenced_oid, effective_owner_oid) as (
+       select
+         rewrite.ev_class,
+         dependency.refobjid,
+         case
+           when coalesce('security_invoker=true' = any(view_relation.reloptions), false)
+             then runtime_role.oid
+           else view_relation.relowner
+         end
        from pg_catalog.pg_rewrite as rewrite
+       join pg_catalog.pg_class as view_relation on view_relation.oid = rewrite.ev_class
+       join pg_catalog.pg_roles as runtime_role on runtime_role.rolname = $1
        join pg_catalog.pg_depend as dependency
          on dependency.classid = 'pg_catalog.pg_rewrite'::regclass
         and dependency.objid = rewrite.oid
@@ -972,7 +1000,14 @@ const collectSnapshot = async (
          and dependency.deptype = 'n'
          and dependency.refobjid <> rewrite.ev_class
        union
-       select dependency.view_oid, nested_dependency.refobjid
+       select
+         dependency.view_oid,
+         nested_dependency.refobjid,
+         case
+           when coalesce('security_invoker=true' = any(nested_view.reloptions), false)
+             then dependency.effective_owner_oid
+           else nested_view.relowner
+         end
        from view_dependencies as dependency
        join pg_catalog.pg_class as nested_view on nested_view.oid = dependency.referenced_oid
        join pg_catalog.pg_rewrite as nested_rewrite
@@ -1005,7 +1040,7 @@ const collectSnapshot = async (
            on referenced_relation.oid = dependency.referenced_oid
          where dependency.view_oid = relation.oid
            and referenced_relation.relkind in ('r', 'p')
-           and referenced_relation.relowner = relation.relowner
+           and referenced_relation.relowner = dependency.effective_owner_oid
            and referenced_relation.relrowsecurity
            and not referenced_relation.relforcerowsecurity
        ) as owner_context_rls_bypass,
@@ -1132,6 +1167,159 @@ const collectSnapshot = async (
         or has_parameter_privilege($1, parameter.parname, 'SET')
      order by parameter.parname`,
     [runtimeRole],
+  );
+  const grantOptions = await admin.query<GrantOptionRow>(
+    `select authority.grant_option
+     from (
+       select format('database:%I:%s', current_database(), privilege.name) as grant_option
+       from (values ('CONNECT'::text), ('CREATE'::text), ('TEMPORARY'::text)) as privilege(name)
+       where has_database_privilege(
+         $1,
+         current_database(),
+         privilege.name || ' WITH GRANT OPTION'
+       )
+       union all
+       select format('schema:%I:%s', namespace.nspname, privilege.name)
+       from pg_catalog.pg_namespace as namespace
+       cross join (values ('CREATE'::text), ('USAGE'::text)) as privilege(name)
+       where namespace.nspname = any($2::text[])
+         and has_schema_privilege(
+           $1,
+           namespace.oid,
+           privilege.name || ' WITH GRANT OPTION'
+         )
+       union all
+       select format(
+         'relation:%I.%I:%s',
+         namespace.nspname,
+         relation.relname,
+         privilege.name
+       )
+       from pg_catalog.pg_class as relation
+       join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+       cross join (
+         values
+           ('DELETE'::text),
+           ('INSERT'::text),
+           ('MAINTAIN'::text),
+           ('REFERENCES'::text),
+           ('SELECT'::text),
+           ('TRIGGER'::text),
+           ('TRUNCATE'::text),
+           ('UPDATE'::text)
+       ) as privilege(name)
+       where namespace.nspname = any($2::text[])
+         and relation.relkind in ('r', 'p', 'v', 'm', 'f')
+         and has_table_privilege(
+           $1,
+           relation.oid,
+           privilege.name || ' WITH GRANT OPTION'
+         )
+       union all
+       select format(
+         'column:%I.%I.%I:%s',
+         namespace.nspname,
+         relation.relname,
+         attribute.attname,
+         privilege.name
+       )
+       from pg_catalog.pg_class as relation
+       join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+       join pg_catalog.pg_attribute as attribute
+         on attribute.attrelid = relation.oid
+        and attribute.attnum > 0
+        and not attribute.attisdropped
+       cross join (
+         values ('INSERT'::text), ('REFERENCES'::text), ('SELECT'::text), ('UPDATE'::text)
+       ) as privilege(name)
+       where namespace.nspname = any($2::text[])
+         and relation.relkind in ('r', 'p', 'v', 'm', 'f')
+         and has_column_privilege(
+           $1,
+           relation.oid,
+           attribute.attnum,
+           privilege.name || ' WITH GRANT OPTION'
+         )
+         and not has_table_privilege(
+           $1,
+           relation.oid,
+           privilege.name || ' WITH GRANT OPTION'
+         )
+       union all
+       select format(
+         'sequence:%I.%I:%s',
+         namespace.nspname,
+         relation.relname,
+         privilege.name
+       )
+       from pg_catalog.pg_class as relation
+       join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+       cross join (values ('SELECT'::text), ('UPDATE'::text), ('USAGE'::text)) as privilege(name)
+       where namespace.nspname = any($2::text[])
+         and relation.relkind = 'S'
+         and has_sequence_privilege(
+           $1,
+           relation.oid,
+           privilege.name || ' WITH GRANT OPTION'
+         )
+       union all
+       select format(
+         'routine:%I.%I(%s):EXECUTE',
+         namespace.nspname,
+         routine.proname,
+         pg_get_function_identity_arguments(routine.oid)
+       )
+       from pg_catalog.pg_proc as routine
+       join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
+       where namespace.nspname = any($2::text[])
+         and has_function_privilege($1, routine.oid, 'EXECUTE WITH GRANT OPTION')
+       union all
+       select format('type:%I.%I:USAGE', namespace.nspname, audited_type.typname)
+       from pg_catalog.pg_type as audited_type
+       join pg_catalog.pg_namespace as namespace on namespace.oid = audited_type.typnamespace
+       where namespace.nspname = any($2::text[])
+         and (
+           audited_type.typtype in ('d', 'e', 'm', 'r')
+           or (audited_type.typtype = 'b' and audited_type.typelem = 0)
+           or (
+             audited_type.typtype = 'c'
+             and exists (
+               select 1
+               from pg_catalog.pg_class as composite_relation
+               where composite_relation.reltype = audited_type.oid
+                 and composite_relation.relkind = 'c'
+             )
+           )
+         )
+         and has_type_privilege($1, audited_type.oid, 'USAGE WITH GRANT OPTION')
+       union all
+       select format('parameter:%s:%s', parameter.parname, privilege.name)
+       from pg_catalog.pg_parameter_acl as parameter
+       cross join (values ('ALTER SYSTEM'::text), ('SET'::text)) as privilege(name)
+       where has_parameter_privilege(
+         $1,
+         parameter.parname,
+         privilege.name || ' WITH GRANT OPTION'
+       )
+       union all
+       select format('language:%I:USAGE', language.lanname)
+       from pg_catalog.pg_language as language
+       where has_language_privilege($1, language.oid, 'USAGE WITH GRANT OPTION')
+       union all
+       select format('foreign-data-wrapper:%I:USAGE', wrapper.fdwname)
+       from pg_catalog.pg_foreign_data_wrapper as wrapper
+       where has_foreign_data_wrapper_privilege($1, wrapper.oid, 'USAGE WITH GRANT OPTION')
+       union all
+       select format('foreign-server:%I:USAGE', server.srvname)
+       from pg_catalog.pg_foreign_server as server
+       where has_server_privilege($1, server.oid, 'USAGE WITH GRANT OPTION')
+       union all
+       select format('tablespace:%I:CREATE', tablespace.spcname)
+       from pg_catalog.pg_tablespace as tablespace
+       where has_tablespace_privilege($1, tablespace.oid, 'CREATE WITH GRANT OPTION')
+     ) as authority
+     order by authority.grant_option`,
+    [runtimeRole, schemaNames],
   );
   const defaultPrivileges = await admin.query<DefaultPrivilegeRow>(
     `with recursive reachable_roles(role_oid) as (
@@ -1288,6 +1476,7 @@ const collectSnapshot = async (
       schema: privilege.schema,
       source: privilege.source,
     })),
+    grantOptions: grantOptions.rows.map(({ grant_option }) => grant_option),
     memberships: memberships.rows.map((membership) => ({
       attributes: {
         bypassRls: membership.bypass_rls,
