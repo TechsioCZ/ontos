@@ -80,7 +80,15 @@ void test('verifies provider keys and completes live support impersonation with 
       permission,
       tenantIds,
     }: {
-      readonly permission: 'access' | 'impersonate' | 'manage_identity';
+      readonly permission:
+        | 'access'
+        | 'impersonate'
+        | 'manage_identity'
+        | 'manage_party_identity'
+        | 'manage_party_relationships'
+        | 'merge_party_identity'
+        | 'read_party_identity'
+        | 'review_party_identity';
       readonly tenantIds: readonly string[];
     }) =>
       Effect.succeed(

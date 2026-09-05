@@ -47,7 +47,7 @@ Delivery dates, sequencing, open alternatives, and prioritization belong in GitH
 | Authentication, authorization, and policy   | [ADR-0005](adr/0005-betterauth-spicedb-policy-layer.md), [ADR-0014](adr/0014-authenticated-principal-session.md), and [ADR-0019](adr/0019-explicit-action-authorization.md)                          | [MicroVerticals](../app/docs/architecture/MICROVERTICALS.md), [Actions](../app/docs/architecture/ACTIONS.md), and [errors](../app/docs/architecture/ERRORS.md) |
 | Data ownership and cross-module references  | [ADR-0004](adr/0004-postgres-canonical-neo4j-projection.md), [ADR-0006](adr/0006-explicit-domain-tables-plus-resource-ref.md), and [ADR-0010](adr/0010-separate-business-ontology-and-authz-graph.md) | [Database](../app/docs/architecture/DATABASE.md) and [governed data access](../app/docs/architecture/DATA_ACCESS.md)        |
 | Asynchronous delivery                       | [ADR-0009](adr/0009-postgres-outbox-idempotent-workers.md) and [ADR-0013](adr/0013-broadcast-outbox-deliveries.md)                                                                                    | [Outbox workers](../app/docs/architecture/OUTBOX_WORKERS.md)                                                                |
-| Shared Party identity                       | [ADR-0015](adr/0015-party-registry-owns-shared-identity.md)                                                                                                                                           | [OntOS context](contexts/ontos/CONTEXT.md)                                                                                  |
+| Shared Party identity                       | [ADR-0015](adr/0015-party-registry-owns-shared-identity.md) and [ADR-0018](adr/0018-party-registry-operational-boundaries.md)                                                                         | [Party Registry](../app/docs/architecture/PARTY_REGISTRY.md) and [OntOS context](contexts/ontos/CONTEXT.md)                |
 | Commerce applications                       | [ADR-0017](adr/0017-commerce-application-boundaries.md)                                                                                                                                               | [Commerce context](contexts/commerce/CONTEXT.md) and [application boundaries](../app/docs/architecture/COMMERCE_APPLICATIONS.md) |
 
 ## Supporting diagrams
@@ -58,6 +58,7 @@ Diagrams explain authoritative prose but never override it:
 - [Runtime containers](diagrams/c4-L2-containers.md)
 - [MicroVertical structure](diagrams/c4-L3-microvertical.md)
 - [Resource references](diagrams/entity-model.md)
+- [Party Registry boundaries](diagrams/party-registry-boundaries.md)
 - [Module lifecycle](diagrams/module-lifecycle.md)
 - [Action flow](diagrams/runtime-action-flow.md)
 

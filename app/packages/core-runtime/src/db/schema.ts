@@ -8,6 +8,7 @@ import {
   integer,
   jsonb,
   pgSchema,
+  pgPolicy,
   primaryKey,
   text,
   timestamp,
@@ -35,6 +36,8 @@ export const CORE_TABLE_INVENTORY = [
   'media_links',
   'evidence_references',
   'search_index_entries',
+  'search_projection_generations',
+  'search_projection_rebuilds',
   'worker_checkpoints',
 ] as const;
 
@@ -77,6 +80,8 @@ export const domainEventTenantSequence = coreSchema.sequence('domain_event_tenan
 const createdAt = () => timestamp('created_at', { withTimezone: true }).defaultNow().notNull();
 const updatedAt = () => timestamp('updated_at', { withTimezone: true }).defaultNow().notNull();
 const occurredAt = () => timestamp('occurred_at', { withTimezone: true }).defaultNow().notNull();
+const enableCoreGovernedRls = <Table>(table: { readonly enableRLS: () => Table }): Table =>
+  table.enableRLS();
 
 export const tenants = coreSchema.table(
   'tenants',
@@ -818,36 +823,154 @@ export const evidenceReferences = coreSchema.table(
   ],
 );
 
-export const searchIndexEntries = coreSchema.table(
-  'search_index_entries',
-  {
-    searchIndexEntryId: uuid('search_index_entry_id').defaultRandom().primaryKey(),
-    tenantId: tenantId(),
-    legalEntityId: legalEntityId(),
-    sourceModuleKey: text('source_module_key').notNull(),
-    sourceResourceType: text('source_resource_type').notNull(),
-    sourceResourceId: text('source_resource_id').notNull(),
-    title: text('title').notNull(),
-    bodyText: text('body_text').notNull(),
-    facetsJson: jsonb('facets_json')
-      .notNull()
-      .default(sql`'{}'::jsonb`),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (table) => [
-    uniqueIndex('core_search_index_entries_source_uk').on(
-      table.tenantId,
-      table.sourceModuleKey,
-      table.sourceResourceType,
-      table.sourceResourceId,
-    ),
-    foreignKey({
-      columns: [table.tenantId, table.legalEntityId],
-      foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
-      name: 'core_search_index_entries_tenant_legal_entity_fk',
-    }).onDelete('restrict'),
-  ],
+export const searchIndexEntries = enableCoreGovernedRls(
+  coreSchema.table(
+    'search_index_entries',
+    {
+      searchIndexEntryId: uuid('search_index_entry_id').defaultRandom().primaryKey(),
+      tenantId: tenantId(),
+      legalEntityId: legalEntityId(),
+      sourceModuleKey: text('source_module_key').notNull(),
+      sourceResourceType: text('source_resource_type').notNull(),
+      sourceResourceId: text('source_resource_id').notNull(),
+      title: text('title').notNull(),
+      bodyText: text('body_text').notNull(),
+      deleted: boolean('deleted').default(false).notNull(),
+      facetsJson: jsonb('facets_json')
+        .notNull()
+        .default(sql`'{}'::jsonb`),
+      projectionVersion: bigint('projection_version', { mode: 'bigint' })
+        .default(sql`1`)
+        .notNull(),
+      createdAt: createdAt(),
+      updatedAt: updatedAt(),
+    },
+    (table) => [
+      uniqueIndex('core_search_index_entries_source_uk').on(
+        table.tenantId,
+        table.sourceModuleKey,
+        table.sourceResourceType,
+        table.sourceResourceId,
+      ),
+      index('core_search_index_entries_query_idx').on(
+        table.tenantId,
+        table.sourceModuleKey,
+        table.sourceResourceType,
+        table.legalEntityId,
+        table.deleted,
+      ),
+      foreignKey({
+        columns: [table.tenantId, table.legalEntityId],
+        foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+        name: 'core_search_index_entries_tenant_legal_entity_fk',
+      }).onDelete('restrict'),
+      check(
+        'core_search_index_entries_document_ck',
+        sql`${table.deleted} or (length(btrim(${table.title})) > 0 and length(${table.title}) <= 300 and length(${table.bodyText}) <= 40000)`,
+      ),
+      check('core_search_index_entries_version_ck', sql`${table.projectionVersion} > 0`),
+      pgPolicy('core_search_index_entries_tenant_select', {
+        for: 'select',
+        to: 'ontos_runtime',
+        using: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+      }),
+      pgPolicy('core_search_index_entries_tenant_insert', {
+        for: 'insert',
+        to: 'ontos_runtime',
+        withCheck: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+      }),
+      pgPolicy('core_search_index_entries_tenant_update', {
+        for: 'update',
+        to: 'ontos_runtime',
+        using: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+        withCheck: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+      }),
+      pgPolicy('core_search_index_entries_tenant_delete', {
+        for: 'delete',
+        to: 'ontos_runtime',
+        using: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+      }),
+    ],
+  ),
+);
+
+/** Core-only snapshot ordering; event sequence allocation is not commit ordering. */
+export const searchProjectionGenerations = enableCoreGovernedRls(
+  coreSchema.table(
+    'search_projection_generations',
+    {
+      tenantId: tenantId(),
+      sourceModuleKey: text('source_module_key').notNull(),
+      generation: bigint('generation', { mode: 'bigint' }).notNull(),
+      eventWatermark: bigint('event_watermark', { mode: 'bigint' }),
+      updatedAt: updatedAt(),
+    },
+    (table) => [
+      primaryKey({
+        name: 'core_search_projection_generations_pk',
+        columns: [table.tenantId, table.sourceModuleKey],
+      }),
+      check('core_search_projection_generations_positive_ck', sql`${table.generation} > 0`),
+      pgPolicy('core_search_projection_generations_tenant_select', {
+        for: 'select',
+        to: 'ontos_runtime',
+        using: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+      }),
+      pgPolicy('core_search_projection_generations_tenant_insert', {
+        for: 'insert',
+        to: 'ontos_runtime',
+        withCheck: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+      }),
+      pgPolicy('core_search_projection_generations_tenant_update', {
+        for: 'update',
+        to: 'ontos_runtime',
+        using: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+        withCheck: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+      }),
+    ],
+  ),
+);
+
+/** Atomic projection-unit floor protects even resources never seen before a rebuild. */
+export const searchProjectionRebuilds = enableCoreGovernedRls(
+  coreSchema.table(
+    'search_projection_rebuilds',
+    {
+      tenantId: tenantId(),
+      sourceModuleKey: text('source_module_key').notNull(),
+      sourceResourceType: text('source_resource_type').notNull(),
+      rebuildVersion: bigint('rebuild_version', { mode: 'bigint' }).notNull(),
+      fingerprint: text('fingerprint').notNull(),
+      updatedAt: updatedAt(),
+    },
+    (table) => [
+      primaryKey({
+        name: 'core_search_projection_rebuilds_pk',
+        columns: [table.tenantId, table.sourceModuleKey, table.sourceResourceType],
+      }),
+      check('core_search_projection_rebuilds_version_ck', sql`${table.rebuildVersion} > 0`),
+      check(
+        'core_search_projection_rebuilds_fingerprint_ck',
+        sql`${table.fingerprint} ~ '^[a-f0-9]{64}$'`,
+      ),
+      pgPolicy('core_search_projection_rebuilds_tenant_select', {
+        for: 'select',
+        to: 'ontos_runtime',
+        using: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+      }),
+      pgPolicy('core_search_projection_rebuilds_tenant_insert', {
+        for: 'insert',
+        to: 'ontos_runtime',
+        withCheck: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+      }),
+      pgPolicy('core_search_projection_rebuilds_tenant_update', {
+        for: 'update',
+        to: 'ontos_runtime',
+        using: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+        withCheck: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+      }),
+    ],
+  ),
 );
 
 export const workerCheckpoints = coreSchema.table(
@@ -884,6 +1007,8 @@ export const coreDatabaseSchema = {
   principalAuthBindings,
   principals,
   searchIndexEntries,
+  searchProjectionGenerations,
+  searchProjectionRebuilds,
   tenantModuleStateChanges,
   tenantModuleStates,
   tenants,
@@ -908,6 +1033,8 @@ export const CORE_TABLES = [
   mediaLinks,
   evidenceReferences,
   searchIndexEntries,
+  searchProjectionGenerations,
+  searchProjectionRebuilds,
   workerCheckpoints,
 ] as const;
 

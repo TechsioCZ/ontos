@@ -1,3 +1,4 @@
+/* oxlint-disable typescript/return-await, unicorn/no-useless-promise-resolve-reject */
 /* eslint-disable no-await-in-loop, typescript/no-non-null-assertion -- Sequential scoped-client cases verify finalization independently. */
 import assert from 'node:assert/strict';
 // @effect-diagnostics asyncFunction:off
@@ -5,6 +6,8 @@ import test from 'node:test';
 import { v1 } from '@authzed/authzed-node';
 import { Effect } from 'effect';
 import {
+  LEGAL_ENTITY_PERMISSION_KEYS,
+  TENANT_PERMISSION_KEYS,
   makeContextAccess,
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
@@ -105,7 +108,60 @@ void test('checks resource writes independently from resource reads', async () =
   assert.deepEqual(permissions, ['write']);
 });
 
-void test('creates lossless tenant and legal-entity-qualified object identities', () => {
+test('forwards every closed tenant permission key without widening it', async () => {
+  const observed: string[] = [];
+  const service = makeContextAccess(
+    makeClient(async (request) => {
+      observed.push(...request.items.map(({ permission }) => permission));
+      return Promise.resolve(
+        responseFor(
+          request,
+          request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
+        ),
+      );
+    }),
+  );
+
+  for (const permission of TENANT_PERMISSION_KEYS) {
+    assert.deepEqual(
+      await Effect.runPromise(service.tenants({ permission, principalId, tenantIds: [tenantId] })),
+      [{ decision: 'allowed', key: tenantId }],
+    );
+  }
+  assert.deepEqual(observed, TENANT_PERMISSION_KEYS);
+});
+
+test('forwards every closed Legal Entity permission key without widening it', async () => {
+  const observed: string[] = [];
+  const service = makeContextAccess(
+    makeClient(async (request) => {
+      observed.push(...request.items.map(({ permission }) => permission));
+      return Promise.resolve(
+        responseFor(
+          request,
+          request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
+        ),
+      );
+    }),
+  );
+
+  for (const permission of LEGAL_ENTITY_PERMISSION_KEYS) {
+    assert.deepEqual(
+      await Effect.runPromise(
+        service.legalEntities({
+          legalEntityIds: [legalEntityId],
+          permission,
+          principalId,
+          tenantId,
+        }),
+      ),
+      [{ decision: 'allowed', key: legalEntityId }],
+    );
+  }
+  assert.deepEqual(observed, LEGAL_ENTITY_PERMISSION_KEYS);
+});
+
+test('creates lossless tenant and legal-entity-qualified object identities', () => {
   const resource = {
     moduleId: 'property.registry',
     resourceId: 'unit:with/slashes',

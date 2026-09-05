@@ -1,0 +1,59 @@
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index 8ec3ffeab4634993e94132ad367870c6f894a963..5714d588b6d8d99ce60a0d104b8b81a7df84d805 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -681,44 +681 @@ type Auth = Bearer | Basic | Custom;
+-declare const betterFetch: <TRes extends Option["output"] extends StandardSchemaV1 ? StandardSchemaV1.InferOutput<Option["output"]> : unknown, TErr = unknown, Option extends BetterFetchOption = {
+-    cache?: RequestCache | undefined;
+-    credentials?: RequestCredentials | undefined;
+-    integrity?: string | undefined;
+-    keepalive?: boolean | undefined;
+-    method?: string | undefined;
+-    mode?: RequestMode | undefined;
+-    priority?: RequestPriority | undefined;
+-    redirect?: RequestRedirect | undefined;
+-    referrer?: string | undefined;
+-    referrerPolicy?: ReferrerPolicy | undefined;
+-    signal?: (AbortSignal | null) | undefined;
+-    window?: null | undefined;
+-    onRequest?: (<T extends Record<string, any>>(context: RequestContext<T>) => Promise<RequestContext | void> | RequestContext | void) | undefined;
+-    onResponse?: ((context: ResponseContext) => Promise<Response | void | ResponseContext> | Response | ResponseContext | void) | undefined;
+-    onSuccess?: ((context: SuccessContext<TRes>) => Promise<void> | void) | undefined;
+-    onError?: ((context: ErrorContext) => Promise<void> | void) | undefined;
+-    onRetry?: ((response: ResponseContext) => Promise<void> | void) | undefined;
+-    hookOptions?: {
+-        cloneResponse?: boolean;
+-    } | undefined;
+-    timeout?: number | undefined;
+-    customFetchImpl?: FetchEsque | undefined;
+-    plugins?: BetterFetchPlugin[] | undefined;
+-    baseURL?: string | undefined;
+-    throw?: boolean | undefined;
+-    auth?: Auth | undefined;
+-    headers?: {} | {
+-        [x: string]: string | undefined;
+-        accept?: StringLiteralUnion<"application/json" | "text/plain" | "application/octet-stream"> | undefined;
+-        "content-type"?: StringLiteralUnion<"application/json" | "text/plain" | "application/x-www-form-urlencoded" | "multipart/form-data" | "application/octet-stream"> | undefined;
+-        authorization?: StringLiteralUnion<`Bearer ${string}` | `Basic ${string}`> | undefined;
+-    } | undefined;
+-    body?: any;
+-    query?: any;
+-    params?: any;
+-    duplex?: ("full" | "half") | undefined;
+-    jsonParser?: ((text: string) => Promise<any> | any) | undefined;
+-    retry?: RetryOptions | undefined;
+-    retryAttempt?: number | undefined;
+-    output?: (StandardSchemaV1 | typeof Blob | typeof File) | undefined;
+-    errorSchema?: StandardSchemaV1 | undefined;
+-    disableValidation?: boolean | undefined;
+-}>(url: string, options?: Option) => Promise<BetterFetchResponse<TRes, TErr, Option["throw"] extends true ? true : TErr extends false ? true : false>>;
++declare const betterFetch: <TRes extends Option["output"] extends StandardSchemaV1 ? StandardSchemaV1.InferOutput<Option["output"]> : unknown, TErr = unknown, Option extends BetterFetchOption = BetterFetchOption>(url: string, options?: Option) => Promise<BetterFetchResponse<TRes, TErr, Option["throw"] extends true ? true : TErr extends false ? true : false>>;
+@@ -739,7 +696,7 @@ declare function detectContentType(body: any): "application/json" | null;
+ declare function getBody(options: BetterFetchOption, headers: Headers): BodyInit | null;
+ declare function getMethod(url: string, options?: BetterFetchOption): string;
+ declare function getTimeout(options?: BetterFetchOption, controller?: AbortController): {
+-    abortTimeout: Timer | undefined;
++    abortTimeout: ReturnType<typeof setTimeout> | undefined;
+     clearTimeout: () => void;
+ };
+ declare function bodyParser(data: any, responseType: ResponseType): any;

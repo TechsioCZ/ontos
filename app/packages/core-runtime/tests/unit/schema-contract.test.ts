@@ -42,7 +42,7 @@ void test('exports exactly the 18 Core tables in PostgreSQL schema core', () => 
   ).toSorted();
 
   assert.deepEqual(qualifiedNames, expectedQualifiedNames);
-  assert.equal(new Set(qualifiedNames).size, 18);
+  assert.equal(new Set(qualifiedNames).size, CORE_TABLE_INVENTORY.length);
   assert.equal(
     qualifiedNames.some((name) => name.startsWith('public.')),
     false,
@@ -106,7 +106,7 @@ void test('preserves critical Action foreign keys and unique idempotency index',
   assert.equal(idempotencyIndex.config.unique, true);
   assert.ok(idempotencyIndex.config.where);
   assert.deepEqual(
-    idempotencyIndex.config.columns.map((column) => 'name' in column && column.name),
+    idempotencyIndex.config.columns.map((column) => ('name' in column ? column.name : false)),
     ['tenant_id', 'action_key', 'principal_id', 'idempotency_key'],
   );
 });
@@ -128,7 +128,7 @@ void test('allocates Domain Event order through a database-owned monotonic seque
   assert.ok(sequenceIndex);
   assert.equal(sequenceIndex.config.unique, true);
   assert.deepEqual(
-    sequenceIndex.config.columns.map((column) => 'name' in column && column.name),
+    sequenceIndex.config.columns.map((column) => ('name' in column ? column.name : false)),
     ['tenant_id', 'tenant_sequence_no'],
   );
 });

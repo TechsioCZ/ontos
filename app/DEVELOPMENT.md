@@ -71,6 +71,18 @@ mise exec -- pnpm dev
 
 `pnpm dev` occupies that terminal until stopped.
 
+Contacts calls Party Registry through its published client across the deployment boundary. Its
+server process needs the non-secret `ONTOS_SHELL_GATEWAY_BASE_URL` (including
+`/shell-super-app-api`) and `ONTOS_PARTY_REGISTRY_API_BASE_URL` (including
+`/party-registry-api`). `mise exec -- pnpm env:local:ensure` derives missing local values from the
+topology and development overlay while preserving explicit values. Run it after adding Party
+Registry to an existing sandbox; no secret values are printed. Start Party Registry alongside
+Contacts before exercising engagement-profile writes.
+
+Zerops configures these URLs with internal service names and ports. Other deployments must supply
+absolute HTTP(S) URLs for their own service routing; missing or invalid values fail closed rather
+than falling back to relative browser URLs or localhost in production.
+
 ### Fail-closed Action authorization checkpoint
 
 Sandbox preparation creates the fixed development context and Tenant membership but does not
@@ -88,7 +100,7 @@ The provisioning command discovers current Actions and grants executor relations
 fixed development Tenant membership set. It accepts no caller-supplied scope and never writes
 stage from a development sandbox.
 
-Remove an unused sandbox after preserving any work:
+When the feature sandbox is no longer needed, stop its running processes and remove it:
 
 ```sh
 locki rm --match 1aixi9oo --branches

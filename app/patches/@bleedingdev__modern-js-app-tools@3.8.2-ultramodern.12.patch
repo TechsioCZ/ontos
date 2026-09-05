@@ -126,6 +126,147 @@ index 8b49ef81a1f54506f45c03586b31248cb677b976..24cb2d18020ea04cbdd43d4d71469788
      }).join(';\n');
  const getPluginsCode = (plugins)=>`[${plugins.map(([, options], index)=>`plugin_${index}(${options ? JSON.stringify(options) : ''})`).join(',')}]`;
  const getServerConfigPath = (meta)=>`path.join(__dirname, "${SERVER_DIR}", "${meta}.server")`;
+diff --git a/dist/cjs/ultramodern-release-envelope/framework-output.js b/dist/cjs/ultramodern-release-envelope/framework-output.js
+--- a/dist/cjs/ultramodern-release-envelope/framework-output.js
++++ b/dist/cjs/ultramodern-release-envelope/framework-output.js
+@@ -82,9 +82,40 @@
+         ...collectNestedStrings(manifest, 'async')
+     ];
+     const normalizedReferences = new Set(references.filter((value)=>'string' == typeof value).map((value)=>value.replace(/^https?:\/\/[^/]+/u, '')).map((value)=>value.replace(/^\/+/u, '')));
+-    return files.filter((logicalPath)=>COMPILED_MODULE_PATTERN.test(logicalPath) && [
+-            ...normalizedReferences
+-        ].some((reference)=>reference === logicalPath || reference.endsWith(`/${logicalPath}`) || logicalPath.endsWith(`/${reference}`)));
++    const clientModules = files.filter((logicalPath)=>COMPILED_MODULE_PATTERN.test(logicalPath) && [
++            ...normalizedReferences
++        ].some((reference)=>reference === logicalPath || reference.endsWith(`/${logicalPath}`) || logicalPath.endsWith(`/${reference}`)));
++    if (clientModules.length > 0) return clientModules;
++    const metadata = isRecord(manifest) && isRecord(manifest.metaData) ? manifest.metaData : undefined;
++    const remoteEntry = metadata && isRecord(metadata.remoteEntry) ? metadata.remoteEntry : undefined;
++    const explicitlyEmptyProducer = Array.isArray(manifest.exposes) && manifest.exposes.length === 0 &&
++        Array.isArray(manifest.remotes) && manifest.remotes.length === 0 &&
++        remoteEntry?.name === '' && remoteEntry.path === '' && remoteEntry.type === 'global';
++    if (!explicitlyEmptyProducer || typeof metadata.publicPath !== 'string') return [];
++    // An empty federation producer still has a compiled application bootstrap.
++    // Bind only its declared route assets, never arbitrary API/SSR or foreign chunks.
++    const publicBase = new URL(metadata.publicPath === 'auto' ? '/' : metadata.publicPath, 'https://ultramodern.invalid/');
++    if (!['http:', 'https:'].includes(publicBase.protocol) || !publicBase.pathname.endsWith('/')) return [];
++    const manifestDirectory = external_node_path_default().posix.dirname(manifestLogicalPath);
++    const routeManifest = await readJson(external_node_path_default().join(distDirectory, manifestDirectory, 'routes-manifest.json'));
++    const routeAssets = isRecord(routeManifest) && isRecord(routeManifest.routeAssets) ? routeManifest.routeAssets : {};
++    const declaredAssets = Object.values(routeAssets).flatMap((route)=>isRecord(route) && Array.isArray(route.assets) ? route.assets : []);
++    const executionPaths = new Set();
++    for (const reference of declaredAssets) {
++        if (typeof reference !== 'string' || reference.includes('\\')) continue;
++        try {
++            const segments = reference.split(/[/?#]/u).map((segment)=>decodeURIComponent(segment));
++            if (segments.some((segment)=>segment === '.' || segment === '..' || segment.includes('\\'))) continue;
++            const asset = new URL(reference, publicBase);
++            if (asset.origin !== publicBase.origin || asset.search || asset.hash || !asset.pathname.startsWith(publicBase.pathname)) continue;
++            const relative = asset.pathname.slice(publicBase.pathname.length);
++            if (!relative.startsWith('static/') || !COMPILED_MODULE_PATTERN.test(relative)) continue;
++            executionPaths.add(external_node_path_default().posix.join(manifestDirectory, relative));
++        } catch {
++            // Invalid URL encodings cannot establish release execution evidence.
++        }
++    }
++    return files.filter((logicalPath)=>executionPaths.has(logicalPath));
+ };
+ const routeReferencedSsrModules = async (distDirectory, files, target, routeSpecLogicalPath = 'route.json')=>{
+     const routeSpec = await readJson(external_node_path_default().join(distDirectory, routeSpecLogicalPath));
+diff --git a/dist/esm/ultramodern-release-envelope/framework-output.mjs b/dist/esm/ultramodern-release-envelope/framework-output.mjs
+--- a/dist/esm/ultramodern-release-envelope/framework-output.mjs
++++ b/dist/esm/ultramodern-release-envelope/framework-output.mjs
+@@ -30,9 +30,40 @@
+         ...collectNestedStrings(manifest, 'async')
+     ];
+     const normalizedReferences = new Set(references.filter((value)=>'string' == typeof value).map((value)=>value.replace(/^https?:\/\/[^/]+/u, '')).map((value)=>value.replace(/^\/+/u, '')));
+-    return files.filter((logicalPath)=>COMPILED_MODULE_PATTERN.test(logicalPath) && [
+-            ...normalizedReferences
+-        ].some((reference)=>reference === logicalPath || reference.endsWith(`/${logicalPath}`) || logicalPath.endsWith(`/${reference}`)));
++    const clientModules = files.filter((logicalPath)=>COMPILED_MODULE_PATTERN.test(logicalPath) && [
++            ...normalizedReferences
++        ].some((reference)=>reference === logicalPath || reference.endsWith(`/${logicalPath}`) || logicalPath.endsWith(`/${reference}`)));
++    if (clientModules.length > 0) return clientModules;
++    const metadata = isRecord(manifest) && isRecord(manifest.metaData) ? manifest.metaData : undefined;
++    const remoteEntry = metadata && isRecord(metadata.remoteEntry) ? metadata.remoteEntry : undefined;
++    const explicitlyEmptyProducer = Array.isArray(manifest.exposes) && manifest.exposes.length === 0 &&
++        Array.isArray(manifest.remotes) && manifest.remotes.length === 0 &&
++        remoteEntry?.name === '' && remoteEntry.path === '' && remoteEntry.type === 'global';
++    if (!explicitlyEmptyProducer || typeof metadata.publicPath !== 'string') return [];
++    // An empty federation producer still has a compiled application bootstrap.
++    // Bind only its declared route assets, never arbitrary API/SSR or foreign chunks.
++    const publicBase = new URL(metadata.publicPath === 'auto' ? '/' : metadata.publicPath, 'https://ultramodern.invalid/');
++    if (!['http:', 'https:'].includes(publicBase.protocol) || !publicBase.pathname.endsWith('/')) return [];
++    const manifestDirectory = node_path.posix.dirname(manifestLogicalPath);
++    const routeManifest = await readJson(node_path.join(distDirectory, manifestDirectory, 'routes-manifest.json'));
++    const routeAssets = isRecord(routeManifest) && isRecord(routeManifest.routeAssets) ? routeManifest.routeAssets : {};
++    const declaredAssets = Object.values(routeAssets).flatMap((route)=>isRecord(route) && Array.isArray(route.assets) ? route.assets : []);
++    const executionPaths = new Set();
++    for (const reference of declaredAssets) {
++        if (typeof reference !== 'string' || reference.includes('\\')) continue;
++        try {
++            const segments = reference.split(/[/?#]/u).map((segment)=>decodeURIComponent(segment));
++            if (segments.some((segment)=>segment === '.' || segment === '..' || segment.includes('\\'))) continue;
++            const asset = new URL(reference, publicBase);
++            if (asset.origin !== publicBase.origin || asset.search || asset.hash || !asset.pathname.startsWith(publicBase.pathname)) continue;
++            const relative = asset.pathname.slice(publicBase.pathname.length);
++            if (!relative.startsWith('static/') || !COMPILED_MODULE_PATTERN.test(relative)) continue;
++            executionPaths.add(node_path.posix.join(manifestDirectory, relative));
++        } catch {
++            // Invalid URL encodings cannot establish release execution evidence.
++        }
++    }
++    return files.filter((logicalPath)=>executionPaths.has(logicalPath));
+ };
+ const routeReferencedSsrModules = async (distDirectory, files, target, routeSpecLogicalPath = 'route.json')=>{
+     const routeSpec = await readJson(node_path.join(distDirectory, routeSpecLogicalPath));
+diff --git a/dist/esm-node/ultramodern-release-envelope/framework-output.mjs b/dist/esm-node/ultramodern-release-envelope/framework-output.mjs
+--- a/dist/esm-node/ultramodern-release-envelope/framework-output.mjs
++++ b/dist/esm-node/ultramodern-release-envelope/framework-output.mjs
+@@ -31,9 +31,40 @@
+         ...collectNestedStrings(manifest, 'async')
+     ];
+     const normalizedReferences = new Set(references.filter((value)=>'string' == typeof value).map((value)=>value.replace(/^https?:\/\/[^/]+/u, '')).map((value)=>value.replace(/^\/+/u, '')));
+-    return files.filter((logicalPath)=>COMPILED_MODULE_PATTERN.test(logicalPath) && [
+-            ...normalizedReferences
+-        ].some((reference)=>reference === logicalPath || reference.endsWith(`/${logicalPath}`) || logicalPath.endsWith(`/${reference}`)));
++    const clientModules = files.filter((logicalPath)=>COMPILED_MODULE_PATTERN.test(logicalPath) && [
++            ...normalizedReferences
++        ].some((reference)=>reference === logicalPath || reference.endsWith(`/${logicalPath}`) || logicalPath.endsWith(`/${reference}`)));
++    if (clientModules.length > 0) return clientModules;
++    const metadata = isRecord(manifest) && isRecord(manifest.metaData) ? manifest.metaData : undefined;
++    const remoteEntry = metadata && isRecord(metadata.remoteEntry) ? metadata.remoteEntry : undefined;
++    const explicitlyEmptyProducer = Array.isArray(manifest.exposes) && manifest.exposes.length === 0 &&
++        Array.isArray(manifest.remotes) && manifest.remotes.length === 0 &&
++        remoteEntry?.name === '' && remoteEntry.path === '' && remoteEntry.type === 'global';
++    if (!explicitlyEmptyProducer || typeof metadata.publicPath !== 'string') return [];
++    // An empty federation producer still has a compiled application bootstrap.
++    // Bind only its declared route assets, never arbitrary API/SSR or foreign chunks.
++    const publicBase = new URL(metadata.publicPath === 'auto' ? '/' : metadata.publicPath, 'https://ultramodern.invalid/');
++    if (!['http:', 'https:'].includes(publicBase.protocol) || !publicBase.pathname.endsWith('/')) return [];
++    const manifestDirectory = node_path.posix.dirname(manifestLogicalPath);
++    const routeManifest = await readJson(node_path.join(distDirectory, manifestDirectory, 'routes-manifest.json'));
++    const routeAssets = isRecord(routeManifest) && isRecord(routeManifest.routeAssets) ? routeManifest.routeAssets : {};
++    const declaredAssets = Object.values(routeAssets).flatMap((route)=>isRecord(route) && Array.isArray(route.assets) ? route.assets : []);
++    const executionPaths = new Set();
++    for (const reference of declaredAssets) {
++        if (typeof reference !== 'string' || reference.includes('\\')) continue;
++        try {
++            const segments = reference.split(/[/?#]/u).map((segment)=>decodeURIComponent(segment));
++            if (segments.some((segment)=>segment === '.' || segment === '..' || segment.includes('\\'))) continue;
++            const asset = new URL(reference, publicBase);
++            if (asset.origin !== publicBase.origin || asset.search || asset.hash || !asset.pathname.startsWith(publicBase.pathname)) continue;
++            const relative = asset.pathname.slice(publicBase.pathname.length);
++            if (!relative.startsWith('static/') || !COMPILED_MODULE_PATTERN.test(relative)) continue;
++            executionPaths.add(node_path.posix.join(manifestDirectory, relative));
++        } catch {
++            // Invalid URL encodings cannot establish release execution evidence.
++        }
++    }
++    return files.filter((logicalPath)=>executionPaths.has(logicalPath));
+ };
+ const routeReferencedSsrModules = async (distDirectory, files, target, routeSpecLogicalPath = 'route.json')=>{
+     const routeSpec = await readJson(node_path.join(distDirectory, routeSpecLogicalPath));
 diff --git a/dist/cjs/plugins/deploy/platforms/cloudflare-output-contract.js b/dist/cjs/plugins/deploy/platforms/cloudflare-output-contract.js
 index 7d24b50..e2af426 100644
 --- a/dist/cjs/plugins/deploy/platforms/cloudflare-output-contract.js

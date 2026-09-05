@@ -70,6 +70,7 @@ function run(command, commandArgs, options = {}) {
 const appId = readFlag('--app');
 const packageName = readFlag('--package');
 const packageDir = readFlag('--package-dir');
+const worker = args.includes('--worker');
 
 if (!appId) {
   fail('--app is required');
@@ -87,7 +88,7 @@ assertRelativePath('--package-dir', packageDir);
 
 const appRoot = path.resolve(workspaceRoot, packageDir);
 const appOutputDir = path.join(appRoot, '.output');
-const runtimeDir = path.join(workspaceRoot, '.zerops/runtime', appId);
+const runtimeDir = path.join(workspaceRoot, '.zerops/runtime', worker ? `${appId}-worker` : appId);
 
 assertInsideWorkspace('package directory', appRoot);
 assertInsideWorkspace('runtime directory', runtimeDir);
@@ -97,7 +98,7 @@ if (appPackage.name !== packageName) {
   fail(`--package must match ${packageDir}/package.json name`);
 }
 
-if (!fs.existsSync(appOutputDir)) {
+if (!worker && !fs.existsSync(appOutputDir)) {
   fail(
     `Modern.js package build must produce ${path.relative(workspaceRoot, appOutputDir)} before runtime materialization`,
   );
@@ -105,15 +106,29 @@ if (!fs.existsSync(appOutputDir)) {
 
 fs.rmSync(runtimeDir, { force: true, recursive: true });
 fs.mkdirSync(path.dirname(runtimeDir), { recursive: true });
-fs.cpSync(appOutputDir, runtimeDir, { recursive: true });
+if (worker) {
+  fs.mkdirSync(runtimeDir, { recursive: true });
+} else {
+  fs.cpSync(appOutputDir, runtimeDir, { recursive: true });
+}
 
 const entryPath = path.join(runtimeDir, 'index.js');
-if (!fs.existsSync(entryPath)) {
+if (!worker && !fs.existsSync(entryPath)) {
   fail(`Modern.js Node deploy output is missing ${path.relative(workspaceRoot, entryPath)}`);
 }
 
 const packageJsonPath = path.join(runtimeDir, 'package.json');
-const runtimePackage = fs.existsSync(packageJsonPath) ? readJson(packageJsonPath) : {};
+let runtimePackage = fs.existsSync(packageJsonPath) ? readJson(packageJsonPath) : {};
+if (worker) {
+  const { materializeOutboxWorker } = await import('./materialize-outbox-worker.mjs');
+  runtimePackage = await materializeOutboxWorker({
+    appId,
+    packageDir,
+    packageName,
+    runtimeDir,
+    workspaceRoot,
+  });
+}
 normalizeRuntimePackageDependencies(runtimePackage);
 removeIncompatiblePlatformDependencies(runtimePackage);
 
@@ -270,9 +285,10 @@ function installRuntimeDependencies(runtimePackage) {
       force: true,
       recursive: true,
     });
-    fs.cpSync(path.join(installDir, 'node_modules'), path.join(runtimeDir, 'node_modules'), {
-      recursive: true,
-    });
+    const installedModules = path.join(installDir, 'node_modules');
+    if (fs.existsSync(installedModules)) {
+      fs.cpSync(installedModules, path.join(runtimeDir, 'node_modules'), { recursive: true });
+    }
 
     for (const dependency of localDependencies) {
       copyWorkspacePackage(dependency, workspacePackages);

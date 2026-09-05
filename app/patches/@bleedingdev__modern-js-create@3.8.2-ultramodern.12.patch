@@ -1,3 +1,28 @@
+diff --git a/dist/cjs/ultramodern-workspace/demo-components.cjs b/dist/cjs/ultramodern-workspace/demo-components.cjs
+index 3724fd0b7b14671fba0cb1c46e25719c5e2e03b7..f58815fbb93eea409b3341583b96e682e2c6e783 100644
+--- a/dist/cjs/ultramodern-workspace/demo-components.cjs
++++ b/dist/cjs/ultramodern-workspace/demo-components.cjs
+@@ -308,13 +308,13 @@ function createLayout(appId) {
+     return `import { Outlet } from '@modern-js/plugin-tanstack/runtime';
+ import './index.css';
+
+-export default function Layout() {
+-  return (
+-    <div data-app-id="${appId}">
+-      <Outlet />
+-    </div>
+-  );
+-}
++const Layout = () => (
++  <div data-app-id="${appId}">
++    <Outlet />
++  </div>
++);
++
++export default Layout;
+ `;
+ }
+ function createRemoteEntry(app) {
 diff --git a/dist/cjs/ultramodern-workspace/mf-validation/constants.cjs b/dist/cjs/ultramodern-workspace/mf-validation/constants.cjs
 index 6fcc6362e30b4e844302227dc64f39075f0fb20b..5c65e3d3e8fb8646e8cdb263a07ca522efe85dd3 100644
 --- a/dist/cjs/ultramodern-workspace/mf-validation/constants.cjs
@@ -11,6 +36,329 @@ index 6fcc6362e30b4e844302227dc64f39075f0fb20b..5c65e3d3e8fb8646e8cdb263a07ca522
  const generatedMetadataPaths = [
      '.modernjs/ultramodern.json'
  ];
+diff --git a/dist/cjs/ultramodern-workspace/mf-validation/inspect.cjs b/dist/cjs/ultramodern-workspace/mf-validation/inspect.cjs
+index 38e47a2ba5c0186660f29ea0add05f18256e3b4c..16085a6a428609b948c9084a0d002ced330c90b1 100644
+--- a/dist/cjs/ultramodern-workspace/mf-validation/inspect.cjs
++++ b/dist/cjs/ultramodern-workspace/mf-validation/inspect.cjs
+@@ -43,8 +43,12 @@ function extractExposes(configPath, value) {
+     if (array) return array.sort();
+     throw new Error(`Cannot statically extract Module Federation exposes from ${configPath}; use a literal exposes object or string array.`);
+ }
+-function extractDtsSettings(configPath, value) {
++function extractDtsSettings(configPath, value, allowDisabled) {
+     if (void 0 === value) return {};
++    if (value.trim() === 'false') {
++        if (!allowDisabled) throw new Error(`Module Federation DTS cannot be disabled for exposed app ${configPath}.`);
++        return {};
++    }
+     const dts = (0, external_object_literal_cjs_namespaceObject.parseObjectLiteral)(value);
+     if (!dts || dts.hasSpread) throw new Error(`Cannot statically extract Module Federation DTS settings from ${configPath}; use a literal dts object.`);
+     const generateTypes = (0, external_object_literal_cjs_namespaceObject.parseObjectLiteral)(dts.properties.get('generateTypes'));
+@@ -70,7 +74,7 @@ function inspectModuleFederationConfigSource(source, appDir, configPath) {
+     return {
+         appDir,
+         configPath,
+-        dts: extractDtsSettings(configPath, properties.properties.get('dts')),
++        dts: extractDtsSettings(configPath, properties.properties.get('dts'), exposes.length === 0),
+         exposes,
+         hostOnlyNoExposes
+     };
+diff --git a/dist/cjs/ultramodern-workspace/module-federation/config.cjs b/dist/cjs/ultramodern-workspace/module-federation/config.cjs
+index 45a7179587e8ab49d1828ba05d25241acad5db82..60cd360e337c3245b89cb540b10e3b241331eb08 100644
+--- a/dist/cjs/ultramodern-workspace/module-federation/config.cjs
++++ b/dist/cjs/ultramodern-workspace/module-federation/config.cjs
+@@ -46,19 +46,18 @@ const external_shared_config_cjs_namespaceObject = require("./shared-config.cjs"
+ function createAppModernConfig(scope, app, remotes = [], enableTailwind = true, configuredDevPorts) {
+     const deliveryUnit = (0, external_delivery_unit_cjs_namespaceObject.createDeliveryUnitRecord)(scope, app);
+     const emitsUi = (0, external_descriptors_cjs_namespaceObject.appEmitsBrowserUi)(app);
+-    const bffImport = (0, external_descriptors_cjs_namespaceObject.appHasApi)(app) ? "import { bffPlugin } from '@modern-js/plugin-bff';\n" : '';
++    const hasApi = (0, external_descriptors_cjs_namespaceObject.appHasApi)(app);
++    const bffImport = hasApi ? "import { bffPlugin } from '@modern-js/plugin-bff';\n" : '';
+     const uiImports = emitsUi ? `import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
+ import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
+ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
++
++const localisedUrls = ultramodernLocalisedUrls;
+ ` : '';
+-    const zephyrPluginSource = emitsUi ? `const zephyrRspackPlugin = () => ({
++    const zephyrPluginSource = emitsUi ? `const zephyrRspackPlugin = (): CliPlugin<AppTools> => ({
+   name: 'ultramodern-zephyr-rspack-plugin',
+   pre: ['@modern-js/plugin-module-federation-config'],
+-  setup(api: {
+-    modifyRspackConfig: (
+-      handler: ReturnType<typeof withZephyrRspack>,
+-    ) => void;
+-  }) {
++  setup(api) {
+     // Zephyr uploads federated build artifacts to Zephyr Cloud (the fast
+     // rollback path). Uploading REQUIRES a Zephyr Cloud account and, in CI, a
+     // deploy-scoped ZE_CI_TOKEN; without it Zephyr fatally fails to load its
+@@ -81,7 +80,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
+ });
+
+ ` : '';
+-    const localisedUrlsEntry = emitsUi ? '            localisedUrls: ultramodernLocalisedUrls as Record<string, Record<string, string>>,\n' : '';
++    const localisedUrlsEntry = emitsUi ? '            localisedUrls,\n' : '';
+     const uiPluginEntries = emitsUi ? '        moduleFederationPlugin(),\n        zephyrRspackPlugin(),\n' : '';
+     const tailwindImport = enableTailwind ? "import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';\n" : '';
+     const bffConfig = (0, external_descriptors_cjs_namespaceObject.appHasApi)(app) ? `      bff: {
+@@ -117,17 +116,16 @@ ${(0, external_descriptors_cjs_namespaceObject.distributedSsrExposes)(service).m
+           ],
+ ` : '';
+     const defaultAssetPrefixSource = 'shell' === app.kind ? "const defaultAssetPrefix = '/';" : `const remoteAssetOrigin =
+-  configuredCloudflareUrl ||
+-  inferredCloudflareUrl ||
++  configuredCloudflareUrl ??
++  inferredCloudflareUrl ??
+   (cloudflareDeployEnabled ? '' : \`http://localhost:\${port}\`);
+ // When deploying to Cloudflare without a configured public URL, publish an
+ // 'auto' publicPath so the remote resolves its chunks from the origin its
+ // remoteEntry.js was loaded from (the vertical's Worker), not the host shell's
+ // origin — otherwise cross-origin chunk loading 404s and MF reports an empty
+ // moduleId. A configured/inferred URL still wins as an absolute prefix.
+-const defaultRemoteAssetPrefix = remoteAssetOrigin
+-  ? \`\${remoteAssetOrigin.replace(/\\/+$/u, '')}/\`
+-  : 'auto';
++const defaultRemoteAssetPrefix =
++  remoteAssetOrigin.length > 0 ? \`\${remoteAssetOrigin.replace(/\\/+$/u, '')}/\` : 'auto';
+ const defaultAssetPrefix = defaultRemoteAssetPrefix;`;
+     const devAssetPrefixSource = 'shell' === app.kind ? `        // Keep shell dev assets origin-relative so the shell works through
+         // tunnels and local previews without rewriting its own chunks.
+@@ -142,7 +140,7 @@ const defaultAssetPrefix = defaultRemoteAssetPrefix;`;
+         ]).filter((port)=>'number' == typeof port && Number.isFinite(port)))
+     ].toSorted((left, right)=>left - right);
+     const legacyCorsSource = `const moduleFederationDevServerOrigin =
+-  envValue('ULTRAMODERN_MF_DEV_ORIGIN') || 'http://localhost:${external_descriptors_cjs_namespaceObject.shellApp.port}';`;
++  envValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:${external_descriptors_cjs_namespaceObject.shellApp.port}';`;
+     const configuredCorsSource = `const moduleFederationDevServerAllowedOrigins = [
+ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+ ];`;
+@@ -154,6 +152,103 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+           },
+         },`;
+     const useConfiguredCorsAllowlist = void 0 !== configuredDevPorts;
++    const hasApiRspackCompatibility = hasApi;
++    const apiRspackImports = hasApiRspackCompatibility ? "import path from 'node:path';\nimport { fileURLToPath } from 'node:url';\n" : '';
++    const apiRspackRuntimeSource = hasApiRspackCompatibility ? `const resolvePostgresProtocolCommonJsEntry = () =>
++  fileURLToPath(new URL('../pg-protocol/dist/index.js', import.meta.resolve('pg/package.json')));
++const resolvePostgresPoolCommonJsEntry = () =>
++  createRequire(import.meta.resolve('pg/package.json')).resolve('pg-pool');
++const resolveEffectApiSourceDirectory = () => fileURLToPath(new URL('api/', import.meta.url));
++const nodeBuiltinRequests = new Set(
++  cloudflareDeployEnabled ? builtinModules.flatMap((name) => [name, \`node:\${name}\`]) : [],
++);
++/* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. */
++const cloudflareRuntimeExternal = (
++  { dependencyType, request }: { dependencyType?: string; request?: string },
++  callback: (error?: Error, result?: string | string[], type?: 'module-import') => void,
++) => {
++  const nativeModuleImport = (specifier: string) =>
++    dependencyType?.startsWith('commonjs') === true ? [specifier, 'default'] : specifier;
++  if (request === 'cloudflare:sockets') {
++    callback(undefined, nativeModuleImport(request), 'module-import');
++    return;
++  }
++  if (request !== undefined && nodeBuiltinRequests.has(request)) {
++    callback(
++      undefined,
++      nativeModuleImport(request.startsWith('node:') ? request : \`node:\${request}\`),
++      'module-import',
++    );
++    return;
++  }
++  callback();
++};
++/* oxlint-enable promise/prefer-await-to-callbacks */\n` : '';
++    const apiRspackToolsSource = hasApiRspackCompatibility ? `        rspack: (config, { environment, rspack }) => {
++          if (!cloudflareDeployEnabled) {
++            return;
++          }
++          const configuredAliases = config.resolve.alias;
++          config.resolve.alias =
++            configuredAliases === false || configuredAliases === undefined ? {} : configuredAliases;
++          Object.assign(config.resolve.alias, {
++            'pg-pool$': resolvePostgresPoolCommonJsEntry(),
++            'pg-protocol$': resolvePostgresProtocolCommonJsEntry(),
++          });
++          const configuredExternals = config.externals;
++          config.externals = [cloudflareRuntimeExternal];
++          if (configuredExternals !== undefined) {
++            config.externals.push(
++              ...(Array.isArray(configuredExternals) ? configuredExternals : [configuredExternals]),
++            );
++          }
++          if (environment.name === 'workerSSR') {
++            const effectApiSourceDirectory = resolveEffectApiSourceDirectory();
++            const configuredNode = config.node;
++            config.node =
++              configuredNode === false || configuredNode === undefined ? {} : configuredNode;
++            Object.assign(config.node, {
++              __dirname: false,
++              __filename: false,
++            });
++            config.plugins.push(
++              new rspack.DefinePlugin({
++                'globalThis.FinalizationRegistry': 'undefined',
++              }),
++              new rspack.NormalModuleReplacementPlugin(/[?&]loaderId=/u, (resource) => {
++                resource.request = resource.request.replace(
++                  /(?<separator>[?&])retain=[^&]*/u,
++                  '$<separator>retain=true',
++                );
++              }),
++              new rspack.NormalModuleReplacementPlugin(/^\\.\\.?[/\\\\]/u, (resource) => {
++                const [requestPath] = resource.request.split('?', 1);
++                if (
++                  requestPath !== undefined &&
++                  path
++                    .resolve(resource.context, requestPath)
++                    .startsWith(effectApiSourceDirectory) &&
++                  !resource.request.includes('modern-bff-runtime-source')
++                ) {
++                  resource.request = \`\${resource.request}?modern-bff-runtime-source\`;
++                }
++              }),
++            );
++          }
++        },
++` : '';
++    const legacyCorsHeadersSource = `const appDevServerHeaders: NonNullable<
++  NonNullable<NonNullable<AppToolsUserConfig['dev']>['server']>['headers']
++> = {
++  'Access-Control-Allow-Headers': 'Accept, Authorization, Content-Type, X-Requested-With',
++  'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
++  'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,
++};
++
++`;
++    const legacyCorsDevServer = `        server: {
++          headers: appDevServerHeaders,
++        },`;
+     const configuredCorsHeader = useConfiguredCorsAllowlist ? 1 === developmentPorts.length ? "'Access-Control-Allow-Origin': moduleFederationDevServerAllowedOrigins[0]," : '' : "'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,";
+     return (0, external_fs_io_cjs_namespaceObject.renderFileTemplate)('workspace/apps/modern.config.ts', {
+         value0: `${bffImport}${tailwindImport}`,
+@@ -176,7 +271,7 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+         value17: (0, external_naming_cjs_namespaceObject.createRspackChunkLoadingGlobal)(app),
+         value18: tailwindBuilderPluginsConfig,
+         value19: useConfiguredCorsAllowlist ? configuredCorsSource : legacyCorsSource,
+-        value20: useConfiguredCorsAllowlist ? configuredCorsDevServer : '',
++        value20: useConfiguredCorsAllowlist ? configuredCorsDevServer : legacyCorsDevServer,
+         value21: configuredCorsHeader,
+         value22: uiImports,
+         value23: zephyrPluginSource,
+@@ -184,7 +279,14 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+         value25: uiPluginEntries,
+         value26: deliveryUnit.unitId,
+         value27: deliveryUnit.buildMarker,
+-        value28: deliveryUnit.version
++        value28: deliveryUnit.version,
++        value29: hasApiRspackCompatibility ? 'builtinModules, ' : '',
++        value30: apiRspackImports,
++        value31: apiRspackRuntimeSource,
++        value32: apiRspackToolsSource,
++        value33: useConfiguredCorsAllowlist ? '' : legacyCorsHeadersSource,
++        value34: emitsUi ? 'AppTools, ' : '',
++        value35: emitsUi ? ', CliPlugin' : ''
+     });
+ }
+ function createModuleFederationBridgeConfig(enableBridgeRouter) {
+@@ -239,15 +341,15 @@ export default moduleFederationConfig;
+ function createBackendModuleFederationConfig(app) {
+     return `import { createRequire } from 'node:module';
+ import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
++import * as Schema from 'effect/Schema';
+ import { dependencies } from './package.json';
+
+ const require = createRequire(import.meta.url);
+-const bffVersion = (
+-  require('@modern-js/plugin-bff/package.json') as { version: string }
+-).version;
+-const effectVersion = (
+-  require('effect/package.json') as { version: string }
+-).version;
++const PackageVersionSchema = Schema.Struct({ version: Schema.String });
++const packageVersion = (specifier: string): string =>
++  Schema.decodeUnknownSync(PackageVersionSchema)(require(specifier)).version;
++const bffVersion = packageVersion('@modern-js/plugin-bff/package.json');
++const effectVersion = packageVersion('effect/package.json');
+
+ const moduleFederationConfig: Parameters<
+   typeof createModuleFederationConfig
+diff --git a/dist/cjs/ultramodern-workspace/module-federation/reexport-module.cjs b/dist/cjs/ultramodern-workspace/module-federation/reexport-module.cjs
+index ef811e6023d5790d8d0bb388455f3b59e9a25707..69a2929c4a71799340a5838d8b52cbed879e8130 100644
+--- a/dist/cjs/ultramodern-workspace/module-federation/reexport-module.cjs
++++ b/dist/cjs/ultramodern-workspace/module-federation/reexport-module.cjs
+@@ -47,14 +47,24 @@ function createUltramodernBuildModule(scope, app) {
+ declare const ULTRAMODERN_SOURCE_REVISION: string;
+
+ const ultramodernGeneratedBuildArtifact = ${JSON.stringify((0, universal_namespaceObject.createUltramodernBuildArtifact)(record), null, 2)} as const;
+-const ultramodernBuildMarker =
+-  typeof ULTRAMODERN_BUILD_MARKER === 'string'
+-    ? ULTRAMODERN_BUILD_MARKER
+-    : ultramodernGeneratedBuildArtifact.deliveryUnit.buildMarker;
+-const ultramodernSourceRevision =
+-  typeof ULTRAMODERN_SOURCE_REVISION === 'string'
+-    ? ULTRAMODERN_SOURCE_REVISION
+-    : ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision;
++const readInjectedBuildMarker = (): string => {
++  try {
++    return ULTRAMODERN_BUILD_MARKER;
++  } catch {
++    return ultramodernGeneratedBuildArtifact.deliveryUnit.buildMarker;
++  }
++};
++
++const readInjectedSourceRevision = (): string => {
++  try {
++    return ULTRAMODERN_SOURCE_REVISION;
++  } catch {
++    return ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision;
++  }
++};
++
++const ultramodernBuildMarker = readInjectedBuildMarker();
++const ultramodernSourceRevision = readInjectedSourceRevision();
+ const ultramodernBuildArtifact = {
+   ...ultramodernGeneratedBuildArtifact,
+   deliveryUnit: {
+diff --git a/dist/cjs/ultramodern-workspace/workspace-script-plan.cjs b/dist/cjs/ultramodern-workspace/workspace-script-plan.cjs
+index 95812d7b858909ac118b28bdba1dc3845576f60a..005679b4802826a50820613417c7732db03ec7b5 100644
+--- a/dist/cjs/ultramodern-workspace/workspace-script-plan.cjs
++++ b/dist/cjs/ultramodern-workspace/workspace-script-plan.cjs
+@@ -144,7 +144,7 @@ function createWorkspaceRootScriptPlan(remotes = [], options = {}) {
+         migrateStrictEffect: rootToolingWrapperCommand('migrateStrictEffect'),
+         zeropsMaterialize: "node ./scripts/materialize-zerops-runtime.mjs",
+         contractCheck: rootToolingWrapperCommand('validate'),
+-        typecheck: options.typecheck ?? `${rootToolingWrapperCommand('typecheck')} --project tsconfig.json`,
++        typecheck: options.typecheck ?? `${rootToolingWrapperCommand('typecheck')} --build tsconfig.json`,
+         check: `pnpm format:check && pnpm lint && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness${bridgeCheck}`
+     };
+ }
+diff --git a/dist/esm/ultramodern-workspace/demo-components.js b/dist/esm/ultramodern-workspace/demo-components.js
+index 4baf232ad01064de66c3dcf8b913a99b4754e5ce..3b5ff3fbf21fdd396bd0a230457798e07a6603fd 100644
+--- a/dist/esm/ultramodern-workspace/demo-components.js
++++ b/dist/esm/ultramodern-workspace/demo-components.js
+@@ -266,13 +266,13 @@ function createLayout(appId) {
+     return `import { Outlet } from '@modern-js/plugin-tanstack/runtime';
+ import './index.css';
+
+-export default function Layout() {
+-  return (
+-    <div data-app-id="${appId}">
+-      <Outlet />
+-    </div>
+-  );
+-}
++const Layout = () => (
++  <div data-app-id="${appId}">
++    <Outlet />
++  </div>
++);
++
++export default Layout;
+ `;
+ }
+ function createRemoteEntry(app) {
 diff --git a/dist/esm/ultramodern-workspace/mf-validation/constants.js b/dist/esm/ultramodern-workspace/mf-validation/constants.js
 index eb2e286b9e3f8dfd6fdb3b0e4473efcc87d2f0a6..32509a4e998fa4dec3ef4d53fc58a5a2b92c3a20 100644
 --- a/dist/esm/ultramodern-workspace/mf-validation/constants.js
@@ -22,6 +370,329 @@ index eb2e286b9e3f8dfd6fdb3b0e4473efcc87d2f0a6..32509a4e998fa4dec3ef4d53fc58a5a2
  const generatedMetadataPaths = [
      '.modernjs/ultramodern.json'
  ];
+diff --git a/dist/esm/ultramodern-workspace/mf-validation/inspect.js b/dist/esm/ultramodern-workspace/mf-validation/inspect.js
+index d3d50e38814b4f1c95815a1bb61065c163ab8772..7f8bc5f5d7699225fadf3d711ab0571fbc4f2e68 100644
+--- a/dist/esm/ultramodern-workspace/mf-validation/inspect.js
++++ b/dist/esm/ultramodern-workspace/mf-validation/inspect.js
+@@ -11,8 +11,12 @@ function extractExposes(configPath, value) {
+     if (array) return array.sort();
+     throw new Error(`Cannot statically extract Module Federation exposes from ${configPath}; use a literal exposes object or string array.`);
+ }
+-function extractDtsSettings(configPath, value) {
++function extractDtsSettings(configPath, value, allowDisabled) {
+     if (void 0 === value) return {};
++    if (value.trim() === 'false') {
++        if (!allowDisabled) throw new Error(`Module Federation DTS cannot be disabled for exposed app ${configPath}.`);
++        return {};
++    }
+     const dts = parseObjectLiteral(value);
+     if (!dts || dts.hasSpread) throw new Error(`Cannot statically extract Module Federation DTS settings from ${configPath}; use a literal dts object.`);
+     const generateTypes = parseObjectLiteral(dts.properties.get('generateTypes'));
+@@ -38,7 +42,7 @@ function inspectModuleFederationConfigSource(source, appDir, configPath) {
+     return {
+         appDir,
+         configPath,
+-        dts: extractDtsSettings(configPath, properties.properties.get('dts')),
++        dts: extractDtsSettings(configPath, properties.properties.get('dts'), exposes.length === 0),
+         exposes,
+         hostOnlyNoExposes
+     };
+diff --git a/dist/esm/ultramodern-workspace/module-federation/config.js b/dist/esm/ultramodern-workspace/module-federation/config.js
+index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..91c854c35dac43d6e55a23e6692aeba13e7f9063 100644
+--- a/dist/esm/ultramodern-workspace/module-federation/config.js
++++ b/dist/esm/ultramodern-workspace/module-federation/config.js
+@@ -11,19 +11,18 @@ import { createSharedModuleFederationConfig, formatTsObjectLiteral } from "./sha
+ function createAppModernConfig(scope, app, remotes = [], enableTailwind = true, configuredDevPorts) {
+     const deliveryUnit = createDeliveryUnitRecord(scope, app);
+     const emitsUi = appEmitsBrowserUi(app);
+-    const bffImport = appHasApi(app) ? "import { bffPlugin } from '@modern-js/plugin-bff';\n" : '';
++    const hasApi = appHasApi(app);
++    const bffImport = hasApi ? "import { bffPlugin } from '@modern-js/plugin-bff';\n" : '';
+     const uiImports = emitsUi ? `import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
+ import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
+ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
++
++const localisedUrls = ultramodernLocalisedUrls;
+ ` : '';
+-    const zephyrPluginSource = emitsUi ? `const zephyrRspackPlugin = () => ({
++    const zephyrPluginSource = emitsUi ? `const zephyrRspackPlugin = (): CliPlugin<AppTools> => ({
+   name: 'ultramodern-zephyr-rspack-plugin',
+   pre: ['@modern-js/plugin-module-federation-config'],
+-  setup(api: {
+-    modifyRspackConfig: (
+-      handler: ReturnType<typeof withZephyrRspack>,
+-    ) => void;
+-  }) {
++  setup(api) {
+     // Zephyr uploads federated build artifacts to Zephyr Cloud (the fast
+     // rollback path). Uploading REQUIRES a Zephyr Cloud account and, in CI, a
+     // deploy-scoped ZE_CI_TOKEN; without it Zephyr fatally fails to load its
+@@ -46,7 +45,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
+ });
+
+ ` : '';
+-    const localisedUrlsEntry = emitsUi ? '            localisedUrls: ultramodernLocalisedUrls as Record<string, Record<string, string>>,\n' : '';
++    const localisedUrlsEntry = emitsUi ? '            localisedUrls,\n' : '';
+     const uiPluginEntries = emitsUi ? '        moduleFederationPlugin(),\n        zephyrRspackPlugin(),\n' : '';
+     const tailwindImport = enableTailwind ? "import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';\n" : '';
+     const bffConfig = appHasApi(app) ? `      bff: {
+@@ -82,17 +81,16 @@ ${distributedSsrExposes(service).map((expose)=>`                {
+           ],
+ ` : '';
+     const defaultAssetPrefixSource = 'shell' === app.kind ? "const defaultAssetPrefix = '/';" : `const remoteAssetOrigin =
+-  configuredCloudflareUrl ||
+-  inferredCloudflareUrl ||
++  configuredCloudflareUrl ??
++  inferredCloudflareUrl ??
+   (cloudflareDeployEnabled ? '' : \`http://localhost:\${port}\`);
+ // When deploying to Cloudflare without a configured public URL, publish an
+ // 'auto' publicPath so the remote resolves its chunks from the origin its
+ // remoteEntry.js was loaded from (the vertical's Worker), not the host shell's
+ // origin — otherwise cross-origin chunk loading 404s and MF reports an empty
+ // moduleId. A configured/inferred URL still wins as an absolute prefix.
+-const defaultRemoteAssetPrefix = remoteAssetOrigin
+-  ? \`\${remoteAssetOrigin.replace(/\\/+$/u, '')}/\`
+-  : 'auto';
++const defaultRemoteAssetPrefix =
++  remoteAssetOrigin.length > 0 ? \`\${remoteAssetOrigin.replace(/\\/+$/u, '')}/\` : 'auto';
+ const defaultAssetPrefix = defaultRemoteAssetPrefix;`;
+     const devAssetPrefixSource = 'shell' === app.kind ? `        // Keep shell dev assets origin-relative so the shell works through
+         // tunnels and local previews without rewriting its own chunks.
+@@ -107,7 +105,7 @@ const defaultAssetPrefix = defaultRemoteAssetPrefix;`;
+         ]).filter((port)=>'number' == typeof port && Number.isFinite(port)))
+     ].toSorted((left, right)=>left - right);
+     const legacyCorsSource = `const moduleFederationDevServerOrigin =
+-  envValue('ULTRAMODERN_MF_DEV_ORIGIN') || 'http://localhost:${shellApp.port}';`;
++  envValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:${shellApp.port}';`;
+     const configuredCorsSource = `const moduleFederationDevServerAllowedOrigins = [
+ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+ ];`;
+@@ -119,6 +117,103 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+           },
+         },`;
+     const useConfiguredCorsAllowlist = void 0 !== configuredDevPorts;
++    const hasApiRspackCompatibility = hasApi;
++    const apiRspackImports = hasApiRspackCompatibility ? "import path from 'node:path';\nimport { fileURLToPath } from 'node:url';\n" : '';
++    const apiRspackRuntimeSource = hasApiRspackCompatibility ? `const resolvePostgresProtocolCommonJsEntry = () =>
++  fileURLToPath(new URL('../pg-protocol/dist/index.js', import.meta.resolve('pg/package.json')));
++const resolvePostgresPoolCommonJsEntry = () =>
++  createRequire(import.meta.resolve('pg/package.json')).resolve('pg-pool');
++const resolveEffectApiSourceDirectory = () => fileURLToPath(new URL('api/', import.meta.url));
++const nodeBuiltinRequests = new Set(
++  cloudflareDeployEnabled ? builtinModules.flatMap((name) => [name, \`node:\${name}\`]) : [],
++);
++/* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. */
++const cloudflareRuntimeExternal = (
++  { dependencyType, request }: { dependencyType?: string; request?: string },
++  callback: (error?: Error, result?: string | string[], type?: 'module-import') => void,
++) => {
++  const nativeModuleImport = (specifier: string) =>
++    dependencyType?.startsWith('commonjs') === true ? [specifier, 'default'] : specifier;
++  if (request === 'cloudflare:sockets') {
++    callback(undefined, nativeModuleImport(request), 'module-import');
++    return;
++  }
++  if (request !== undefined && nodeBuiltinRequests.has(request)) {
++    callback(
++      undefined,
++      nativeModuleImport(request.startsWith('node:') ? request : \`node:\${request}\`),
++      'module-import',
++    );
++    return;
++  }
++  callback();
++};
++/* oxlint-enable promise/prefer-await-to-callbacks */\n` : '';
++    const apiRspackToolsSource = hasApiRspackCompatibility ? `        rspack: (config, { environment, rspack }) => {
++          if (!cloudflareDeployEnabled) {
++            return;
++          }
++          const configuredAliases = config.resolve.alias;
++          config.resolve.alias =
++            configuredAliases === false || configuredAliases === undefined ? {} : configuredAliases;
++          Object.assign(config.resolve.alias, {
++            'pg-pool$': resolvePostgresPoolCommonJsEntry(),
++            'pg-protocol$': resolvePostgresProtocolCommonJsEntry(),
++          });
++          const configuredExternals = config.externals;
++          config.externals = [cloudflareRuntimeExternal];
++          if (configuredExternals !== undefined) {
++            config.externals.push(
++              ...(Array.isArray(configuredExternals) ? configuredExternals : [configuredExternals]),
++            );
++          }
++          if (environment.name === 'workerSSR') {
++            const effectApiSourceDirectory = resolveEffectApiSourceDirectory();
++            const configuredNode = config.node;
++            config.node =
++              configuredNode === false || configuredNode === undefined ? {} : configuredNode;
++            Object.assign(config.node, {
++              __dirname: false,
++              __filename: false,
++            });
++            config.plugins.push(
++              new rspack.DefinePlugin({
++                'globalThis.FinalizationRegistry': 'undefined',
++              }),
++              new rspack.NormalModuleReplacementPlugin(/[?&]loaderId=/u, (resource) => {
++                resource.request = resource.request.replace(
++                  /(?<separator>[?&])retain=[^&]*/u,
++                  '$<separator>retain=true',
++                );
++              }),
++              new rspack.NormalModuleReplacementPlugin(/^\\.\\.?[/\\\\]/u, (resource) => {
++                const [requestPath] = resource.request.split('?', 1);
++                if (
++                  requestPath !== undefined &&
++                  path
++                    .resolve(resource.context, requestPath)
++                    .startsWith(effectApiSourceDirectory) &&
++                  !resource.request.includes('modern-bff-runtime-source')
++                ) {
++                  resource.request = \`\${resource.request}?modern-bff-runtime-source\`;
++                }
++              }),
++            );
++          }
++        },
++` : '';
++    const legacyCorsHeadersSource = `const appDevServerHeaders: NonNullable<
++  NonNullable<NonNullable<AppToolsUserConfig['dev']>['server']>['headers']
++> = {
++  'Access-Control-Allow-Headers': 'Accept, Authorization, Content-Type, X-Requested-With',
++  'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
++  'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,
++};
++
++`;
++    const legacyCorsDevServer = `        server: {
++          headers: appDevServerHeaders,
++        },`;
+     const configuredCorsHeader = useConfiguredCorsAllowlist ? 1 === developmentPorts.length ? "'Access-Control-Allow-Origin': moduleFederationDevServerAllowedOrigins[0]," : '' : "'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,";
+     return renderFileTemplate('workspace/apps/modern.config.ts', {
+         value0: `${bffImport}${tailwindImport}`,
+@@ -141,7 +236,7 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+         value17: createRspackChunkLoadingGlobal(app),
+         value18: tailwindBuilderPluginsConfig,
+         value19: useConfiguredCorsAllowlist ? configuredCorsSource : legacyCorsSource,
+-        value20: useConfiguredCorsAllowlist ? configuredCorsDevServer : '',
++        value20: useConfiguredCorsAllowlist ? configuredCorsDevServer : legacyCorsDevServer,
+         value21: configuredCorsHeader,
+         value22: uiImports,
+         value23: zephyrPluginSource,
+@@ -149,7 +244,14 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+         value25: uiPluginEntries,
+         value26: deliveryUnit.unitId,
+         value27: deliveryUnit.buildMarker,
+-        value28: deliveryUnit.version
++        value28: deliveryUnit.version,
++        value29: hasApiRspackCompatibility ? 'builtinModules, ' : '',
++        value30: apiRspackImports,
++        value31: apiRspackRuntimeSource,
++        value32: apiRspackToolsSource,
++        value33: useConfiguredCorsAllowlist ? '' : legacyCorsHeadersSource,
++        value34: emitsUi ? 'AppTools, ' : '',
++        value35: emitsUi ? ', CliPlugin' : ''
+     });
+ }
+ function createModuleFederationBridgeConfig(enableBridgeRouter) {
+@@ -204,15 +306,15 @@ export default moduleFederationConfig;
+ function createBackendModuleFederationConfig(app) {
+     return `import { createRequire } from 'node:module';
+ import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
++import * as Schema from 'effect/Schema';
+ import { dependencies } from './package.json';
+
+ const require = createRequire(import.meta.url);
+-const bffVersion = (
+-  require('@modern-js/plugin-bff/package.json') as { version: string }
+-).version;
+-const effectVersion = (
+-  require('effect/package.json') as { version: string }
+-).version;
++const PackageVersionSchema = Schema.Struct({ version: Schema.String });
++const packageVersion = (specifier: string): string =>
++  Schema.decodeUnknownSync(PackageVersionSchema)(require(specifier)).version;
++const bffVersion = packageVersion('@modern-js/plugin-bff/package.json');
++const effectVersion = packageVersion('effect/package.json');
+
+ const moduleFederationConfig: Parameters<
+   typeof createModuleFederationConfig
+diff --git a/dist/esm/ultramodern-workspace/module-federation/reexport-module.js b/dist/esm/ultramodern-workspace/module-federation/reexport-module.js
+index 1e2bef1edab5bff011cc1913b7746c39312ca90b..d8b5407100b33140151d7044abbcf828ea61017a 100644
+--- a/dist/esm/ultramodern-workspace/module-federation/reexport-module.js
++++ b/dist/esm/ultramodern-workspace/module-federation/reexport-module.js
+@@ -13,14 +13,24 @@ function createUltramodernBuildModule(scope, app) {
+ declare const ULTRAMODERN_SOURCE_REVISION: string;
+
+ const ultramodernGeneratedBuildArtifact = ${JSON.stringify(createUltramodernBuildArtifact(record), null, 2)} as const;
+-const ultramodernBuildMarker =
+-  typeof ULTRAMODERN_BUILD_MARKER === 'string'
+-    ? ULTRAMODERN_BUILD_MARKER
+-    : ultramodernGeneratedBuildArtifact.deliveryUnit.buildMarker;
+-const ultramodernSourceRevision =
+-  typeof ULTRAMODERN_SOURCE_REVISION === 'string'
+-    ? ULTRAMODERN_SOURCE_REVISION
+-    : ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision;
++const readInjectedBuildMarker = (): string => {
++  try {
++    return ULTRAMODERN_BUILD_MARKER;
++  } catch {
++    return ultramodernGeneratedBuildArtifact.deliveryUnit.buildMarker;
++  }
++};
++
++const readInjectedSourceRevision = (): string => {
++  try {
++    return ULTRAMODERN_SOURCE_REVISION;
++  } catch {
++    return ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision;
++  }
++};
++
++const ultramodernBuildMarker = readInjectedBuildMarker();
++const ultramodernSourceRevision = readInjectedSourceRevision();
+ const ultramodernBuildArtifact = {
+   ...ultramodernGeneratedBuildArtifact,
+   deliveryUnit: {
+diff --git a/dist/esm/ultramodern-workspace/workspace-script-plan.js b/dist/esm/ultramodern-workspace/workspace-script-plan.js
+index 683e43743c53e41b163455e8c8138929a44480c2..2d082066f2c5f5b489ec69d9fd7faa4dad5a8ce6 100644
+--- a/dist/esm/ultramodern-workspace/workspace-script-plan.js
++++ b/dist/esm/ultramodern-workspace/workspace-script-plan.js
+@@ -108,7 +108,7 @@ function createWorkspaceRootScriptPlan(remotes = [], options = {}) {
+         migrateStrictEffect: rootToolingWrapperCommand('migrateStrictEffect'),
+         zeropsMaterialize: "node ./scripts/materialize-zerops-runtime.mjs",
+         contractCheck: rootToolingWrapperCommand('validate'),
+-        typecheck: options.typecheck ?? `${rootToolingWrapperCommand('typecheck')} --project tsconfig.json`,
++        typecheck: options.typecheck ?? `${rootToolingWrapperCommand('typecheck')} --build tsconfig.json`,
+         check: `pnpm format:check && pnpm lint && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness${bridgeCheck}`
+     };
+ }
+diff --git a/dist/esm-node/ultramodern-workspace/demo-components.js b/dist/esm-node/ultramodern-workspace/demo-components.js
+index 503564abb6a3ea1be8e3c209197f55ef49b6209f..d0e7878f9d82d9fe8996ed1987eee2f9c12a0862 100644
+--- a/dist/esm-node/ultramodern-workspace/demo-components.js
++++ b/dist/esm-node/ultramodern-workspace/demo-components.js
+@@ -267,13 +267,13 @@ function createLayout(appId) {
+     return `import { Outlet } from '@modern-js/plugin-tanstack/runtime';
+ import './index.css';
+
+-export default function Layout() {
+-  return (
+-    <div data-app-id="${appId}">
+-      <Outlet />
+-    </div>
+-  );
+-}
++const Layout = () => (
++  <div data-app-id="${appId}">
++    <Outlet />
++  </div>
++);
++
++export default Layout;
+ `;
+ }
+ function createRemoteEntry(app) {
 diff --git a/dist/esm-node/ultramodern-workspace/mf-validation/constants.js b/dist/esm-node/ultramodern-workspace/mf-validation/constants.js
 index f52edfd11fbd7ade07b5b37ec90186e66f3573b8..cfdd41d84464e05894479b3e4c09a28f3f952e38 100644
 --- a/dist/esm-node/ultramodern-workspace/mf-validation/constants.js
@@ -34,6 +705,304 @@ index f52edfd11fbd7ade07b5b37ec90186e66f3573b8..cfdd41d84464e05894479b3e4c09a28f
  const generatedMetadataPaths = [
      '.modernjs/ultramodern.json'
  ];
+diff --git a/dist/esm-node/ultramodern-workspace/mf-validation/inspect.js b/dist/esm-node/ultramodern-workspace/mf-validation/inspect.js
+index c333334745820eaf95b7a9783e481b500c669590..5bfe33f755f0ad4460fb93a47f4f2fd042067afc 100644
+--- a/dist/esm-node/ultramodern-workspace/mf-validation/inspect.js
++++ b/dist/esm-node/ultramodern-workspace/mf-validation/inspect.js
+@@ -12,8 +12,12 @@ function extractExposes(configPath, value) {
+     if (array) return array.sort();
+     throw new Error(`Cannot statically extract Module Federation exposes from ${configPath}; use a literal exposes object or string array.`);
+ }
+-function extractDtsSettings(configPath, value) {
++function extractDtsSettings(configPath, value, allowDisabled) {
+     if (void 0 === value) return {};
++    if (value.trim() === 'false') {
++        if (!allowDisabled) throw new Error(`Module Federation DTS cannot be disabled for exposed app ${configPath}.`);
++        return {};
++    }
+     const dts = parseObjectLiteral(value);
+     if (!dts || dts.hasSpread) throw new Error(`Cannot statically extract Module Federation DTS settings from ${configPath}; use a literal dts object.`);
+     const generateTypes = parseObjectLiteral(dts.properties.get('generateTypes'));
+@@ -39,7 +43,7 @@ function inspectModuleFederationConfigSource(source, appDir, configPath) {
+     return {
+         appDir,
+         configPath,
+-        dts: extractDtsSettings(configPath, properties.properties.get('dts')),
++        dts: extractDtsSettings(configPath, properties.properties.get('dts'), exposes.length === 0),
+         exposes,
+         hostOnlyNoExposes
+     };
+diff --git a/dist/esm-node/ultramodern-workspace/module-federation/config.js b/dist/esm-node/ultramodern-workspace/module-federation/config.js
+index 5956501f8ec070d086690b2be4096c40c0c249c0..079df825aa7f0c60040d7dc6e253417ca923cc4a 100644
+--- a/dist/esm-node/ultramodern-workspace/module-federation/config.js
++++ b/dist/esm-node/ultramodern-workspace/module-federation/config.js
+@@ -12,19 +12,18 @@ import { createSharedModuleFederationConfig, formatTsObjectLiteral } from "./sha
+ function createAppModernConfig(scope, app, remotes = [], enableTailwind = true, configuredDevPorts) {
+     const deliveryUnit = createDeliveryUnitRecord(scope, app);
+     const emitsUi = appEmitsBrowserUi(app);
+-    const bffImport = appHasApi(app) ? "import { bffPlugin } from '@modern-js/plugin-bff';\n" : '';
++    const hasApi = appHasApi(app);
++    const bffImport = hasApi ? "import { bffPlugin } from '@modern-js/plugin-bff';\n" : '';
+     const uiImports = emitsUi ? `import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
+ import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
+ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
++
++const localisedUrls = ultramodernLocalisedUrls;
+ ` : '';
+-    const zephyrPluginSource = emitsUi ? `const zephyrRspackPlugin = () => ({
++    const zephyrPluginSource = emitsUi ? `const zephyrRspackPlugin = (): CliPlugin<AppTools> => ({
+   name: 'ultramodern-zephyr-rspack-plugin',
+   pre: ['@modern-js/plugin-module-federation-config'],
+-  setup(api: {
+-    modifyRspackConfig: (
+-      handler: ReturnType<typeof withZephyrRspack>,
+-    ) => void;
+-  }) {
++  setup(api) {
+     // Zephyr uploads federated build artifacts to Zephyr Cloud (the fast
+     // rollback path). Uploading REQUIRES a Zephyr Cloud account and, in CI, a
+     // deploy-scoped ZE_CI_TOKEN; without it Zephyr fatally fails to load its
+@@ -47,7 +46,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
+ });
+
+ ` : '';
+-    const localisedUrlsEntry = emitsUi ? '            localisedUrls: ultramodernLocalisedUrls as Record<string, Record<string, string>>,\n' : '';
++    const localisedUrlsEntry = emitsUi ? '            localisedUrls,\n' : '';
+     const uiPluginEntries = emitsUi ? '        moduleFederationPlugin(),\n        zephyrRspackPlugin(),\n' : '';
+     const tailwindImport = enableTailwind ? "import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';\n" : '';
+     const bffConfig = appHasApi(app) ? `      bff: {
+@@ -83,17 +82,16 @@ ${distributedSsrExposes(service).map((expose)=>`                {
+           ],
+ ` : '';
+     const defaultAssetPrefixSource = 'shell' === app.kind ? "const defaultAssetPrefix = '/';" : `const remoteAssetOrigin =
+-  configuredCloudflareUrl ||
+-  inferredCloudflareUrl ||
++  configuredCloudflareUrl ??
++  inferredCloudflareUrl ??
+   (cloudflareDeployEnabled ? '' : \`http://localhost:\${port}\`);
+ // When deploying to Cloudflare without a configured public URL, publish an
+ // 'auto' publicPath so the remote resolves its chunks from the origin its
+ // remoteEntry.js was loaded from (the vertical's Worker), not the host shell's
+ // origin — otherwise cross-origin chunk loading 404s and MF reports an empty
+ // moduleId. A configured/inferred URL still wins as an absolute prefix.
+-const defaultRemoteAssetPrefix = remoteAssetOrigin
+-  ? \`\${remoteAssetOrigin.replace(/\\/+$/u, '')}/\`
+-  : 'auto';
++const defaultRemoteAssetPrefix =
++  remoteAssetOrigin.length > 0 ? \`\${remoteAssetOrigin.replace(/\\/+$/u, '')}/\` : 'auto';
+ const defaultAssetPrefix = defaultRemoteAssetPrefix;`;
+     const devAssetPrefixSource = 'shell' === app.kind ? `        // Keep shell dev assets origin-relative so the shell works through
+         // tunnels and local previews without rewriting its own chunks.
+@@ -108,7 +106,7 @@ const defaultAssetPrefix = defaultRemoteAssetPrefix;`;
+         ]).filter((port)=>'number' == typeof port && Number.isFinite(port)))
+     ].toSorted((left, right)=>left - right);
+     const legacyCorsSource = `const moduleFederationDevServerOrigin =
+-  envValue('ULTRAMODERN_MF_DEV_ORIGIN') || 'http://localhost:${shellApp.port}';`;
++  envValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:${shellApp.port}';`;
+     const configuredCorsSource = `const moduleFederationDevServerAllowedOrigins = [
+ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+ ];`;
+@@ -120,6 +118,103 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+           },
+         },`;
+     const useConfiguredCorsAllowlist = void 0 !== configuredDevPorts;
++    const hasApiRspackCompatibility = hasApi;
++    const apiRspackImports = hasApiRspackCompatibility ? "import path from 'node:path';\nimport { fileURLToPath } from 'node:url';\n" : '';
++    const apiRspackRuntimeSource = hasApiRspackCompatibility ? `const resolvePostgresProtocolCommonJsEntry = () =>
++  fileURLToPath(new URL('../pg-protocol/dist/index.js', import.meta.resolve('pg/package.json')));
++const resolvePostgresPoolCommonJsEntry = () =>
++  createRequire(import.meta.resolve('pg/package.json')).resolve('pg-pool');
++const resolveEffectApiSourceDirectory = () => fileURLToPath(new URL('api/', import.meta.url));
++const nodeBuiltinRequests = new Set(
++  cloudflareDeployEnabled ? builtinModules.flatMap((name) => [name, \`node:\${name}\`]) : [],
++);
++/* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. */
++const cloudflareRuntimeExternal = (
++  { dependencyType, request }: { dependencyType?: string; request?: string },
++  callback: (error?: Error, result?: string | string[], type?: 'module-import') => void,
++) => {
++  const nativeModuleImport = (specifier: string) =>
++    dependencyType?.startsWith('commonjs') === true ? [specifier, 'default'] : specifier;
++  if (request === 'cloudflare:sockets') {
++    callback(undefined, nativeModuleImport(request), 'module-import');
++    return;
++  }
++  if (request !== undefined && nodeBuiltinRequests.has(request)) {
++    callback(
++      undefined,
++      nativeModuleImport(request.startsWith('node:') ? request : \`node:\${request}\`),
++      'module-import',
++    );
++    return;
++  }
++  callback();
++};
++/* oxlint-enable promise/prefer-await-to-callbacks */\n` : '';
++    const apiRspackToolsSource = hasApiRspackCompatibility ? `        rspack: (config, { environment, rspack }) => {
++          if (!cloudflareDeployEnabled) {
++            return;
++          }
++          const configuredAliases = config.resolve.alias;
++          config.resolve.alias =
++            configuredAliases === false || configuredAliases === undefined ? {} : configuredAliases;
++          Object.assign(config.resolve.alias, {
++            'pg-pool$': resolvePostgresPoolCommonJsEntry(),
++            'pg-protocol$': resolvePostgresProtocolCommonJsEntry(),
++          });
++          const configuredExternals = config.externals;
++          config.externals = [cloudflareRuntimeExternal];
++          if (configuredExternals !== undefined) {
++            config.externals.push(
++              ...(Array.isArray(configuredExternals) ? configuredExternals : [configuredExternals]),
++            );
++          }
++          if (environment.name === 'workerSSR') {
++            const effectApiSourceDirectory = resolveEffectApiSourceDirectory();
++            const configuredNode = config.node;
++            config.node =
++              configuredNode === false || configuredNode === undefined ? {} : configuredNode;
++            Object.assign(config.node, {
++              __dirname: false,
++              __filename: false,
++            });
++            config.plugins.push(
++              new rspack.DefinePlugin({
++                'globalThis.FinalizationRegistry': 'undefined',
++              }),
++              new rspack.NormalModuleReplacementPlugin(/[?&]loaderId=/u, (resource) => {
++                resource.request = resource.request.replace(
++                  /(?<separator>[?&])retain=[^&]*/u,
++                  '$<separator>retain=true',
++                );
++              }),
++              new rspack.NormalModuleReplacementPlugin(/^\\.\\.?[/\\\\]/u, (resource) => {
++                const [requestPath] = resource.request.split('?', 1);
++                if (
++                  requestPath !== undefined &&
++                  path
++                    .resolve(resource.context, requestPath)
++                    .startsWith(effectApiSourceDirectory) &&
++                  !resource.request.includes('modern-bff-runtime-source')
++                ) {
++                  resource.request = \`\${resource.request}?modern-bff-runtime-source\`;
++                }
++              }),
++            );
++          }
++        },
++` : '';
++    const legacyCorsHeadersSource = `const appDevServerHeaders: NonNullable<
++  NonNullable<NonNullable<AppToolsUserConfig['dev']>['server']>['headers']
++> = {
++  'Access-Control-Allow-Headers': 'Accept, Authorization, Content-Type, X-Requested-With',
++  'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
++  'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,
++};
++
++`;
++    const legacyCorsDevServer = `        server: {
++          headers: appDevServerHeaders,
++        },`;
+     const configuredCorsHeader = useConfiguredCorsAllowlist ? 1 === developmentPorts.length ? "'Access-Control-Allow-Origin': moduleFederationDevServerAllowedOrigins[0]," : '' : "'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,";
+     return renderFileTemplate('workspace/apps/modern.config.ts', {
+         value0: `${bffImport}${tailwindImport}`,
+@@ -142,7 +237,7 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+         value17: createRspackChunkLoadingGlobal(app),
+         value18: tailwindBuilderPluginsConfig,
+         value19: useConfiguredCorsAllowlist ? configuredCorsSource : legacyCorsSource,
+-        value20: useConfiguredCorsAllowlist ? configuredCorsDevServer : '',
++        value20: useConfiguredCorsAllowlist ? configuredCorsDevServer : legacyCorsDevServer,
+         value21: configuredCorsHeader,
+         value22: uiImports,
+         value23: zephyrPluginSource,
+@@ -150,7 +245,14 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+         value25: uiPluginEntries,
+         value26: deliveryUnit.unitId,
+         value27: deliveryUnit.buildMarker,
+-        value28: deliveryUnit.version
++        value28: deliveryUnit.version,
++        value29: hasApiRspackCompatibility ? 'builtinModules, ' : '',
++        value30: apiRspackImports,
++        value31: apiRspackRuntimeSource,
++        value32: apiRspackToolsSource,
++        value33: useConfiguredCorsAllowlist ? '' : legacyCorsHeadersSource,
++        value34: emitsUi ? 'AppTools, ' : '',
++        value35: emitsUi ? ', CliPlugin' : ''
+     });
+ }
+ function createModuleFederationBridgeConfig(enableBridgeRouter) {
+@@ -205,15 +307,15 @@ export default moduleFederationConfig;
+ function createBackendModuleFederationConfig(app) {
+     return `import { createRequire } from 'node:module';
+ import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
++import * as Schema from 'effect/Schema';
+ import { dependencies } from './package.json';
+
+ const require = createRequire(import.meta.url);
+-const bffVersion = (
+-  require('@modern-js/plugin-bff/package.json') as { version: string }
+-).version;
+-const effectVersion = (
+-  require('effect/package.json') as { version: string }
+-).version;
++const PackageVersionSchema = Schema.Struct({ version: Schema.String });
++const packageVersion = (specifier: string): string =>
++  Schema.decodeUnknownSync(PackageVersionSchema)(require(specifier)).version;
++const bffVersion = packageVersion('@modern-js/plugin-bff/package.json');
++const effectVersion = packageVersion('effect/package.json');
+
+ const moduleFederationConfig: Parameters<
+   typeof createModuleFederationConfig
+diff --git a/dist/esm-node/ultramodern-workspace/module-federation/reexport-module.js b/dist/esm-node/ultramodern-workspace/module-federation/reexport-module.js
+index be7c63e9f560d2f31a3ee28d4047d700a51b2abb..74714165cdb59faf8158bee5779a5432076e9e5d 100644
+--- a/dist/esm-node/ultramodern-workspace/module-federation/reexport-module.js
++++ b/dist/esm-node/ultramodern-workspace/module-federation/reexport-module.js
+@@ -14,14 +14,24 @@ function createUltramodernBuildModule(scope, app) {
+ declare const ULTRAMODERN_SOURCE_REVISION: string;
+
+ const ultramodernGeneratedBuildArtifact = ${JSON.stringify(createUltramodernBuildArtifact(record), null, 2)} as const;
+-const ultramodernBuildMarker =
+-  typeof ULTRAMODERN_BUILD_MARKER === 'string'
+-    ? ULTRAMODERN_BUILD_MARKER
+-    : ultramodernGeneratedBuildArtifact.deliveryUnit.buildMarker;
+-const ultramodernSourceRevision =
+-  typeof ULTRAMODERN_SOURCE_REVISION === 'string'
+-    ? ULTRAMODERN_SOURCE_REVISION
+-    : ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision;
++const readInjectedBuildMarker = (): string => {
++  try {
++    return ULTRAMODERN_BUILD_MARKER;
++  } catch {
++    return ultramodernGeneratedBuildArtifact.deliveryUnit.buildMarker;
++  }
++};
++
++const readInjectedSourceRevision = (): string => {
++  try {
++    return ULTRAMODERN_SOURCE_REVISION;
++  } catch {
++    return ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision;
++  }
++};
++
++const ultramodernBuildMarker = readInjectedBuildMarker();
++const ultramodernSourceRevision = readInjectedSourceRevision();
+ const ultramodernBuildArtifact = {
+   ...ultramodernGeneratedBuildArtifact,
+   deliveryUnit: {
+diff --git a/dist/esm-node/ultramodern-workspace/workspace-script-plan.js b/dist/esm-node/ultramodern-workspace/workspace-script-plan.js
+index d5c918d9687cc706d40994e9526d3639624b4acd..f64f423af3cfcc62459c9a6919d63760eca271b8 100644
+--- a/dist/esm-node/ultramodern-workspace/workspace-script-plan.js
++++ b/dist/esm-node/ultramodern-workspace/workspace-script-plan.js
+@@ -109,7 +109,7 @@ function createWorkspaceRootScriptPlan(remotes = [], options = {}) {
+         migrateStrictEffect: rootToolingWrapperCommand('migrateStrictEffect'),
+         zeropsMaterialize: "node ./scripts/materialize-zerops-runtime.mjs",
+         contractCheck: rootToolingWrapperCommand('validate'),
+-        typecheck: options.typecheck ?? `${rootToolingWrapperCommand('typecheck')} --project tsconfig.json`,
++        typecheck: options.typecheck ?? `${rootToolingWrapperCommand('typecheck')} --build tsconfig.json`,
+         check: `pnpm format:check && pnpm lint && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness${bridgeCheck}`
+     };
+ }
 diff --git a/dist/types/ultramodern-workspace/mf-validation/constants.d.ts b/dist/types/ultramodern-workspace/mf-validation/constants.d.ts
 index ebbc5176bacfd3790c8f01c8000e258ad348ce00..2d9e878b3f30650b0ca3e7b78d8c63de31f1489d 100644
 --- a/dist/types/ultramodern-workspace/mf-validation/constants.d.ts
@@ -45,3 +1014,264 @@ index ebbc5176bacfd3790c8f01c8000e258ad348ce00..2d9e878b3f30650b0ca3e7b78d8c63de
  export declare const generatedMetadataPaths: string[];
  export declare const defaultAppRootDirs: string[];
  export declare const skippedScanDirs: Set<string>;
+diff --git a/templates/workspace/apps/modern.config.ts.handlebars b/templates/workspace/apps/modern.config.ts.handlebars
+index 2144abc7232f756a7d824e18bd90ce881e0dadc2..df32f795ae765176365e81a251b7da4a084011dc 100644
+--- a/templates/workspace/apps/modern.config.ts.handlebars
++++ b/templates/workspace/apps/modern.config.ts.handlebars
+@@ -1,8 +1,12 @@
+-import {
++import { {{value29}}createRequire } from 'node:module';
++{{value30}}import {
+   appTools,
+   defineConfig,
+   presetUltramodern,
+ } from '@modern-js/app-tools';
++import type {
++  {{value34}}AppToolsUserConfig{{value35}}
++} from '@modern-js/app-tools';
+ import {
+   getBuildConfigEnvironment,
+   withBuildConfigEnvironment,
+@@ -10,9 +14,10 @@ import {
+ {{value0}}import { i18nPlugin } from '@modern-js/plugin-i18n';
+ import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
+ {{value22}}
++Object.assign(globalThis, { require: createRequire(import.meta.url) });
+ const cloudflareDeployEnabled =
+   getBuildConfigEnvironment('MODERNJS_DEPLOY') === 'cloudflare';
+-
++{{value31}}
+ {{value23}}const appId = '{{value1}}';
+ const cloudflareWorkerName = '{{value2}}';
+ const port = Number(getBuildConfigEnvironment('{{value3}}') ?? {{value4}});
+@@ -35,16 +40,16 @@ const inferredCloudflareUrl =
+ // Site origin (SEO: canonical/hreflang URLs) prefers the site-wide public URL;
+ // the per-app deployment URL only fills in when no site origin is configured.
+ const siteUrl =
+-  configuredSiteUrl ||
+-  configuredCloudflareUrl ||
+-  inferredCloudflareUrl ||
++  configuredSiteUrl ??
++  configuredCloudflareUrl ??
++  inferredCloudflareUrl ??
+   `http://localhost:${port}`;
+ {{value7}}
+ // Asset loading is intentionally independent from the canonical site URL.
+ // Module Federation remotes must publish an absolute publicPath so browsers
+ // load remoteEntry.js and exposed chunks from the remote origin, not the host.
+ const assetPrefix =
+-  configuredModernAssetPrefix || configuredUltramodernAssetPrefix || defaultAssetPrefix;
++  configuredModernAssetPrefix ?? configuredUltramodernAssetPrefix ?? defaultAssetPrefix;
+ const buildTarget = cloudflareDeployEnabled ? 'cloudflare' : 'web';
+ const buildOutputRoot = cloudflareDeployEnabled ? 'dist-cloudflare' : 'dist';
+ const buildTempDirectory = `node_modules/.modern-js-${appId}-${buildTarget}`;
+@@ -62,21 +67,24 @@ if (
+   );
+ }
+
++const whenEnabled = <Configuration>(enabled: boolean, configuration: Configuration) =>
++  enabled ? configuration : undefined;
++
++{{value33}}const cloudflareDeployment = whenEnabled(cloudflareDeployEnabled, {
++  deploy: {
++    worker: {
++      compatibilityDate: '{{value10}}',
++      name: cloudflareWorkerName,
++      security: {{value11}},
++{{value12}}      ssr: true,
++    },
++  },
++} satisfies Pick<AppToolsUserConfig, 'deploy'>);
++
+ export default defineConfig(
+   presetUltramodern(
+     {
+-{{value9}}{{value18}}      ...(cloudflareDeployEnabled
+-        ? {
+-            deploy: {
+-              worker: {
+-              compatibilityDate: '{{value10}}',
+-              name: cloudflareWorkerName,
+-              security: {{value11}},
+-{{value12}}              ssr: true,
+-            },
+-          },
+-          }
+-        : {}),
++{{value9}}{{value18}}      ...cloudflareDeployment,
+       dev: {
+ {{value13}}{{value20}}
+       },
+@@ -145,6 +153,8 @@ export default defineConfig(
+             '@modern-js/plugin-i18n/runtime/no-react-i18next',
+         },
+         globalVars: {
++          ULTRAMODERN_SHELL_ORIGIN:
++            envValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:{{value6}}',
+           ULTRAMODERN_SITE_URL: siteUrl,
+         },
+         mainEntryName: 'index',
+@@ -153,21 +163,13 @@ export default defineConfig(
+         autoprefixer: {
+           overrideBrowserslist: ['defaults'],
+         },
+-        bundlerChain: chain => {
++        bundlerChain: (chain) => {
+           chain.output
+             .uniqueName('{{value16}}')
+             .chunkLoadingGlobal('{{value17}}');
+         },
+-        devServer: {
+-          headers: {
+-            'Access-Control-Allow-Headers':
+-              'Accept, Authorization, Content-Type, X-Requested-With',
+-            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+-            {{value21}}
+-          },
+-        },
+-      },
+-    },
++{{value32}}      },
++    } satisfies AppToolsUserConfig,
+     {
+       appId,
+       deliveryUnit: {
+diff --git a/templates/workspace-scripts/proof-cloudflare-version.mjs b/templates/workspace-scripts/proof-cloudflare-version.mjs
+index e26615204dea65bcd0562ea04229cb51659da4af..b06de806dbe48cee148ffbf97fbc65c1cb4196d7 100644
+--- a/templates/workspace-scripts/proof-cloudflare-version.mjs
++++ b/templates/workspace-scripts/proof-cloudflare-version.mjs
+@@ -122,11 +122,20 @@ function normalizeCompactApp(rawApp, localOverlay = {}) {
+           ? 'shellSuperApp'
+           : `vertical${toPascalCase(domain ?? id)}`,
+     api,
++    cloudflareRoutes: cloudflare.routes,
++    deliveryUnit: rawApp.deliveryUnit,
+     jsonSmokeChecks,
+   };
+ }
+
+ function createBuildMarker(scope, app) {
++  if (app.deliveryUnit !== undefined) {
++    assert(
++      typeof app.deliveryUnit.buildMarker === 'string' && app.deliveryUnit.buildMarker.length > 0,
++      `${app.id} declared delivery unit must contain a build marker`,
++    );
++    return app.deliveryUnit.buildMarker;
++  }
+   return crypto
+     .createHash('sha256')
+     .update(`${scope}:${app.packageSuffix}:${app.id}:0.1.0`)
+@@ -135,22 +144,23 @@ function createBuildMarker(scope, app) {
+ }
+
+ function createDeliveryUnit(packageScope, app) {
+-  const unitId = `${packageScope}/${app.domain ?? app.id}`;
++  const unitId = app.deliveryUnit?.unitId ?? `${packageScope}/${app.domain ?? app.id}`;
+   const buildMarker = createBuildMarker(packageScope, app);
++  const sourceRevision = app.deliveryUnit?.sourceRevision ?? 'workspace';
+   const identity = {
+     unitId,
+     buildMarker,
+-    sourceRevision: 'workspace',
++    sourceRevision,
+   };
+
+   return {
+     schemaVersion: 1,
+     kind: 'microvertical-delivery-unit',
+     unitId,
+-    packageName: `@${packageScope}/${app.packageSuffix}`,
+-    version: '0.1.0',
++    packageName: app.deliveryUnit?.packageName ?? `@${packageScope}/${app.packageSuffix}`,
++    version: app.deliveryUnit?.version ?? '0.1.0',
+     buildMarker,
+-    sourceRevision: 'workspace',
++    sourceRevision,
+     surfaces: {
+       ui: { ...identity, surface: 'ui' },
+       api: { ...identity, surface: 'api' },
+@@ -257,12 +267,11 @@ function createPublicSurface() {
+
+ function createCloudflareRoutes(app) {
+   return {
+-    ssr: '/en',
+-    mfManifest: '/mf-manifest.json',
+-    locale: `/locales/en/${appNamespace(app)}.json`,
++    ...(app.cloudflareRoutes ?? {}),
++    mfManifest: app.cloudflareRoutes?.mfManifest ?? '/mf-manifest.json',
+     ...(app.api
+       ? {
+-          apiReadiness: `${app.api.prefix}/${app.api.stem}/readiness`,
++          apiReadiness: app.cloudflareRoutes?.apiReadiness ?? `${app.api.prefix}/${app.api.stem}/readiness`,
+         }
+     : {}),
+   };
+diff --git a/templates/workspace-scripts/ultramodern-cloudflare-proof.mjs b/templates/workspace-scripts/ultramodern-cloudflare-proof.mjs
+index fb7872e47d2d2844aafe7577783a01df393d6563..6b01d7f41d9fcbaebb07411ba4c91d2d8704ab61 100644
+--- a/templates/workspace-scripts/ultramodern-cloudflare-proof.mjs
++++ b/templates/workspace-scripts/ultramodern-cloudflare-proof.mjs
+@@ -696,7 +696,7 @@ async function validateSsrEvidence(evidence, app, publicUrl, routes) {
+   const qualityGates = cloudflare?.qualityGates ?? {};
+   const budgets = qualityGates.budgets ?? {};
+
+-  const ssrRoute = routes.ssr ?? '/en';
++  const ssrRoute = routes.ssr;
+   const ssr = await fetchText(joinUrl(publicUrl, ssrRoute));
+   evidence.assertions.push({
+     type: 'ssr',
+@@ -864,7 +864,7 @@ async function validateI18nEvidence(evidence, app, publicUrl, routes) {
+   const qualityGates = app.deploy?.cloudflare?.qualityGates ?? {};
+   const budgets = qualityGates.budgets ?? {};
+
+-  const localeRoute = routes.locale ?? `/locales/en/${app.i18n?.namespace}.json`;
++  const localeRoute = routes.locale;
+   const locale = await fetchText(joinUrl(publicUrl, localeRoute));
+   const localeJson = parseMaybeJson(locale.body);
+   evidence.assertions.push({
+@@ -1048,10 +1048,22 @@ async function validateApp(app, publicUrl) {
+   const routes = app.deploy?.cloudflare?.routes ?? {};
+   const evidence = createAppEvidence(app, publicUrl);
+
+-  const ssr = await validateSsrEvidence(evidence, app, publicUrl, routes);
+-  await validateRenderedAssetEvidence(evidence, app, publicUrl, ssr);
++  if (routes.ssr !== undefined) {
++    assert(
++      typeof routes.ssr === 'string' && routes.ssr.startsWith('/'),
++      `${app.id} declared SSR route must be a root-relative path`,
++    );
++    const ssr = await validateSsrEvidence(evidence, app, publicUrl, routes);
++    await validateRenderedAssetEvidence(evidence, app, publicUrl, ssr);
++  }
+   await validateModuleFederationManifestEvidence(evidence, app, publicUrl, routes);
+-  await validateI18nEvidence(evidence, app, publicUrl, routes);
++  if (routes.locale !== undefined) {
++    assert(
++      typeof routes.locale === 'string' && routes.locale.startsWith('/'),
++      `${app.id} declared locale route must be a root-relative path`,
++    );
++    await validateI18nEvidence(evidence, app, publicUrl, routes);
++  }
+   await validateReadinessEvidence(evidence, app, publicUrl, routes);
+   await validateServiceBindingEvidence(evidence, app, publicUrl);
+   await validateJsonSmokeEvidence(evidence, app, publicUrl);
+diff --git a/templates/workspace-scripts/validate-ultramodern-workspace.mjs.handlebars b/templates/workspace-scripts/validate-ultramodern-workspace.mjs.handlebars
+index 75c2005c26ed73272eae9dfa6bd59466d7819944..2177b087999ed0729b6bb0cdbd5b99c15030cda9 100644
+--- a/templates/workspace-scripts/validate-ultramodern-workspace.mjs.handlebars
++++ b/templates/workspace-scripts/validate-ultramodern-workspace.mjs.handlebars
+@@ -2660,6 +2660,7 @@ const assertProjectReferenceEmitConfig = (tsConfig, packagePath) => {
+   assert(compilerOptions.declarationMap === false, `${packagePath} must not emit declaration maps during checks`);
+   assert(compilerOptions.emitDeclarationOnly === true, `${packagePath} must only emit declarations during checks`);
+   assert(compilerOptions.noEmit === false, `${packagePath} must override root noEmit for TS-Go build mode`);
++  assert(compilerOptions.skipLibCheck !== true, `${packagePath} must not bypass dependency declarations with skipLibCheck`);
+   assert(
+     compilerOptions.outDir === `${relativeRoot}/node_modules/.cache/tsgo/declarations/${tsgoCacheKey(packagePath)}`,
+     `${packagePath} must emit TS-Go declarations into the generated cache`,
+@@ -3575,7 +3576,7 @@ if (bridgeConfig) {
+   }
+   assert(rootPackage.scripts?.['bridge:check'], 'Bridge workspaces must expose bridge:check');
+ } else {
+-  assert(rootPackage.scripts?.typecheck === 'node ./scripts/ultramodern-typecheck.mts --project tsconfig.json', 'Root typecheck must run TS-Go across the root project reference graph');
++  assert(rootPackage.scripts?.typecheck === 'node ./scripts/ultramodern-typecheck.mts --build tsconfig.json', 'Root typecheck must run TS-Go across the root project reference graph');
+ }
+ assert(rootPackage.scripts?.['contract:check'] === 'node ./scripts/validate-ultramodern-workspace.mts', 'Root must expose contract:check');
+ assert(rootPackage.scripts?.['api:check'] === 'node ./scripts/check-ultramodern-api-boundaries.mts', 'Root must expose api:check');

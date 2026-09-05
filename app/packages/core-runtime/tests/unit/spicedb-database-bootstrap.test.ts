@@ -86,3 +86,29 @@ test('grants fresh development module access only to Contacts', async () => {
     [`  module_access:${contactsObjectId}#accessor@principal:60000000-0000-4000-8000-000000000001`],
   );
 });
+
+test('declares the complete Party tenant permission vocabulary', async () => {
+  const development = await readFile(
+    new URL('../../spicedb/bootstrap.yaml', import.meta.url),
+    'utf-8',
+  );
+  for (const permission of [
+    'manage_party_identity',
+    'manage_party_relationships',
+    'merge_party_identity',
+    'read_party_identity',
+    'review_party_identity',
+  ]) {
+    assert.match(development, new RegExp(`permission ${permission} =`, 'u'));
+  }
+});
+
+test('declares the Counterparty Legal Entity permission vocabulary', async () => {
+  const development = await readFile(
+    new URL('../../spicedb/bootstrap.yaml', import.meta.url),
+    'utf-8',
+  );
+  for (const permission of ['manage_counterparty', 'read_counterparty']) {
+    assert.match(development, new RegExp(`permission ${permission} =`, 'u'));
+  }
+});

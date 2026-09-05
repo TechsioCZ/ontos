@@ -62,6 +62,7 @@ export class ActionAlreadyCommitted extends Schema.TaggedError<ActionAlreadyComm
   'ActionAlreadyCommitted',
   {
     code: Schema.Literal('action_already_committed'),
+    invocationId: Schema.String,
     ...safeReason,
   },
 ) {}

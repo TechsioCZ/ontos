@@ -3,27 +3,17 @@
 // @ontos-module-id contacts.core
 import { defineOntosModuleManifest } from '@app/core-runtime';
 // <generated-module-manifest-imports>
-import { archiveContactAction } from './src/actions/archive-contact.action.ts';
-import { archiveCustomerAction } from './src/actions/archive-customer.action.ts';
-import { ContactCreatePage } from './src/routes/[lang]/contacts/customers/[id]/contacts/new/page.tsx';
-import { ContactDetailApi } from './shared/apis/contact-detail.ts';
-import { ContactDetailPage } from './src/routes/[lang]/contacts/customers/[id]/contacts/[contactId]/page.tsx';
-import { ContactEditPage } from './src/routes/[lang]/contacts/customers/[id]/contacts/[contactId]/edit/page.tsx';
-import { ContactListApi } from './shared/apis/contact-list.ts';
-import { createContactAction } from './src/actions/create-contact.action.ts';
-import { createCustomerAction } from './src/actions/create-customer.action.ts';
+import { archiveOrganizationEngagementAction } from './src/actions/archive-organization-engagement.action.ts';
+import { archivePersonEngagementAction } from './src/actions/archive-person-engagement.action.ts';
+import { attachOrganizationEngagementAction } from './src/actions/attach-organization-engagement.action.ts';
+import { attachPersonEngagementAction } from './src/actions/attach-person-engagement.action.ts';
 import { ContactsPage } from './src/routes/[lang]/contacts/page.tsx';
-import { CustomerAresLookupApi } from './shared/apis/customer-ares-lookup.ts';
-import { CustomerCreatePage } from './src/routes/[lang]/contacts/customers/[id]/new/page.tsx';
-import { CustomerDetailApi } from './shared/apis/customer-detail.ts';
-import { CustomerDetailPage } from './src/routes/[lang]/contacts/customers/[id]/page.tsx';
-import { CustomerEditPage } from './src/routes/[lang]/contacts/customers/[id]/edit/page.tsx';
-import { CustomerListApi } from './shared/apis/customer-list.ts';
-import { CustomersListPage } from './src/routes/[lang]/contacts/customers/page.tsx';
-import { editContactAction } from './src/actions/edit-contact.action.ts';
-import { editCustomerAction } from './src/actions/edit-customer.action.ts';
-import { unarchiveContactAction } from './src/actions/unarchive-contact.action.ts';
-import { unarchiveCustomerAction } from './src/actions/unarchive-customer.action.ts';
+import { OrganizationEngagementProfileApi } from './shared/apis/organization-engagement-profile.ts';
+import { organizationEngagementProfileResourceDescriptor } from './shared/resources/organization-engagement-profile.ts';
+import { PersonEngagementProfileApi } from './shared/apis/person-engagement-profile.ts';
+import { personEngagementProfileResourceDescriptor } from './shared/resources/person-engagement-profile.ts';
+import { unarchiveOrganizationEngagementAction } from './src/actions/unarchive-organization-engagement.action.ts';
+import { unarchivePersonEngagementAction } from './src/actions/unarchive-person-engagement.action.ts';
 // </generated-module-manifest-imports>
 
 export const contactsManifest = defineOntosModuleManifest({
@@ -51,35 +41,23 @@ export const contactsManifest = defineOntosModuleManifest({
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
-      archiveContactAction,
-      archiveCustomerAction,
-      createContactAction,
-      createCustomerAction,
-      editContactAction,
-      editCustomerAction,
-      unarchiveContactAction,
-      unarchiveCustomerAction,
+      archiveOrganizationEngagementAction,
+      archivePersonEngagementAction,
+      attachOrganizationEngagementAction,
+      attachPersonEngagementAction,
+      unarchiveOrganizationEngagementAction,
+      unarchivePersonEngagementAction,
       // </generated-module-manifest-actions>
     ],
     api: {
       // <generated-module-manifest-apis>
-      'contact-detail': ContactDetailApi,
-      'contact-list': ContactListApi,
-      'customer-ares-lookup': CustomerAresLookupApi,
-      'customer-detail': CustomerDetailApi,
-      'customer-list': CustomerListApi,
+      'organization-engagement-profile': OrganizationEngagementProfileApi,
+      'person-engagement-profile': PersonEngagementProfileApi,
       // </generated-module-manifest-apis>
     },
     components: {
       // <generated-module-manifest-components>
-      'page-contact-create': ContactCreatePage,
-      'page-contact-detail': ContactDetailPage,
-      'page-contact-edit': ContactEditPage,
       'page-contacts': ContactsPage,
-      'page-customer-create': CustomerCreatePage,
-      'page-customer-detail': CustomerDetailPage,
-      'page-customer-edit': CustomerEditPage,
-      'page-customers-list': CustomersListPage,
       // </generated-module-manifest-components>
     },
     events: [],
@@ -87,7 +65,12 @@ export const contactsManifest = defineOntosModuleManifest({
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>
     ],
-    resourceTypes: [],
+    resourceTypes: [
+      // <generated-module-manifest-resources>
+      organizationEngagementProfileResourceDescriptor,
+      personEngagementProfileResourceDescriptor,
+      // </generated-module-manifest-resources>
+    ],
     search: [
       // <generated-module-manifest-search>
       // </generated-module-manifest-search>
@@ -115,45 +98,6 @@ export const contactsManifest = defineOntosModuleManifest({
       pages: [
         // <generated-module-shell-pages>
         {
-          componentKey: 'contacts.core.page-contact-create',
-          contributionKey: 'contacts.core.page.contact-create',
-          entrypoint: {
-            access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'contacts.core.page.contact-create',
-            moduleKey: 'contacts.core',
-            role: 'page',
-            scope: 'tenant',
-          },
-          routePath: '/contacts/customers/:id/contacts/new',
-        },
-        {
-          componentKey: 'contacts.core.page-contact-detail',
-          contributionKey: 'contacts.core.page.contact-detail',
-          entrypoint: {
-            access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'contacts.core.page.contact-detail',
-            moduleKey: 'contacts.core',
-            role: 'page',
-            scope: 'tenant',
-          },
-          routePath: '/contacts/customers/:id/contacts/:contactId',
-        },
-        {
-          componentKey: 'contacts.core.page-contact-edit',
-          contributionKey: 'contacts.core.page.contact-edit',
-          entrypoint: {
-            access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'contacts.core.page.contact-edit',
-            moduleKey: 'contacts.core',
-            role: 'page',
-            scope: 'tenant',
-          },
-          routePath: '/contacts/customers/:id/contacts/:contactId/edit',
-        },
-        {
           componentKey: 'contacts.core.page-contacts',
           contributionKey: 'contacts.core.page.contacts',
           entrypoint: {
@@ -165,58 +109,6 @@ export const contactsManifest = defineOntosModuleManifest({
             scope: 'tenant',
           },
           routePath: '/contacts',
-        },
-        {
-          componentKey: 'contacts.core.page-customer-create',
-          contributionKey: 'contacts.core.page.customer-create',
-          entrypoint: {
-            access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'contacts.core.page.customer-create',
-            moduleKey: 'contacts.core',
-            role: 'page',
-            scope: 'tenant',
-          },
-          routePath: '/contacts/customers/:id/new',
-        },
-        {
-          componentKey: 'contacts.core.page-customer-detail',
-          contributionKey: 'contacts.core.page.customer-detail',
-          entrypoint: {
-            access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'contacts.core.page.customer-detail',
-            moduleKey: 'contacts.core',
-            role: 'page',
-            scope: 'tenant',
-          },
-          routePath: '/contacts/customers/:id',
-        },
-        {
-          componentKey: 'contacts.core.page-customer-edit',
-          contributionKey: 'contacts.core.page.customer-edit',
-          entrypoint: {
-            access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'contacts.core.page.customer-edit',
-            moduleKey: 'contacts.core',
-            role: 'page',
-            scope: 'tenant',
-          },
-          routePath: '/contacts/customers/:id/edit',
-        },
-        {
-          componentKey: 'contacts.core.page-customers-list',
-          contributionKey: 'contacts.core.page.customers-list',
-          entrypoint: {
-            access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'contacts.core.page.customers-list',
-            moduleKey: 'contacts.core',
-            role: 'page',
-            scope: 'tenant',
-          },
-          routePath: '/contacts/customers',
         },
         // </generated-module-shell-pages>
       ],

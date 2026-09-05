@@ -7,7 +7,9 @@
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/contacts-client.ts",
     "./locales/cs": "./locales/cs/contacts.json",
-    "./locales/en": "./locales/en/contacts.json"
+    "./locales/en": "./locales/en/contacts.json",
+    "./resources/organization-engagement-profile": "./shared/resources/organization-engagement-profile.ts",
+    "./resources/person-engagement-profile": "./shared/resources/person-engagement-profile.ts"
   },
   "scripts": {
     "dev": "node ../../scripts/prepare-dev-module-contract.mts contacts && modern dev",
@@ -29,6 +31,7 @@
   },
   "dependencies": {
     "@app/core-runtime": "workspace:*",
+    "@app/party-registry": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
     "@authzed/authzed-node": "1.6.1",

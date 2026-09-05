@@ -1,0 +1,6 @@
+ALTER TABLE "party"."party_fact_assertions" ADD COLUMN "evidence_evaluation" jsonb;--> statement-breakpoint
+ALTER TABLE "party"."party_match_decisions" ADD COLUMN "operation" text DEFAULT 'LEGACY' NOT NULL;--> statement-breakpoint
+ALTER TABLE "party"."party_match_decisions" ADD COLUMN "committed_create_outcome" text;--> statement-breakpoint
+ALTER TABLE "party"."party_match_decisions" ADD COLUMN "evidence_evaluation" jsonb;--> statement-breakpoint
+ALTER TABLE "party"."party_match_decisions" ADD CONSTRAINT "party_match_decisions_operation_ck" CHECK ("party"."party_match_decisions"."operation" in ('CREATE', 'MATCH', 'REVIEW_MATCH', 'REVIEW_CREATE', 'LIFECYCLE', 'LEGACY'));--> statement-breakpoint
+ALTER TABLE "party"."party_match_decisions" ADD CONSTRAINT "party_match_decisions_create_result_ck" CHECK (case when "party"."party_match_decisions"."operation" in ('CREATE', 'REVIEW_CREATE') then "party"."party_match_decisions"."committed_create_outcome" is not null and "party"."party_match_decisions"."outcome" <> 'NO_MATCH' and "party"."party_match_decisions"."committed_create_outcome" = case when "party"."party_match_decisions"."outcome" = 'MATCHED' then 'MATCHED_EXISTING' else "party"."party_match_decisions"."outcome" end else "party"."party_match_decisions"."committed_create_outcome" is null end);

@@ -1,10 +1,17 @@
-// @effect-diagnostics nodeBuiltinImport:off processEnv:off
-import { existsSync } from 'node:fs';
-import path from 'node:path';
+/* oxlint-disable sonarjs/no-built-in-override, typescript/consistent-return */
+import { NodeFileSystem, NodePath } from '@effect/platform-node';
+import { Effect, FileSystem, Layer, Path } from 'effect';
+import bootstrapEnvironment from './workspace-environment-bootstrap.cjs';
 
-const isAppWorkspace = (candidate: string): boolean =>
-  existsSync(path.join(candidate, 'pnpm-workspace.yaml')) &&
-  existsSync(path.join(candidate, 'packages/core-runtime/package.json'));
+const isAppWorkspace = (candidate: string) =>
+  Effect.gen(function* isAppWorkspaceEffect() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return (
+      (yield* fileSystem.exists(path.join(candidate, 'pnpm-workspace.yaml'))) &&
+      (yield* fileSystem.exists(path.join(candidate, 'packages/core-runtime/package.json')))
+    );
+  });
 
 /**
  * Finds the application workspace without relying on import.meta.dirname.
@@ -12,38 +19,46 @@ const isAppWorkspace = (candidate: string): boolean =>
  * Modern.js bundles server modules into a cache directory, so module-relative
  * paths do not identify the source workspace at runtime.
  */
-export const resolveAppWorkspaceRoot = (startDirectory: string): string | undefined => {
-  let candidate = path.resolve(startDirectory);
+const resolveAppWorkspaceRootWithServices = (startDirectory: string) =>
+  Effect.gen(function* resolveAppWorkspaceRootEffect() {
+    const path = yield* Path.Path;
+    let candidate = path.resolve(startDirectory);
 
-  while (true) {
-    if (isAppWorkspace(candidate)) {
-      return candidate;
+    while (true) {
+      if (yield* isAppWorkspace(candidate)) {
+        return candidate;
+      }
+
+      const nestedApp = path.join(candidate, 'app');
+      if (yield* isAppWorkspace(nestedApp)) {
+        return nestedApp;
+      }
+
+      const parent = path.dirname(candidate);
+      if (parent === candidate) {
+        return;
+      }
+
+      candidate = parent;
     }
+  });
 
-    const nestedApp = path.join(candidate, 'app');
-    if (isAppWorkspace(nestedApp)) {
-      return nestedApp;
-    }
+const withNodeServices = <Value, Error>(
+  effect: Effect.Effect<Value, Error, FileSystem.FileSystem | Path.Path>,
+) =>
+  Effect.scoped(
+    Layer.build(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)).pipe(
+      Effect.flatMap((services) => Effect.provide(effect, services)),
+    ),
+  );
 
-    const parent = path.dirname(candidate);
-    if (parent === candidate) {
-      return undefined;
-    }
+export const resolveAppWorkspaceRootEffect = (startDirectory: string) =>
+  withNodeServices(resolveAppWorkspaceRootWithServices(startDirectory));
 
-    candidate = parent;
-  }
-};
-
-const workspaceCandidates = [
-  process.env['ULTRAMODERN_WORKSPACE_ROOT'],
-  process.cwd(),
-  process.env['INIT_CWD'],
-].filter((candidate): candidate is string => candidate !== undefined && candidate.length > 0);
+export const resolveAppWorkspaceRoot: (startDirectory: string) => string | undefined =
+  bootstrapEnvironment.resolveAppWorkspaceRootSync;
 
 /** The application workspace owns the single local environment file. */
-export const APP_WORKSPACE_ROOT =
-  workspaceCandidates
-    .map(resolveAppWorkspaceRoot)
-    .find((candidate): candidate is string => candidate !== undefined) ?? process.cwd();
+export const APP_WORKSPACE_ROOT: string = bootstrapEnvironment.APP_WORKSPACE_ROOT;
 
-export const APP_ENV_PATH = path.join(APP_WORKSPACE_ROOT, '.env');
+export const APP_ENV_PATH: string = bootstrapEnvironment.APP_ENV_PATH;

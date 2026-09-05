@@ -1,5 +1,6 @@
 /* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- The loader preserves the typed Effect error channel until the framework boundary. */
 import { Effect, Predicate } from 'effect';
+import type { Config } from 'effect';
 import type { ResolvedModuleTarget } from '../../../../../shared/api.ts';
 import { resolveModuleTarget, runEffectRequest } from '../../../../api/auth-client.ts';
 import type { ShellTargetClientError } from '../../../../api/auth-client.ts';
@@ -61,7 +62,10 @@ export type ModuleTargetPageModel =
       readonly target: ResolvedModuleTarget;
     };
 
-const safeState = (error: ShellTargetClientError, shell: HomePageModel): ModuleTargetPageModel => {
+const safeState = (
+  error: Config.ConfigError | ShellTargetClientError,
+  shell: HomePageModel,
+): ModuleTargetPageModel => {
   switch (error._tag) {
     case 'ShellAuthenticationRequiredProblem':
     case 'ShellSelectionRequiredProblem': {
@@ -74,6 +78,7 @@ const safeState = (error: ShellTargetClientError, shell: HomePageModel): ModuleT
       return { shell, state: 'not_found' };
     }
     case 'ShellCapabilityUnavailableProblem':
+    case 'ConfigError':
     case 'HttpClientError':
     case 'SchemaError':
     case 'ShellInternalProblem':

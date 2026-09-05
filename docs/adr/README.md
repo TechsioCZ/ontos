@@ -22,6 +22,7 @@ relevant to the task. An accepted ADR remains current unless a later ADR explici
 | [0015](0015-party-registry-owns-shared-identity.md)        | Party Registry owns shared identity                       | Accepted                          |
 | [0016](0016-independently-deployable-microverticals.md)    | Independent MicroVertical deployment seams                | Accepted                          |
 | [0017](0017-commerce-application-boundaries.md)            | Commerce application boundaries                           | Accepted                          |
+| [0018](0018-party-registry-operational-boundaries.md)      | Party Registry operational boundaries                     | Accepted                          |
 | [0019](0019-explicit-action-authorization.md)              | Explicit fail-closed Action authorization                 | Accepted                          |
 | [0020](0020-governed-application-composition.md)           | Governed runtime Application Composition                  | Accepted                          |
 

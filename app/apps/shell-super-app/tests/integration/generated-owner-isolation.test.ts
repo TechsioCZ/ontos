@@ -805,7 +805,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
       ),
       {
         partial: false,
-        results: [{ ref: resourceRef, title: 'A1 searchable' }],
+        results: [{ kind: 'resource', ref: resourceRef, title: 'A1 searchable' }],
       },
     );
     const shellLayer = createShellGovernedReadsLayer(

@@ -10,7 +10,11 @@ import type {
 import { LEGAL_ENTITY_SCOPES } from '../operations/context.ts';
 import type { LegalEntityScope, OperationalScope } from '../operations/context.ts';
 import type { OperationContextUnavailable } from '../operations/errors.ts';
-import type { ResourceAccessTarget } from '../permissions/context-access.ts';
+import type {
+  LegalEntityPermissionKey,
+  ResourceAccessTarget,
+  TenantPermissionKey,
+} from '../permissions/context-access.ts';
 import type { ReadHandlerContext, ReadHandlerResult } from './context.ts';
 
 const registrationMarker: unique symbol = Symbol('@app/core-runtime/reads/registration');
@@ -42,11 +46,35 @@ export interface ReadPolicyDescriptor {
   readonly denialStatus: ReadPermissionDenialStatus;
   readonly policyKey: string;
 }
-export type ResolvedReadPermissionTarget =
-  | Readonly<{ readonly kind: 'legal_entity' }>
+export type ReadAlternativeTenantPermission = Exclude<
+  TenantPermissionKey,
+  'access' | 'impersonate'
+>;
+export type AtomicResolvedReadPermissionTarget =
+  | Readonly<{
+      readonly kind: 'legal_entity';
+      readonly permission?: LegalEntityPermissionKey;
+    }>
   | Readonly<{ readonly kind: 'module'; readonly moduleId: string }>
   | Readonly<{ readonly kind: 'resource'; readonly resource: ResourceAccessTarget }>
-  | Readonly<{ readonly kind: 'tenant'; readonly permission: 'access' | 'manage_identity' }>;
+  | Readonly<{ readonly kind: 'tenant'; readonly permission: TenantPermissionKey }>;
+export type AlternativeResolvedReadPermissionTarget =
+  | Exclude<
+      AtomicResolvedReadPermissionTarget,
+      Readonly<{ readonly kind: 'tenant'; readonly permission: TenantPermissionKey }>
+    >
+  | Readonly<{ readonly kind: 'tenant'; readonly permission: ReadAlternativeTenantPermission }>;
+export type ResolvedReadPermissionTarget =
+  | AtomicResolvedReadPermissionTarget
+  | Readonly<{
+      readonly kind: 'any_of';
+      /** The first target is canonical for Policy input and persisted evidence. */
+      readonly targets: readonly [
+        AlternativeResolvedReadPermissionTarget,
+        AlternativeResolvedReadPermissionTarget,
+        ...AlternativeResolvedReadPermissionTarget[],
+      ];
+    }>;
 export type ReadPermissionTargetResolver<Input> = (
   input: Input,
   scope: OperationalScope,

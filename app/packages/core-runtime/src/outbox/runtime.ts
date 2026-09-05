@@ -1,3 +1,4 @@
+/* oxlint-disable sonarjs/no-inverted-boolean-check */
 /* eslint-disable unicorn/no-array-method-this-argument -- Effect's dual flatMap API is intentional. */
 // @effect-diagnostics effectFnOpportunity:off globalDateInEffect:off instanceOfSchema:off
 import { Cause, Context, Effect, Exit, Layer, Schema } from 'effect';
@@ -9,6 +10,7 @@ import type {
 } from './definition.ts';
 import {
   getOutboxWorkerHandler,
+  attestOutboxWorkerHandlerContext,
   validateOutboxWorkerRegistrations,
   validateOutboxWorkerSubscriptions,
 } from './definition.ts';
@@ -166,24 +168,26 @@ const withOutcomeSpan = <Value, Error, Requirements>(
   );
 
 const handlerContext = (claim: OutboxClaim): OutboxWorkerHandlerContext =>
-  withOptionalProperty(
-    {
-      attemptNumber: claim.attemptNumber,
-      claimId: claim.claimId,
-    },
-    claim.correlationId !== undefined,
-    'correlationId',
-    claim.correlationId,
-    {
-      deliveryId: claim.deliveryId,
-      domainEventId: claim.domainEventId,
-      messageId: claim.messageId,
-      producerModuleKey: claim.producerModuleKey,
-      tenantId: claim.tenantId,
-      tenantSequenceNo: claim.tenantSequenceNo,
-      topic: claim.topic,
-      workerKey: claim.workerKey,
-    },
+  attestOutboxWorkerHandlerContext(
+    withOptionalProperty(
+      {
+        attemptNumber: claim.attemptNumber,
+        claimId: claim.claimId,
+      },
+      !(claim.correlationId === undefined),
+      'correlationId',
+      claim.correlationId,
+      {
+        deliveryId: claim.deliveryId,
+        domainEventId: claim.domainEventId,
+        messageId: claim.messageId,
+        producerModuleKey: claim.producerModuleKey,
+        tenantId: claim.tenantId,
+        tenantSequenceNo: claim.tenantSequenceNo,
+        topic: claim.topic,
+        workerKey: claim.workerKey,
+      },
+    ),
   );
 
 const subscriptionMatchesRegistration = (

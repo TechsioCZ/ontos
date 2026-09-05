@@ -10,16 +10,66 @@ import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import { LEGAL_ENTITY_SCOPES } from '../operations/context.ts';
 import type { OperationalScope, LegalEntityScope } from '../operations/context.ts';
 import type { OperationContextUnavailable } from '../operations/errors.ts';
+import type { ResourceAccessTarget, TenantPermissionKey } from '../permissions/context-access.ts';
 
 const actionRegistration: unique symbol = Symbol('@app/core-runtime/actions/registration');
 const actionHandler: unique symbol = Symbol('@app/core-runtime/actions/registration/handler');
 const actionServiceFactory: unique symbol = Symbol(
   '@app/core-runtime/actions/registration/service-factory',
 );
+const actionResourcePermissionDeclaration: unique symbol = Symbol(
+  '@app/core-runtime/actions/resource-permission',
+);
+const actionResourcePermissionResolver: unique symbol = Symbol(
+  '@app/core-runtime/actions/resource-permission/resolver',
+);
 
 export type ActionIdempotencyRule = 'optional' | 'required';
 export type ActionAuditProfile = 'minimal' | 'sensitive' | 'standard';
-export type ActionTenantPermission = 'impersonate' | 'manage_identity';
+export type ActionTenantPermission = Exclude<TenantPermissionKey, 'access' | 'read_party_identity'>;
+export type ActionLegalEntityPermission = 'manage_counterparty';
+export type ActionResourcePermission = 'read' | 'write';
+export interface ActionResourcePermissionTarget {
+  readonly permission: ActionResourcePermission;
+  readonly resource: ResourceAccessTarget;
+}
+export type ActionResourcePermissionTargetResolver<Payload> = (
+  payload: Payload,
+  scope: OperationalScope,
+) => ActionResourcePermissionTarget;
+export interface ActionResourcePermissionDeclaration<Payload> {
+  readonly [actionResourcePermissionDeclaration]: true;
+  readonly [actionResourcePermissionResolver]: ActionResourcePermissionTargetResolver<Payload>;
+  readonly kind: 'resource';
+}
+
+/** Declares a private resolver for an additional Resource permission check. */
+export const defineActionResourcePermission = <Payload>(
+  resolver: ActionResourcePermissionTargetResolver<Payload>,
+): ActionResourcePermissionDeclaration<Payload> => {
+  if (!Predicate.isFunction(resolver)) {
+    throw new TypeError('Action Resource permission resolver must be a function');
+  }
+  return Object.freeze({
+    [actionResourcePermissionDeclaration]: true as const,
+    [actionResourcePermissionResolver]: resolver,
+    kind: 'resource' as const,
+  });
+};
+
+const isActionResourcePermissionDeclaration = (
+  declaration: ActionResourcePermissionDeclaration<never> | undefined,
+): declaration is ActionResourcePermissionDeclaration<never> => {
+  if (!Predicate.isObjectKeyword(declaration) || declaration === null) {
+    return false;
+  }
+  return (
+    declaration[actionResourcePermissionDeclaration] &&
+    Predicate.isFunction(declaration[actionResourcePermissionResolver]) &&
+    declaration.kind === 'resource' &&
+    Object.isFrozen(declaration)
+  );
+};
 
 export interface ActionDescriptor<
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
@@ -42,10 +92,14 @@ export interface ActionDescriptor<
   readonly domainEvents: DomainEvents;
   readonly entrypoint: ModuleEntrypointDescriptor<'action', 'write', Owner>;
   readonly idempotency: ActionIdempotencyRule;
+  /** Requires a permission on the Legal Entity selected by trusted operational scope. */
+  readonly legalEntityPermission?: ActionLegalEntityPermission;
   readonly legalEntityScope: LegalEntityScope;
   readonly owningModuleKey: Owner;
   readonly payloadSchema: PayloadSchema;
   readonly policies: readonly ActionPolicy<PayloadSchema['Type'], NoInfer<Owner>>[];
+  /** Declares an additional Resource permission resolved from decoded input and trusted scope. */
+  readonly resourcePermission?: ActionResourcePermissionDeclaration<PayloadSchema['Type']>;
   readonly resultSchema: ResultSchema;
   readonly schemaVersion: string;
   /**
@@ -150,9 +204,12 @@ export type ActionRequirements<Registration> =
 
 export interface ActionDescriptorValidationInput<Policy> {
   readonly entrypoint: ModuleEntrypointDescriptor;
+  readonly legalEntityPermission?: unknown;
   readonly legalEntityScope: string;
   readonly owningModuleKey: string;
   readonly policies?: readonly Policy[];
+  readonly resourcePermission?: ActionResourcePermissionDeclaration<never>;
+  readonly tenantPermission?: unknown;
 }
 
 export const validateActionDescriptorInput = <Policy>(
@@ -173,8 +230,25 @@ export const validateActionDescriptorInput = <Policy>(
   if (!LEGAL_ENTITY_SCOPES.some((scope) => scope === descriptor.legalEntityScope)) {
     throw new TypeError('Action legal-entity scope must be required, optional, or forbidden');
   }
+  if (
+    descriptor.legalEntityPermission !== undefined &&
+    (descriptor.legalEntityPermission !== 'manage_counterparty' ||
+      descriptor.legalEntityScope !== 'required')
+  ) {
+    throw new TypeError(
+      'Action Legal Entity permission must be supported and require trusted Legal Entity scope',
+    );
+  }
   if (!Array.isArray(descriptor.policies)) {
     throw new TypeError('Action policies must be an explicit readonly array of Policy references');
+  }
+  if (
+    (descriptor.resourcePermission !== undefined &&
+      !isActionResourcePermissionDeclaration(descriptor.resourcePermission)) ||
+    (descriptor.tenantPermission !== undefined &&
+      !Predicate.isFunction(descriptor.tenantPermission))
+  ) {
+    throw new TypeError('Action permission declarations and resolvers must be valid');
   }
   for (const policy of descriptor.policies) {
     if (!isActionPolicy(policy)) {
@@ -356,6 +430,27 @@ export const getActionServiceFactory = <
     HandlerRequirements
   >,
 ): ActionServiceFactory<Services, HandlerRequirements> => registration[actionServiceFactory];
+
+export const getActionResourcePermissionTargetResolver = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Owner extends string,
+  Services,
+  HandlerRequirements,
+>(
+  registration: ActionRegistration<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Owner,
+    Services,
+    HandlerRequirements
+  >,
+): ActionResourcePermissionTargetResolver<PayloadSchema['Type']> | undefined =>
+  registration.descriptor.resourcePermission?.[actionResourcePermissionResolver];
 
 export const decodeActionPayload = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,

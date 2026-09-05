@@ -146,6 +146,8 @@ export { tenantLegalEntityRlsPolicies, tenantRlsPolicies } from './db/scoped-tra
 export {
   ContextAccess,
   ContextAccessLive,
+  LEGAL_ENTITY_PERMISSION_KEYS,
+  TENANT_PERMISSION_KEYS,
   makeContextAccess,
   makeContextAccessLive,
   toLegalEntityAccessObjectId,
@@ -157,16 +159,28 @@ export type {
   ContextAccessDecision,
   ContextAccessResult,
   ContextAccessService,
+  LegalEntityPermissionKey,
   ResourceAccessTarget,
+  TenantPermissionKey,
 } from './permissions/context-access.ts';
-export { defineAction, isActionRegistration } from './actions/definition.ts';
+export {
+  defineAction,
+  defineActionResourcePermission,
+  isActionRegistration,
+} from './actions/definition.ts';
 export type {
   ActionAuditProfile,
   ActionDescriptor,
   ActionHandler,
   ActionIdempotencyRule,
+  ActionLegalEntityPermission,
   ActionRegistration,
+  ActionResourcePermission,
+  ActionResourcePermissionDeclaration,
+  ActionResourcePermissionTarget,
+  ActionResourcePermissionTargetResolver,
   ActionRequirements,
+  ActionTenantPermission,
   AnyActionRegistration,
 } from './actions/definition.ts';
 export {
@@ -232,6 +246,9 @@ export {
   defineRead,
 } from './reads/definition.ts';
 export type {
+  AlternativeResolvedReadPermissionTarget,
+  AtomicResolvedReadPermissionTarget,
+  ReadAlternativeTenantPermission,
   ReadAccessKind,
   ReadDescriptor,
   ReadEvidenceCaptureMode,
@@ -243,6 +260,7 @@ export type {
   ReadResultPermissionTargetResolver,
   ReadRegistration,
   ReadServiceFactory,
+  ResolvedReadPermissionTarget,
 } from './reads/definition.ts';
 export type {
   ReadEvidenceMetadata,
@@ -270,6 +288,69 @@ export {
   ReadResultValidationError,
 } from './reads/errors.ts';
 export type { ReadCoreError } from './reads/errors.ts';
+export {
+  CoreSearchFacetSchema,
+  CoreSearchMetadataFieldSchema,
+  CoreSearchProjectionDocumentSchema,
+  CoreSearchProjectionHitSchema,
+  CoreSearchProjectionInvalid,
+  CoreSearchProjectionMutationSchema,
+  CoreSearchProjectionReplacementSchema,
+  CoreSearchProjectionStore,
+  CoreSearchProjectionUnavailable,
+  CoreSearchQueryRuntime,
+  CoreSearchQuerySchema,
+  CoreSearchResourceRefSchema,
+  CoreSearchTemporalFacetSchema,
+  createCoreSearchQueryRuntime,
+  decodeCoreSearchProjectionMutation,
+  decodeCoreSearchProjectionReplacement,
+  makeCoreSearchQueryRuntime,
+  makeInMemoryCoreSearchProjectionStore,
+} from './search/projection.ts';
+export type {
+  CoreSearchFacet,
+  CoreSearchMetadataField,
+  CoreSearchProjectionDocument,
+  CoreSearchProjectionHit,
+  CoreSearchProjectionStoreService,
+  CoreSearchQuery,
+  CoreSearchQueryRuntimeService,
+  CoreSearchResourceRef,
+  CoreSearchTemporalFacet,
+  CoreSearchProjectionMutation,
+  CoreSearchProjectionReplacement,
+} from './search/projection.ts';
+export {
+  CoreSearchProjectionStoreLive,
+  CoreSearchQueryRuntimeLive,
+  makePostgresCoreSearchProjectionStore,
+} from './search/persistence.ts';
+export {
+  CORE_SEARCH_INGESTION_REGISTRATIONS,
+  CORE_SEARCH_PARTY_LIFECYCLE_TOPICS,
+  CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS,
+  CoreSearchIngestion,
+  CoreSearchIngestionLive,
+  CoreSearchIngestionObservationSchema,
+  makeCoreSearchIngestion,
+} from './search/ingestion.ts';
+export type {
+  CoreSearchIngestionObservation,
+  CoreSearchIngestionRegistration,
+  CoreSearchIngestionService,
+  CoreSearchPartyLifecycleTopic,
+  CoreSearchPartyProjectorWorkerKey,
+} from './search/ingestion.ts';
+export {
+  CoreSearchWorkerSnapshot,
+  CoreSearchWorkerSnapshotLive,
+} from './search/worker-snapshot.ts';
+export type {
+  CoreSearchSnapshotReadExecutor,
+  CoreSearchWorkerSnapshotService,
+  CoreSearchWorkerSnapshotView,
+} from './search/worker-snapshot.ts';
 export { DataAccessEventSchema, DomainEventSchema, OutboxMessageSchema } from './actions/events.ts';
 export type {
   ActionAccessEvidencePolicy,
@@ -499,7 +580,7 @@ export { setManagedApiKeyBindingStatusAction } from './modules/actions/set-manag
 export { setSelfApiKeyBindingStatusAction } from './modules/actions/set-self-api-key-binding-status.action.ts';
 // </generated-core-action-exports>
 
-export { defineOutboxWorker } from './outbox/definition.ts';
+export { defineOutboxWorker, extractOutboxWorkerSubscriptions } from './outbox/definition.ts';
 export type {
   AnyOutboxWorkerRegistration,
   OutboxWorkerDescriptor,
@@ -520,6 +601,8 @@ export {
   OutboxWorkerDescriptorError,
 } from './outbox/errors.ts';
 export type { OutboxWorkerError } from './outbox/errors.ts';
+export { createOutboxWorkerHealth, serveOutboxWorkerHealth } from './outbox/health.ts';
+export type { OutboxWorkerHealth, OutboxWorkerHealthServer } from './outbox/health.ts';
 export { parseOutboxPollingConfig, runOutboxPollingLoop } from './outbox/poller.ts';
 export type {
   OutboxCycleRunner,

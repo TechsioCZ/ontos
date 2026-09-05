@@ -53,39 +53,25 @@ import {
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import type { GatewayAssertionRedemption } from '@app/core-runtime';
-import { Clock, DateTime, Effect, Schema } from 'effect';
+import { Clock, DateTime, Effect, Option, Schema } from 'effect';
 import { createLocalJWKSet, decodeProtectedHeader, jwtVerify } from 'jose';
-import type { JSONWebKeySet } from 'jose';
 
 export const ACTION_GATEWAY_AUDIENCE = '${vertical.appId}' as const;
 export const ACTION_PRINCIPAL_BEARER_CHALLENGE = 'Bearer' as const;
 
 const errorFields = { reason: Schema.String };
-
-export class ActionPrincipalMissingError extends Schema.TaggedError<ActionPrincipalMissingError>()(
-  'ActionPrincipalMissingError',
-  errorFields,
-) {}
-export class ActionPrincipalInvalidError extends Schema.TaggedError<ActionPrincipalInvalidError>()(
-  'ActionPrincipalInvalidError',
-  errorFields,
-) {}
-export class ActionPrincipalExpiredError extends Schema.TaggedError<ActionPrincipalExpiredError>()(
-  'ActionPrincipalExpiredError',
-  errorFields,
-) {}
-export class ActionPrincipalScopeError extends Schema.TaggedError<ActionPrincipalScopeError>()(
-  'ActionPrincipalScopeError',
-  errorFields,
-) {}
-export class ActionPrincipalConfigurationError extends Schema.TaggedError<ActionPrincipalConfigurationError>()(
-  'ActionPrincipalConfigurationError',
-  errorFields,
-) {}
-export class ActionPrincipalUnavailableError extends Schema.TaggedError<ActionPrincipalUnavailableError>()(
-  'ActionPrincipalUnavailableError',
-  errorFields,
-) {}
+export const ActionPrincipalMissingErrorSchema = Schema.TaggedStruct('ActionPrincipalMissingError', errorFields);
+export type ActionPrincipalMissingError = typeof ActionPrincipalMissingErrorSchema.Type;
+export const ActionPrincipalInvalidErrorSchema = Schema.TaggedStruct('ActionPrincipalInvalidError', errorFields);
+export type ActionPrincipalInvalidError = typeof ActionPrincipalInvalidErrorSchema.Type;
+export const ActionPrincipalExpiredErrorSchema = Schema.TaggedStruct('ActionPrincipalExpiredError', errorFields);
+export type ActionPrincipalExpiredError = typeof ActionPrincipalExpiredErrorSchema.Type;
+export const ActionPrincipalScopeErrorSchema = Schema.TaggedStruct('ActionPrincipalScopeError', errorFields);
+export type ActionPrincipalScopeError = typeof ActionPrincipalScopeErrorSchema.Type;
+export const ActionPrincipalConfigurationErrorSchema = Schema.TaggedStruct('ActionPrincipalConfigurationError', errorFields);
+export type ActionPrincipalConfigurationError = typeof ActionPrincipalConfigurationErrorSchema.Type;
+export const ActionPrincipalUnavailableErrorSchema = Schema.TaggedStruct('ActionPrincipalUnavailableError', errorFields);
+export type ActionPrincipalUnavailableError = typeof ActionPrincipalUnavailableErrorSchema.Type;
 
 export type ActionPrincipalError =
   | ActionPrincipalMissingError
@@ -101,129 +87,84 @@ export interface ActionPrincipalVerificationOptions {
   readonly redemption: GatewayAssertionRedemption;
 }
 
-interface VerificationConfiguration {
-  readonly issuer: string;
-  readonly jwks: JSONWebKeySet;
-}
+const configurationError = (): ActionPrincipalConfigurationError =>
+  ActionPrincipalConfigurationErrorSchema.make({ reason: 'Action identity verification is misconfigured' });
+const invalidError = (): ActionPrincipalInvalidError =>
+  ActionPrincipalInvalidErrorSchema.make({ reason: 'The Bearer assertion is invalid' });
+const unavailableError = (): ActionPrincipalUnavailableError =>
+  ActionPrincipalUnavailableErrorSchema.make({ reason: 'Action identity verification is unavailable' });
 
-const configurationError = () =>
-  new ActionPrincipalConfigurationError({ reason: 'Action identity verification is misconfigured' });
-const invalidError = () =>
-  new ActionPrincipalInvalidError({ reason: 'The Bearer assertion is invalid' });
+const PublicVerificationKeySchema = Schema.Struct({
+  alg: Schema.Literal('EdDSA'),
+  crv: Schema.Literal('Ed25519'),
+  d: Schema.optionalKey(Schema.Never),
+  key_ops: Schema.optionalKey(Schema.Array(Schema.Literal('verify'))),
+  kid: Schema.String.check(Schema.isMinLength(1)),
+  kty: Schema.Literal('OKP'),
+  use: Schema.Literal('sig'),
+  x: Schema.String.check(Schema.isMinLength(1)),
+});
+const PublicVerificationKeysSchema = Schema.Struct({
+  keys: Schema.Array(PublicVerificationKeySchema).check(
+    Schema.isMinLength(1),
+    Schema.makeFilter((keys) =>
+      new Set(keys.map((key) => key.kid)).size === keys.length
+        ? undefined
+        : 'Verification key identifiers must be unique',
+    ),
+  ),
+});
+const VerificationEnvironmentSchema = Schema.Struct({
+  ONTOS_GATEWAY_ISSUER: Schema.String.check(
+    Schema.isPattern(/^https?:\\/\\//u),
+    Schema.makeFilter((value) => URL.canParse(value) ? undefined : 'An absolute HTTP issuer is required'),
+  ),
+  ONTOS_GATEWAY_PUBLIC_JWKS: Schema.fromJsonString(PublicVerificationKeysSchema),
+});
 
-const parseConfiguration = (
-  environment: Readonly<Record<string, string | undefined>>,
-): VerificationConfiguration => {
-  const issuer = environment['ONTOS_GATEWAY_ISSUER'];
-  const rawJwks = environment['ONTOS_GATEWAY_PUBLIC_JWKS'];
-  if (issuer === undefined || rawJwks === undefined) {
-    throw configurationError();
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(rawJwks);
-  } catch {
-    throw configurationError();
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw configurationError();
-  }
-  const keys = (parsed as Record<string, unknown>)['keys'];
-  if (!Array.isArray(keys) || keys.length === 0) {
-    throw configurationError();
-  }
-  const keyIds = new Set<string>();
-  for (const candidate of keys) {
-    if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
-      throw configurationError();
-    }
-    const key = candidate as Record<string, unknown>;
-    const keyOperations = key['key_ops'];
-    if (
-      key['kty'] !== 'OKP' ||
-      key['crv'] !== 'Ed25519' ||
-      key['alg'] !== 'EdDSA' ||
-      key['use'] !== 'sig' ||
-      typeof key['kid'] !== 'string' ||
-      key['kid'].length === 0 ||
-      typeof key['x'] !== 'string' ||
-      key['x'].length === 0 ||
-      key['d'] !== undefined ||
-      (keyOperations !== undefined &&
-        (!Array.isArray(keyOperations) ||
-          keyOperations.some((operation) => operation !== 'verify')))
-    ) {
-      throw configurationError();
-    }
-    if (keyIds.has(key['kid'])) {
-      throw configurationError();
-    }
-    keyIds.add(key['kid']);
-  }
-  try {
-    const parsedIssuer = new URL(issuer);
-    if (parsedIssuer.protocol !== 'https:' && parsedIssuer.protocol !== 'http:') {
-      throw configurationError();
-    }
-  } catch {
-    throw configurationError();
-  }
-  return { issuer, jwks: { keys } as JSONWebKeySet };
-};
+const parseConfiguration = (environment: Readonly<Record<string, string | undefined>>) =>
+  Schema.decodeUnknownEffect(VerificationEnvironmentSchema)(environment).pipe(
+    Effect.mapError(configurationError),
+    Effect.map(({ ONTOS_GATEWAY_ISSUER: issuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks }) => ({
+      issuer,
+      // JOSE receives only validated public verification material. Optional metadata and
+      // operation declarations are checked above but are not needed by the verifier.
+      jwks: { keys: jwks.keys.map(({ alg, crv, kid, kty, use, x }) => ({ alg, crv, kid, kty, use, x })) },
+    })),
+  );
 
-const classifyVerificationFailure = (error: unknown): ActionPrincipalError => {
+const VerificationFailureSchema = Schema.Struct({
+  claim: Schema.optionalKey(Schema.String),
+  code: Schema.optionalKey(Schema.String),
+  name: Schema.optionalKey(Schema.String),
+});
+type VerificationFailure = typeof VerificationFailureSchema.Type;
+const decodeVerificationFailure = Schema.decodeUnknownOption(VerificationFailureSchema);
+
+const classifyVerificationFailure = (error: VerificationFailure): ActionPrincipalError => {
+  if (error.name === 'JWTExpired') {
+    return ActionPrincipalExpiredErrorSchema.make({ reason: 'The Bearer assertion has expired' });
+  }
+  if (error.name === 'JWTClaimValidationFailed') {
+    return error.claim === 'iss' || error.claim === 'aud'
+      ? ActionPrincipalScopeErrorSchema.make({ reason: 'The Bearer assertion has invalid scope' })
+      : invalidError();
+  }
   if (
-    error instanceof ActionPrincipalMissingError ||
-    error instanceof ActionPrincipalInvalidError ||
-    error instanceof ActionPrincipalExpiredError ||
-    error instanceof ActionPrincipalScopeError ||
-    error instanceof ActionPrincipalConfigurationError ||
-    error instanceof ActionPrincipalUnavailableError
+    error.name === 'SchemaError' ||
+    /^(?:JWS|JWT|JOSE)/u.test(error.name ?? '') ||
+    /^ERR_(?:JOSE|JWK|JWKS|JWS|JWT)_/u.test(error.code ?? '')
   ) {
-    return error;
+    return invalidError();
   }
-  if (typeof error === 'object' && error !== null) {
-    const name = Reflect.get(error, 'name');
-    const code = Reflect.get(error, 'code');
-    if (name === 'JWTExpired') {
-      return new ActionPrincipalExpiredError({ reason: 'The Bearer assertion has expired' });
-    }
-    if (name === 'JWTClaimValidationFailed') {
-      const claim = Reflect.get(error, 'claim');
-      if (claim === 'iss' || claim === 'aud') {
-        return new ActionPrincipalScopeError({ reason: 'The Bearer assertion has invalid scope' });
-      }
-      return invalidError();
-    }
-    if (name === 'SchemaError') {
-      return invalidError();
-    }
-    if (typeof name === 'string' && name.startsWith('JWS')) {
-      return invalidError();
-    }
-    if (typeof name === 'string' && name.startsWith('JWT')) {
-      return invalidError();
-    }
-    if (typeof name === 'string' && name.startsWith('JOSE')) {
-      return invalidError();
-    }
-    if (
-      typeof code === 'string' &&
-      (/^ERR_(?:JOSE|JWK|JWKS|JWS|JWT)_/u.test(code) || code === 'ERR_JWKS_NO_MATCHING_KEY')
-    ) {
-      return invalidError();
-    }
-  }
-  return new ActionPrincipalUnavailableError({
-    reason: 'Action identity verification is unavailable',
-  });
+  return unavailableError();
 };
 
-const readBearer = (authorization: string | undefined): Effect.Effect<string, ActionPrincipalError> => {
+const readBearer = (
+  authorization: string | undefined,
+): Effect.Effect<string, ActionPrincipalError> => {
   if (authorization === undefined) {
-    return Effect.fail(
-      new ActionPrincipalMissingError({ reason: 'A Bearer assertion is required' }),
-    );
+    return Effect.fail(ActionPrincipalMissingErrorSchema.make({ reason: 'A Bearer assertion is required' }));
   }
   const match = /^Bearer (?<token>[^\\s]+)$/u.exec(authorization);
   const token = match?.groups?.['token'];
@@ -236,28 +177,30 @@ export const verifyActionPrincipal = (
 ): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError> =>
   Effect.gen(function* verifyActionPrincipalEffect() {
     const token = yield* readBearer(authorization);
-    const environment = options.environment ?? {};
-    const configuration = yield* Effect.try({
-      catch: () => configurationError(),
-      try: () => parseConfiguration(environment),
-    });
-    const now = yield* (options.currentTimeSeconds ??
-      Clock.currentTimeMillis.pipe(Effect.map((milliseconds) => Math.floor(milliseconds / 1000))));
+    const configuration = yield* parseConfiguration(options.environment ?? {});
+    const now = yield* (
+      options.currentTimeSeconds ??
+        Clock.currentTimeMillis.pipe(Effect.map((milliseconds) => Math.floor(milliseconds / 1000)))
+    );
     if (!Number.isSafeInteger(now) || now < 0) {
-      return yield* configurationError();
+      return yield* Effect.fail(configurationError());
     }
     const unverifiedHeader = yield* Effect.try({
-      catch: classifyVerificationFailure,
+      // Local token parsing failures are unusable credentials, not verification outages.
+      catch: invalidError,
       try: () => decodeProtectedHeader(token),
     });
     const header = yield* decodeGatewayContextProtectedHeader(unverifiedHeader).pipe(
       Effect.mapError(invalidError),
     );
     if (header.alg !== 'EdDSA' || header.typ !== 'JWT' || header.kid.length === 0) {
-      return yield* invalidError();
+      return yield* Effect.fail(invalidError());
     }
     const verified = yield* Effect.tryPromise({
-      catch: classifyVerificationFailure,
+      catch: (cause) => Option.match(decodeVerificationFailure(cause), {
+        onNone: unavailableError,
+        onSome: classifyVerificationFailure,
+      }),
       try: () =>
         jwtVerify(token, createLocalJWKSet(configuration.jwks), {
           algorithms: ['EdDSA'],
@@ -274,7 +217,7 @@ export const verifyActionPrincipal = (
       claims.ver !== GATEWAY_ASSERTION_VERSION ||
       claims.iat > now + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS
     ) {
-      return yield* invalidError();
+      return yield* Effect.fail(invalidError());
     }
     const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema, {
       onExcessProperty: 'error',
@@ -290,9 +233,7 @@ export const verifyActionPrincipal = (
         Effect.mapError((error) =>
           error._tag === 'GatewayAssertionReplayError'
             ? invalidError()
-            : new ActionPrincipalUnavailableError({
-                reason: 'Action identity verification is unavailable',
-              }),
+            : unavailableError(),
         ),
       );
     return principal;

@@ -15,6 +15,24 @@ import type { SpiceDbConfigError } from './config-error.ts';
 
 export type ContextAccessDecision = 'allowed' | 'denied' | 'unavailable';
 
+export const TENANT_PERMISSION_KEYS = [
+  'access',
+  'impersonate',
+  'manage_identity',
+  'manage_party_identity',
+  'manage_party_relationships',
+  'merge_party_identity',
+  'read_party_identity',
+  'review_party_identity',
+] as const;
+export type TenantPermissionKey = (typeof TENANT_PERMISSION_KEYS)[number];
+export const LEGAL_ENTITY_PERMISSION_KEYS = [
+  'access',
+  'manage_counterparty',
+  'read_counterparty',
+] as const;
+export type LegalEntityPermissionKey = (typeof LEGAL_ENTITY_PERMISSION_KEYS)[number];
+
 export interface ContextAccessResult {
   readonly decision: ContextAccessDecision;
   readonly key: string;
@@ -29,6 +47,7 @@ export interface ResourceAccessTarget {
 export interface ContextAccessService {
   readonly legalEntities: (input: {
     readonly legalEntityIds: readonly string[];
+    readonly permission?: LegalEntityPermissionKey;
     readonly principalId: string;
     readonly tenantId: string;
   }) => Effect.Effect<readonly ContextAccessResult[]>;
@@ -46,7 +65,7 @@ export interface ContextAccessService {
     readonly tenantId: string;
   }) => Effect.Effect<readonly ContextAccessResult[]>;
   readonly tenants: (input: {
-    readonly permission: 'access' | 'impersonate' | 'manage_identity';
+    readonly permission: TenantPermissionKey;
     readonly principalId: string;
     readonly tenantIds: readonly string[];
   }) => Effect.Effect<readonly ContextAccessResult[]>;
@@ -200,11 +219,11 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
   };
 
   const service: ContextAccessService = {
-    legalEntities: ({ legalEntityIds, principalId, tenantId }) =>
+    legalEntities: ({ legalEntityIds, permission = 'access', principalId, tenantId }) =>
       checkBatch(
         legalEntityIds.map((legalEntityId) => ({
           key: legalEntityId,
-          permission: 'access',
+          permission,
           resourceId: toLegalEntityAccessObjectId(tenantId, legalEntityId) ?? '',
           resourceType: 'legal_entity',
         })),

@@ -9,7 +9,8 @@
     "noEmit": false,
     "outDir": "../../node_modules/.cache/tsgo/declarations/apps__shell-super-app",
     "skipLibCheck": true,
-    "tsBuildInfoFile": "../../node_modules/.cache/tsgo/apps__shell-super-app.tsbuildinfo"
+    "tsBuildInfoFile": "../../node_modules/.cache/tsgo/apps__shell-super-app.tsbuildinfo",
+    "types": ["node", "bun-types/sqlite"]
   },
   "include": [
     "api",
@@ -30,6 +31,9 @@
     },
     {
       "path": "../../verticals/contacts"
+    },
+    {
+      "path": "../../verticals/party-registry"
     }
   ]
 }

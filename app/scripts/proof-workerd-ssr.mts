@@ -7,7 +7,6 @@ import path from 'node:path';
 import { Log, LogLevel, Miniflare } from 'miniflare';
 
 const workspaceRoot = process.cwd();
-const defaultProofRoutes = ['/en'];
 const reportPath = path.join(
   workspaceRoot,
   '.codex/reports/cloudflare-workerd-ssr/composition-proof.json',
@@ -126,6 +125,7 @@ const apps = (compactConfig.topology?.apps ?? []).map((rawApp) => {
       ? rawApp.moduleFederation
       : {};
   const configuredProofRoutes = rawApp.deploy?.cloudflare?.distributedSsrProofRoutes;
+  const configuredSsrRoute = rawApp.deploy?.cloudflare?.routes?.ssr;
   const proofRoutes = Array.isArray(configuredProofRoutes)
     ? [
         ...new Set(
@@ -157,7 +157,14 @@ const apps = (compactConfig.topology?.apps ?? []).map((rawApp) => {
       : [],
     apiPrefix:
       typeof rawApp.api?.prefix === 'string' ? rawApp.api.prefix.replace(/\/+$/u, '') : undefined,
-    proofRoutes: proofRoutes.length > 0 ? proofRoutes : defaultProofRoutes,
+    proofRoutes:
+      proofRoutes.length > 0
+        ? proofRoutes
+        : [
+            typeof configuredSsrRoute === 'string' && configuredSsrRoute.startsWith('/')
+              ? configuredSsrRoute
+              : '/',
+          ],
     jsonSmokeChecks: Array.isArray(rawApp.deploy?.cloudflare?.jsonSmokeChecks)
       ? rawApp.deploy.cloudflare.jsonSmokeChecks
       : [],

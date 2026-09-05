@@ -4,37 +4,31 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { contactsManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
-import { archiveContactAction } from './src/actions/archive-contact.action.ts';
-import { archiveCustomerAction } from './src/actions/archive-customer.action.ts';
-import { createContactAction } from './src/actions/create-contact.action.ts';
-import { createCustomerAction } from './src/actions/create-customer.action.ts';
-import { editContactAction } from './src/actions/edit-contact.action.ts';
-import { editCustomerAction } from './src/actions/edit-customer.action.ts';
-import { unarchiveContactAction } from './src/actions/unarchive-contact.action.ts';
-import { unarchiveCustomerAction } from './src/actions/unarchive-customer.action.ts';
+import { archiveOrganizationEngagementAction } from './src/actions/archive-organization-engagement.action.ts';
+import { archivePersonEngagementAction } from './src/actions/archive-person-engagement.action.ts';
+import { attachOrganizationEngagementAction } from './src/actions/attach-organization-engagement.action.ts';
+import { attachPersonEngagementAction } from './src/actions/attach-person-engagement.action.ts';
+import { unarchiveOrganizationEngagementAction } from './src/actions/unarchive-organization-engagement.action.ts';
+import { unarchivePersonEngagementAction } from './src/actions/unarchive-person-engagement.action.ts';
 // </generated-module-registration-imports>
 
 export const contactsRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
-    archiveContactAction,
-    archiveCustomerAction,
-    createContactAction,
-    createCustomerAction,
-    editContactAction,
-    editCustomerAction,
-    unarchiveContactAction,
-    unarchiveCustomerAction,
+    archiveOrganizationEngagementAction,
+    archivePersonEngagementAction,
+    attachOrganizationEngagementAction,
+    attachPersonEngagementAction,
+    unarchiveOrganizationEngagementAction,
+    unarchivePersonEngagementAction,
     // </generated-module-registration-actions>
   ],
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
-      'contact-detail': () => import('./src/api/contact-detail-client.ts'),
-      'contact-list': () => import('./src/api/contact-list-client.ts'),
-      'customer-ares-lookup': () => import('./src/api/customer-ares-lookup-client.ts'),
-      'customer-detail': () => import('./src/api/customer-detail-client.ts'),
-      'customer-list': () => import('./src/api/customer-list-client.ts'),
+      'organization-engagement-profile': () =>
+        import('./src/api/organization-engagement-profile-client.ts'),
+      'person-engagement-profile': () => import('./src/api/person-engagement-profile-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {
@@ -43,19 +37,7 @@ export const contactsRegistration = defineVerticalRuntimeRegistration({
     },
     pages: {
       // <generated-module-registration-pages>
-      'page-contact-create': () =>
-        import('./src/routes/[lang]/contacts/customers/[id]/contacts/new/page.tsx'),
-      'page-contact-detail': () =>
-        import('./src/routes/[lang]/contacts/customers/[id]/contacts/[contactId]/page.tsx'),
-      'page-contact-edit': () =>
-        import('./src/routes/[lang]/contacts/customers/[id]/contacts/[contactId]/edit/page.tsx'),
       'page-contacts': () => import('./src/routes/[lang]/contacts/page.tsx'),
-      'page-customer-create': () =>
-        import('./src/routes/[lang]/contacts/customers/[id]/new/page.tsx'),
-      'page-customer-detail': () => import('./src/routes/[lang]/contacts/customers/[id]/page.tsx'),
-      'page-customer-edit': () =>
-        import('./src/routes/[lang]/contacts/customers/[id]/edit/page.tsx'),
-      'page-customers-list': () => import('./src/routes/[lang]/contacts/customers/page.tsx'),
       // </generated-module-registration-pages>
     },
     reports: {

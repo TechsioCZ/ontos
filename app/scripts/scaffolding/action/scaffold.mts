@@ -21,6 +21,7 @@ import {
   discoverOntosModule,
   ensureUniqueMutationPaths,
   insertSortedSlot,
+  isModuleManifestImport,
   requireCanonicalSlug,
   requireCoreModuleKey,
   resolveContainedPath,
@@ -301,10 +302,7 @@ export const planActionScaffold = async (
       MODULE_MANIFEST_IMPORT_SLOT_START,
       MODULE_MANIFEST_IMPORT_SLOT_END,
       [ownerImport],
-      (candidate) =>
-        /^(?:import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/src\/actions\/[a-z][a-z0-9-]*\.action\.ts';|import \{ [A-Z][A-Za-z0-9]*Api \} from '\.\/shared\/apis\/[a-z][a-z0-9-]*\.ts';|import \{ [A-Z][A-Za-z0-9]*Page \} from '\.\/src\/routes\/.+\/page\.tsx';|import \{ [A-Z][A-Za-z0-9]* \} from '\.\/src\/components\/[a-z][a-z0-9-]*\.tsx';)$/u.test(
-          candidate,
-        ),
+      isModuleManifestImport,
     ),
     MODULE_MANIFEST_ACTION_SLOT_START,
     MODULE_MANIFEST_ACTION_SLOT_END,
@@ -319,6 +317,9 @@ export const planActionScaffold = async (
       [ownerImport],
       (candidate) =>
         /^import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/src\/actions\/[a-z][a-z0-9-]*\.action\.ts';$/u.test(
+          candidate,
+        ) ||
+        /^import \{ [a-z][A-Za-z0-9]*Worker \} from '\.\/src\/workers\/[a-z][a-z0-9-]*\.worker\.ts';$/u.test(
           candidate,
         ),
     ),

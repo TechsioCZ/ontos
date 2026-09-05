@@ -1,3 +1,4 @@
+/* eslint-disable no-await-in-loop -- PostgreSQL role and grant DDL intentionally runs in order inside one transaction. */
 import { config as loadDotenv } from 'dotenv';
 import { Client } from 'pg';
 import { APP_ENV_PATH } from '../../packages/core-runtime/src/environment/workspace-environment.ts';
@@ -40,7 +41,7 @@ try {
   await client.query(
     `grant connect on database "${admin.pathname.slice(1).replaceAll('"', '""')}" to ontos_runtime`,
   );
-  for (const schema of ['core', 'auth', 'contacts']) {
+  for (const schema of ['core', 'auth', 'contacts', 'party']) {
     const schemaExists = await client.query<{ exists: boolean }>(
       'select exists(select 1 from pg_catalog.pg_namespace where nspname = $1) as exists',
       [schema],

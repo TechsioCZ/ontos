@@ -89,6 +89,7 @@ void test('rejects invalid polling values instead of falling back to a busy loop
 
 void test('runs immediately, survives a typed cycle failure, and continues polling', async () => {
   let calls = 0;
+  const healthTransitions: string[] = [];
   let completed!: () => void;
   const observedThreeCalls = new Promise<void>((resolve) => {
     completed = resolve;
@@ -113,6 +114,10 @@ void test('runs immediately, survives a typed cycle failure, and continues polli
     runOutboxPollingLoop(
       {
         config: { claimOwner: 'consumer:test', maxDeliveries: 10, pollIntervalMs: 10 },
+        health: {
+          cycleFailed: Effect.sync(() => healthTransitions.push('failed')),
+          cycleSucceeded: Effect.sync(() => healthTransitions.push('ready')),
+        },
         registrations: [registration],
         subscriptions: [registration.descriptor],
       },
@@ -130,4 +135,5 @@ void test('runs immediately, survives a typed cycle failure, and continues polli
   controller.abort();
   await assert.rejects(running);
   assert.ok(calls >= 3);
+  assert.deepEqual(healthTransitions.slice(0, 3), ['failed', 'ready', 'ready']);
 });

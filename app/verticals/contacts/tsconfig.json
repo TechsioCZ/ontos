@@ -33,6 +33,9 @@
     },
     {
       "path": "../../packages/shared-design-tokens"
+    },
+    {
+      "path": "../party-registry"
     }
   ]
 }

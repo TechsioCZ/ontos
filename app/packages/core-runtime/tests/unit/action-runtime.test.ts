@@ -1,3 +1,4 @@
+/* oxlint-disable sonarjs/use-type-alias */
 // @effect-diagnostics asyncFunction:off globalDate:off globalDateInEffect:off missingEffectError:off unsafeEffectTypeAssertion:off
 /* eslint-disable max-classes-per-file, no-await-in-loop, no-throw-literal -- Test-local typed errors, sequential lifecycle assertions, and the controlled Drizzle transaction fake are deliberate. */
 import assert from 'node:assert/strict';
@@ -16,7 +17,11 @@ import type {
 import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
 import type { ActionRuntimeStage } from '../../src/actions/runtime.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
-import { defineAction, getActionHandler } from '../../src/actions/definition.ts';
+import {
+  defineAction,
+  defineActionResourcePermission,
+  getActionHandler,
+} from '../../src/actions/definition.ts';
 import {
   ActionInvocationPersistenceError,
   ActionPermissionCheckError,
@@ -72,6 +77,7 @@ const QueryConfigSchema = Schema.Struct({ text: Schema.String });
 interface HarnessOptions {
   readonly commitFailureCode?: string;
   readonly createRecord?: ActionInvocationRecord;
+  readonly legalEntityPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
   readonly lockedModuleState?: 'active' | 'denied' | 'unavailable';
   readonly moduleState?: TenantModuleState | 'missing' | 'unavailable';
   readonly permissionDecision?: ActionPermissionDecision;
@@ -79,6 +85,7 @@ interface HarnessOptions {
   readonly policyFinalizationFailure?: boolean;
   readonly rejectionFailure?: boolean;
   readonly resolutionUnavailable?: boolean;
+  readonly resourcePermissionDecision?: 'allowed' | 'denied' | 'unavailable';
   readonly tenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
   readonly transactionMode?: 'commit-definite' | 'definite-failure' | 'normal' | 'uncertain';
 }
@@ -86,9 +93,13 @@ interface HarnessOptions {
 const makeHarness = (options: HarnessOptions = {}) => {
   const finalized: FinalizeActionPolicyDenialInput[] = [];
   const flushed: FlushActionSuccessInput[] = [];
+  const legalEntityChecks: unknown[] = [];
   const permissionChecks: CheckActionPermissionInput[] = [];
   const rejections: RejectPermissionDeniedInput[] = [];
+  const requestHashes: string[] = [];
+  const resourceChecks: unknown[] = [];
   const stages: ActionRuntimeStage[] = [];
+  const tenantChecks: unknown[] = [];
   let createCount = 0;
   let lockCount = 0;
   let permissionCheckCount = 0;
@@ -112,6 +123,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
   const repository: ActionRepositoryService = {
     createOrResolveInvocation: (_executor, input) => {
       createCount += 1;
+      requestHashes.push(input.requestHash);
       preparedHash = input.requestHash;
       return Effect.succeed({
         ...currentInvocation,
@@ -320,16 +332,34 @@ const makeHarness = (options: HarnessOptions = {}) => {
     testOperationalScopeResolver,
     {
       contextAccess: {
-        legalEntities: () => Effect.succeed([]),
+        legalEntities: (input) => {
+          legalEntityChecks.push(input);
+          return Effect.succeed(
+            input.legalEntityIds.map((key) => ({
+              decision: options.legalEntityPermissionDecision ?? ('allowed' as const),
+              key,
+            })),
+          );
+        },
         modules: () => Effect.succeed([]),
-        resources: () => Effect.succeed([]),
-        tenants: ({ tenantIds }) =>
-          Effect.succeed(
-            tenantIds.map((key) => ({
+        resources: (input) => {
+          resourceChecks.push(input);
+          return Effect.succeed(
+            input.resources.map(({ moduleId, resourceId, resourceType }) => ({
+              decision: options.resourcePermissionDecision ?? ('allowed' as const),
+              key: `${moduleId}:${resourceType}:${resourceId}`,
+            })),
+          );
+        },
+        tenants: (input) => {
+          tenantChecks.push(input);
+          return Effect.succeed(
+            input.tenantIds.map((key) => ({
               decision: options.tenantPermissionDecision ?? ('allowed' as const),
               key,
             })),
-          ),
+          );
+        },
       },
       moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
       moduleStateGate,
@@ -348,11 +378,15 @@ const makeHarness = (options: HarnessOptions = {}) => {
     finalized,
     flushed,
     gateCounts: () => ({ handlerResolutionCount, moduleStateReadCount, moduleStateRecheckCount }),
+    legalEntityChecks,
     permissionChecks,
     permissionCounts: () => ({ permissionCheckCount, rejectionCount }),
     rejections,
+    requestHashes,
+    resourceChecks,
     runtime,
     stages,
+    tenantChecks,
   };
 };
 
@@ -765,6 +799,358 @@ test('requires a declared tenant role independently from the Action executor rel
     }),
   );
   assert.equal(allowed.counts().transitionCount, 1);
+});
+
+test('accepts every Party write authority as an explicit tenant permission', async () => {
+  const partyPermissions = [
+    'manage_party_identity',
+    'manage_party_relationships',
+    'merge_party_identity',
+    'review_party_identity',
+  ] as const;
+  for (const [index, permission] of partyPermissions.entries()) {
+    const actionKey = `party.registry.permission-${index}`;
+    const action = defineAction(
+      {
+        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'party.read.v1' },
+        actionKey,
+        auditProfile: 'sensitive',
+        domainErrorSchema: Schema.Never,
+        domainEvents: {},
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'write',
+          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          entrypointKey: actionKey,
+          moduleKey: 'party.registry',
+          role: 'action',
+        }),
+        idempotency: 'required',
+        legalEntityScope: 'optional',
+        owningModuleKey: 'party.registry',
+        payloadSchema: Schema.Void,
+        policies: [],
+        resultSchema: Schema.Void,
+        schemaVersion: '1',
+        tenantPermission: () => permission,
+      },
+      () => Effect.void,
+    );
+    const harness = makeHarness();
+    await Effect.runPromise(
+      harness.runtime.runAction({
+        payload: undefined,
+        principal,
+        registration: action,
+        transport: transport(permission),
+      }),
+    );
+    assert.deepEqual(harness.tenantChecks, [
+      {
+        permission,
+        principalId: principal.principalId,
+        tenantIds: [principal.tenantId],
+      },
+    ]);
+    assert.deepEqual(harness.flushed[0]?.transport, {
+      correlationId: `correlation-${permission}`,
+      idempotencyKey: permission,
+    });
+  }
+});
+
+test('canonicalizes every resolved tenant permission target for hash and evidence', async () => {
+  const action = defineAction(
+    {
+      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'identity.read.v1' },
+      actionKey: 'core.identity.rotate-managed-key',
+      auditProfile: 'sensitive',
+      domainErrorSchema: Schema.Never,
+      domainEvents: {},
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+        entrypointKey: 'core.identity.rotate-managed-key',
+        moduleKey: 'core.identity',
+        role: 'action',
+      }),
+      idempotency: 'required',
+      legalEntityScope: 'optional',
+      owningModuleKey: 'core.identity',
+      payloadSchema: Schema.Void,
+      policies: [],
+      resultSchema: Schema.Void,
+      schemaVersion: '1',
+      tenantPermission: () => 'manage_identity',
+    },
+    () => Effect.void,
+  );
+  const first = makeHarness();
+  const second = makeHarness();
+  await Effect.runPromise(
+    first.runtime.runAction({
+      payload: undefined,
+      principal,
+      registration: action,
+      transport: {
+        ...transport('same-idempotency-key'),
+        targetModuleKey: 'forged.one',
+        targetResourceId: 'forged-one',
+        targetResourceType: 'first',
+      },
+    }),
+  );
+  await Effect.runPromise(
+    second.runtime.runAction({
+      payload: undefined,
+      principal,
+      registration: action,
+      transport: {
+        ...transport('same-idempotency-key'),
+        targetModuleKey: 'forged.two',
+        targetResourceId: 'forged-two',
+        targetResourceType: 'second',
+      },
+    }),
+  );
+
+  assert.deepEqual(first.requestHashes, second.requestHashes);
+  assert.deepEqual(first.flushed[0]?.transport, {
+    correlationId: 'correlation-same-idempotency-key',
+    idempotencyKey: 'same-idempotency-key',
+  });
+  assert.deepEqual(second.flushed[0]?.transport, first.flushed[0]?.transport);
+});
+
+test('authorizes Counterparty creation against the trusted Legal Entity before Policy and transaction', async () => {
+  let handlerCalls = 0;
+  let policyCalls = 0;
+  const action = defineAction(
+    {
+      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counterparty.read.v1' },
+      actionKey: 'party.registry.create-counterparty',
+      auditProfile: 'sensitive',
+      domainErrorSchema: Schema.Never,
+      domainEvents: {},
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+        entrypointKey: 'party.registry.create-counterparty',
+        moduleKey: 'party.registry',
+        role: 'action',
+      }),
+      idempotency: 'required',
+      legalEntityPermission: 'manage_counterparty',
+      legalEntityScope: 'required',
+      owningModuleKey: 'party.registry',
+      payloadSchema: Schema.Void,
+      policies: [
+        defineGlobalPolicy<unknown>({
+          evaluate: (input) => {
+            policyCalls += 1;
+            assert.deepEqual(input.target, {});
+            return Effect.void;
+          },
+          policyKey: 'party.registry.counterparty-create.v1',
+        }),
+      ],
+      resultSchema: Schema.Void,
+      schemaVersion: '1',
+    },
+    () => {
+      handlerCalls += 1;
+      return Effect.void;
+    },
+  );
+  const forgedTransport = {
+    ...transport('legal-entity-denied'),
+    targetModuleKey: 'forged.module',
+    targetResourceId: 'forged-legal-entity',
+    targetResourceType: 'legal_entity',
+  };
+
+  const denied = makeHarness({ legalEntityPermissionDecision: 'denied' });
+  const failure = await Effect.runPromise(
+    Effect.flip(
+      denied.runtime.runAction({
+        payload: undefined,
+        principal,
+        registration: action,
+        transport: forgedTransport,
+      }),
+    ),
+  );
+  assert.equal(failure._tag, 'ActionPermissionDenied');
+  assert.equal(policyCalls, 0);
+  assert.equal(handlerCalls, 0);
+  assert.equal(denied.counts().transactionCount, 0);
+  assert.deepEqual(denied.legalEntityChecks, [
+    {
+      legalEntityIds: [principal.legalEntityId],
+      permission: 'manage_counterparty',
+      principalId: principal.principalId,
+      tenantId: principal.tenantId,
+    },
+  ]);
+  assert.deepEqual(denied.rejections[0]?.transport, {
+    correlationId: 'correlation-legal-entity-denied',
+    idempotencyKey: 'legal-entity-denied',
+  });
+  assert.equal(denied.stages.at(-1), 'permission_checked');
+
+  const unavailable = makeHarness({ legalEntityPermissionDecision: 'unavailable' });
+  const unavailableFailure = await Effect.runPromise(
+    Effect.flip(
+      unavailable.runtime.runAction({
+        payload: undefined,
+        principal,
+        registration: action,
+        transport: forgedTransport,
+      }),
+    ),
+  );
+  assert.equal(unavailableFailure._tag, 'ActionPermissionCheckError');
+  assert.equal(unavailable.rejections.length, 0);
+  assert.equal(unavailable.counts().transactionCount, 0);
+  assert.equal(unavailable.stages.includes('permission_checked'), false);
+
+  const allowed = makeHarness();
+  await Effect.runPromise(
+    allowed.runtime.runAction({
+      payload: undefined,
+      principal,
+      registration: action,
+      transport: {
+        ...forgedTransport,
+        idempotencyKey: 'legal-entity-allowed',
+      },
+    }),
+  );
+  assert.equal(policyCalls, 1);
+  assert.equal(handlerCalls, 1);
+  assert.deepEqual(allowed.flushed[0]?.transport, {
+    correlationId: 'correlation-legal-entity-denied',
+    idempotencyKey: 'legal-entity-allowed',
+  });
+  assert.ok(
+    allowed.stages.indexOf('permission_checked') < allowed.stages.indexOf('policy_boundary'),
+  );
+});
+
+test('authorizes the resolved Resource target before Policy, transaction, and handler', async () => {
+  let handlerCalls = 0;
+  let policyCalls = 0;
+  const action = defineAction(
+    {
+      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counterparty.read.v1' },
+      actionKey: 'party.registry.end-counterparty-role',
+      auditProfile: 'sensitive',
+      domainErrorSchema: Schema.Never,
+      domainEvents: {},
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+        entrypointKey: 'party.registry.end-counterparty-role',
+        moduleKey: 'party.registry',
+        role: 'action',
+      }),
+      idempotency: 'required',
+      legalEntityScope: 'required',
+      owningModuleKey: 'party.registry',
+      payloadSchema: Schema.Struct({ counterpartyId: Schema.String }),
+      policies: [
+        defineGlobalPolicy<{ readonly counterpartyId: string }>({
+          evaluate: (input) => {
+            policyCalls += 1;
+            assert.deepEqual(input.target, {
+              targetModuleKey: 'party.registry',
+              targetResourceId: 'counterparty-1',
+              targetResourceType: 'counterparty',
+            });
+            return Effect.void;
+          },
+          policyKey: 'party.registry.role-end.v1',
+        }),
+      ],
+      resourcePermission: defineActionResourcePermission<{
+        readonly counterpartyId: string;
+      }>(({ counterpartyId }, scope) => {
+        assert.equal(scope.legalEntityId, principal.legalEntityId);
+        return {
+          permission: 'write',
+          resource: {
+            moduleId: 'party.registry',
+            resourceId: counterpartyId,
+            resourceType: 'counterparty',
+          },
+        };
+      }),
+      resultSchema: Schema.Void,
+      schemaVersion: '1',
+    },
+    () => {
+      handlerCalls += 1;
+      return Effect.void;
+    },
+  );
+
+  const denied = makeHarness({ resourcePermissionDecision: 'denied' });
+  const failure = await Effect.runPromise(
+    Effect.flip(
+      denied.runtime.runAction({
+        payload: { counterpartyId: 'counterparty-1' },
+        principal,
+        registration: action,
+        transport: {
+          ...transport('resource-denied'),
+          targetModuleKey: 'forged.module',
+          targetResourceId: 'forged-resource',
+          targetResourceType: 'forged-type',
+        },
+      }),
+    ),
+  );
+
+  assert.equal(failure._tag, 'ActionPermissionDenied');
+  assert.equal(policyCalls, 0);
+  assert.equal(handlerCalls, 0);
+  assert.equal(denied.counts().transactionCount, 0);
+  assert.deepEqual(denied.resourceChecks, [
+    {
+      legalEntityId: principal.legalEntityId,
+      permission: 'write',
+      principalId: principal.principalId,
+      resources: [
+        {
+          moduleId: 'party.registry',
+          resourceId: 'counterparty-1',
+          resourceType: 'counterparty',
+        },
+      ],
+      tenantId: principal.tenantId,
+    },
+  ]);
+  assert.deepEqual(denied.rejections[0]?.transport, {
+    correlationId: 'correlation-resource-denied',
+    idempotencyKey: 'resource-denied',
+    targetModuleKey: 'party.registry',
+    targetResourceId: 'counterparty-1',
+    targetResourceType: 'counterparty',
+  });
+
+  const unavailable = makeHarness({ resourcePermissionDecision: 'unavailable' });
+  const unavailableFailure = await Effect.runPromise(
+    Effect.flip(
+      unavailable.runtime.runAction({
+        payload: { counterpartyId: 'counterparty-1' },
+        principal,
+        registration: action,
+        transport: transport('resource-unavailable'),
+      }),
+    ),
+  );
+  assert.equal(unavailableFailure._tag, 'ActionPermissionCheckError');
+  assert.equal(unavailable.rejections.length, 0);
+  assert.equal(unavailable.counts().transactionCount, 0);
 });
 
 test('persists a definite permission denial before returning it and never evaluates Policies', async () => {

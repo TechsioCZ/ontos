@@ -1,10 +1,8 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Link as RouterLink } from '@modern-js/plugin-tanstack/runtime';
-import { Link } from '@techsio/ui-kit/atoms/link';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 
 export const ContactsPage = () => {
-  const { language, t } = useModernI18n();
+  const { t } = useModernI18n();
   const headingId = 'contacts-heading';
 
   return (
@@ -21,9 +19,9 @@ export const ContactsPage = () => {
           >
             {t('contacts.pages.contacts.title')}
           </h1>
-          <Link as={RouterLink} to={`/${language}/contacts/customers`}>
-            {t('contacts.pages.contacts.customers')}
-          </Link>
+          <p className="contacts:max-w-2xl contacts:text-(--color-page-muted-fg)">
+            {t('contacts.pages.contacts.description')}
+          </p>
         </div>
       </section>
     </>

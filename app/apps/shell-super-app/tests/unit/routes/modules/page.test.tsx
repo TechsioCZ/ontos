@@ -143,6 +143,7 @@ test('rejects a malformed remote module before React receives it', async () => {
   render(<ModuleTargetPage />);
 
   expect(await screen.findByText('shell.moduleTarget.incompatible')).toBeTruthy();
+  expect(remotePropsMock).not.toHaveBeenCalled();
 });
 
 test('passes an empty route-parameter record to a resolved static page', async () => {

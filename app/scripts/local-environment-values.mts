@@ -11,15 +11,35 @@ const existingValues = (lines: readonly string[]): Readonly<Record<string, strin
   );
 
 export interface LocalEnvironmentOverrides {
-  readonly grpcPort?: string;
-  readonly httpPort?: string;
-  readonly preSharedKey?: string;
+  readonly grpcPort?: string | undefined;
+  readonly httpPort?: string | undefined;
+  readonly preSharedKey?: string | undefined;
 }
+
+export interface LocalPublicClientTopology {
+  readonly shellId: string;
+  readonly shellPort: number;
+  readonly partyRegistryApiBaseUrl: string;
+}
+
+export const localPublicClientValues = (
+  lines: readonly string[],
+  topology: LocalPublicClientTopology,
+) => {
+  const existing = existingValues(lines);
+  return {
+    ONTOS_PARTY_REGISTRY_API_BASE_URL:
+      existing['ONTOS_PARTY_REGISTRY_API_BASE_URL'] ?? topology.partyRegistryApiBaseUrl,
+    ONTOS_SHELL_GATEWAY_BASE_URL:
+      existing['ONTOS_SHELL_GATEWAY_BASE_URL'] ??
+      `http://localhost:${topology.shellPort}/${topology.shellId}-api`,
+  };
+};
 
 export const localSpiceDbValues = (
   lines: readonly string[],
   overrides: LocalEnvironmentOverrides,
-): Readonly<Record<string, string>> => {
+) => {
   const existing = existingValues(lines);
   const grpcPort = overrides.grpcPort ?? existing['SPICEDB_GRPC_PORT'] ?? '50051';
   const httpPort = overrides.httpPort ?? existing['SPICEDB_HTTP_PORT'] ?? '8443';

@@ -28,14 +28,12 @@ import {
 } from '../provision-current-action-authorization.mts';
 
 const currentActionKeys = [
-  'contacts.core.archive-contact',
-  'contacts.core.archive-customer',
-  'contacts.core.create-contact',
-  'contacts.core.create-customer',
-  'contacts.core.edit-contact',
-  'contacts.core.edit-customer',
-  'contacts.core.unarchive-contact',
-  'contacts.core.unarchive-customer',
+  'contacts.core.archive-organization-engagement',
+  'contacts.core.archive-person-engagement',
+  'contacts.core.attach-organization-engagement',
+  'contacts.core.attach-person-engagement',
+  'contacts.core.unarchive-organization-engagement',
+  'contacts.core.unarchive-person-engagement',
   'core.identity.bind-managed-api-key',
   'core.identity.bind-self-api-key',
   'core.identity.change-principal-status',
@@ -44,6 +42,30 @@ const currentActionKeys = [
   'core.identity.set-managed-api-key-binding-status',
   'core.identity.set-self-api-key-binding-status',
   'core.modules.change-tenant-module-state',
+  'party.registry.add-contact-point',
+  'party.registry.add-party-official-identifier',
+  'party.registry.archive-party',
+  'party.registry.confirm-duplicate-parties',
+  'party.registry.correct-party-fact',
+  'party.registry.counterparty-create',
+  'party.registry.counterparty-role-add',
+  'party.registry.counterparty-role-end',
+  'party.registry.create-party',
+  'party.registry.create-party-relationship',
+  'party.registry.dismiss-duplicate-candidate',
+  'party.registry.end-contact-point',
+  'party.registry.end-party-official-identifier',
+  'party.registry.end-party-relationship',
+  'party.registry.mark-duplicate-candidate-needs-evidence',
+  'party.registry.match-party',
+  'party.registry.request-search-rebuild',
+  'party.registry.resolve-duplicate-candidate-create',
+  'party.registry.resolve-duplicate-candidate-match',
+  'party.registry.unarchive-party',
+  'party.registry.update-contact-point',
+  'party.registry.update-party',
+  'party.registry.update-party-official-identifier',
+  'party.registry.update-party-relationship',
 ] as const;
 
 const currentActions = currentActionKeys.map((actionKey) => ({
@@ -206,9 +228,10 @@ test('workspace validation rejects both provisioning spellings in every automati
 test('discovers exactly the current generated Core and Contacts Action baseline', async () => {
   const workspaceRoot = path.resolve(import.meta.dirname, '../..');
   assert.deepEqual(await discoverCurrentActionKeys(workspaceRoot), currentActionKeys);
-  assert.equal(new Set(currentActionKeys).size, 16);
+  assert.equal(new Set(currentActionKeys).size, 38);
   assert.equal(currentActionKeys.filter((key) => key.startsWith('core.')).length, 8);
-  assert.equal(currentActionKeys.filter((key) => key.startsWith('contacts.core.')).length, 8);
+  assert.equal(currentActionKeys.filter((key) => key.startsWith('contacts.core.')).length, 6);
+  assert.equal(currentActionKeys.filter((key) => key.startsWith('party.registry.')).length, 24);
 });
 
 test('builds lossless, deterministic Tenant-membership grants for development and stage', async () => {
@@ -227,8 +250,8 @@ test('builds lossless, deterministic Tenant-membership grants for development an
     stage.contexts,
   );
 
-  assert.equal(developmentRelationships.length, 16);
-  assert.equal(stageRelationships.length, 32);
+  assert.equal(developmentRelationships.length, 38);
+  assert.equal(stageRelationships.length, 76);
   for (const relationship of [...developmentRelationships, ...stageRelationships]) {
     assert.equal(relationship.relation, 'executor');
     assert.equal(relationship.resource?.objectType, 'action');
@@ -244,14 +267,14 @@ test('builds lossless, deterministic Tenant-membership grants for development an
   );
   assert.equal(
     Buffer.from(
-      toSpiceDbActionObjectId('contacts.core.edit-customer').slice(3),
+      toSpiceDbActionObjectId('contacts.core.attach-person-engagement').slice(3),
       'base64url',
     ).toString('utf-8'),
-    'contacts.core.edit-customer',
+    'contacts.core.attach-person-engagement',
   );
   assert.notEqual(
-    toSpiceDbActionObjectId('contacts.core.edit-customer'),
-    toSpiceDbActionObjectId('contacts-core-edit-customer'),
+    toSpiceDbActionObjectId('contacts.core.attach-person-engagement'),
+    toSpiceDbActionObjectId('contacts-core-attach-person-engagement'),
   );
 });
 
@@ -329,12 +352,12 @@ test('provisions with TOUCH, verifies both outcomes, and is safe to rerun', asyn
   const first = await Effect.runPromise(provisionActionAuthorization(client, input));
   const second = await Effect.runPromise(provisionActionAuthorization(client, input));
 
-  assert.deepEqual(first, { actionCount: 16, grantCount: 16, tenantCount: 1 });
+  assert.deepEqual(first, { actionCount: 38, grantCount: 38, tenantCount: 1 });
   assert.deepEqual(second, first);
   assert.equal(state.schemaWriteCount, 2);
   assert.equal(state.relationshipWriteCount, 2);
-  assert.equal(state.grants.size, 16);
-  assert.equal(state.updates.length, 32);
+  assert.equal(state.grants.size, 38);
+  assert.equal(state.updates.length, 76);
   assert.ok(
     state.updates.every(({ operation }) => operation === v1.RelationshipUpdate_Operation.TOUCH),
   );
@@ -361,7 +384,7 @@ test('never grants explicit Actions through Tenant membership and verifies recor
     provisionActionAuthorization(client, {
       actions: [
         {
-          actionKey: 'contacts.core.create-customer',
+          actionKey: 'contacts.core.attach-person-engagement',
           provisioning: 'tenant_membership_default',
         },
         { actionKey: 'core.identity.restricted', provisioning: 'explicit' },
@@ -383,7 +406,7 @@ test('never grants explicit Actions through Tenant membership and verifies recor
   assert.equal(state.updates.length, 2);
   assert.equal(
     state.updates[0]?.relationship?.resource?.objectId,
-    toSpiceDbActionObjectId('contacts.core.create-customer'),
+    toSpiceDbActionObjectId('contacts.core.attach-person-engagement'),
   );
 });
 
@@ -474,11 +497,11 @@ test('rejects invalid input and missing membership before writing grants', async
     provisionActionAuthorization(client, {
       actions: [
         {
-          actionKey: 'contacts.core.edit-customer',
+          actionKey: 'contacts.core.attach-person-engagement',
           provisioning: 'tenant_membership_default',
         },
         {
-          actionKey: 'contacts.core.edit-customer',
+          actionKey: 'contacts.core.attach-person-engagement',
           provisioning: 'tenant_membership_default',
         },
       ],

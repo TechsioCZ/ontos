@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as publicSurface from '../../src/index.ts';
+import type { ResolvedReadPermissionTarget } from '../../src/index.ts';
 import {
   computeActionRequestHash,
   computeCanonicalValueHash,
@@ -84,6 +85,9 @@ void test('publishes only the narrow server Action surface', () => {
   assert.equal('defineAction' in publicSurface, true);
   assert.equal('defineGlobalPolicy' in publicSurface, true);
   assert.equal('defineMicroverticalPolicy' in publicSurface, true);
+  assert.equal('defineActionResourcePermission' in publicSurface, true);
+  assert.equal('LEGAL_ENTITY_PERMISSION_KEYS' in publicSurface, true);
+  assert.equal('TENANT_PERMISSION_KEYS' in publicSurface, true);
   assert.equal('denyPolicy' in publicSurface, true);
   assert.equal('ActionPolicyDenied' in publicSurface, true);
   assert.equal('ActionPolicyEvaluationError' in publicSurface, true);
@@ -102,4 +106,24 @@ void test('publishes only the narrow server Action surface', () => {
   assert.equal('createPermissionCheckClient' in publicSurface, false);
   assert.equal('makeActionPermissionService' in publicSurface, false);
   assert.equal('Pool' in publicSurface, false);
+});
+
+test('publishes the typed governed Read alternative-target composition', () => {
+  const target = {
+    kind: 'any_of',
+    targets: [
+      {
+        kind: 'resource',
+        resource: {
+          moduleId: 'party.registry',
+          resourceId: 'counterparty-1',
+          resourceType: 'counterparty',
+        },
+      },
+      { kind: 'tenant', permission: 'manage_party_identity' },
+    ],
+  } as const satisfies ResolvedReadPermissionTarget;
+
+  assert.equal(target.kind, 'any_of');
+  assert.equal(target.targets[0].kind, 'resource');
 });

@@ -31,6 +31,21 @@ export interface OutboxWorkerHandlerContext {
   readonly workerKey: string;
 }
 
+const verifiedHandlerContexts = new WeakSet<OutboxWorkerHandlerContext>();
+
+/** Core-private construction seam: caller-created context objects are not trusted worker claims. */
+export const attestOutboxWorkerHandlerContext = (
+  context: OutboxWorkerHandlerContext,
+): OutboxWorkerHandlerContext => {
+  const verified = Object.freeze({ ...context });
+  verifiedHandlerContexts.add(verified);
+  return verified;
+};
+
+export const isVerifiedOutboxWorkerHandlerContext = (
+  context: OutboxWorkerHandlerContext,
+): boolean => verifiedHandlerContexts.has(context);
+
 export interface OutboxWorkerDescriptor<
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
   Consumer extends string,
@@ -96,6 +111,24 @@ export type AnyOutboxWorkerRegistration = OutboxWorkerRegistration<
   unknown,
   unknown
 >;
+
+/** Derive the schema-free deployment catalog without importing an owner's unrelated entrypoints. */
+export const extractOutboxWorkerSubscriptions = (
+  registrations: readonly AnyOutboxWorkerRegistration[],
+): readonly OutboxWorkerSubscription[] =>
+  Object.freeze(
+    registrations
+      .map(({ descriptor }) =>
+        Object.freeze({
+          consumerModuleKey: descriptor.consumerModuleKey,
+          entrypoint: descriptor.entrypoint,
+          producerModuleKey: descriptor.producerModuleKey,
+          topic: descriptor.topic,
+          workerKey: descriptor.workerKey,
+        }),
+      )
+      .toSorted((left, right) => left.workerKey.localeCompare(right.workerKey)),
+  );
 
 export type OutboxWorkerRequirements<Registration extends AnyOutboxWorkerRegistration> =
   Registration extends OutboxWorkerRegistration<

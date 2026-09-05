@@ -20,6 +20,7 @@ import {
   generatedSlotContainsExactEntry,
   insertModuleFederationExposure,
   insertSortedSlot,
+  isModuleManifestImport,
   isMissingFileError,
   moduleFederationExposureSource,
   patchJsonObjectProperty,
@@ -435,7 +436,7 @@ const patchPageWiring = (
     MODULE_MANIFEST_IMPORT_SLOT_START,
     MODULE_MANIFEST_IMPORT_SLOT_END,
     [wiring.manifestImport],
-    (candidate) => /^import \{ [A-Za-z][A-Za-z0-9]* \} from '.+';$/u.test(candidate),
+    isModuleManifestImport,
   );
   manifest = insertSortedSlot(
     manifest,

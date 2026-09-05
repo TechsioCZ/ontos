@@ -26,6 +26,12 @@ const context = {
   principalId,
   tenantId,
 } as const;
+const tenantContext = {
+  authMethod: context.authMethod,
+  correlationId: context.correlationId,
+  principalId: context.principalId,
+  tenantId: context.tenantId,
+} as const;
 const ref = { moduleId, resourceId: 'unit-1', resourceType } as const;
 const entrypoint = (role: 'api' | 'search', access: 'read' | 'write' = 'read') => ({
   access,
@@ -177,7 +183,8 @@ const access = (
         key: `${owner}:${type}:${resourceId}`,
       })),
     ),
-  tenants: () => Effect.succeed([]),
+  tenants: ({ tenantIds }) =>
+    Effect.succeed(tenantIds.map((key) => ({ decision: moduleDecision, key }))),
 });
 
 const dependencies = (
@@ -299,7 +306,136 @@ test('search filters resource denials and reports partial provider failure', asy
   );
   await expect(Effect.runPromise(partial.search(context, 'unit'))).resolves.toEqual({
     partial: true,
-    results: [{ ref, title: 'Unit 1' }],
+    results: [{ kind: 'resource', ref, title: 'Unit 1' }],
+  });
+});
+
+test('tenant-scoped Party search needs no Legal Entity, forwards declared filters and preserves identity metadata', async () => {
+  const installed = catalog();
+  const [contract] = installed.contracts;
+  if (contract === undefined) {
+    throw new Error('The test catalog must include one installed contract');
+  }
+  const [partyResourceDescriptor] = contract.manifest.publicSurface.resourceTypes;
+  if (partyResourceDescriptor === undefined) {
+    throw new Error('The test catalog must include one resource type');
+  }
+  const partyResourceType = 'party.registry.party';
+  const partySearchKey = 'party.registry.party-search';
+  const partyModuleId = 'party.registry';
+  const partyContract = {
+    ...contract,
+    deployment: { ...contract.deployment, appId: 'party-registry' },
+    manifest: {
+      ...contract.manifest,
+      module: { ...contract.manifest.module, id: partyModuleId },
+      publicSurface: {
+        ...contract.manifest.publicSurface,
+        actions: [],
+        api: [],
+        resourceTypes: [
+          {
+            ...partyResourceDescriptor,
+            key: partyResourceType,
+            owningModuleId: partyModuleId,
+          },
+        ],
+        search: [
+          {
+            accessFiltering: 'tenant_scope' as const,
+            key: partySearchKey,
+            owningModuleId: partyModuleId,
+            requestFilters: ['includeArchived'] as const,
+            resourceType: partyResourceType,
+            tenantPermission: 'read_party_identity' as const,
+          },
+        ],
+        shellContributions: {
+          mediaAttachments: [],
+          navigation: [],
+          pages: [],
+          publicComponents: [],
+          reports: [],
+          resourceDetails: [],
+          search: [
+            {
+              contributionKey: 'party.registry.search.party',
+              entrypoint: {
+                access: 'read' as const,
+                authorization: { kind: 'context_permission' as const, permission: 'module.access' },
+                entrypointKey: 'party.registry.search.party',
+                moduleKey: partyModuleId,
+                role: 'search' as const,
+                scope: 'tenant' as const,
+              },
+              searchKey: partySearchKey,
+            },
+          ],
+          timelines: [],
+        },
+      },
+    },
+  };
+  const partyCatalog = buildInstalledModuleCatalog([
+    { contract: partyContract, expectedAppId: 'party-registry' },
+  ]);
+  const calls: unknown[] = [];
+  const baseline = dependencies();
+  const result = await Effect.runPromise(
+    makeShellSearch(
+      {
+        ...baseline,
+        catalog: Effect.succeed(partyCatalog),
+        contextAccess: {
+          ...baseline.contextAccess,
+          modules: () => Effect.die('tenant-scoped search must not require module access'),
+          resources: () => Effect.die('tenant-scoped search must not require resource access'),
+          tenants: ({ permission, tenantIds }) => {
+            calls.push({ permission, tenantIds });
+            return Effect.succeed([{ decision: 'allowed', key: tenantId }]);
+          },
+        },
+      },
+      {
+        search: (input) => {
+          calls.push(input);
+          return Effect.succeed([
+            {
+              archived: true,
+              matchedViaAlias: true,
+              ref: {
+                moduleId: partyModuleId,
+                resourceId: 'party-1',
+                resourceType: partyResourceType,
+                tenantId,
+              },
+              title: 'Canonical Party',
+            },
+          ]);
+        },
+      },
+    ).search(tenantContext, { includeArchived: true, query: ' party ', role: 'CUSTOMER' }),
+  );
+
+  expect(calls[0]).toEqual({ permission: 'read_party_identity', tenantIds: [tenantId] });
+  expect(calls[1]).toMatchObject({ includeArchived: true, query: 'party' });
+  expect(calls[1]).not.toHaveProperty('role');
+  expect(result).toEqual({
+    partial: false,
+    results: [
+      {
+        archived: true,
+        kind: 'party',
+        matchedViaAlias: true,
+        ref: {
+          moduleId: partyModuleId,
+          resourceId: 'party-1',
+          resourceType: partyResourceType,
+          tenantId,
+        },
+        title: 'Canonical Party',
+      },
+    ],
   });
 });
 
@@ -308,6 +444,100 @@ test('search fails only when every eligible provider fails', async () => {
     search: () => Effect.fail(new ShellProviderUnavailableError()),
   }).search(context, 'unit');
   await expect(Effect.runPromise(effect)).rejects.toBeInstanceOf(ShellProviderUnavailableError);
+});
+
+test('Counterparty search preserves both identities, selected scope, roles and collision metadata', async () => {
+  const [contract] = catalog().contracts;
+  if (contract === undefined) {
+    throw new Error('The test catalog must include one installed contract');
+  }
+  const filteredCatalog = buildInstalledModuleCatalog([
+    {
+      contract: {
+        ...contract,
+        manifest: {
+          ...contract.manifest,
+          publicSurface: {
+            ...contract.manifest.publicSurface,
+            search: contract.manifest.publicSurface.search.map((descriptor) => ({
+              ...descriptor,
+              requestFilters: ['includeArchived', 'role'] as const,
+            })),
+          },
+        },
+      },
+      expectedAppId: 'property-registry',
+    },
+  ]);
+  const counterpartyRef = { ...ref, tenantId };
+  const canonicalPartyRef = {
+    ...ref,
+    resourceId: 'party-1',
+    resourceType: 'property.registry.party',
+    tenantId,
+  };
+  const collision = {
+    counterpartyRefs: [counterpartyRef, { ...counterpartyRef, resourceId: 'unit-2' }],
+    kind: 'CANONICAL_PARTY_COUNTERPARTY_COLLISION',
+  };
+  const value = {
+    collision,
+    currentRoles: ['CUSTOMER', 'SUPPLIER'],
+    legalEntity: { legalEntityId, tenantId },
+    party: {
+      archived: true,
+      matchedViaAlias: true,
+      ref: canonicalPartyRef,
+      title: 'Canonical Party',
+    },
+    ref: counterpartyRef,
+  };
+  const calls: unknown[] = [];
+  const search = makeShellSearch(
+    { ...dependencies(), catalog: Effect.succeed(filteredCatalog) },
+    {
+      search: (input) => {
+        calls.push(input);
+        return Effect.succeed([value]);
+      },
+    },
+  );
+  const result = await Effect.runPromise(
+    search.search(context, { includeArchived: true, query: 'canonical', role: 'CUSTOMER' }),
+  );
+  expect(calls[0]).toMatchObject({ includeArchived: true, role: 'CUSTOMER' });
+  expect(result).toEqual({
+    partial: false,
+    results: [{ ...value, kind: 'counterparty', title: 'Canonical Party' }],
+  });
+  expect(await Effect.runPromise(search.search(tenantContext, 'canonical'))).toEqual({
+    partial: false,
+    results: [],
+  });
+  expect(calls).toHaveLength(1);
+  const baseline = dependencies();
+  const redacted = await Effect.runPromise(
+    makeShellSearch(
+      {
+        ...baseline,
+        catalog: Effect.succeed(filteredCatalog),
+        contextAccess: {
+          ...baseline.contextAccess,
+          resources: ({ resources }) =>
+            Effect.succeed(
+              resources.map((resource) => ({
+                decision:
+                  resource.resourceId === 'unit-2' ? ('denied' as const) : ('allowed' as const),
+                key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
+              })),
+            ),
+        },
+      },
+      { search: () => Effect.succeed([value]) },
+    ).search(context, 'canonical'),
+  );
+  expect(JSON.stringify(redacted)).not.toContain('unit-2');
+  expect(redacted.results[0]).not.toHaveProperty('collision');
 });
 
 test('treats a missing tenant module-state record as hidden rather than authorization uncertainty', async () => {

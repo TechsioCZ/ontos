@@ -1,3 +1,4 @@
+/* eslint-disable oxc/no-barrel-file, sonarjs/no-wildcard-import -- This is the published contract-derived client aggregate for governed Contacts operations. */
 import type { GatewayContextClientOptions } from '@app/shared-contracts';
 import { Effect, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
 import type {
@@ -10,22 +11,17 @@ import type {
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import { contactsApi, contactsApiContract, contactsOperationContexts } from '../../shared/api.ts';
 import type {
-  ContactDetailRequest,
-  ContactListRequest,
-  ContactLifecyclePayload,
-  CreateContactPayload,
-  CreateCustomerPayload,
+  AttachOrganizationEngagementPayload,
+  AttachPersonEngagementPayload,
   ContactsReadiness,
-  CustomerAresLookupRequest,
-  CustomerDetailRequest,
-  CustomerLifecyclePayload,
-  CustomerListRequest,
-  EditContactPayload,
-  EditCustomerPayload,
   OperationContext,
+  OrganizationEngagementLifecyclePayload,
+  PersonEngagementLifecyclePayload,
 } from '../../shared/api.ts';
 import { actionGateway } from './action-gateway.ts';
 
+export * from './organization-engagement-profile-client.ts';
+export * from './person-engagement-profile-client.ts';
 export { Effect, runEffectRequest } from '@modern-js/plugin-bff/effect-client';
 
 type ContactsApiGroups =
@@ -60,19 +56,32 @@ interface ContactsClientAuthorization {
   readonly traceId?: string;
 }
 
+interface ContactsClientRequestContext {
+  locale?: string;
+  operationContext?: OperationContext;
+  traceparent?: string;
+}
+
+interface ContactsClientHeaders extends Readonly<Record<string, string | undefined>> {
+  authorization: string;
+  'x-correlation-id': string;
+  'x-trace-id'?: string;
+}
+
 const makeClient = (
   options: ContactsClientOptions,
   authentication?: ContactsClientAuthorization,
 ) => {
-  const localeContext = options.locale === undefined ? {} : { locale: options.locale };
-  const operationContext =
-    options.operationContext === undefined
-      ? localeContext
-      : { ...localeContext, operationContext: options.operationContext };
-  const requestContext =
-    options.traceparent === undefined
-      ? operationContext
-      : { ...operationContext, traceparent: options.traceparent };
+  const requestContext: ContactsClientRequestContext = {};
+  if (options.locale !== undefined) {
+    requestContext.locale = options.locale;
+  }
+  if (options.operationContext !== undefined) {
+    requestContext.operationContext = options.operationContext;
+  }
+  if (options.traceparent !== undefined) {
+    requestContext.traceparent = options.traceparent;
+  }
   const config = {
     baseUrl: options.baseUrl ?? contactsApiContract.apiPrefix,
     requestContext,
@@ -80,17 +89,13 @@ const makeClient = (
   if (authentication === undefined) {
     return makeEffectHttpApiClient(contactsApi, config);
   }
-  const headers =
-    authentication.traceId === undefined
-      ? {
-          authorization: authentication.authorization,
-          'x-correlation-id': authentication.correlationId,
-        }
-      : {
-          authorization: authentication.authorization,
-          'x-correlation-id': authentication.correlationId,
-          'x-trace-id': authentication.traceId,
-        };
+  const headers: ContactsClientHeaders = {
+    authorization: authentication.authorization,
+    'x-correlation-id': authentication.correlationId,
+  };
+  if (authentication.traceId !== undefined) {
+    headers['x-trace-id'] = authentication.traceId;
+  }
   return makeEffectHttpApiClient(contactsApi, {
     ...config,
     transformClient: HttpClient.mapRequest(HttpClientRequest.setHeaders(headers)),
@@ -131,75 +136,59 @@ export const getContactsReadiness = (
     operationContext: options.operationContext ?? contactsOperationContexts.readiness,
   }).pipe(Effect.flatMap((client) => client.foundation.readiness({})));
 
-export const createCustomer = (payload: CreateCustomerPayload, options: ContactsMutationOptions) =>
-  invoke(options, contactsOperationContexts.createCustomer, (client) =>
-    client.customerMutations.createCustomer({ headers: mutationHeaders(options), payload }),
-  );
-export const editCustomer = (payload: EditCustomerPayload, options: ContactsMutationOptions) =>
-  invoke(options, contactsOperationContexts.editCustomer, (client) =>
-    client.customerMutations.editCustomer({ headers: mutationHeaders(options), payload }),
-  );
-export const archiveCustomer = (
-  payload: CustomerLifecyclePayload,
+export const attachOrganizationEngagement = (
+  payload: AttachOrganizationEngagementPayload,
   options: ContactsMutationOptions,
 ) =>
-  invoke(options, contactsOperationContexts.archiveCustomer, (client) =>
-    client.customerMutations.archiveCustomer({ headers: mutationHeaders(options), payload }),
-  );
-export const unarchiveCustomer = (
-  payload: CustomerLifecyclePayload,
-  options: ContactsMutationOptions,
-) =>
-  invoke(options, contactsOperationContexts.unarchiveCustomer, (client) =>
-    client.customerMutations.unarchiveCustomer({ headers: mutationHeaders(options), payload }),
+  invoke(options, contactsOperationContexts.attachOrganizationEngagement, (client) =>
+    client.organizationEngagementMutations.attach({
+      headers: mutationHeaders(options),
+      payload,
+    }),
   );
 
-export const createContact = (payload: CreateContactPayload, options: ContactsMutationOptions) =>
-  invoke(options, contactsOperationContexts.createContact, (client) =>
-    client.contactMutations.createContact({ headers: mutationHeaders(options), payload }),
-  );
-export const editContact = (payload: EditContactPayload, options: ContactsMutationOptions) =>
-  invoke(options, contactsOperationContexts.editContact, (client) =>
-    client.contactMutations.editContact({ headers: mutationHeaders(options), payload }),
-  );
-export const archiveContact = (
-  payload: ContactLifecyclePayload,
+export const archiveOrganizationEngagement = (
+  payload: OrganizationEngagementLifecyclePayload,
   options: ContactsMutationOptions,
 ) =>
-  invoke(options, contactsOperationContexts.archiveContact, (client) =>
-    client.contactMutations.archiveContact({ headers: mutationHeaders(options), payload }),
-  );
-export const unarchiveContact = (
-  payload: ContactLifecyclePayload,
-  options: ContactsMutationOptions,
-) =>
-  invoke(options, contactsOperationContexts.unarchiveContact, (client) =>
-    client.contactMutations.unarchiveContact({ headers: mutationHeaders(options), payload }),
+  invoke(options, contactsOperationContexts.archiveOrganizationEngagement, (client) =>
+    client.organizationEngagementMutations.archive({
+      headers: mutationHeaders(options),
+      payload,
+    }),
   );
 
-export const getCustomerDetail = (
-  payload: CustomerDetailRequest,
-  options: ContactsOperationOptions,
+export const unarchiveOrganizationEngagement = (
+  payload: OrganizationEngagementLifecyclePayload,
+  options: ContactsMutationOptions,
 ) =>
-  invoke(options, contactsOperationContexts.getCustomerDetail, (client) =>
-    client.customerDetail.getCustomerDetail({ payload }),
+  invoke(options, contactsOperationContexts.unarchiveOrganizationEngagement, (client) =>
+    client.organizationEngagementMutations.unarchive({
+      headers: mutationHeaders(options),
+      payload,
+    }),
   );
-export const getCustomerList = (payload: CustomerListRequest, options: ContactsOperationOptions) =>
-  invoke(options, contactsOperationContexts.getCustomerList, (client) =>
-    client.customerList.getCustomerList({ payload }),
-  );
-export const lookupCustomerAres = (
-  payload: CustomerAresLookupRequest,
-  options: ContactsOperationOptions,
+
+export const attachPersonEngagement = (
+  payload: AttachPersonEngagementPayload,
+  options: ContactsMutationOptions,
 ) =>
-  invoke(options, contactsOperationContexts.lookupCustomerAres, (client) =>
-    client.customerAresLookup.lookup({ payload }),
+  invoke(options, contactsOperationContexts.attachPersonEngagement, (client) =>
+    client.personEngagementMutations.attach({ headers: mutationHeaders(options), payload }),
   );
-export const getContact = (payload: ContactDetailRequest, options: ContactsOperationOptions) =>
-  invoke(options, contactsOperationContexts.getContact, (client) =>
-    client.contactDetail.getContact({ payload }),
+
+export const archivePersonEngagement = (
+  payload: PersonEngagementLifecyclePayload,
+  options: ContactsMutationOptions,
+) =>
+  invoke(options, contactsOperationContexts.archivePersonEngagement, (client) =>
+    client.personEngagementMutations.archive({ headers: mutationHeaders(options), payload }),
   );
-export const getContactList = (payload: ContactListRequest, options: ContactsOperationOptions) =>
-  invoke(options, contactsOperationContexts.getContactList, (client) =>
-    client.contactList.getContactList({ payload }),
+
+export const unarchivePersonEngagement = (
+  payload: PersonEngagementLifecyclePayload,
+  options: ContactsMutationOptions,
+) =>
+  invoke(options, contactsOperationContexts.unarchivePersonEngagement, (client) =>
+    client.personEngagementMutations.unarchive({ headers: mutationHeaders(options), payload }),
   );

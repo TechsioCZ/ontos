@@ -50,6 +50,9 @@ const forbiddenImportPattern = `${importPrefix}['"](?:drizzle-orm(?:\\/[^'"]*)?|
 const forbiddenImport = new RegExp(forbiddenImportPattern, 'u');
 const multilineForbiddenImport = new RegExp(forbiddenImportPattern, 'gu');
 const importedSpecifier = new RegExp(`${importPrefix}['"](?<specifier>[^'"]+)['"]`, 'gu');
+const isTestSource = (relative: string): boolean =>
+  /(?:^|\/)(?:tests?|__tests__)\//u.test(relative) ||
+  relative.startsWith('packages/core-runtime/src/testing/');
 const hiddenCapability =
   /\b(?:CoreDatabase|CoreDatabaseExecutor|CoreTransaction|ScopedTransactionExecutor|ActionTransactionExecutor|coreDatabaseSchema|actionInvocations|CORE_TABLES)\b/u;
 const hiddenCoreSchema = /\b(?:coreDatabaseSchema|actionInvocations|CORE_TABLES)\b/u;
@@ -189,6 +192,27 @@ export const checkDatabaseAccessBoundaries = async (
     const source = sources.get(file)!;
     const relative = path.relative(root, file).split(path.sep).join('/');
     const governedAdapter = isGovernedAdapter(relative, source);
+    if (!isTestSource(relative)) {
+      for (const match of source.matchAll(importedSpecifier)) {
+        const specifier = match.groups?.['specifier'];
+        if (specifier === undefined) continue;
+        const dependency = resolveLocalSource(sourceFiles, root, file, specifier);
+        const dependencyRelative =
+          dependency === undefined
+            ? undefined
+            : path.relative(root, dependency).split(path.sep).join('/');
+        if (
+          specifier.startsWith('@app/core-runtime/testing/') ||
+          dependencyRelative?.startsWith('packages/core-runtime/src/testing/') === true
+        ) {
+          record({
+            file: relative,
+            line: source.slice(0, match.index).split('\n').length,
+            reason: 'test-only Core runtime imported by production source',
+          });
+        }
+      }
+    }
     if (isOwnerOperationSource(relative, source)) {
       for (const match of source.matchAll(importedSpecifier)) {
         const specifier = match.groups?.['specifier'];
