@@ -29,6 +29,8 @@ jobs:
         include:
           - name: Format
             command: pnpm format:check
+          - name: Effect Rule Implementation
+            command: pnpm typecheck:lint-rules && pnpm test:lint-rules
           - name: Lint
             command: pnpm lint
           - name: Typecheck

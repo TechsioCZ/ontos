@@ -1,0 +1,22 @@
+{
+  "jsPlugins": [{ "name": "effect-native", "specifier": "../../fixture-plugin.ts" }],
+  "categories": { "correctness": "off" },
+  "rules": {
+    "effect-native/no-scattered-browser-effect-run": [
+      "error",
+      {
+        "browserGlobs": [
+          "apps/*/src/**",
+          "verticals/*/src/**",
+          "tools/oxlint/effect-native/tests/fixtures/no-scattered-browser-effect-run/**"
+        ],
+        "adapterFiles": [
+          "apps/*/src/runtime/**",
+          "verticals/*/src/runtime/**",
+          "tools/oxlint/effect-native/tests/fixtures/no-scattered-browser-effect-run/valid/runtime/**"
+        ],
+        "includeTestFiles": true
+      }
+    ]
+  }
+}

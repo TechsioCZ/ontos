@@ -1,0 +1,13 @@
+{
+  "jsPlugins": [{ "name": "effect-native", "specifier": "../../fixture-plugin.ts" }],
+  "categories": { "correctness": "off" },
+  "rules": { "effect-native/no-nullable-schema-field": "error" },
+  "overrides": [
+    {
+      "files": ["**/optional-keys-demo/**"],
+      "rules": {
+        "effect-native/no-nullable-schema-field": ["error", { "includeOptionalKeys": true }]
+      }
+    }
+  ]
+}
