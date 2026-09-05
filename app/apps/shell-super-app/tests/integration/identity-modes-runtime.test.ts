@@ -55,8 +55,12 @@ const cookieHeader = (setCookieHeaders: readonly string[]): string => {
 
 void test('verifies provider keys and completes live support impersonation with durable stopped evidence', async (context) => {
   const baseConfiguration = await Effect.runPromise(loadAuthConfig());
-  const authPool = new Pool({ connectionString: baseConfiguration.connectionString });
-  const corePool = new Pool({ connectionString: baseConfiguration.connectionString });
+  const authPool = new Pool({
+    connectionString: Redacted.value(baseConfiguration.connectionString),
+  });
+  const corePool = new Pool({
+    connectionString: Redacted.value(baseConfiguration.connectionString),
+  });
   const authDatabase = drizzle({ client: authPool, relations: authRelations });
   const coreDatabase = drizzle({ client: corePool, relations: coreRelations });
   const tenantId = randomUUID();
@@ -371,7 +375,10 @@ void test('verifies provider keys and completes live support impersonation with 
       principalId: originalPrincipalId,
       tenantId,
     });
-    assert.equal(JSON.stringify(verifiedAssertion.payload).includes(Redacted.value(issued.secret)), false);
+    assert.equal(
+      JSON.stringify(verifiedAssertion.payload).includes(Redacted.value(issued.secret)),
+      false,
+    );
     await Effect.runPromise(
       actionRuntime.runAction({
         payload: { displayName: 'API-key evidence target', kind: 'service' },
@@ -387,7 +394,9 @@ void test('verifies provider keys and completes live support impersonation with 
       }),
     );
     await Effect.runPromise(keys.setEnabled(verified.providerKeyId, false));
-    const invalidKey = await Effect.runPromise(Effect.flip(keys.verify(Redacted.value(issued.secret))));
+    const invalidKey = await Effect.runPromise(
+      Effect.flip(keys.verify(Redacted.value(issued.secret))),
+    );
     assert.equal(invalidKey._tag, 'ApiKeyCredentialInvalidError');
 
     const managedPrincipal = await Effect.runPromise(

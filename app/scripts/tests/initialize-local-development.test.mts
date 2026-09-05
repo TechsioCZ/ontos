@@ -34,6 +34,12 @@ test('accepts only a development configuration with local service endpoints', as
   assert.equal(configuration.email, LOCAL_DEVELOPMENT_CONTEXT.email);
   assert.ok(Redacted.isRedacted(configuration.databaseAdminUrl));
   assert.equal(Redacted.value(configuration.databaseAdminUrl), localEnvironment.DATABASE_ADMIN_URL);
+  assert.ok(Redacted.isRedacted(configuration.spiceDbPreSharedKey));
+  assert.equal(
+    Redacted.value(configuration.spiceDbPreSharedKey),
+    localEnvironment.SPICEDB_PRESHARED_KEY,
+  );
+  assert.doesNotMatch(JSON.stringify(configuration), /local-spicedb-key/u);
 
   for (const environment of [
     { ...localEnvironment, ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage' },

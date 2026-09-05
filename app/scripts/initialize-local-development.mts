@@ -12,7 +12,7 @@ import { config as loadDotenv } from 'dotenv';
 import { and, eq, or } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { Effect, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 import { Pool } from 'pg';
 import {
   account,
@@ -62,13 +62,13 @@ export const LOCAL_DEVELOPMENT_VERTICALS = Object.freeze(['contacts'] as const);
 export interface LocalDevelopmentConfiguration {
   readonly authBaseUrl: string;
   readonly authSecret: string;
-  readonly databaseAdminUrl: string;
+  readonly databaseAdminUrl: Redacted.Redacted<string>;
   readonly email: string;
   readonly password: string;
   readonly principalDisplayName: string;
   readonly spiceDbEndpoint: string;
   readonly spiceDbInsecureLocal: boolean;
-  readonly spiceDbPreSharedKey: string;
+  readonly spiceDbPreSharedKey: Redacted.Redacted<string>;
 }
 
 export interface LocalDevelopmentRelationship {
@@ -580,7 +580,7 @@ const touchRelationships = async (
     preSharedKey: configuration.spiceDbPreSharedKey,
   };
   const client = v1.NewClient(
-    configuration.spiceDbPreSharedKey,
+    Redacted.value(configuration.spiceDbPreSharedKey),
     configuration.spiceDbEndpoint,
     spiceDbClientSecurity(spiceDbConfiguration),
   );
@@ -655,7 +655,7 @@ export const initializeLocalDevelopment = (
               'The local Better Auth user could not be reconciled',
             ),
       try: async () => {
-        const pool = new Pool({ connectionString: configuration.databaseAdminUrl });
+        const pool = new Pool({ connectionString: Redacted.value(configuration.databaseAdminUrl) });
         try {
           const authDatabase = drizzle({ client: pool, relations: authRelations });
           return await ensureAuthUser(configuration, authDatabase);
@@ -670,7 +670,7 @@ export const initializeLocalDevelopment = (
           ? cause
           : failure('local_persistence_failed', 'The local Core context could not be reconciled'),
       try: async () => {
-        const pool = new Pool({ connectionString: configuration.databaseAdminUrl });
+        const pool = new Pool({ connectionString: Redacted.value(configuration.databaseAdminUrl) });
         try {
           const coreDatabase = drizzle({ client: pool, relations: coreRelations });
           await reconcileCoreContext(coreDatabase, authUser.userId, moduleIds);

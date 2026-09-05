@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect, Layer, Predicate, Schema } from 'effect';
+import { Effect, Layer, Predicate, Redacted, Schema } from 'effect';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import { Pool } from 'pg';
 import {
@@ -197,8 +197,12 @@ const installedPageCatalog = (): InstalledModuleCatalog =>
 
 test('creates, resolves, persists, revokes, and signs out a Better Auth session', async () => {
   const configuration = await Effect.runPromise(loadAuthConfig());
-  const corePool = new Pool({ connectionString: configuration.connectionString });
-  const authPool = new Pool({ connectionString: configuration.connectionString });
+  const corePool = new Pool({
+    connectionString: Redacted.value(configuration.connectionString),
+  });
+  const authPool = new Pool({
+    connectionString: Redacted.value(configuration.connectionString),
+  });
   const coreDatabase = drizzle({ client: corePool, relations: coreRelations });
   const authDatabase = drizzle({ client: authPool, relations: authRelations });
   const resolver = makePrincipalResolver({ executor: coreDatabase });
@@ -1010,10 +1014,14 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
   const configuration = await Effect.runPromise(loadAuthConfig());
   const databaseConnections = await Effect.runPromise(loadDatabaseConnectionPair());
   const adminPool = new Pool({
-    connectionString: databaseConnections.admin.connectionString,
+    connectionString: Redacted.value(databaseConnections.admin.connectionString),
   });
-  const corePool = new Pool({ connectionString: configuration.connectionString });
-  const authPool = new Pool({ connectionString: configuration.connectionString });
+  const corePool = new Pool({
+    connectionString: Redacted.value(configuration.connectionString),
+  });
+  const authPool = new Pool({
+    connectionString: Redacted.value(configuration.connectionString),
+  });
   const coreDatabase = drizzle({ client: corePool, relations: coreRelations });
   const authDatabase = drizzle({ client: authPool, relations: authRelations });
   const adminAuthDatabase = drizzle({ client: adminPool, relations: authRelations });

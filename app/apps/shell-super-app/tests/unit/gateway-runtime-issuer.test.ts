@@ -33,7 +33,8 @@ type CapturedHandlers = {
 test('shares signing import across runtime gateway/provider assertions, but not across runtimes', async () => {
   // Capture handlers and provider wiring without building persistence or connecting to a database.
   const gatewayHandlers: GatewayHandler[] = [];
-  rstest.spyOn(HttpApiBuilder, 'group').mockImplementation((_api, name, build) => {
+  const originalGroup = HttpApiBuilder.group;
+  const captureGroup: typeof HttpApiBuilder.group = (api, name, build) => {
     if (name === 'gatewayContext') {
       const handlers: CapturedHandlers = {
         handle: (endpoint, handler) => {
@@ -43,11 +44,10 @@ test('shares signing import across runtime gateway/provider assertions, but not 
       };
       (build as unknown as (handlers: CapturedHandlers) => unknown)(handlers);
     }
-    return Layer.empty;
-  });
-  const reads = rstest
-    .spyOn(governedReads, 'createShellGovernedReadsLayer')
-    .mockReturnValue(Layer.empty as ReturnType<typeof governedReads.createShellGovernedReadsLayer>);
+    return originalGroup(api, name, build);
+  };
+  rstest.spyOn(HttpApiBuilder, 'group').mockImplementation(captureGroup);
+  const reads = rstest.spyOn(governedReads, 'createShellGovernedReadsLayer');
   const importKey = rstest.mocked(jose.importJWK);
   const { privateKey } = await jose.generateKeyPair('EdDSA', { extractable: true });
   const jwk = await jose.exportJWK(privateKey);

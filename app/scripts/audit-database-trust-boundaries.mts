@@ -4,7 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Client } from 'pg';
-import { Effect, Exit } from 'effect';
+import { Effect, Exit, Redacted } from 'effect';
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 import { collectSnapshot } from './database-trust-audit/collect-snapshot.mts';
 import {
@@ -33,8 +33,12 @@ export const auditDatabaseTrustBoundaries = (): Effect.Effect<
           }),
       ),
     );
-    const admin = new Client({ connectionString: connections.admin.connectionString });
-    const runtime = new Client({ connectionString: connections.runtime.connectionString });
+    const admin = new Client({
+      connectionString: Redacted.value(connections.admin.connectionString),
+    });
+    const runtime = new Client({
+      connectionString: Redacted.value(connections.runtime.connectionString),
+    });
     return yield* Effect.tryPromise({
       catch: (error) =>
         new DatabaseTrustBoundaryAuditError({
