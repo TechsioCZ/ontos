@@ -160,9 +160,7 @@ export const makePartySearchProjectionGateway = (
           tenantId: input.tenantId,
         })
         .pipe(
-          Effect.flatMap((hits) =>
-            Effect.forEach(mapPartyProjectionHit, { concurrency: 1 })(hits),
-          ),
+          Effect.flatMap((hits) => Effect.forEach(mapPartyProjectionHit, { concurrency: 1 })(hits)),
           Effect.mapError(projectionUnavailable),
         ),
   });
