@@ -1,10 +1,6 @@
 /** Focused server-only entrypoint used to bundle independently deployed Outbox Worker hosts. */
 export { defineTenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
-export {
-  enableGovernedRls,
-  tenantLegalEntityRlsPolicies,
-  tenantRlsPolicies,
-} from '../db/scoped-transaction.ts';
+export { tenantLegalEntityRlsPolicies, tenantRlsPolicies } from '../db/scoped-transaction.ts';
 export { CoreSearchIngestion, CoreSearchIngestionLive } from '../search/ingestion.ts';
 export { CoreSearchProjectionStoreLive } from '../search/persistence.ts';
 export {

@@ -7,7 +7,7 @@ import type { PoolConfig } from 'pg';
 import { AuthConfig } from '../config.ts';
 import type { AuthConfigValue } from '../config.ts';
 import { AuthDatabaseConnectionError } from './connection-error.ts';
-import { authDatabaseSchema } from './schema.ts';
+import { authRelations } from './schema.ts';
 import type { AuthDatabaseExecutor } from './types.ts';
 
 export class AuthDatabase extends Context.Service<
@@ -51,7 +51,7 @@ export const makeAuthDatabase = (
     Effect.map((pool) => ({
       executor: drizzle({
         client: pool,
-        schema: authDatabaseSchema,
+        relations: authRelations,
       }),
     })),
   );

@@ -14,6 +14,7 @@ Read this guide, then only the rows that govern the task.
 | State-changing operations                             | [Action Execution](docs/architecture/ACTIONS.md)                                                                    |
 | Typed failures and HTTP responses                     | [Effect Error and HTTP Contracts](docs/architecture/ERRORS.md)                                                      |
 | PostgreSQL ownership and governed access              | [Database Architecture](docs/architecture/DATABASE.md) and [Governed Data Access](docs/architecture/DATA_ACCESS.md) |
+| Drizzle cohort, migration layout, and re-proof steps  | [Drizzle v1 Upgrade](docs/architecture/DRIZZLE_V1_UPGRADE.md)                                                       |
 | Asynchronous consumers                                | [Outbox Worker Architecture](docs/architecture/OUTBOX_WORKERS.md)                                                   |
 | Pages, APIs, components, search, reports, and workers | [Module Entrypoints](docs/architecture/MODULE_ENTRYPOINTS.md)                                                       |
 | Deployment contracts and module identity              | [Module Manifests](docs/architecture/MODULE_MANIFESTS.md)                                                           |

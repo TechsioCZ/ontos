@@ -11,12 +11,13 @@ import {
 const organizationConfig = getTableConfig(organizationEngagementProfiles);
 const personConfig = getTableConfig(personEngagementProfiles);
 
-test('owns exactly two engagement profile tables', () => {
+test('owns two engagement profile tables plus gateway replay protection', () => {
   const qualifiedNames = [organizationConfig, personConfig]
     .map((config) => `${config.schema}.${config.name}`)
     .toSorted();
   assert.equal(CONTACTS_SCHEMA_NAME, 'contacts');
   assert.deepEqual(CONTACTS_TABLE_INVENTORY, [
+    'gateway_assertion_redemptions',
     'organization_engagement_profiles',
     'person_engagement_profiles',
   ]);

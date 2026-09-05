@@ -11,7 +11,7 @@ import {
   duplicateCandidateCaseParties,
   duplicateCandidateCases,
   parties,
-  partyDatabaseSchema,
+  partyRelations,
   partyFactAssertions,
   partyIdentifierClaims,
   partyMatchDecisions,
@@ -32,8 +32,8 @@ test('real PostgreSQL identity locks serialize concurrent exact creates and repe
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
   const adminPool = new Pool({ connectionString: connections.admin.connectionString });
   const runtimePool = new Pool({ connectionString: connections.runtime.connectionString, max: 2 });
-  const admin = drizzle({ client: adminPool, schema: partyDatabaseSchema });
-  const runtime = drizzle({ client: runtimePool, schema: partyDatabaseSchema });
+  const admin = drizzle({ client: adminPool, relations: partyRelations });
+  const runtime = drizzle({ client: runtimePool, relations: partyRelations });
   const cleanup = async () => {
     await admin.delete(partyMatchDecisions).where(eq(partyMatchDecisions.tenantId, tenantId));
     await admin

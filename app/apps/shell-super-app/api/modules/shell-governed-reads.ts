@@ -222,6 +222,7 @@ const makeRegistrations = (
     serviceFactory,
     // Provider-specific Party tenant and Counterparty resource checks run inside the orchestrator.
     () => ({ kind: 'tenant', permission: 'access' }),
+    () => [],
   );
   const moduleTarget = defineRead(
     {

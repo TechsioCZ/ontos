@@ -8,7 +8,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { Effect } from 'effect';
 import { Pool } from 'pg';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
-import { coreDatabaseSchema } from '../../src/db/schema.ts';
+import { coreRelations } from '../../src/db/schema.ts';
 import { makePostgresCoreSearchProjectionStore } from '../../src/search/persistence.ts';
 import { makeCoreSearchQueryRuntime } from '../../src/search/projection.ts';
 
@@ -31,7 +31,7 @@ test('durably rebuilds tenant projections with tombstones and selected-Legal-Ent
     tenantId,
   };
   const store = makePostgresCoreSearchProjectionStore({
-    executor: drizzle({ client: runtimePool, schema: coreDatabaseSchema }),
+    executor: drizzle({ client: runtimePool, relations: coreRelations }),
   });
   const search = makeCoreSearchQueryRuntime(store);
   const partyDocument = (resourceId: string, projectionVersion: string, title: string) => ({
@@ -90,7 +90,7 @@ test('durably rebuilds tenant projections with tombstones and selected-Legal-Ent
       [tenantId, `search-${tenantId}`, otherTenantId, `search-${otherTenantId}`],
     );
     await admin.query(
-      `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values ($1, $2, 'Search LE', 'CZ', $1, 'active'), ($3, $2, 'Other LE', 'CZ', $3, 'active')`,
+      `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values ($1::uuid, $2, 'Search LE', 'CZ', $1::uuid::text, 'active'), ($3::uuid, $2, 'Other LE', 'CZ', $3::uuid::text, 'active')`,
       [legalEntityId, tenantId, otherLegalEntityId],
     );
 
@@ -191,7 +191,7 @@ test('durably rebuilds tenant projections with tombstones and selected-Legal-Ent
     await Effect.runPromise(store.replace(emptyRebuild));
     // A fresh service instance must observe the durable floor, not process-local state.
     const restarted = makePostgresCoreSearchProjectionStore({
-      executor: drizzle({ client: runtimePool, schema: coreDatabaseSchema }),
+      executor: drizzle({ client: runtimePool, relations: coreRelations }),
     });
     const floorSearch = async () =>
       Effect.runPromise(

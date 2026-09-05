@@ -7,7 +7,7 @@ import type { PoolConfig } from 'pg';
 import { DatabaseConfig } from './config.ts';
 import type { DatabaseConfigValue } from './config.ts';
 import { DatabaseConnectionError } from './connection-error.ts';
-import { coreDatabaseSchema } from './schema.ts';
+import { coreRelations } from './schema.ts';
 import type { CoreDatabaseExecutor } from './types.ts';
 
 export { DatabaseConnectionError } from './connection-error.ts';
@@ -53,7 +53,7 @@ export const makeCoreDatabase = (
     Effect.map((pool) => ({
       executor: drizzle({
         client: pool,
-        schema: coreDatabaseSchema,
+        relations: coreRelations,
       }),
     })),
   );

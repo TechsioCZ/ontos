@@ -12,6 +12,7 @@
   },
   "scripts": {
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
+    "db:check": "drizzle-kit check --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
     "db:test": "node --test tests/unit/*.test.ts tests/integration/*.test.ts",
     "db:verify": "node scripts/verify-db-schema.mts",
@@ -26,7 +27,7 @@
   "dependencies": {
     "@authzed/authzed-node": "1.6.1",
     "@effect/platform-node": "4.0.0-beta.107",
-    "drizzle-orm": "0.45.2",
+    "drizzle-orm": "1.0.0-rc.4",
     "dotenv": "17.4.2",
     "effect": "4.0.0-beta.107",
     "pg": "8.22.0"
@@ -34,6 +35,6 @@
   "devDependencies": {
     "@types/node": "^20.19.43",
     "@types/pg": "8.20.0",
-    "drizzle-kit": "0.31.10"
+    "drizzle-kit": "1.0.0-rc.4"
   }
 }

@@ -7,7 +7,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { Effect, Option, Schema } from 'effect';
 import { Pool } from 'pg';
 import {
-  contactsDatabaseSchema,
+  contactsRelations,
   organizationEngagementProfiles,
   personEngagementProfiles,
 } from '../../src/db/schema.ts';
@@ -45,8 +45,8 @@ test('enforces tenant isolation and canonical-reference uniqueness without cross
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
   const adminPool = new Pool({ connectionString: connections.admin.connectionString });
   const runtimePool = new Pool({ connectionString: connections.runtime.connectionString, max: 1 });
-  const admin = drizzle({ client: adminPool, schema: contactsDatabaseSchema });
-  const runtime = drizzle({ client: runtimePool, schema: contactsDatabaseSchema });
+  const admin = drizzle({ client: adminPool, relations: contactsRelations });
+  const runtime = drizzle({ client: runtimePool, relations: contactsRelations });
   const cleanup = async () => {
     await admin
       .delete(personEngagementProfiles)

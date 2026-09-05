@@ -22,7 +22,7 @@ import type {
   PrepareActionInvocationInput,
   RejectPermissionDeniedInput,
 } from '../actions/repository.ts';
-import { coreDatabaseSchema } from '../db/schema.ts';
+import { coreRelations } from '../db/schema.ts';
 import { makeOperationalScopeResolver } from '../operations/context.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
@@ -284,7 +284,7 @@ export const makeActionTestHarness = (options: ActionTestHarnessOptions = {}) =>
       );
     },
   });
-  const database = { executor: drizzle({ client: pool, schema: coreDatabaseSchema }) };
+  const database = { executor: drizzle({ client: pool, relations: coreRelations }) };
   const contextAccess: ContextAccessService = {
     legalEntities: ({ legalEntityIds, permission }) =>
       Effect.succeed(

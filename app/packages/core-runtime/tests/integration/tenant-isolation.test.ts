@@ -11,7 +11,7 @@ import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import {
   actionInvocations,
   auditEvents,
-  coreDatabaseSchema,
+  coreRelations,
   dataAccessEvents,
   domainEvents,
   evidenceReferences,
@@ -203,7 +203,7 @@ void test('an unscoped owner repository remains isolated inside a governed read 
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
   const admin = new Pool({ connectionString: connections.admin.connectionString });
   const runtimePool = new Pool({ connectionString: connections.runtime.connectionString });
-  const runtimeDatabase = drizzle({ client: runtimePool, schema: coreDatabaseSchema });
+  const runtimeDatabase = drizzle({ client: runtimePool, relations: coreRelations });
   const schemaName = `governed_isolation_${randomUUID().replaceAll('-', '')}`;
   const ownerSchema = pgSchema(schemaName);
   const records = ownerSchema.table('records', {

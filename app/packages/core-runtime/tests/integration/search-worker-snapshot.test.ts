@@ -10,7 +10,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { Effect } from 'effect';
 import { Pool } from 'pg';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
-import { coreDatabaseSchema, domainEvents } from '../../src/db/schema.ts';
+import { coreRelations, domainEvents } from '../../src/db/schema.ts';
 import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import {
   makeCoreSearchWorkerSnapshot,
@@ -30,7 +30,7 @@ test('worker projection uses independent generations and one repeatable snapshot
   const eventId = randomUUID();
   const source = makeCoreSearchWorkerSnapshot(
     makePostgresCoreSearchSnapshotBackend({
-      executor: drizzle({ client: runtimePool, schema: coreDatabaseSchema }),
+      executor: drizzle({ client: runtimePool, relations: coreRelations }),
     }),
   );
   const insertEvent = async (id: string) => {
@@ -48,7 +48,7 @@ test('worker projection uses independent generations and one repeatable snapshot
       [tenantId, `snapshot-${tenantId}`],
     );
     await admin.query(
-      `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values ($1, $2, 'Snapshot LE', 'CZ', $1, 'active')`,
+      `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values ($1::uuid, $2, 'Snapshot LE', 'CZ', $1::uuid::text, 'active')`,
       [legalEntityId, tenantId],
     );
     const originalVersion = await insertEvent(eventId);

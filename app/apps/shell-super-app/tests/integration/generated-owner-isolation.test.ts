@@ -33,7 +33,7 @@ import { makeActionRepository } from '../../../../packages/core-runtime/src/acti
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import {
-  coreDatabaseSchema,
+  coreRelations,
   dataAccessEvents,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { makeModuleEntrypointGateway } from '../../../../packages/core-runtime/src/modules/module-entrypoint-gateway.ts';
@@ -434,7 +434,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
   // in-process fixture, so the shared test pool needs more than one physical connection.
   const runtimePool = new Pool({ connectionString: connections.runtime.connectionString, max: 4 });
   const runtimeDatabase = {
-    executor: drizzle({ client: runtimePool, schema: coreDatabaseSchema }),
+    executor: drizzle({ client: runtimePool, relations: coreRelations }),
   };
   const fixture = await createGeneratedOwnerFixture(schemaName);
   const contract = await deriveOntosModuleDeploymentContract({
@@ -805,7 +805,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
       ),
       {
         partial: false,
-        results: [{ ref: resourceRef, title: 'A1 searchable' }],
+        results: [{ kind: 'resource', ref: resourceRef, title: 'A1 searchable' }],
       },
     );
     const shellLayer = createShellGovernedReadsLayer(

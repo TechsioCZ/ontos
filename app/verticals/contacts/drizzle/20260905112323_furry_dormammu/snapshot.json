@@ -1,0 +1,672 @@
+{
+  "id": "ec5eda96-ad88-49b7-abb9-7165b7ff7009",
+  "prevIds": [
+    "9c6a58c6-58f2-4331-909a-ceb3025a9035"
+  ],
+  "version": "8",
+  "dialect": "postgres",
+  "ddl": [
+    {
+      "name": "contacts",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "gateway_assertion_redemptions",
+      "schema": "contacts",
+      "entityType": "tables"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "audience",
+      "schema": "contacts",
+      "table": "gateway_assertion_redemptions",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "expires_at",
+      "schema": "contacts",
+      "table": "gateway_assertion_redemptions",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "issuer",
+      "schema": "contacts",
+      "table": "gateway_assertion_redemptions",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "jti",
+      "schema": "contacts",
+      "table": "gateway_assertion_redemptions",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "redeemed_at",
+      "schema": "contacts",
+      "table": "gateway_assertion_redemptions",
+      "entityType": "columns"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "issuer",
+        "audience",
+        "jti"
+      ],
+      "nullsNotDistinct": false,
+      "name": "contacts_gateway_assertion_redemptions_identity_uk",
+      "schema": "contacts",
+      "table": "gateway_assertion_redemptions",
+      "entityType": "uniques"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "expires_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "contacts_gateway_assertion_redemptions_expiry_idx",
+      "schema": "contacts",
+      "table": "gateway_assertion_redemptions",
+      "entityType": "indexes"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "organization_engagement_profiles",
+      "schema": "contacts",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "engagement_profile_id"
+      ],
+      "nameExplicit": false,
+      "name": "organization_engagement_profiles_pkey",
+      "schema": "contacts",
+      "table": "organization_engagement_profiles",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "engagement_profile_id",
+      "schema": "contacts",
+      "table": "organization_engagement_profiles",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "contacts",
+      "table": "organization_engagement_profiles",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "party_resource_id",
+      "schema": "contacts",
+      "table": "organization_engagement_profiles",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "counterparty_resource_id",
+      "schema": "contacts",
+      "table": "organization_engagement_profiles",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "schema": "contacts",
+      "table": "organization_engagement_profiles",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "schema": "contacts",
+      "table": "organization_engagement_profiles",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "archived_at",
+      "schema": "contacts",
+      "table": "organization_engagement_profiles",
+      "entityType": "columns"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "engagement_profile_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "contacts_organization_engagement_profiles_tenant_id_uk",
+      "schema": "contacts",
+      "table": "organization_engagement_profiles",
+      "entityType": "uniques"
+    },
+    {
+      "value": "\"contacts\".\"organization_engagement_profiles\".\"party_resource_id\" = btrim(\"contacts\".\"organization_engagement_profiles\".\"party_resource_id\") and length(\"contacts\".\"organization_engagement_profiles\".\"party_resource_id\") > 0",
+      "name": "contacts_organization_engagement_profiles_party_resource_id_ck",
+      "schema": "contacts",
+      "table": "organization_engagement_profiles",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"contacts\".\"organization_engagement_profiles\".\"counterparty_resource_id\" = btrim(\"contacts\".\"organization_engagement_profiles\".\"counterparty_resource_id\") and length(\"contacts\".\"organization_engagement_profiles\".\"counterparty_resource_id\") > 0",
+      "name": "contacts_organization_engagement_profiles_counterparty_resource_id_ck",
+      "schema": "contacts",
+      "table": "organization_engagement_profiles",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "counterparty_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "contacts_organization_engagement_profiles_counterparty_uk",
+      "schema": "contacts",
+      "table": "organization_engagement_profiles",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "party_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "contacts_organization_engagement_profiles_party_uk",
+      "schema": "contacts",
+      "table": "organization_engagement_profiles",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "counterparty_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": "\"contacts\".\"organization_engagement_profiles\".\"archived_at\" is null",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "contacts_organization_engagement_profiles_active_idx",
+      "schema": "contacts",
+      "table": "organization_engagement_profiles",
+      "entityType": "indexes"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"contacts\".\"organization_engagement_profiles\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "contacts_organization_engagement_profiles_tenant_select",
+      "schema": "contacts",
+      "table": "organization_engagement_profiles",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"contacts\".\"organization_engagement_profiles\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "contacts_organization_engagement_profiles_tenant_insert",
+      "schema": "contacts",
+      "table": "organization_engagement_profiles",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"contacts\".\"organization_engagement_profiles\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"contacts\".\"organization_engagement_profiles\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "contacts_organization_engagement_profiles_tenant_update",
+      "schema": "contacts",
+      "table": "organization_engagement_profiles",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"contacts\".\"organization_engagement_profiles\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "contacts_organization_engagement_profiles_tenant_delete",
+      "schema": "contacts",
+      "table": "organization_engagement_profiles",
+      "entityType": "policies"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "person_engagement_profiles",
+      "schema": "contacts",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "engagement_profile_id"
+      ],
+      "nameExplicit": false,
+      "name": "person_engagement_profiles_pkey",
+      "schema": "contacts",
+      "table": "person_engagement_profiles",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "engagement_profile_id",
+      "schema": "contacts",
+      "table": "person_engagement_profiles",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "contacts",
+      "table": "person_engagement_profiles",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "party_resource_id",
+      "schema": "contacts",
+      "table": "person_engagement_profiles",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "counterparty_resource_id",
+      "schema": "contacts",
+      "table": "person_engagement_profiles",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "schema": "contacts",
+      "table": "person_engagement_profiles",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "schema": "contacts",
+      "table": "person_engagement_profiles",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "archived_at",
+      "schema": "contacts",
+      "table": "person_engagement_profiles",
+      "entityType": "columns"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "engagement_profile_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "contacts_person_engagement_profiles_tenant_id_uk",
+      "schema": "contacts",
+      "table": "person_engagement_profiles",
+      "entityType": "uniques"
+    },
+    {
+      "value": "\"contacts\".\"person_engagement_profiles\".\"party_resource_id\" = btrim(\"contacts\".\"person_engagement_profiles\".\"party_resource_id\") and length(\"contacts\".\"person_engagement_profiles\".\"party_resource_id\") > 0",
+      "name": "contacts_person_engagement_profiles_party_resource_id_ck",
+      "schema": "contacts",
+      "table": "person_engagement_profiles",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"contacts\".\"person_engagement_profiles\".\"counterparty_resource_id\" = btrim(\"contacts\".\"person_engagement_profiles\".\"counterparty_resource_id\") and length(\"contacts\".\"person_engagement_profiles\".\"counterparty_resource_id\") > 0",
+      "name": "contacts_person_engagement_profiles_counterparty_resource_id_ck",
+      "schema": "contacts",
+      "table": "person_engagement_profiles",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "party_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "counterparty_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "contacts_person_engagement_profiles_party_counterparty_uk",
+      "schema": "contacts",
+      "table": "person_engagement_profiles",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "party_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": "\"contacts\".\"person_engagement_profiles\".\"counterparty_resource_id\" is null",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "contacts_person_engagement_profiles_party_only_uk",
+      "schema": "contacts",
+      "table": "person_engagement_profiles",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "counterparty_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "party_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": "\"contacts\".\"person_engagement_profiles\".\"archived_at\" is null",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "contacts_person_engagement_profiles_active_idx",
+      "schema": "contacts",
+      "table": "person_engagement_profiles",
+      "entityType": "indexes"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"contacts\".\"person_engagement_profiles\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "contacts_person_engagement_profiles_tenant_select",
+      "schema": "contacts",
+      "table": "person_engagement_profiles",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"contacts\".\"person_engagement_profiles\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "contacts_person_engagement_profiles_tenant_insert",
+      "schema": "contacts",
+      "table": "person_engagement_profiles",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"contacts\".\"person_engagement_profiles\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"contacts\".\"person_engagement_profiles\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "contacts_person_engagement_profiles_tenant_update",
+      "schema": "contacts",
+      "table": "person_engagement_profiles",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"contacts\".\"person_engagement_profiles\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "contacts_person_engagement_profiles_tenant_delete",
+      "schema": "contacts",
+      "table": "person_engagement_profiles",
+      "entityType": "policies"
+    }
+  ],
+  "renames": []
+}

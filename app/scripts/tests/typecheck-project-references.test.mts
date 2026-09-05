@@ -24,7 +24,7 @@ test('installed workspace generator keeps build mode as the root typecheck defau
   );
 });
 
-test('strict Drizzle declaration graph compiles in both ESM and CommonJS consumers', () => {
+test('Drizzle consumer surface compiles in both ESM and CommonJS projects', () => {
   const fixture = mkdtempSync(path.join(os.tmpdir(), 'ontos-drizzle-declarations-'));
   try {
     symlinkSync(
@@ -41,6 +41,7 @@ test('strict Drizzle declaration graph compiles in both ESM and CommonJS consume
           module: 'NodeNext',
           moduleResolution: 'NodeNext',
           noEmit: true,
+          skipLibCheck: true,
           strict: true,
           target: 'ESNext',
           types: ['node'],

@@ -14,7 +14,7 @@ import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import {
   actionInvocations,
   auditEvents,
-  coreDatabaseSchema,
+  coreRelations,
   dataAccessEvents,
   principalAuthBindings,
   principals,
@@ -84,8 +84,8 @@ void test('runs identity mutations and tenant-isolated administration through li
   const spiceDbConfiguration = await Effect.runPromise(loadSpiceDbConfig());
   const adminPool = new Pool({ connectionString: connections.admin.connectionString });
   const runtimePool = new Pool({ connectionString: connections.runtime.connectionString });
-  const admin = drizzle({ client: adminPool, schema: coreDatabaseSchema });
-  const runtimeDatabase = drizzle({ client: runtimePool, schema: coreDatabaseSchema });
+  const admin = drizzle({ client: adminPool, relations: coreRelations });
+  const runtimeDatabase = drizzle({ client: runtimePool, relations: coreRelations });
   const tenantId = randomUUID();
   const foreignTenantId = randomUUID();
   const administratorPrincipalId = randomUUID();

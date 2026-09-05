@@ -15,7 +15,7 @@ import {
   dataAccessEvents,
   domainEvents,
   outboxMessages,
-  coreDatabaseSchema,
+  coreRelations,
   tenants,
   legalEntities,
   principals,
@@ -29,6 +29,7 @@ import {
 } from '../permissions/context-access.ts';
 import { loadSpiceDbConfig } from '../permissions/config.ts';
 import { ReadRuntimeLive } from '../reads/runtime.ts';
+import { buildActionAuthorizationRelationships } from '../install/action-authorization-provisioning.ts';
 
 const relationship = (
   resourceType: string,
@@ -45,6 +46,7 @@ const relationship = (
 
 /** Real Core persistence and SpiceDB. Call only against a disposable local database. */
 export const makeLiveOperationFixture = async (configuration: {
+  readonly actionKeys?: readonly string[];
   readonly runtimeConnectionString: string;
 }) => {
   const spiceDb = await Effect.runPromise(loadSpiceDbConfig());
@@ -56,7 +58,7 @@ export const makeLiveOperationFixture = async (configuration: {
     throw new Error('Live test fixtures require disposable localhost services');
   }
   const pool = new Pool({ connectionString: configuration.runtimeConnectionString, max: 8 });
-  const executor = drizzle({ client: pool, schema: coreDatabaseSchema });
+  const executor = drizzle({ client: pool, relations: coreRelations });
   const spice = v1.NewClient(
     spiceDb.preSharedKey,
     spiceDb.endpoint,
@@ -136,6 +138,9 @@ export const makeLiveOperationFixture = async (configuration: {
           relationship('legal_entity', entityObject, relation, 'principal', principal.principalId),
         ),
       ),
+      ...buildActionAuthorizationRelationships(configuration.actionKeys ?? [], [
+        { principalId: manager.principalId, tenantId },
+      ]),
     ];
     await spice.promises.writeRelationships(
       v1.WriteRelationshipsRequest.create({

@@ -37,7 +37,7 @@ import type { PartyRef } from '../../shared/resources/party.ts';
 import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
 import type { PartyCandidate } from '../../shared/domain/identity-contracts.ts';
 import {
-  partyDatabaseSchema,
+  partyRelations,
   parties,
   partyFactAssertions,
   partyIdentifierClaims,
@@ -79,14 +79,28 @@ const tag = <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A,
 
 test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims, recovery and temporal authorization', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
+  const actionKeys = [
+    createPartyAction,
+    counterpartyCreateAction,
+    counterpartyRoleAddAction,
+    counterpartyRoleEndAction,
+    resolveDuplicateCandidateCreateAction,
+    createPartyRelationshipAction,
+    updatePartyRelationshipAction,
+    endPartyRelationshipAction,
+    archivePartyAction,
+    unarchivePartyAction,
+  ].map(({ descriptor }) => descriptor.actionKey);
   const fixture = await makeLiveOperationFixture({
+    actionKeys,
     runtimeConnectionString: connections.runtime.connectionString,
   });
   const other = await makeLiveOperationFixture({
+    actionKeys,
     runtimeConnectionString: connections.runtime.connectionString,
   });
   const adminPool = new Pool({ connectionString: connections.admin.connectionString });
-  const admin = drizzle({ client: adminPool, schema: partyDatabaseSchema });
+  const admin = drizzle({ client: adminPool, relations: partyRelations });
   const run = <A, E>(effect: Effect.Effect<A, E, ActionRuntime | ReadRuntime>) =>
     Effect.runPromise(effect.pipe(Effect.provide(fixture.layer)));
   const create = (

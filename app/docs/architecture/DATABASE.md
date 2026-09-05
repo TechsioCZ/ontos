@@ -23,8 +23,36 @@ governed by [Action Execution](./ACTIONS.md).
   `drizzle`, using a distinct journal table per owner. Independent migration
   histories must never share one journal table because their timestamps would
   suppress each other's migrations.
+- Each owner history uses the Drizzle v1 layout: one folder per migration
+  named `<timestamp>_<tag>` that holds `migration.sql` and `snapshot.json`.
+  There is no `meta/_journal.json`. Never hand-edit a committed `migration.sql`
+  or renumber a folder; the bookkeeping table matches rows by folder name and
+  content hash. The upgrade record and re-proof sequence live in
+  [Drizzle v1 Upgrade](./DRIZZLE_V1_UPGRADE.md).
 - Code outside an owning package must not import a private schema, repository,
   migration, or database client from that package.
+
+## Drizzle Cohort
+
+OntOS runs the Drizzle v1 line (`drizzle-orm` and `drizzle-kit` at the same
+version) pinned identically in every owner, together with the matching Better
+Auth line and its `@better-auth/drizzle-adapter/relations-v2` entrypoint. The
+package manifests are the source of truth for the exact versions. Bump the
+pair only as one cohort and only through the proofs in
+[Drizzle v1 Upgrade](./DRIZZLE_V1_UPGRADE.md).
+
+Owner conventions on v1:
+
+- Declare relations with `defineRelations(<tables>, (r) => ...)` and construct
+  executors with `drizzle({ client, relations })`. Executor types are
+  `NodePgDatabase<typeof <owner>Relations>`. Relational Queries v1
+  (`relations(...)`, callback `where`) are unavailable.
+- Declare governed tables with `<schema>.table.withRLS(...)` and attach
+  `tenantRlsPolicies` or `tenantLegalEntityRlsPolicies` from `@app/core-runtime`.
+- Use `getColumns` instead of the deprecated `getTableColumns`.
+- After adding a migration or rebasing a branch that adds one, run
+  `pnpm db:check`; it validates each owner's snapshot chain and reports
+  non-commutative migrations across branches.
 
 ## Typed Drizzle and Effect
 

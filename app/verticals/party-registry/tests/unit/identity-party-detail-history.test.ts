@@ -63,6 +63,7 @@ test('Party Detail history derives reviewer authority while current fact targets
 
 test('Party Detail persistence reads safe current and immutable historical assertions through a tenant-scoped query', () => {
   const client = new Client();
+  const database = drizzle({ client });
   const queries: string[] = [];
   const values: unknown[][] = [];
   const rows = [
@@ -100,12 +101,12 @@ test('Party Detail persistence reads safe current and immutable historical asser
   });
   return Effect.runPromise(
     Effect.gen(function* checkSafeHistory() {
-      const result = yield* findPartyDetailAssertions(drizzle(client), tenantId, partyId, true);
+      const result = yield* findPartyDetailAssertions(database, tenantId, partyId, true);
       assert.deepEqual(result.currentFactAssertions, [fact]);
       assert.equal(result.factHistory?.length, 2);
       assert.equal(result.factHistory?.[0]?.value, 'Original name');
       assert.equal(result.factHistory?.[0]?.state, 'SUPERSEDED');
-      const current = yield* findPartyDetailAssertions(drizzle(client), tenantId, partyId, false);
+      const current = yield* findPartyDetailAssertions(database, tenantId, partyId, false);
       assert.deepEqual(current, { currentFactAssertions: [fact], factHistory: null });
       assert.deepEqual(values, [
         [tenantId, partyId],
@@ -122,7 +123,7 @@ test('Party Detail persistence reads safe current and immutable historical asser
         tenantId,
         {
           facts: (canonicalPartyId, includeHistory) =>
-            findPartyDetailAssertions(drizzle(client), tenantId, canonicalPartyId, includeHistory),
+            findPartyDetailAssertions(database, tenantId, canonicalPartyId, includeHistory),
           find: () =>
             Effect.succeed({
               _tag: 'found' as const,

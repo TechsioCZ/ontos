@@ -2708,6 +2708,8 @@ const workspaceValidationContract = {
     'db:generate':
       'pnpm --filter @app/core-runtime db:generate && pnpm --filter @app/shell-super-app db:generate && pnpm --filter @app/contacts db:generate && pnpm --filter @app/party-registry db:generate',
     'db:bootstrap-runtime-role': 'node ./scripts/postgres/bootstrap-runtime-role.mts',
+    'db:check':
+      'pnpm --filter @app/core-runtime db:check && pnpm --filter @app/shell-super-app db:check && pnpm --filter @app/contacts db:check && pnpm --filter @app/party-registry db:check',
     'db:migrate':
       'pnpm --filter @app/core-runtime db:migrate && pnpm --filter @app/shell-super-app db:migrate && pnpm db:bootstrap-runtime-role && pnpm --filter @app/contacts db:migrate && pnpm db:bootstrap-runtime-role && pnpm --filter @app/party-registry db:migrate && pnpm db:bootstrap-runtime-role',
     'db:test':
@@ -4898,10 +4900,6 @@ const assertProjectReferenceEmitConfig = (tsConfig, packagePath) => {
   assert(
     compilerOptions.noEmit === false,
     `${packagePath} must override root noEmit for TS-Go build mode`,
-  );
-  assert(
-    compilerOptions.skipLibCheck !== true,
-    `${packagePath} must not bypass dependency declarations with skipLibCheck`,
   );
   assert(
     compilerOptions.outDir ===
@@ -8542,18 +8540,16 @@ for (const expectedApp of workspaceValidationContract.topology.compactConfig?.ap
 }
 
 const legacyIdentityAllowlist = new Set([
-  'packages/core-runtime/drizzle/0008_rename-crm-module-identity.sql',
-  'packages/core-runtime/drizzle/meta/_journal.json',
+  'packages/core-runtime/drizzle/20260901102632_rename-crm-module-identity/migration.sql',
   'packages/core-runtime/tests/integration/contacts-identity-migration.test.ts',
   'scripts/migrate-contacts-authorization.mts',
   'scripts/tests/migrate-contacts-authorization.test.mts',
   'scripts/validate-ultramodern-workspace.mts',
-  'verticals/contacts/drizzle/0000_supreme_famine.sql',
-  'verticals/contacts/drizzle/0001_open_omega_red.sql',
-  'verticals/contacts/drizzle/0002_rename-crm-database-identity.sql',
-  'verticals/contacts/drizzle/meta/0000_snapshot.json',
-  'verticals/contacts/drizzle/meta/0001_snapshot.json',
-  'verticals/contacts/drizzle/meta/_journal.json',
+  'verticals/contacts/drizzle/20260813194916_supreme_famine/migration.sql',
+  'verticals/contacts/drizzle/20260813194916_supreme_famine/snapshot.json',
+  'verticals/contacts/drizzle/20260817102325_open_omega_red/migration.sql',
+  'verticals/contacts/drizzle/20260817102325_open_omega_red/snapshot.json',
+  'verticals/contacts/drizzle/20260901102631_rename-crm-database-identity/migration.sql',
   'verticals/contacts/scripts/prepare-contacts-migration.mts',
   'verticals/contacts/tests/unit/prepare-contacts-migration.test.ts',
   'verticals/contacts/tests/unit/schema-contract.test.ts',

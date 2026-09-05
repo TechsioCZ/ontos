@@ -19,7 +19,7 @@ import {
   partyContactPointPurposes,
   partyContactPoints,
   partyCorrections,
-  partyDatabaseSchema,
+  partyRelations,
   partyFactAssertions,
   partyIdentifierClaims,
   partyMatchDecisions,
@@ -72,8 +72,8 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
   const adminPool = new Pool({ connectionString: connections.admin.connectionString });
   const runtimePool = new Pool({ connectionString: connections.runtime.connectionString, max: 1 });
-  const admin = drizzle({ client: adminPool, schema: partyDatabaseSchema });
-  const runtime = drizzle({ client: runtimePool, schema: partyDatabaseSchema });
+  const admin = drizzle({ client: adminPool, relations: partyRelations });
+  const runtime = drizzle({ client: runtimePool, relations: partyRelations });
 
   const cleanup = async () => {
     await admin.delete(partyCorrections).where(inArray(partyCorrections.tenantId, fixtureTenants));

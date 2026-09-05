@@ -13,7 +13,7 @@ import {
   SupportRecoveryPrincipalContextResolver,
 } from '@app/core-runtime';
 import { APIError, betterAuth } from 'better-auth';
-import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { parseCookies } from 'better-auth/cookies';
 import { constantTimeEqual, makeSignature } from 'better-auth/crypto';
 import { admin } from 'better-auth/plugins';

@@ -1,7 +1,7 @@
 /* oxlint-disable react-doctor/async-await-in-loop, sonarjs/no-nested-functions, typescript/return-await */
 // @effect-diagnostics asyncFunction:off globalDate:off preferSchemaOverJson:off
 /* eslint-disable no-await-in-loop, anti-slop/no-conditional-empty-object-spread, anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters -- Rebuild writes must remain sequential in one transaction; canonical JSON and optional fields are private persistence mechanics. */
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { Effect, Layer, Schema } from 'effect';
 import { CoreDatabase } from '../db/client.ts';
 import { searchIndexEntries, searchProjectionRebuilds } from '../db/schema.ts';
@@ -130,12 +130,12 @@ const lockProjectionUnit = (
 
 const currentRow = (transaction: CoreTransaction, ref: CoreSearchResourceRef) =>
   transaction.query.searchIndexEntries.findFirst({
-    where: and(
-      eq(searchIndexEntries.tenantId, ref.tenantId),
-      eq(searchIndexEntries.sourceModuleKey, ref.moduleId),
-      eq(searchIndexEntries.sourceResourceType, ref.resourceType),
-      eq(searchIndexEntries.sourceResourceId, ref.resourceId),
-    ),
+    where: {
+      sourceModuleKey: ref.moduleId,
+      sourceResourceId: ref.resourceId,
+      sourceResourceType: ref.resourceType,
+      tenantId: ref.tenantId,
+    },
   });
 
 const currentRebuild = (
@@ -143,11 +143,11 @@ const currentRebuild = (
   unit: Readonly<{ moduleId: string; resourceType: string; tenantId: string }>,
 ) =>
   transaction.query.searchProjectionRebuilds.findFirst({
-    where: and(
-      eq(searchProjectionRebuilds.tenantId, unit.tenantId),
-      eq(searchProjectionRebuilds.sourceModuleKey, unit.moduleId),
-      eq(searchProjectionRebuilds.sourceResourceType, unit.resourceType),
-    ),
+    where: {
+      sourceModuleKey: unit.moduleId,
+      sourceResourceType: unit.resourceType,
+      tenantId: unit.tenantId,
+    },
   });
 
 const persistUpsert = async (
@@ -262,11 +262,11 @@ const replaceProjection = async (
     }
   }
   const existing = await transaction.query.searchIndexEntries.findMany({
-    where: and(
-      eq(searchIndexEntries.tenantId, replacement.tenantId),
-      eq(searchIndexEntries.sourceModuleKey, replacement.moduleId),
-      eq(searchIndexEntries.sourceResourceType, replacement.resourceType),
-    ),
+    where: {
+      sourceModuleKey: replacement.moduleId,
+      sourceResourceType: replacement.resourceType,
+      tenantId: replacement.tenantId,
+    },
   });
   for (const document of replacement.documents) {
     await persistUpsert(transaction, document);
@@ -384,15 +384,13 @@ export const makePostgresCoreSearchProjectionStore = (
             // Match the bounded rebuild unit; never silently truncate before evidence filtering.
             limit: 10_001,
             orderBy: (table, { asc }) => [asc(table.title), asc(table.sourceResourceId)],
-            where: and(
-              eq(searchIndexEntries.tenantId, input.tenantId),
-              eq(searchIndexEntries.sourceModuleKey, input.moduleId),
-              eq(searchIndexEntries.sourceResourceType, input.resourceType),
-              eq(searchIndexEntries.deleted, false),
-              input.selectedLegalEntityId === undefined
-                ? isNull(searchIndexEntries.legalEntityId)
-                : eq(searchIndexEntries.legalEntityId, input.selectedLegalEntityId),
-            ),
+            where: {
+              deleted: false,
+              legalEntityId: input.selectedLegalEntityId ?? { isNull: true },
+              sourceModuleKey: input.moduleId,
+              sourceResourceType: input.resourceType,
+              tenantId: input.tenantId,
+            },
           });
           if (rows.length > 10_000) {
             throw unavailable();

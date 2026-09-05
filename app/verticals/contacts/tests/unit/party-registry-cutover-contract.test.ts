@@ -96,8 +96,9 @@ test('uses the public Party Registry ResourceRef contracts without raw legacy id
   assert.equal('ico' in organization, false);
 });
 
-test('owns only engagement profile tables and has no cross-vertical foreign keys', () => {
+test('owns engagement profiles and gateway replay protection without cross-vertical foreign keys', () => {
   assert.deepEqual(CONTACTS_TABLE_INVENTORY, [
+    'gateway_assertion_redemptions',
     'organization_engagement_profiles',
     'person_engagement_profiles',
   ]);
@@ -113,7 +114,10 @@ test('owns only engagement profile tables and has no cross-vertical foreign keys
 test('contains no compatibility mapping, backfill, dual-write, or legacy identity ownership', async () => {
   const [schema, migration, packageJson] = await Promise.all([
     readFile(new URL('../../src/db/schema.ts', import.meta.url), 'utf-8'),
-    readFile(new URL('../../drizzle/0004_furry_dormammu.sql', import.meta.url), 'utf-8'),
+    readFile(
+      new URL('../../drizzle/20260905112323_furry_dormammu/migration.sql', import.meta.url),
+      'utf-8',
+    ),
     readFile(new URL('../../package.json', import.meta.url), 'utf-8'),
   ]);
 

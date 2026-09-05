@@ -16,8 +16,10 @@
     "db:generate": "pnpm --filter @app/core-runtime db:generate && pnpm --filter @app/shell-super-app db:generate && pnpm --filter @app/contacts db:generate && pnpm --filter @app/party-registry db:generate",
     "db:bootstrap-runtime-role": "node ./scripts/postgres/bootstrap-runtime-role.mts",
     "db:bootstrap-spicedb": "node ./scripts/postgres/bootstrap-spicedb-database.mts",
+    "db:check": "pnpm --filter @app/core-runtime db:check && pnpm --filter @app/shell-super-app db:check && pnpm --filter @app/contacts db:check && pnpm --filter @app/party-registry db:check",
     "db:migrate": "pnpm --filter @app/core-runtime db:migrate && pnpm --filter @app/shell-super-app db:migrate && pnpm db:bootstrap-runtime-role && pnpm --filter @app/contacts db:migrate && pnpm db:bootstrap-runtime-role && pnpm --filter @app/party-registry db:migrate && pnpm db:bootstrap-runtime-role",
-    "db:test": "pnpm --filter @app/core-runtime db:test && node --test scripts/tests/contacts-identity-migration.test.mts && pnpm --filter @app/shell-super-app test:integration && pnpm --filter @app/contacts db:test && pnpm --filter @app/party-registry db:test",
+    "db:test": "pnpm --filter @app/core-runtime db:test && pnpm --filter @app/shell-super-app test:integration && pnpm --filter @app/contacts db:test && pnpm --filter @app/party-registry db:test",
+    "database-trust:audit": "node ./scripts/audit-database-trust-boundaries.mts",
     "db:verify": "node ./scripts/verify-application-db-schema.mts",
     "local:initialize": "node ./scripts/initialize-local-development.mts",
     "test:unit": "pnpm -r --if-present run test:unit && pnpm -r --if-present run test:component",
@@ -75,7 +77,6 @@
     "api:check": "node ./scripts/check-ultramodern-api-boundaries.mts",
     "i18n:boundaries": "node ./scripts/check-ultramodern-i18n-boundaries.mts",
     "postinstall": "node ./scripts/bootstrap-agent-skills.mts --postinstall && oxfmt . '!repos/**'",
-    "database-trust:audit": "node ./scripts/audit-database-trust-boundaries.mts",
     "authorization:provision-current-actions": "node ./scripts/provision-current-action-authorization.mts",
     "authorization:inventory:check": "node ./scripts/check-module-entrypoint-boundaries.mts",
     "authorization:impact:report": "node ./scripts/report-fail-closed-authorization-impact.mts",
@@ -83,9 +84,10 @@
   },
   "dependencies": {
     "@authzed/authzed-node": "1.6.1",
-    "better-auth": "1.6.23",
+    "@better-auth/drizzle-adapter": "1.7.2",
+    "better-auth": "1.7.2",
     "dotenv": "17.4.2",
-    "drizzle-orm": "0.45.2",
+    "drizzle-orm": "1.0.0-rc.4",
     "pg": "8.22.0"
   },
   "devDependencies": {

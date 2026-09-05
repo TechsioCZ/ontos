@@ -2,6 +2,10 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runScaffold } from '../../../../scripts/scaffolding/cli.mts';
+import {
+  MODULE_MANIFEST_RESOURCE_SLOT_END,
+  MODULE_MANIFEST_RESOURCE_SLOT_START,
+} from '../../../../scripts/scaffolding/shared.mts';
 
 export const GENERATED_OWNER = {
   actionKey: 'isolation.owner.create-record',
@@ -136,8 +140,9 @@ const addResourceType = async (root: string): Promise<void> => {
   const manifest = await readFile(manifestPath, 'utf-8');
   const withResourceType = replaceRequired(
     manifest,
-    '    resourceTypes: [],',
-    `    resourceTypes: [
+    `      ${MODULE_MANIFEST_RESOURCE_SLOT_START}
+      ${MODULE_MANIFEST_RESOURCE_SLOT_END}`,
+    `      ${MODULE_MANIFEST_RESOURCE_SLOT_START}
       {
         capabilities: {
           graphVisible: false,
@@ -151,7 +156,7 @@ const addResourceType = async (root: string): Promise<void> => {
         label: 'Isolation record',
         owningModuleId: '${GENERATED_OWNER.moduleId}',
       },
-    ],`,
+      ${MODULE_MANIFEST_RESOURCE_SLOT_END}`,
   );
   const withResourceDetail = replaceRequired(
     withResourceType,

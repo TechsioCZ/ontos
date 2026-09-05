@@ -5,7 +5,7 @@ import type { Scope } from 'effect';
 import { Pool } from 'pg';
 import type { PoolConfig } from 'pg';
 import { ContactsDatabaseConnectionError } from './connection-error.ts';
-import { contactsDatabaseSchema } from './schema.ts';
+import { contactsRelations } from './schema.ts';
 import type { ContactsDatabaseExecutor } from './types.ts';
 
 export class ContactsDatabase extends Context.Service<
@@ -56,7 +56,7 @@ export const makeContactsDatabase = (
     Effect.map((pool) => ({
       executor: drizzle({
         client: pool,
-        schema: contactsDatabaseSchema,
+        relations: contactsRelations,
       }),
     })),
   );

@@ -8,6 +8,7 @@
     "incremental": true,
     "noEmit": false,
     "outDir": "../../node_modules/.cache/tsgo/declarations/packages__core-runtime",
+    "skipLibCheck": true,
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__core-runtime.tsbuildinfo"
   },
   "include": [

@@ -52,7 +52,7 @@ import {
   makeModuleStateSnapshot,
 } from '../../src/modules/module-state-gate.ts';
 import { supportRecoveryPrincipalContextResolverFromRepository } from '../../src/auth/support-recovery-principal-context.ts';
-import { coreDatabaseSchema } from '../../src/db/schema.ts';
+import { coreRelations } from '../../src/db/schema.ts';
 import { recordSupportImpersonationAction } from '../../src/modules/actions/record-support-impersonation.action.ts';
 
 const principal = {
@@ -252,7 +252,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
   });
   Object.defineProperty(pool, 'query', { value: query });
   const database = {
-    executor: drizzle({ client: pool, schema: coreDatabaseSchema }),
+    executor: drizzle({ client: pool, relations: coreRelations }),
   };
 
   const permission = {

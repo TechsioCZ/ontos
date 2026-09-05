@@ -2,12 +2,8 @@ import type {
   PartySubjectEvidence,
   PartyEvidenceEvaluation,
 } from '../../shared/domain/identity-contracts.ts';
-import {
-  enableGovernedRls,
-  tenantLegalEntityRlsPolicies,
-  tenantRlsPolicies,
-} from '@app/core-runtime';
-import { sql } from 'drizzle-orm';
+import { tenantLegalEntityRlsPolicies, tenantRlsPolicies } from '@app/core-runtime';
+import { defineRelations, sql } from 'drizzle-orm';
 import {
   boolean,
   check,
@@ -59,6 +55,8 @@ const updatedAt = () => timestamp('updated_at', { withTimezone: true }).defaultN
 const recordedAt = () => timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull();
 const validFrom = () => timestamp('valid_from', { withTimezone: true }).notNull();
 const validTo = () => timestamp('valid_to', { withTimezone: true });
+const enableGovernedRls = <Table>(table: { readonly enableRLS: () => Table }): Table =>
+  table.enableRLS();
 
 const externalEvidenceConstraint = (name: string, column: AnyPgColumn) =>
   check(
@@ -1327,3 +1325,6 @@ export type PartyRelationshipRecord = typeof partyRelationships.$inferSelect;
 export type NewPartyRelationshipRecord = typeof partyRelationships.$inferInsert;
 export type CounterpartyRecord = typeof counterparties.$inferSelect;
 export type NewCounterpartyRecord = typeof counterparties.$inferInsert;
+
+/** Relational Queries v2 entry point for the Party Registry owner. */
+export const partyRelations = defineRelations(partyDatabaseSchema);

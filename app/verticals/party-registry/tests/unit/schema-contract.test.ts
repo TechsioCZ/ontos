@@ -639,18 +639,24 @@ test('ships an independent Party migration with forced RLS and append-only corre
   assert.match(drizzleConfig, /\.\/src\/db\/schema\.ts/u);
 
   const migrationDirectory = new URL('../../drizzle/', import.meta.url);
-  const migrationDirectoryEntries = await readdir(migrationDirectory);
-  const migrationFiles = migrationDirectoryEntries
-    .filter((name) => name.endsWith('.sql'))
+  const migrationDirectoryEntries = await readdir(migrationDirectory, { withFileTypes: true });
+  const migrationFolders = migrationDirectoryEntries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
     .toSorted();
-  assert.ok(migrationFiles.length >= 2);
+  assert.ok(migrationFolders.length >= 2);
+  const remediationFolder = migrationFolders.find((name) => name.endsWith('_nebulous_cardiac'));
+  assert.ok(remediationFolder);
   const remediation = await readFile(
-    new URL('0001_nebulous_cardiac.sql', migrationDirectory),
+    new URL(`${remediationFolder}/migration.sql`, migrationDirectory),
     'utf-8',
   );
   assert.match(remediation, /party_match_decisions_create_result_ck/u);
   assert.match(remediation, /committed_create_outcome/u);
-  const migration = await readFile(new URL(migrationFiles[0] ?? '', migrationDirectory), 'utf-8');
+  const migration = await readFile(
+    new URL(`${migrationFolders[0] ?? ''}/migration.sql`, migrationDirectory),
+    'utf-8',
+  );
   assert.equal(
     migration.match(/ALTER TABLE "party"\."[^"]+" ENABLE ROW LEVEL SECURITY;/gu)?.length,
     PARTY_TABLE_INVENTORY.length,

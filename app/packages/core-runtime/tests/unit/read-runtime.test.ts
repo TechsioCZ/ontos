@@ -15,7 +15,7 @@ import {
 import { makeReadRuntime, READ_RUNTIME_STAGES } from '../../src/reads/runtime.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { OperationContextUnavailable } from '../../src/operations/errors.ts';
-import { coreDatabaseSchema } from '../../src/db/schema.ts';
+import { coreRelations } from '../../src/db/schema.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
 const scope = Object.freeze({
@@ -82,7 +82,7 @@ const makeHarness = (
   });
   Object.defineProperty(pool, 'query', { value: query });
   const database = {
-    executor: drizzle({ client: pool, schema: coreDatabaseSchema }),
+    executor: drizzle({ client: pool, relations: coreRelations }),
   };
   const stages: string[] = [];
   const runtime = makeReadRuntime(

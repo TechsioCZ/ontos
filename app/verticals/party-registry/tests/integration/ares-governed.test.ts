@@ -38,8 +38,14 @@ import {
 } from '../../src/api/party-command-client.ts';
 import { executeAresLookupWithAuthorization } from '../../src/api/ares-lookup-client.ts';
 import { executePartyDetailWithAuthorization } from '../../src/api/party-detail-client.ts';
+import { addContactPointAction } from '../../src/actions/add-contact-point.action.ts';
+import { addPartyOfficialIdentifierAction } from '../../src/actions/add-party-official-identifier.action.ts';
+import { correctPartyFactAction } from '../../src/actions/correct-party-fact.action.ts';
+import { createPartyAction } from '../../src/actions/create-party.action.ts';
+import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
+import { updatePartyAction } from '../../src/actions/update-party.action.ts';
 import {
-  partyDatabaseSchema,
+  partyRelations,
   partyFactAssertions,
   partyOfficialIdentifiers,
   partyIdentifierClaims,
@@ -77,10 +83,18 @@ const rawSubject = {
 test('exported ARES coordinator uses real authorized HTTP commands, canonical persistence and reviewed correction', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
   const fixture = await makeLiveOperationFixture({
+    actionKeys: [
+      addContactPointAction,
+      addPartyOfficialIdentifierAction,
+      correctPartyFactAction,
+      createPartyAction,
+      resolveDuplicateCandidateCreateAction,
+      updatePartyAction,
+    ].map(({ descriptor }) => descriptor.actionKey),
     runtimeConnectionString: connections.runtime.connectionString,
   });
   const pool = new Pool({ connectionString: connections.admin.connectionString });
-  const admin = drizzle({ client: pool, schema: partyDatabaseSchema });
+  const admin = drizzle({ client: pool, relations: partyRelations });
   const { privateKey, publicKey } = await generateKeyPair('Ed25519');
   const kid = `ares-live-${randomUUID()}`;
   const issuer = 'https://disposable-shell.ontos.test';

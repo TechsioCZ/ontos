@@ -1,13 +1,13 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { APP_ENV_PATH } from '@app/core-runtime/workspace-environment';
 import { betterAuth } from 'better-auth';
-import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { config as loadDotenv } from 'dotenv';
 import { eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import {
-  coreDatabaseSchema,
+  coreRelations,
   dataAccessEvents,
   legalEntities,
   principalAuthBindings,
@@ -15,7 +15,13 @@ import {
   tenantModuleStates,
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
-import { account, authDatabaseSchema, session, user } from '../../api/auth/db/schema.ts';
+import {
+  account,
+  authDatabaseSchema,
+  authRelations,
+  session,
+  user,
+} from '../../api/auth/db/schema.ts';
 
 export const e2eCredentials = {
   email: 'e2e.user@example.test',
@@ -52,8 +58,8 @@ export const createAuthenticationFixture = async () => {
 
   const corePool = new Pool({ connectionString });
   const authPool = new Pool({ connectionString });
-  const coreDatabase = drizzle({ client: corePool, schema: coreDatabaseSchema });
-  const authDatabase = drizzle({ client: authPool, schema: authDatabaseSchema });
+  const coreDatabase = drizzle({ client: corePool, relations: coreRelations });
+  const authDatabase = drizzle({ client: authPool, relations: authRelations });
   const authentication = betterAuth({
     baseURL,
     database: drizzleAdapter(authDatabase, {
