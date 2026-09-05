@@ -34,7 +34,23 @@ export class SupportImpersonationDeniedError extends Schema.TaggedError<SupportI
 export class SupportImpersonationUnavailableError extends Schema.TaggedError<SupportImpersonationUnavailableError>()(
   'SupportImpersonationUnavailableError',
   { code: Schema.Literal('support_impersonation_unavailable'), reason: Schema.String },
-) {}
+) {
+  #originalFailure: unknown = undefined;
+
+  static withOriginalFailure(originalFailure?: unknown): SupportImpersonationUnavailableError {
+    const failure = new SupportImpersonationUnavailableError({
+      code: 'support_impersonation_unavailable',
+      reason: 'Support impersonation is temporarily unavailable',
+    });
+    failure.#originalFailure = originalFailure;
+    return failure;
+  }
+
+  // Keep diagnostics off the Schema wire contract, JSON and ordinary Error inspection.
+  getOriginalFailure(): unknown {
+    return this.#originalFailure;
+  }
+}
 export type SupportImpersonationError =
   | SupportImpersonationDeniedError
   | SupportImpersonationUnavailableError;
@@ -43,21 +59,18 @@ const denied = () =>
     code: 'support_impersonation_denied',
     reason: 'Support impersonation is not permitted',
   });
-const unavailable = () =>
-  new SupportImpersonationUnavailableError({
-    code: 'support_impersonation_unavailable',
-    reason: 'Support impersonation is temporarily unavailable',
-  });
+const unavailable = (originalFailure?: unknown) =>
+  SupportImpersonationUnavailableError.withOriginalFailure(originalFailure);
 const cookieHeaders = (headers: Headers): readonly string[] =>
   Predicate.isFunction(headers.getSetCookie) ? headers.getSetCookie() : [];
 const mapAuthenticationError = (error: { readonly _tag?: string }) =>
   error._tag === 'AuthenticationUnavailableError' || error._tag === 'AuthenticationInternalError'
-    ? unavailable()
+    ? unavailable(error)
     : denied();
 const mapResolverError = (error: { readonly _tag?: string }) =>
-  error._tag === 'PrincipalResolverUnavailableError' ? unavailable() : denied();
+  error._tag === 'PrincipalResolverUnavailableError' ? unavailable(error) : denied();
 const mapProviderError = <Failure>(error: Failure) =>
-  error instanceof APIError && error.statusCode < 500 ? denied() : unavailable();
+  error instanceof APIError && error.statusCode < 500 ? denied() : unavailable(error);
 
 export interface SupportProviderSession {
   readonly activeTenantId?: null | string | undefined;
