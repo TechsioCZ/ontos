@@ -1121,12 +1121,16 @@ void test('keeps Policy rejection terminal and deduplicates repeated and concurr
     assert.equal(audits.length, 2);
 
     let concurrentEvaluations = 0;
+    const bothPoliciesReached = Effect.runSync(Deferred.make<null>());
     const concurrentKey = 'policy-terminal-concurrent';
     const concurrentPolicy = defineGlobalPolicy<{ readonly value: string }>({
       evaluate: () =>
-        Effect.gen(function* delayedDenial() {
+        Effect.gen(function* concurrentDenial() {
           concurrentEvaluations += 1;
-          yield* Effect.sleep('20 millis');
+          if (concurrentEvaluations === 2) {
+            yield* Deferred.succeed(bothPoliciesReached, null);
+          }
+          yield* Deferred.await(bothPoliciesReached).pipe(Effect.timeout('3 seconds'));
           return yield* denyPolicy('concurrent_rejection', 'Concurrent request rejected');
         }),
       policyKey: 'global.concurrent-rejection.v1',
