@@ -414,7 +414,7 @@ test.each([
   async ({ lostResponse, checkpointFails }) => {
     const adminValue = 'original-session-token:true';
     const adminCookie = encodeURIComponent(
-      `${adminValue}.${await makeSignature(adminValue, configuration.secret)}`,
+      `${adminValue}.${await makeSignature(adminValue, Redacted.value(configuration.secret))}`,
     );
     const secondImpersonationSessionId = 'second-impersonated-session-id';
     const recoveries = [
