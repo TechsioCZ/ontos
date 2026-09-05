@@ -154,22 +154,23 @@ test('validates lazily, trims values and accepts both PostgreSQL schemes', () =>
   const configuration = parseStageDemoBootstrapConfig(environment);
   environment.BETTER_AUTH_URL = ' http://localhost:3000 ';
   expect(Effect.runSync(configuration).authBaseUrl).toBe('http://localhost:3000');
-  expect(
-    Effect.runSync(
-      parseStageDemoBootstrapConfig({
-        ...validEnvironment,
-        DATABASE_ADMIN_URL: ' postgres://db:password@db:5432/db ',
-        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: ' stage ',
-        STAGE_DEMO_PASSWORD: ' password ',
-      }),
-    ),
-  ).toMatchObject({
-    databaseAdminUrl: 'postgres://db:password@db:5432/db',
-    accounts: [
-      { email: 'demo@test.com', password: 'password' },
-      { email: 'siampark01@test.com', password: validEnvironment.STAGE_SIAMPARK_PASSWORD },
-    ],
-  });
+  const trimmed = Effect.runSync(
+    parseStageDemoBootstrapConfig({
+      ...validEnvironment,
+      DATABASE_ADMIN_URL: ' postgres://db:password@db:5432/db ',
+      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: ' stage ',
+      STAGE_DEMO_PASSWORD: ' password ',
+    }),
+  );
+  expect(trimmed.databaseAdminUrl).toBe('postgres://db:password@db:5432/db');
+  expect(trimmed.accounts.map(({ email }) => email)).toEqual([
+    'demo@test.com',
+    'siampark01@test.com',
+  ]);
+  expect(trimmed.accounts.map(({ password }) => Redacted.value(password))).toEqual([
+    'password',
+    validEnvironment.STAGE_SIAMPARK_PASSWORD,
+  ]);
 });
 
 test('preserves unexpected environment access defects instead of reporting invalid configuration', () => {

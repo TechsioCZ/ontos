@@ -37,8 +37,8 @@ const invalid = (reason: string): DeploymentAllowlistConfigurationError =>
     reason,
   });
 
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Build-time globals and JSON files enter here and are decoded immediately by the Json object schema.
 const object = (
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Build-time globals and JSON files enter here and are decoded immediately by the Json object schema.
   value: unknown,
 ): Effect.Effect<JsonObject, DeploymentAllowlistConfigurationError> => {
   if (!Predicate.isObjectKeyword(value) || value === null || Array.isArray(value)) {
@@ -98,6 +98,7 @@ const normalizeContractUrl = <Value>(
 };
 
 const decodeAppId = (
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Topology JSON members are decoded immediately by the app ID schema.
   value: unknown,
 ): Effect.Effect<OntosDeploymentAppId, DeploymentAllowlistConfigurationError> =>
   Schema.decodeUnknownEffect(OntosDeploymentAppIdSchema)(value).pipe(
