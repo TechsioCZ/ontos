@@ -1,9 +1,16 @@
 import { expect, test } from '@rstest/core';
 import { Effect } from 'effect';
-import { decodeJwt, decodeProtectedHeader, exportJWK, generateKeyPair, jwtVerify } from 'jose';
+import {
+  decodeJwt,
+  decodeProtectedHeader,
+  exportJWK,
+  generateKeyPair,
+  importJWK,
+  jwtVerify,
+} from 'jose';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';
-import { issueGatewayContextAssertion } from '../../api/auth/gateway-issuer.ts';
+import { issueGatewayContextAssertion, makeGatewayIssuer } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerDependencies } from '../../api/auth/gateway-issuer.ts';
 
 const withOptionalProperty = <
@@ -100,6 +107,25 @@ test('signs exact five-minute, audience-scoped EdDSA claims with the configured 
   expect(JSON.stringify(claims)).not.toMatch(
     /email|displayName|credential|cookie|sessionToken|actionKey|permission|policy|businessPayload/u,
   );
+});
+
+test('imports the configured signing key once per issuer lifetime', async () => {
+  const { configuration } = await makeConfiguration();
+  let importCount = 0;
+  const importSigningKey = async (privateJwk: GatewayIssuerConfigValue['privateJwk']) => {
+    importCount += 1;
+    return await importJWK(privateJwk, 'EdDSA');
+  };
+  const issue = makeGatewayIssuer(dependencies(configuration), importSigningKey);
+
+  await Promise.all(
+    [
+      issue({ audience: 'property-registry', principal }),
+      issue({ audience: 'property-registry', principal }),
+    ].map(async (effect) => await Effect.runPromise(effect)),
+  );
+
+  expect(importCount).toBe(1);
 });
 
 test('fails closed for unknown audiences and invalid Effect-managed time', async () => {

@@ -8,7 +8,7 @@ import type {
   GatewayContextClientOptions,
   GatewayContextResponse,
 } from '@app/shared-contracts';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Redacted, Schema } from 'effect';
 import * as AresApplication from '../../shared/domain/ares-application.ts';
 import type {
   AresAppliedEvidence,
@@ -53,16 +53,18 @@ export type ActionGatewayIssuer = (
 ) => GatewayContextClientEffect<GatewayContextResponse>;
 
 export type ActionGatewayAttempt<Success, Failure> = (
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
 ) => Effect.Effect<Success, Failure>;
 
+// The freshly issued assertion is redacted here, at the only place it is built, so no span
+// attribute, log annotation or serialized error downstream can carry the credential.
 export const makeActionGateway = (acquire: ActionGatewayIssuer = issueGatewayContext) => ({
   invoke: <Success, Failure>(
     attempt: ActionGatewayAttempt<Success, Failure>,
     options: GatewayContextClientOptions = {},
   ) =>
     acquire({ audience: ACTION_GATEWAY_AUDIENCE }, options).pipe(
-      Effect.flatMap(({ token }) => attempt(`Bearer ${token}`)),
+      Effect.flatMap(({ token }) => attempt(Redacted.make(`Bearer ${token}`))),
     ),
 });
 
@@ -114,17 +116,17 @@ export interface AresApplyRequest {
 export interface PartyRegistryStandardActionInvoker<Failure> {
   readonly addContactPoint: (
     payload: AddContactPointPayload,
-    authorization: string,
+    authorization: Redacted.Redacted<string>,
     options: AresActionInvocationOptions,
   ) => Effect.Effect<AddContactPointResult, Failure>;
   readonly addPartyOfficialIdentifier: (
     payload: AddPartyOfficialIdentifierPayload,
-    authorization: string,
+    authorization: Redacted.Redacted<string>,
     options: AresActionInvocationOptions,
   ) => Effect.Effect<AddPartyOfficialIdentifierResult, Failure>;
   readonly updateParty: (
     payload: UpdatePartyPayload,
-    authorization: string,
+    authorization: Redacted.Redacted<string>,
     options: AresActionInvocationOptions,
   ) => Effect.Effect<UpdatePartyResult, Failure>;
 }

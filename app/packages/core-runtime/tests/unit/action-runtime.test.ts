@@ -3,8 +3,9 @@
 /* eslint-disable max-classes-per-file, no-await-in-loop, no-throw-literal -- Test-local typed errors, sequential lifecycle assertions, and the controlled Drizzle transaction fake are deliberate. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { inspect } from 'node:util';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Cause, Effect, Exit, Schema, Predicate } from 'effect';
+import { Cause, Effect, Exit, Logger, Redacted, Schema, Predicate } from 'effect';
 import { Pool } from 'pg';
 import { CoreDatabase } from '../../src/db/client.ts';
 import type {
@@ -83,6 +84,8 @@ interface HarnessOptions {
   readonly moduleState?: TenantModuleState | 'missing' | 'unavailable';
   readonly permissionDecision?: ActionPermissionDecision;
   readonly permissionFailure?: boolean;
+  readonly permissionError?: ActionPermissionCheckError;
+  readonly transactionError?: Error;
   readonly policyFinalizationFailure?: boolean;
   readonly rejectionFailure?: boolean;
   readonly resolutionUnavailable?: boolean;
@@ -224,7 +227,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
       if (text === 'begin') {
         transactionCount += 1;
         if (options.transactionMode === 'definite-failure') {
-          throw new Error('transaction unavailable');
+          throw options.transactionError ?? new Error('transaction unavailable');
         }
       }
       if (text === 'commit') {
@@ -271,6 +274,9 @@ const makeHarness = (options: HarnessOptions = {}) => {
     checkActionPermission: (input: CheckActionPermissionInput) => {
       permissionCheckCount += 1;
       permissionChecks.push(input);
+      if (options.permissionError !== undefined) {
+        return Effect.fail(options.permissionError);
+      }
       return options.permissionFailure === true
         ? Effect.fail(
             new ActionPermissionCheckError({
@@ -456,6 +462,100 @@ const registration = () =>
         return { total: payload.amount };
       }),
   );
+
+test('redacts runtime diagnostics without changing failure semantics', async () => {
+  const marker = 'synthetic-runtime-secret-never-a-credential';
+  const original = new Error(marker, { cause: new Error(marker) });
+  const originalCause = Cause.die(original);
+  const permissionError = new ActionPermissionCheckError({
+    code: 'action_permission_check_failed',
+    reason: marker,
+  });
+  for (const path of ['policy', 'handler', 'transaction', 'permission'] as const) {
+    const harness = makeHarness({
+      ...(path === 'transaction'
+        ? { transactionMode: 'definite-failure' as const, transactionError: original }
+        : {}),
+      ...(path === 'permission' ? { permissionError } : {}),
+    });
+    const action = defineAction(
+      {
+        ...registration().descriptor,
+        policies:
+          path === 'policy'
+            ? [
+                defineGlobalPolicy({
+                  evaluate: () => Effect.failCause(originalCause),
+                  policyKey: 'global.synthetic.v1',
+                }),
+              ]
+            : [],
+      },
+      () => (path === 'handler' ? Effect.failCause(originalCause) : Effect.succeed({ total: 1 })),
+    );
+    const messages: unknown[][] = [];
+    const rendered: string[] = [];
+    const logger = Logger.make((options) => {
+      assert.ok(Array.isArray(options.message));
+      messages.push(options.message);
+      rendered.push(JSON.stringify(Logger.formatStructured.log(options)));
+    });
+    const exit = await Effect.runPromiseExit(
+      harness.runtime
+        .runAction({
+          payload: { amount: 1 },
+          principal,
+          registration: action,
+          transport: transport(),
+        })
+        .pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger]))),
+    );
+    assert.ok(Exit.isFailure(exit), path);
+    const failureOption = Cause.findErrorOption(exit.cause);
+    assert.ok(failureOption._tag === 'Some', path);
+    const failure = failureOption.value;
+    if (path === 'handler') {
+      assert.ok(
+        exit.cause.reasons.some(
+          (reason) => Cause.isDieReason(reason) && reason.defect === original,
+        ),
+        'redaction must not discard the original handler defect',
+      );
+    }
+    const expectedTags = {
+      policy: 'ActionPolicyEvaluationError',
+      handler: 'ActionHandlerExecutionError',
+      transaction: 'ActionTransactionError',
+      permission: 'ActionPermissionCheckError',
+    };
+    assert.equal(failure._tag, expectedTags[path]);
+    if (path === 'permission') assert.equal(failure, permissionError);
+    assert.equal(messages.length, 1, path);
+    assert.equal(inspect(messages).includes(marker), false, path);
+    assert.equal(JSON.stringify(messages).includes(marker), false, path);
+    assert.equal(rendered.join('\n').includes(marker), false, path);
+    assert.ok(
+      rendered.join('\n').includes(path === 'handler' ? 'execution_defect' : expectedTags[path]),
+    );
+    assert.match(rendered.join('\n'), /shell.counter.change/);
+    assert.match(rendered.join('\n'), /correlation-intent-1/);
+    assert.match(rendered.join('\n'), /invocation-1/);
+    if (path === 'policy') assert.match(rendered.join('\n'), /global.synthetic.v1/);
+    const diagnostic = messages.flat().find(Redacted.isRedacted);
+    assert.ok(diagnostic, path);
+    const retained = Redacted.value(diagnostic);
+    if (path === 'policy' || path === 'handler') {
+      assert.equal(retained, originalCause);
+    } else {
+      if (path === 'permission') {
+        assert.equal(retained, permissionError);
+      } else {
+        assert.ok(retained instanceof Error);
+        assert.equal(retained.cause, original);
+      }
+    }
+  }
+});
 
 test('executes the complete stage order with transaction ownership and success evidence', async () => {
   const harness = makeHarness();

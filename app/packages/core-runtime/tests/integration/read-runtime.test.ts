@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { getTableConfig } from 'drizzle-orm/pg-core';
-import { Effect, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 import { Pool } from 'pg';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations, dataAccessEvents } from '../../src/db/schema.ts';
@@ -32,8 +32,12 @@ void test('standalone governed-read evidence permits no Action invocation and re
 
 void test('commits live allowed evidence before releasing a governed read result', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
-  const admin = new Pool({ connectionString: connections.admin.connectionString });
-  const runtimePool = new Pool({ connectionString: connections.runtime.connectionString });
+  const admin = new Pool({
+    connectionString: Redacted.value(connections.admin.connectionString),
+  });
+  const runtimePool = new Pool({
+    connectionString: Redacted.value(connections.runtime.connectionString),
+  });
   const runtimeDatabase = drizzle({ client: runtimePool, relations: coreRelations });
   const tenantId = randomUUID();
   const principalId = randomUUID();

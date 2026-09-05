@@ -6,7 +6,7 @@ import type {
   InstalledModuleCatalog,
   TenantModuleState,
 } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import {
   attachShellMedia,
   makeShellResourceDetail,
@@ -200,7 +200,7 @@ const dependencies = (
     issueAssertion: () => {
       const authorization = `Bearer test-${assertion}`;
       assertion += 1;
-      return Effect.succeed(authorization);
+      return Effect.succeed(Redacted.make(authorization));
     },
     moduleStates: {
       getTenantModuleStates: (_tenantId: string, moduleIds: readonly string[]) =>
@@ -674,20 +674,42 @@ test('media endpoint cannot invoke a provider mutation', async () => {
   });
 });
 
-test('acquires a fresh audience-scoped assertion for each provider attempt', async () => {
-  const authorizations: string[] = [];
+test('redacts provider assertions in memory and unwraps them only at the request header sink', async () => {
+  const authorizations: Redacted.Redacted<string>[] = [];
+  const requests: Request[] = [];
   const result = await Effect.runPromise(
     makeShellResourceDetail(dependencies(), {
       detail: ({ authorization }) => {
         authorizations.push(authorization);
+        requests.push(
+          new Request('https://property.example/resource', {
+            headers: { authorization: Redacted.value(authorization) },
+          }),
+        );
         return Effect.succeed({ fields: [], title: 'Unit 1' });
       },
       timeline: ({ authorization }) => {
         authorizations.push(authorization);
+        requests.push(
+          new Request('https://property.example/timeline', {
+            headers: { authorization: Redacted.value(authorization) },
+          }),
+        );
         return Effect.succeed({ entries: [], projectionLagging: false });
       },
     }).resolve(context, ref),
   );
   expect(result.outcome).toBe('resolved');
-  expect(authorizations).toEqual(['Bearer test-0', 'Bearer test-1']);
+  expect(authorizations).toHaveLength(2);
+  for (const authorization of authorizations) {
+    expect(Redacted.isRedacted(authorization)).toBe(true);
+    expect(String(authorization)).toBe('<redacted>');
+    expect(JSON.stringify({ authorization })).toBe('{"authorization":"<redacted>"}');
+  }
+  expect(JSON.stringify({ authorizations })).not.toContain('Bearer test-0');
+  expect(JSON.stringify({ authorizations })).not.toContain('Bearer test-1');
+  expect(requests.map((request) => request.headers.get('authorization'))).toEqual([
+    'Bearer test-0',
+    'Bearer test-1',
+  ]);
 });

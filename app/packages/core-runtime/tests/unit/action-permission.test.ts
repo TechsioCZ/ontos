@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { v1 } from '@authzed/authzed-node';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import {
   SPICEDB_ROOT_ENV_PATH,
   loadSpiceDbConfig,
@@ -63,7 +63,7 @@ test('loads the root SpiceDB environment independently of the invocation directo
     assert.deepEqual(configuration, {
       endpoint: 'localhost:50051',
       insecureLocal: true,
-      preSharedKey: 'ontos-local-development-key',
+      preSharedKey: Redacted.make('ontos-local-development-key'),
     });
   } finally {
     process.chdir(originalDirectory);
@@ -118,7 +118,7 @@ test('requires complete configuration and explicit secure or localhost-insecure 
   assert.deepEqual(validSecure, {
     endpoint: 'spicedb.internal.example:443',
     insecureLocal: false,
-    preSharedKey: 'test-key',
+    preSharedKey: Redacted.make('test-key'),
   });
   assert.deepEqual(
     failures.map((failure) => failure._tag),
@@ -167,7 +167,7 @@ test('allows insecure transport only for the exact Zerops stage private endpoint
     deploymentEnvironment: 'stage',
     endpoint: 'spicedb:50051',
     insecureLocal: true,
-    preSharedKey: 'test-key',
+    preSharedKey: Redacted.make('test-key'),
   });
   assert.deepEqual(
     rejected.map((failure) => failure._tag),
@@ -295,7 +295,7 @@ test('constructs the live client with a bounded deadline and finalizes it with t
   const configuration = {
     endpoint: 'localhost:50051',
     insecureLocal: true,
-    preSharedKey: 'test-key',
+    preSharedKey: Redacted.make('test-key'),
   } as const;
 
   await Effect.runPromise(

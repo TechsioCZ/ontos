@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off processEnv:off
 import { config as loadDotenv } from 'dotenv';
-import { Context, Effect, Layer } from 'effect';
+import { Context, Effect, Layer, Redacted } from 'effect';
 import { APP_ENV_PATH } from '../environment/workspace-environment.ts';
 import { DatabaseConfigError } from './config-error.ts';
 
@@ -11,7 +11,7 @@ export const ROOT_ENV_PATH = APP_ENV_PATH;
 type Environment = Readonly<Record<string, string | undefined>>;
 
 export interface DatabaseConfigValue {
-  readonly connectionString: string;
+  readonly connectionString: Redacted.Redacted<string>;
   readonly database: string;
   readonly host: string;
   readonly port: number;
@@ -109,7 +109,7 @@ export const parseDatabaseConfig = (
       }
 
       return {
-        connectionString: databaseUrl,
+        connectionString: Redacted.make(databaseUrl),
         database,
         host,
         port,
@@ -130,7 +130,7 @@ export const parseDatabaseConnectionPair = (
     }
     const admin = yield* parseDatabaseConfig({ DATABASE_URL: adminUrl });
     if (
-      admin.connectionString === runtime.connectionString ||
+      Redacted.value(admin.connectionString) === Redacted.value(runtime.connectionString) ||
       admin.user === runtime.user ||
       runtime.user === 'postgres'
     ) {

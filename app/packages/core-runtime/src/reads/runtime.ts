@@ -1,6 +1,6 @@
 /* oxlint-disable sonarjs/no-duplicate-string */
 /* eslint-disable complexity, max-classes-per-file -- The governed lifecycle and its private failure diagnostics stay co-located and ordered. */
-import { Cause, Context, Effect, Exit, Layer, Schema } from 'effect';
+import { Cause, Context, Effect, Exit, Layer, Redacted, Schema } from 'effect';
 import { CoreDatabase } from '../db/client.ts';
 import {
   decodeTrustedPrincipalContext,
@@ -98,6 +98,14 @@ export type ReadRuntimeStage = (typeof READ_RUNTIME_STAGES)[number];
 export interface ReadRuntimeOptions {
   readonly onStage?: (stage: ReadRuntimeStage) => void;
 }
+
+// Keep provider details opaque to loggers without altering the program's failure values.
+const readFailureDiagnostic = (cause: Cause.Cause<unknown>) => ({
+  cause: Redacted.make(cause),
+  hasDefects: Cause.hasDies(cause),
+  hasFailures: Cause.findErrorOption(cause)._tag === 'Some',
+  hasInterrupts: Cause.hasInterrupts(cause),
+});
 
 const stableTargetKey = (value: string): boolean => value.length > 0 && value.length <= 300;
 type PermissionDecision = 'allowed' | 'denied' | 'unavailable';
@@ -361,7 +369,10 @@ export const makeReadRuntime = (
           return yield* failure.value;
         }
         yield* Effect.annotateLogs(
-          Effect.logError('Unexpected operational scope resolution defect', scopeExit.cause),
+          Effect.logError(
+            'Unexpected operational scope resolution defect',
+            readFailureDiagnostic(scopeExit.cause),
+          ),
           {
             correlationId: transport.correlationId,
             readKey: input.registration.descriptor.readKey,
@@ -381,7 +392,7 @@ export const makeReadRuntime = (
         yield* Effect.annotateLogs(
           Effect.logError(
             'Unexpected read permission-target resolver defect',
-            permissionTargetExit.cause,
+            readFailureDiagnostic(permissionTargetExit.cause),
           ),
           { correlationId: scope.correlationId, readKey: input.registration.descriptor.readKey },
         );
@@ -523,7 +534,10 @@ export const makeReadRuntime = (
           });
         }
         yield* Effect.annotateLogs(
-          Effect.logError('Unexpected governed read Policy evaluation failure', policyExit.cause),
+          Effect.logError(
+            'Unexpected governed read Policy evaluation failure',
+            readFailureDiagnostic(policyExit.cause),
+          ),
           {
             correlationId: scope.correlationId,
             policyKey: policy.policyKey,
@@ -823,7 +837,10 @@ export const makeReadRuntime = (
             error.defectCause === undefined
               ? Effect.void
               : Effect.annotateLogs(
-                  Effect.logError('Unexpected governed read defect', error.defectCause),
+                  Effect.logError(
+                    'Unexpected governed read defect',
+                    readFailureDiagnostic(error.defectCause),
+                  ),
                   {
                     correlationId: scope.correlationId,
                     readKey: input.registration.descriptor.readKey,

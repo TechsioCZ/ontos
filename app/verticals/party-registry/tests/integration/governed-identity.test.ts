@@ -12,7 +12,7 @@ import {
   resolveActionCommit,
 } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Redacted } from 'effect';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { and, eq } from 'drizzle-orm';
 import { Pool } from 'pg';
@@ -93,13 +93,15 @@ test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims
   ].map(({ descriptor }) => descriptor.actionKey);
   const fixture = await makeLiveOperationFixture({
     actionKeys,
-    runtimeConnectionString: connections.runtime.connectionString,
+    runtimeConnectionString: Redacted.value(connections.runtime.connectionString),
   });
   const other = await makeLiveOperationFixture({
     actionKeys,
-    runtimeConnectionString: connections.runtime.connectionString,
+    runtimeConnectionString: Redacted.value(connections.runtime.connectionString),
   });
-  const adminPool = new Pool({ connectionString: connections.admin.connectionString });
+  const adminPool = new Pool({
+    connectionString: Redacted.value(connections.admin.connectionString),
+  });
   const admin = drizzle({ client: adminPool, relations: partyRelations });
   const run = <A, E>(effect: Effect.Effect<A, E, ActionRuntime | ReadRuntime>) =>
     Effect.runPromise(effect.pipe(Effect.provide(fixture.layer)));

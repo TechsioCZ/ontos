@@ -3,7 +3,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Cause, Context, Deferred, Effect, Exit, Logger, Predicate, Schema } from 'effect';
+import { inspect } from 'node:util';
+import {
+  Cause,
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Logger,
+  Predicate,
+  Redacted,
+  References,
+  Schema,
+} from 'effect';
 import { Pool } from 'pg';
 import { defineRead } from '../../src/reads/definition.ts';
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
@@ -36,6 +48,8 @@ const makeHarness = (
   options: {
     readonly failCommit?: boolean;
     readonly failEvidence?: boolean;
+    readonly scopeDefect?: Error;
+    readonly transactionDefect?: Error;
     readonly onLegalEntityPermission?: (permission: string | undefined) => void;
     readonly onQuery?: (text: string) => void;
     readonly onResourceTarget?: (target: {
@@ -56,6 +70,9 @@ const makeHarness = (
   const evidenceRows: EvidenceRow[] = [];
   const QueryConfigSchema = Schema.Struct({ text: Schema.String });
   const query = async <Query, Values>(queryInput: Query, values?: Values) => {
+    if (options.transactionDefect !== undefined) {
+      throw options.transactionDefect;
+    }
     const { text } = Schema.decodeUnknownSync(QueryConfigSchema)(queryInput);
     options.onQuery?.(text);
     if (options.failCommit === true && text.toLowerCase() === 'commit') {
@@ -97,7 +114,12 @@ const makeHarness = (
   const runtime = makeReadRuntime(
     database,
     openModuleEntrypointGateway,
-    { resolve: () => Effect.succeed(options.resolvedScope ?? scope) },
+    {
+      resolve: () =>
+        options.scopeDefect === undefined
+          ? Effect.succeed(options.resolvedScope ?? scope)
+          : Effect.die(options.scopeDefect),
+    },
     {
       legalEntities: ({ legalEntityIds, permission }) => {
         options.onLegalEntityPermission?.(permission);
@@ -1096,6 +1118,114 @@ test('fails closed when tenant-scoped Party result authorization becomes unavail
   assert.equal(failure._tag, 'ReadPermissionUnavailable');
 });
 
+test('redacts unexpected read diagnostics without changing governed failure semantics', async () => {
+  for (const source of [
+    'scope',
+    'target',
+    'policy',
+    'factory',
+    'handler',
+    'transaction',
+  ] as const) {
+    const marker = `synthetic-read-secret-${source}`;
+    const failure = new Error(marker, { cause: new Error(marker) });
+    const cause = Cause.fail(failure);
+    const logs: {
+      readonly message: readonly unknown[];
+      readonly annotations: unknown;
+      readonly cause: Cause.Cause<unknown>;
+    }[] = [];
+    const rendered: string[] = [];
+    const logger = Logger.make((entry) => {
+      assert.ok(Array.isArray(entry.message));
+      logs.push({
+        message: entry.message,
+        annotations: entry.fiber.getRef(References.CurrentLogAnnotations),
+        cause: entry.cause,
+      });
+      rendered.push(Logger.formatJson.log(entry), Logger.formatLogFmt.log(entry));
+    });
+    const harness = makeHarness({
+      ...(source === 'scope' ? { scopeDefect: failure } : {}),
+      ...(source === 'transaction' ? { transactionDefect: failure } : {}),
+    });
+    const policy = defineGlobalPolicy<Readonly<Record<string, never>>>({
+      evaluate: () => Effect.die(failure),
+      policyKey: 'global.read-diagnostics.v1',
+    });
+    const governed = defineRead(
+      {
+        ...registration().descriptor,
+        policies: source === 'policy' ? [{ denialStatus: 422, policyKey: policy.policyKey }] : [],
+      },
+      () =>
+        source === 'handler'
+          ? Effect.failCause(cause)
+          : Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
+      () => (source === 'factory' ? Effect.die(failure) : Effect.succeed({})),
+      () => {
+        if (source === 'target') {
+          throw failure;
+        }
+        return { kind: 'module', moduleId: 'core.shell' };
+      },
+      undefined,
+      source === 'policy' ? [policy] : [],
+    );
+    const error = await Effect.runPromise(
+      Effect.flip(
+        harness.runtime.runRead({
+          input: {},
+          principal: scope,
+          registration: governed,
+          transport: { correlationId: scope.correlationId },
+        }),
+      ).pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger]))),
+    );
+    assert.equal(
+      error._tag,
+      source === 'policy' ? 'ReadPolicyEvaluationError' : 'ReadHandlerExecutionError',
+    );
+    assert.equal(harness.evidence(), 0);
+    assert.equal(logs.length, 1);
+    assert.equal(
+      rendered.some((line) => line.includes(marker)),
+      false,
+      `${source}: rendered logs`,
+    );
+    assert.equal(
+      inspect(logs, { depth: null }).includes(marker),
+      false,
+      `${source}: logger arguments`,
+    );
+    assert.match(inspect(logs), /correlation-1/u);
+    assert.match(inspect(logs), /core\.shell\.items/u);
+    if (source === 'policy') {
+      assert.match(inspect(logs), /global\.read-diagnostics\.v1/u);
+    }
+    const diagnostic = logs[0]?.message[1];
+    assert.ok(Predicate.hasProperty(diagnostic, 'cause'));
+    assert.ok(Predicate.hasProperty(diagnostic, 'hasDefects'));
+    assert.ok(Predicate.hasProperty(diagnostic, 'hasFailures'));
+    assert.ok(Predicate.hasProperty(diagnostic, 'hasInterrupts'));
+    assert.ok(Redacted.isRedacted(diagnostic.cause));
+    const original = Redacted.value(diagnostic.cause);
+    assert.ok(Cause.isCause(original));
+    assert.equal(diagnostic.hasDefects, source !== 'handler');
+    assert.equal(diagnostic.hasFailures, source === 'handler');
+    assert.equal(diagnostic.hasInterrupts, false);
+    if (source === 'handler') {
+      assert.equal(original, cause);
+      const originalFailure = Cause.findErrorOption(original);
+      assert.equal(originalFailure._tag, 'Some');
+      if (originalFailure._tag === 'Some') {
+        assert.equal(originalFailure.value, failure);
+      }
+    }
+    assert.equal(failure.message, marker);
+  }
+});
+
 test('preserves declared owner read availability and not-found failures but sanitizes defects', async () => {
   const failures = [
     new ReadHandlerUnavailable({
@@ -1133,6 +1263,9 @@ test('preserves declared owner read availability and not-found failures but sani
         ),
       );
       assert.equal(error._tag, expectedTags[index]);
+      if (index < 2) {
+        assert.equal(error, failure);
+      }
       assert.doesNotMatch(error.reason, /secret/u);
       assert.equal(harness.evidence(), 0);
     }),

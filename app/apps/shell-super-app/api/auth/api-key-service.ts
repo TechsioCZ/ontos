@@ -4,7 +4,7 @@ import { apiKey } from '@better-auth/api-key';
 import { APIError, betterAuth } from 'better-auth';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { and, asc, eq, lte, sql } from 'drizzle-orm';
-import { Clock, Context, Effect, Layer, Schema, Predicate } from 'effect';
+import { Clock, Context, Effect, Layer, Schema, Predicate, Redacted } from 'effect';
 import { AuthConfig } from './config.ts';
 import type { AuthConfigValue } from './config.ts';
 import { AuthDatabase } from './db/client.ts';
@@ -61,7 +61,7 @@ export interface ProviderApiKeyMetadata extends SafeApiKeyMetadata {
   readonly providerKeyId: string;
 }
 export interface IssuedApiKey extends ProviderApiKeyMetadata {
-  readonly secret: string;
+  readonly secret: Redacted.Redacted<string>;
 }
 export interface VerifiedApiKey {
   readonly providerKeyId: string;
@@ -228,7 +228,7 @@ export const makeApiKeyService = (
     }),
     logger: { disabled: true },
     plugins: [apiKey({ enableMetadata: true, enableSessionForAPIKeys: false, references: 'user' })],
-    secret: configuration.secret,
+    secret: Redacted.value(configuration.secret),
     trustedOrigins: [...configuration.trustedOrigins],
   });
   const metadata = (keyId: string) =>
@@ -287,7 +287,7 @@ export const makeApiKeyService = (
             ),
             headers: requestHeaders,
           }),
-      }).pipe(Effect.map((created) => ({ ...toSafe(created), secret: created.key }))),
+      }).pipe(Effect.map((created) => ({ ...toSafe(created), secret: Redacted.make(created.key) }))),
     metadata,
     pendingCleanup: (input) =>
       Effect.gen(function* pendingApiKeyCleanup() {

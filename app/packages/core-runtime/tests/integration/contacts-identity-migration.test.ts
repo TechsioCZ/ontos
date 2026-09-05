@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import { Pool } from 'pg';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 
@@ -57,7 +57,10 @@ const tableColumns = {
 
 test('Contacts Core identity migration is preserving, scoped, rerunnable, and collision-safe', async () => {
   const configuration = await Effect.runPromise(loadDatabaseConnectionPair());
-  const pool = new Pool({ connectionString: configuration.admin.connectionString, max: 1 });
+  const pool = new Pool({
+    connectionString: Redacted.value(configuration.admin.connectionString),
+    max: 1,
+  });
   const schema = `core_contacts_identity_${randomUUID().replaceAll('-', '')}`;
   const quotedSchema = `"${schema}"`;
   try {

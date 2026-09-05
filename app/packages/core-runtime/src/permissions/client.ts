@@ -1,6 +1,6 @@
 // @effect-diagnostics asyncFunction:off
 import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import type { Scope } from 'effect';
 import { allowsInsecureSpiceDbTransport } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
@@ -46,7 +46,7 @@ export const createSpiceDbPermissionClient = (
   timeoutMilliseconds: number,
 ): SpiceDbPermissionClient => {
   const client = v1.NewClient(
-    configuration.preSharedKey,
+    Redacted.value(configuration.preSharedKey),
     configuration.endpoint,
     spiceDbClientSecurity(configuration),
     undefined,

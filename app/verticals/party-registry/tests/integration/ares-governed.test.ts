@@ -9,7 +9,7 @@ import { text as readText } from 'node:stream/consumers';
 import test from 'node:test';
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
-import { ConfigProvider, Effect, Layer, Schema } from 'effect';
+import { ConfigProvider, Effect, Layer, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/plugin-bff/effect-edge';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
@@ -91,9 +91,9 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
       resolveDuplicateCandidateCreateAction,
       updatePartyAction,
     ].map(({ descriptor }) => descriptor.actionKey),
-    runtimeConnectionString: connections.runtime.connectionString,
+    runtimeConnectionString: Redacted.value(connections.runtime.connectionString),
   });
-  const pool = new Pool({ connectionString: connections.admin.connectionString });
+  const pool = new Pool({ connectionString: Redacted.value(connections.admin.connectionString) });
   const admin = drizzle({ client: pool, relations: partyRelations });
   const { privateKey, publicKey } = await generateKeyPair('Ed25519');
   const kid = `ares-live-${randomUUID()}`;
@@ -110,7 +110,7 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
       .setJti(randomUUID())
       .sign(privateKey);
   const token = await sign(fixture.manager);
-  const authorization = `Bearer ${token}`;
+  const authorization = Redacted.make(`Bearer ${token}`);
   const gateway = makeActionGateway(() =>
     Effect.promise(async () => ({ expiresAt: 0, token: await sign(fixture.manager) })),
   );

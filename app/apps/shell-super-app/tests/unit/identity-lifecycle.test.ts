@@ -5,7 +5,9 @@ import {
   IdentityTargetInvalidError,
   PrincipalBindingMissingError,
 } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { inspect } from 'node:util';
+import { Effect, Redacted, Schema } from 'effect';
+import { ApiKeyIssueResponseSchema } from '../../shared/api.ts';
 import {
   ApiKeyProviderUnavailableError,
   ApiKeyStateInconsistentError,
@@ -37,7 +39,7 @@ const issued = {
   expiresAt: null,
   name: 'automation',
   providerKeyId: 'private-provider-key-id',
-  secret: 'ontos-secret',
+  secret: Redacted.make('ontos-secret'),
   start: 'onto',
 };
 const resolver = makePrincipalResolverDouble({
@@ -224,8 +226,22 @@ test('returns a secret only after bind succeeds and strips the private provider 
       requestHeaders: new Headers(),
     }),
   );
-  expect(result.secret).toBe('ontos-secret');
+  expect(result.secret).toBe(issued.secret);
+  expect(JSON.stringify(result)).not.toContain('ontos-secret');
   expect(Object.hasOwn(result, 'providerKeyId')).toBe(false);
+  expect(Redacted.isRedacted(result.secret)).toBe(true);
+  expect(String(result.secret)).not.toContain('ontos-secret');
+  expect(inspect(result)).not.toContain('ontos-secret');
+  // Only the one-time HTTP response projection reveals the synthetic credential.
+  const response = { ...result, secret: Redacted.value(result.secret) };
+  expect(Schema.is(ApiKeyIssueResponseSchema)(result)).toBe(false);
+  expect(Schema.is(ApiKeyIssueResponseSchema)(response)).toBe(true);
+  expect(response.secret).toBe('ontos-secret');
+  expect(JSON.stringify(response)).toContain('ontos-secret');
+  expect(response.authBindingId).toBe('00000000-0000-4000-8000-000000000004');
+  expect(response.cleanupPending).toBe(false);
+  expect(Object.hasOwn(response, 'providerKeyId')).toBe(false);
+  expect(JSON.stringify(result)).not.toContain('ontos-secret');
 });
 
 test('revokes the replacement before failing when closing the old Core binding fails', async () => {
@@ -300,7 +316,8 @@ test('returns the replacement secret when both old closure and replacement rollb
       requestHeaders: new Headers(),
     }),
   );
-  expect(result.secret).toBe('ontos-secret');
+  expect(result.secret).toBe(issued.secret);
+  expect(JSON.stringify(result)).not.toContain('ontos-secret');
   expect(result.cleanupPending).toBe(true);
   expect(actionRuntime.invocationCount()).toBe(3);
 });
@@ -352,7 +369,8 @@ test('returns the replacement secret when old Core closure committed but provide
     }),
   );
 
-  expect(result.secret).toBe('ontos-secret');
+  expect(result.secret).toBe(issued.secret);
+  expect(JSON.stringify(result)).not.toContain('ontos-secret');
   expect(result.cleanupPending).toBe(true);
   expect(actionRuntime.invocationCount()).toBe(2);
   expect(resolverCalls).toBe(2);
@@ -569,7 +587,8 @@ test('reconciles a provider key left pending by failed bind compensation before 
     }),
   );
 
-  expect(result.secret).toBe('ontos-secret');
+  expect(result.secret).toBe(issued.secret);
+  expect(JSON.stringify(result)).not.toContain('ontos-secret');
   expect(disabled).toEqual(['orphan-provider-key-id']);
   expect(cleared).toEqual(['orphan-provider-key-id', 'private-provider-key-id']);
 });

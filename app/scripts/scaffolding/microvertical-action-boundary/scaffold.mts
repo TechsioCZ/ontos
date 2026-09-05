@@ -171,13 +171,32 @@ const readBearer = (
   return token === undefined ? Effect.fail(invalidError()) : Effect.succeed(token);
 };
 
-export const verifyActionPrincipal = (
-  authorization: string | undefined,
-  options: ActionPrincipalVerificationOptions,
-): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError> =>
+/** Each verifier owns at most one validated public-key resolver, never request or replay state. */
+export const createActionPrincipalVerifier = (
+  createResolver: typeof createLocalJWKSet = createLocalJWKSet,
+) => {
+  let cached: { rawJwks: string; resolver: ReturnType<typeof createLocalJWKSet> } | undefined;
+
+  return (
+    authorization: string | undefined,
+    options: ActionPrincipalVerificationOptions,
+  ): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError> =>
   Effect.gen(function* verifyActionPrincipalEffect() {
     const token = yield* readBearer(authorization);
-    const configuration = yield* parseConfiguration(options.environment ?? {});
+    const environment = options.environment ?? {};
+    // Revalidate each call before reuse, including issuer and private-key rejection.
+    const validated = yield* parseConfiguration(environment);
+    const configuration = yield* Effect.try({
+      catch: configurationError,
+      try: () => {
+        const rawJwks = environment['ONTOS_GATEWAY_PUBLIC_JWKS'] ?? '';
+        if (cached?.rawJwks !== rawJwks) {
+          cached = { rawJwks, resolver: createResolver(validated.jwks) };
+        }
+        // Capture locally: another request may rotate the single cache entry while we yield.
+        return { issuer: validated.issuer, resolver: cached.resolver };
+      },
+    });
     const now = yield* (
       options.currentTimeSeconds ??
         Clock.currentTimeMillis.pipe(Effect.map((milliseconds) => Math.floor(milliseconds / 1000)))
@@ -202,7 +221,7 @@ export const verifyActionPrincipal = (
         onSome: classifyVerificationFailure,
       }),
       try: () =>
-        jwtVerify(token, createLocalJWKSet(configuration.jwks), {
+        jwtVerify(token, configuration.resolver, {
           algorithms: ['EdDSA'],
           audience: ACTION_GATEWAY_AUDIENCE,
           clockTolerance: GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
@@ -238,6 +257,9 @@ export const verifyActionPrincipal = (
       );
     return principal;
   });
+};
+
+export const verifyActionPrincipal = createActionPrincipalVerifier();
 
 /** Shared trusted-identity acquisition for generated Actions and governed reads. */
 export const verifyOperationPrincipal = verifyActionPrincipal;
@@ -282,7 +304,7 @@ import type {
   GatewayContextClientOptions,
   GatewayContextResponse,
 } from '@app/shared-contracts';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 
 export const ACTION_GATEWAY_AUDIENCE = '${vertical.appId}' as const;
 
@@ -292,16 +314,18 @@ export type ActionGatewayIssuer = (
 ) => GatewayContextClientEffect<GatewayContextResponse>;
 
 export type ActionGatewayAttempt<Success, Failure> = (
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
 ) => Effect.Effect<Success, Failure>;
 
+// The freshly issued assertion is redacted here, at the only place it is built, so no span
+// attribute, log annotation or serialized error downstream can carry the credential.
 export const makeActionGateway = (acquire: ActionGatewayIssuer = issueGatewayContext) => ({
   invoke: <Success, Failure>(
     attempt: ActionGatewayAttempt<Success, Failure>,
     options: GatewayContextClientOptions = {},
   ) =>
     acquire({ audience: ACTION_GATEWAY_AUDIENCE }, options).pipe(
-      Effect.flatMap(({ token }) => attempt(\`Bearer \${token}\`)),
+      Effect.flatMap(({ token }) => attempt(Redacted.make(\`Bearer \${token}\`))),
     ),
 });
 

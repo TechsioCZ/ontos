@@ -4,7 +4,7 @@ import test from 'node:test';
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { eq, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Redacted, Schema } from 'effect';
 import { Pool } from 'pg';
 import {
   contactsRelations,
@@ -43,8 +43,13 @@ const hasPostgreSqlCode = (expected: string) => {
 
 test('enforces tenant isolation and canonical-reference uniqueness without cross-vertical FKs', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
-  const adminPool = new Pool({ connectionString: connections.admin.connectionString });
-  const runtimePool = new Pool({ connectionString: connections.runtime.connectionString, max: 1 });
+  const adminPool = new Pool({
+    connectionString: Redacted.value(connections.admin.connectionString),
+  });
+  const runtimePool = new Pool({
+    connectionString: Redacted.value(connections.runtime.connectionString),
+    max: 1,
+  });
   const admin = drizzle({ client: adminPool, relations: contactsRelations });
   const runtime = drizzle({ client: runtimePool, relations: contactsRelations });
   const cleanup = async () => {

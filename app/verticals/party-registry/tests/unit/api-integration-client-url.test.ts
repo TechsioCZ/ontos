@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 import { executeAresLookupWithAuthorization } from '../../src/api/ares-lookup-client.ts';
@@ -25,7 +25,9 @@ test('targets the mounted owner BFF prefix and supports a separate owner deploym
       request.pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, fakeFetch)),
     );
   try {
-    await capture(executeAresLookupWithAuthorization({ ico: '12345678' }, 'Bearer test', 'test'));
+    await capture(
+      executeAresLookupWithAuthorization({ ico: '12345678' }, Redacted.make('Bearer test'), 'test'),
+    );
     await capture(
       executePartyDetailWithAuthorization(
         {
@@ -36,15 +38,26 @@ test('targets the mounted owner BFF prefix and supports a separate owner deploym
             tenantId: '20000000-0000-4000-8000-000000000001',
           },
         },
-        'Bearer test',
+        Redacted.make('Bearer test'),
         'test',
       ),
     );
-    await capture(loadPartiesClientWithAuthorization({ query: 'Example' }, 'Bearer test', 'test'));
     await capture(
-      executeAresLookupWithAuthorization({ ico: '12345678' }, 'Bearer test', 'test', {
-        baseUrl: 'https://party.example/party-registry-api',
-      }),
+      loadPartiesClientWithAuthorization(
+        { query: 'Example' },
+        Redacted.make('Bearer test'),
+        'test',
+      ),
+    );
+    await capture(
+      executeAresLookupWithAuthorization(
+        { ico: '12345678' },
+        Redacted.make('Bearer test'),
+        'test',
+        {
+          baseUrl: 'https://party.example/party-registry-api',
+        },
+      ),
     );
     assert.deepEqual(requests, [
       'https://shell.example/party-registry-api/reads/ares-lookup',

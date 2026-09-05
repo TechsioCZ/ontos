@@ -280,7 +280,7 @@ const renderApiClient = (vertical: OntosVerticalMetadata, name: string): string 
   const type = toPascalCase(name);
   const value = `${toPascalCase(name)}Api`;
   return `${generatedHeader('module-api')}
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import { makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
 import { ${value} } from '../../shared/apis/${name}.ts';
@@ -293,14 +293,18 @@ export interface ${type}ClientOptions {
 
 export const execute${type}WithAuthorization = (
   payload: ${type}Request,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   correlationId: string,
   options: ${type}ClientOptions = {},
 ) =>
   makeEffectHttpApiClient(${value}, {
       baseUrl: options.baseUrl ?? '/${vertical.appId}-api',
       transformClient: HttpClient.mapRequest(
-        HttpClientRequest.setHeaders({ authorization, 'x-correlation-id': correlationId }),
+        // Unwrapped only here, at the outbound HTTP header boundary.
+        HttpClientRequest.setHeaders({
+          authorization: Redacted.value(authorization),
+          'x-correlation-id': correlationId,
+        }),
       ),
     }).pipe(
       Effect.flatMap((client) =>
@@ -391,6 +395,7 @@ const renderProviderClient = (
   const group = kind === 'report' ? 'reports' : 'search';
   return `${generatedHeader(kind)}
 import { Effect, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
+import { Redacted } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import { ${apiValue} } from '../../shared/apis/${name}-${kind === 'report' ? 'report' : 'search'}.ts';
 import type { ${type}ProviderRequest } from '../../shared/apis/${name}-${kind === 'report' ? 'report' : 'search'}.ts';
@@ -402,14 +407,18 @@ export interface ${type}ClientOptions {
 
 export const load${type}ClientWithAuthorization = (
   payload: ${type}ProviderRequest,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   correlationId: string,
   options: ${type}ClientOptions = {},
 ) =>
   makeEffectHttpApiClient(${apiValue}, {
       baseUrl: options.baseUrl ?? '/${vertical.appId}-api',
       transformClient: HttpClient.mapRequest(
-        HttpClientRequest.setHeaders({ authorization, 'x-correlation-id': correlationId }),
+        // Unwrapped only here, at the outbound HTTP header boundary.
+        HttpClientRequest.setHeaders({
+          authorization: Redacted.value(authorization),
+          'x-correlation-id': correlationId,
+        }),
       ),
     }).pipe(Effect.flatMap((client) => client.${group}.execute({ payload })));
 

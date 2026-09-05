@@ -2,7 +2,7 @@
 // @effect-diagnostics asyncFunction:off
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Result, Schema } from 'effect';
+import { Effect, Redacted, Result, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 import {
   PartyCommandCommitIndeterminateProblemSchema,
@@ -112,7 +112,7 @@ test('the command client decodes indeterminate commits without losing recovery m
       }),
     );
   const result = await Effect.runPromise(
-    requestSearchRebuildWithAuthorization({}, 'Bearer test', {
+    requestSearchRebuildWithAuthorization({}, Redacted.make('Bearer test'), {
       baseUrl: 'https://party.example/party-registry-api',
       correlationId: 'uncertain',
       idempotencyKey: 'same-key',
@@ -142,7 +142,7 @@ test('the command client preserves committed invocation metadata across HTTP', a
       }),
     );
   const result = await Effect.runPromise(
-    requestSearchRebuildWithAuthorization({}, 'Bearer test', {
+    requestSearchRebuildWithAuthorization({}, Redacted.make('Bearer test'), {
       baseUrl: 'https://party.example/party-registry-api',
       correlationId: 'committed',
       idempotencyKey: 'same-key',

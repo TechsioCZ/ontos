@@ -6,7 +6,7 @@ import test from 'node:test';
 import { v1 } from '@authzed/authzed-node';
 import { and, eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect, Predicate } from 'effect';
+import { Effect, Predicate, Redacted } from 'effect';
 import { Pool } from 'pg';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
@@ -82,8 +82,12 @@ const relationship = (
 void test('runs identity mutations and tenant-isolated administration through live Action and Read runtimes', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
   const spiceDbConfiguration = await Effect.runPromise(loadSpiceDbConfig());
-  const adminPool = new Pool({ connectionString: connections.admin.connectionString });
-  const runtimePool = new Pool({ connectionString: connections.runtime.connectionString });
+  const adminPool = new Pool({
+    connectionString: Redacted.value(connections.admin.connectionString),
+  });
+  const runtimePool = new Pool({
+    connectionString: Redacted.value(connections.runtime.connectionString),
+  });
   const admin = drizzle({ client: adminPool, relations: coreRelations });
   const runtimeDatabase = drizzle({ client: runtimePool, relations: coreRelations });
   const tenantId = randomUUID();
@@ -99,7 +103,7 @@ void test('runs identity mutations and tenant-isolated administration through li
   const selfProviderKeyId = `identity-runtime-self-key-${randomUUID()}`;
   const supportTargetUserId = `identity-runtime-target-${randomUUID()}`;
   const spiceDbClient = v1.NewClient(
-    spiceDbConfiguration.preSharedKey,
+    Redacted.value(spiceDbConfiguration.preSharedKey),
     spiceDbConfiguration.endpoint,
     spiceDbConfiguration.insecureLocal
       ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED

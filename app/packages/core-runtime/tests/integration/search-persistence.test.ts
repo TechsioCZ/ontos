@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import { Pool } from 'pg';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
@@ -14,8 +14,12 @@ import { makeCoreSearchQueryRuntime } from '../../src/search/projection.ts';
 
 test('durably rebuilds tenant projections with tombstones and selected-Legal-Entity filtering', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
-  const admin = new Pool({ connectionString: connections.admin.connectionString });
-  const runtimePool = new Pool({ connectionString: connections.runtime.connectionString });
+  const admin = new Pool({
+    connectionString: Redacted.value(connections.admin.connectionString),
+  });
+  const runtimePool = new Pool({
+    connectionString: Redacted.value(connections.runtime.connectionString),
+  });
   const tenantId = randomUUID();
   const otherTenantId = randomUUID();
   const legalEntityId = randomUUID();

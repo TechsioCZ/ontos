@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { v1 } from '@authzed/authzed-node';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import {
   makeContextAccess,
   toLegalEntityAccessObjectId,
@@ -31,7 +31,7 @@ void test('isolates live legal-entity, module, and resource batches by tenant an
   const moduleObjectId = toModuleAccessObjectId(tenantId, legalEntityId, moduleId)!;
   const resourceObjectId = toResourceAccessObjectId(tenantId, legalEntityId, resource)!;
   const client = v1.NewClient(
-    configuration.preSharedKey,
+    Redacted.value(configuration.preSharedKey),
     configuration.endpoint,
     configuration.insecureLocal
       ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED

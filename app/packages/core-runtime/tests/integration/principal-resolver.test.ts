@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { DateTime, Effect } from 'effect';
+import { DateTime, Effect, Redacted } from 'effect';
 import { Pool } from 'pg';
 import { makePrincipalResolver } from '../../src/auth/principal-resolver.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
@@ -17,7 +17,7 @@ const subject = 'better-auth-integration-subject';
 
 void test('lists and selects multiple tenant-scoped principals and fails closed after access changes', async () => {
   const configuration = await Effect.runPromise(loadDatabaseConfig());
-  const pool = new Pool({ connectionString: configuration.connectionString });
+  const pool = new Pool({ connectionString: Redacted.value(configuration.connectionString) });
   const database = drizzle({ client: pool, relations: coreRelations });
   const resolver = makePrincipalResolver({ executor: database });
 

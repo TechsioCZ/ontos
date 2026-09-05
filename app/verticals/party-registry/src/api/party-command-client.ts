@@ -8,6 +8,7 @@ import { executePartyMatchDecisionWithAuthorization } from './party-match-decisi
 import type { GatewayContextClientOptions } from '@app/shared-contracts';
 import { Effect, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
 import type { HttpApi, HttpApiClient, HttpApiGroup } from '@modern-js/plugin-bff/effect-client';
+import { Redacted } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import {
   partyRegistryCommandsApi,
@@ -60,24 +61,28 @@ export interface PartyCommandOptions extends PartyCommandRecoveryOptions {
   readonly idempotencyKey: string;
 }
 
-interface PartyCommandRequestHeaders extends Readonly<Record<string, string | undefined>> {
-  authorization: string;
+/** Correlation metadata: plain strings that are safe to annotate, log and serialize. */
+interface PartyCommandCorrelationHeaders extends Readonly<Record<string, string | undefined>> {
   'x-correlation-id': string;
   'x-trace-id'?: string;
 }
 
-const requestHeaders = (authorization: string, options: PartyCommandRecoveryOptions) => {
-  const headers: PartyCommandRequestHeaders = {
-    authorization,
+// The outgoing header record is the single boundary that unwraps the assertion; the encoded wire
+// header stays the same `authorization: Bearer …` string the owner deployment already accepts.
+const requestHeaders = (
+  authorization: Redacted.Redacted<string>,
+  options: PartyCommandRecoveryOptions,
+) => {
+  const headers: PartyCommandCorrelationHeaders = {
     'x-correlation-id': options.correlationId,
   };
   if (options.traceId !== undefined) {
     headers['x-trace-id'] = options.traceId;
   }
-  return headers;
+  return { ...headers, authorization: Redacted.value(authorization) };
 };
 
-const makeClient = (authorization: string, options: PartyCommandOptions) =>
+const makeClient = (authorization: Redacted.Redacted<string>, options: PartyCommandOptions) =>
   makeEffectHttpApiClient(partyRegistryCommandsApi, {
     baseUrl: options.baseUrl ?? '/party-registry-api',
     transformClient: HttpClient.mapRequest(
@@ -86,7 +91,7 @@ const makeClient = (authorization: string, options: PartyCommandOptions) =>
   });
 
 const invokeAuthorized = <Success, Failure>(
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
   operation: (client: PartyCommandClient) => Effect.Effect<Success, Failure>,
 ) => makeClient(authorization, options).pipe(Effect.flatMap(operation));
@@ -95,7 +100,7 @@ const invokeAuthorized = <Success, Failure>(
 // Assertions are acquired afresh, never cached in a client, route loader, or module initializer.
 const invoke = <Success, Failure>(
   options: PartyCommandRecoveryOptions,
-  operation: (authorization: string) => Effect.Effect<Success, Failure>,
+  operation: (authorization: Redacted.Redacted<string>) => Effect.Effect<Success, Failure>,
 ) =>
   Effect.promise(() => import('./action-gateway.ts')).pipe(
     Effect.flatMap(({ actionGateway }) => actionGateway.invoke(operation, options.gateway)),
@@ -103,7 +108,7 @@ const invoke = <Success, Failure>(
 
 export const resolvePartyCommandCommitWithAuthorization = (
   payload: ResolvePartyCommandCommitPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandRecoveryOptions,
 ) =>
   makeEffectHttpApiClient(partyRegistryCommandRecoveryApi, {
@@ -123,7 +128,7 @@ export const resolvePartyCommandCommit = (
 
 export const addContactPointWithAuthorization = (
   payload: AddContactPointPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -140,7 +145,7 @@ export const addContactPoint = (payload: AddContactPointPayload, options: PartyC
 
 export const addPartyOfficialIdentifierWithAuthorization = (
   payload: AddPartyOfficialIdentifierPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -160,7 +165,7 @@ export const addPartyOfficialIdentifier = (
 
 export const archivePartyWithAuthorization = (
   payload: ArchivePartyPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -177,7 +182,7 @@ export const archiveParty = (payload: ArchivePartyPayload, options: PartyCommand
 
 export const confirmDuplicatePartiesWithAuthorization = (
   payload: ConfirmDuplicatePartiesPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -197,7 +202,7 @@ export const confirmDuplicateParties = (
 
 export const correctPartyFactWithAuthorization = (
   payload: CorrectPartyFactPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) => {
@@ -219,7 +224,7 @@ export const correctPartyFact = (payload: CorrectPartyFactPayload, options: Part
 
 export const counterpartyCreateWithAuthorization = (
   payload: CounterpartyCreatePayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -239,7 +244,7 @@ export const counterpartyCreate = (
 
 export const counterpartyRoleAddWithAuthorization = (
   payload: CounterpartyRoleAddPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -259,7 +264,7 @@ export const counterpartyRoleAdd = (
 
 export const counterpartyRoleEndWithAuthorization = (
   payload: CounterpartyRoleEndPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -279,7 +284,7 @@ export const counterpartyRoleEnd = (
 
 export const createPartyRelationshipWithAuthorization = (
   payload: CreatePartyRelationshipPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -299,7 +304,7 @@ export const createPartyRelationship = (
 
 export const createPartyWithAuthorization = (
   payload: CreatePartyPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -314,7 +319,7 @@ export const createParty = (payload: CreatePartyPayload, options: PartyCommandOp
 
 export const dismissDuplicateCandidateWithAuthorization = (
   payload: DismissDuplicateCandidatePayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -334,7 +339,7 @@ export const dismissDuplicateCandidate = (
 
 export const endContactPointWithAuthorization = (
   payload: EndContactPointPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -351,7 +356,7 @@ export const endContactPoint = (payload: EndContactPointPayload, options: PartyC
 
 export const endPartyOfficialIdentifierWithAuthorization = (
   payload: EndPartyOfficialIdentifierPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -371,7 +376,7 @@ export const endPartyOfficialIdentifier = (
 
 export const endPartyRelationshipWithAuthorization = (
   payload: EndPartyRelationshipPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -391,7 +396,7 @@ export const endPartyRelationship = (
 
 export const markDuplicateCandidateNeedsEvidenceWithAuthorization = (
   payload: MarkDuplicateCandidateNeedsEvidencePayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -411,7 +416,7 @@ export const markDuplicateCandidateNeedsEvidence = (
 
 export const matchPartyWithAuthorization = (
   payload: MatchPartyPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -426,7 +431,7 @@ export const matchParty = (payload: MatchPartyPayload, options: PartyCommandOpti
 
 export const requestSearchRebuildWithAuthorization = (
   payload: RequestSearchRebuildPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -446,7 +451,7 @@ export const requestSearchRebuild = (
 
 export const resolveDuplicateCandidateCreateWithAuthorization = (
   payload: ResolveDuplicateCandidateCreatePayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -466,7 +471,7 @@ export const resolveDuplicateCandidateCreate = (
 
 export const resolveDuplicateCandidateMatchWithAuthorization = (
   payload: ResolveDuplicateCandidateMatchPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -486,7 +491,7 @@ export const resolveDuplicateCandidateMatch = (
 
 export const unarchivePartyWithAuthorization = (
   payload: UnarchivePartyPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -503,7 +508,7 @@ export const unarchiveParty = (payload: UnarchivePartyPayload, options: PartyCom
 
 export const updateContactPointWithAuthorization = (
   payload: UpdateContactPointPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -523,7 +528,7 @@ export const updateContactPoint = (
 
 export const updatePartyOfficialIdentifierWithAuthorization = (
   payload: UpdatePartyOfficialIdentifierPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -543,7 +548,7 @@ export const updatePartyOfficialIdentifier = (
 
 export const updatePartyRelationshipWithAuthorization = (
   payload: UpdatePartyRelationshipPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>
@@ -563,7 +568,7 @@ export const updatePartyRelationship = (
 
 export const updatePartyWithAuthorization = (
   payload: UpdatePartyPayload,
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
 ) =>
   invokeAuthorized(authorization, options, (client) =>

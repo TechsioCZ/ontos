@@ -71,6 +71,7 @@ export interface ActionPrincipalVerificationOptions {
 interface VerificationConfiguration {
   readonly issuer: string;
   readonly jwks: JSONWebKeySet;
+  readonly rawJwks: string;
 }
 
 const VerificationJwkSchema = Schema.Struct({
@@ -144,7 +145,7 @@ const parseConfiguration = (
     throw configurationError();
   }
   const keys: JSONWebKeySet['keys'] = parsed.keys.map((key) => ({ ...key }));
-  return { issuer, jwks: { keys } };
+  return { issuer, jwks: { keys }, rawJwks };
 };
 
 const classifyVerificationFailure = <Failure>(error: Failure): ActionPrincipalError => {
@@ -198,75 +199,97 @@ const readBearer = (
   return token === undefined ? Effect.fail(invalidError()) : Effect.succeed(token);
 };
 
-export const verifyActionPrincipal = (
-  authorization: string | undefined,
-  options: ActionPrincipalVerificationOptions,
-): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError> =>
-  Effect.gen(function* verifyActionPrincipalEffect() {
-    const token = yield* readBearer(authorization);
-    const environment = options.environment ?? {};
-    const configuration = yield* Effect.try({
-      catch: () => configurationError(),
-      try: () => parseConfiguration(environment),
-    });
-    const now = yield* (
-      options.currentTimeSeconds ??
-        Clock.currentTimeMillis.pipe(Effect.map((milliseconds) => Math.floor(milliseconds / 1000)))
-    );
-    if (!Number.isSafeInteger(now) || now < 0) {
-      return yield* configurationError();
-    }
-    const unverifiedHeader = yield* Effect.try({
-      catch: invalidError,
-      try: () => decodeProtectedHeader(token),
-    });
-    const header = yield* decodeGatewayContextProtectedHeader(unverifiedHeader).pipe(
-      Effect.mapError(invalidError),
-    );
-    if (header.alg !== 'EdDSA' || header.typ !== 'JWT' || header.kid.length === 0) {
-      return yield* invalidError();
-    }
-    const verified = yield* Effect.tryPromise({
-      catch: classifyVerificationFailure,
-      try: () =>
-        jwtVerify(token, createLocalJWKSet(configuration.jwks), {
-          algorithms: ['EdDSA'],
-          audience: ACTION_GATEWAY_AUDIENCE,
-          clockTolerance: GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
-          currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(now * 1000)),
-          issuer: configuration.issuer,
-        }),
-    });
-    const claims = yield* decodeGatewayContextClaims(verified.payload).pipe(
-      Effect.mapError(invalidError),
-    );
-    if (
-      claims.ver !== GATEWAY_ASSERTION_VERSION ||
-      claims.iat > now + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS
-    ) {
-      return yield* invalidError();
-    }
-    const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema, {
-      onExcessProperty: 'error',
-    })(claims.principal).pipe(Effect.mapError(invalidError));
-    yield* options.redemption
-      .consume({
-        audience: ACTION_GATEWAY_AUDIENCE,
-        expiresAtEpochSeconds: claims.exp,
-        issuer: claims.iss,
-        jti: claims.jti,
-      })
-      .pipe(
-        Effect.mapError((error) =>
-          error._tag === 'GatewayAssertionReplayError'
-            ? invalidError()
-            : new ActionPrincipalUnavailableError({
-                reason: 'Action identity verification is unavailable',
-              }),
-        ),
+/** Each verifier owns at most one validated public-key resolver, never request or replay state. */
+export const createActionPrincipalVerifier = (
+  createResolver: typeof createLocalJWKSet = createLocalJWKSet,
+) => {
+  let cached: { rawJwks: string; resolver: ReturnType<typeof createLocalJWKSet> } | undefined;
+
+  return (
+    authorization: string | undefined,
+    options: ActionPrincipalVerificationOptions,
+  ): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError> =>
+    Effect.gen(function* verifyActionPrincipalEffect() {
+      const token = yield* readBearer(authorization);
+      const environment = options.environment ?? {};
+      const configuration = yield* Effect.try({
+        catch: () => configurationError(),
+        try: () => {
+          // Revalidate each call before reuse, including issuer and private-key rejection.
+          const validated = parseConfiguration(environment);
+          if (cached?.rawJwks !== validated.rawJwks) {
+            cached = {
+              rawJwks: validated.rawJwks,
+              resolver: createResolver(validated.jwks),
+            };
+          }
+          // Capture locally: another request may rotate the single cache entry while we yield.
+          return { issuer: validated.issuer, resolver: cached.resolver };
+        },
+      });
+      const now = yield* (
+        options.currentTimeSeconds ??
+          Clock.currentTimeMillis.pipe(
+            Effect.map((milliseconds) => Math.floor(milliseconds / 1000)),
+          )
       );
-    return principal;
-  });
+      if (!Number.isSafeInteger(now) || now < 0) {
+        return yield* configurationError();
+      }
+      const unverifiedHeader = yield* Effect.try({
+        catch: invalidError,
+        try: () => decodeProtectedHeader(token),
+      });
+      const header = yield* decodeGatewayContextProtectedHeader(unverifiedHeader).pipe(
+        Effect.mapError(invalidError),
+      );
+      if (header.alg !== 'EdDSA' || header.typ !== 'JWT' || header.kid.length === 0) {
+        return yield* invalidError();
+      }
+      const verified = yield* Effect.tryPromise({
+        catch: classifyVerificationFailure,
+        try: () =>
+          jwtVerify(token, configuration.resolver, {
+            algorithms: ['EdDSA'],
+            audience: ACTION_GATEWAY_AUDIENCE,
+            clockTolerance: GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
+            currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(now * 1000)),
+            issuer: configuration.issuer,
+          }),
+      });
+      const claims = yield* decodeGatewayContextClaims(verified.payload).pipe(
+        Effect.mapError(invalidError),
+      );
+      if (
+        claims.ver !== GATEWAY_ASSERTION_VERSION ||
+        claims.iat > now + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS
+      ) {
+        return yield* invalidError();
+      }
+      const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema, {
+        onExcessProperty: 'error',
+      })(claims.principal).pipe(Effect.mapError(invalidError));
+      yield* options.redemption
+        .consume({
+          audience: ACTION_GATEWAY_AUDIENCE,
+          expiresAtEpochSeconds: claims.exp,
+          issuer: claims.iss,
+          jti: claims.jti,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            error._tag === 'GatewayAssertionReplayError'
+              ? invalidError()
+              : new ActionPrincipalUnavailableError({
+                  reason: 'Action identity verification is unavailable',
+                }),
+          ),
+        );
+      return principal;
+    });
+};
+
+export const verifyActionPrincipal = createActionPrincipalVerifier();
 
 /** Shared trusted-identity acquisition for generated Actions and governed reads. */
 export const verifyOperationPrincipal = verifyActionPrincipal;
