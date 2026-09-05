@@ -7,7 +7,7 @@ import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Effect } from 'effect';
 import { Pool } from 'pg';
-import { contacts, contactsDatabaseSchema, customers } from '../../src/db/schema.ts';
+import { contacts, contactsRelations, customers } from '../../src/db/schema.ts';
 
 const tenantA = 'c1000000-0000-4000-8000-000000000001';
 const tenantB = 'c1000000-0000-4000-8000-000000000002';
@@ -44,8 +44,8 @@ test('enforces Contacts constraints, tenant RLS, parent integrity, and durable a
     connectionString: connections.runtime.connectionString,
     max: 1,
   });
-  const admin = drizzle({ client: adminPool, schema: contactsDatabaseSchema });
-  const runtime = drizzle({ client: runtimePool, schema: contactsDatabaseSchema });
+  const admin = drizzle({ client: adminPool, relations: contactsRelations });
+  const runtime = drizzle({ client: runtimePool, relations: contactsRelations });
   const cleanup = async () => {
     await admin.delete(contacts).where(inArray(contacts.tenantId, fixtureTenants));
     await admin.delete(customers).where(inArray(customers.tenantId, fixtureTenants));

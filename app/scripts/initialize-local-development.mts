@@ -5,18 +5,24 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { v1 } from '@authzed/authzed-node';
 import { betterAuth } from 'better-auth';
-import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { verifyPassword } from 'better-auth/crypto';
 import { admin } from 'better-auth/plugins';
 import { config as loadDotenv } from 'dotenv';
 import { and, eq, or } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Effect, Schema } from 'effect';
 import { Pool } from 'pg';
-import { account, authDatabaseSchema, user } from '../apps/shell-super-app/api/auth/db/schema.ts';
+import {
+  account,
+  authDatabaseSchema,
+  authRelations,
+  user,
+} from '../apps/shell-super-app/api/auth/db/schema.ts';
 import { parseDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 import {
-  coreDatabaseSchema,
+  coreRelations,
   legalEntities,
   principalAuthBindings,
   principals,
@@ -337,7 +343,7 @@ export const buildLocalDevelopmentRelationships = (
 
 const ensureAuthUser = async (
   configuration: LocalDevelopmentConfiguration,
-  database: ReturnType<typeof drizzle<typeof authDatabaseSchema>>,
+  database: NodePgDatabase<typeof authRelations>,
 ): Promise<{ readonly status: 'created' | 'existing'; readonly userId: string }> => {
   const existingUsers = await database
     .select({ email: user.email, id: user.id, name: user.name })
@@ -391,7 +397,7 @@ const ensureAuthUser = async (
 };
 
 const reconcileCoreContext = async (
-  database: ReturnType<typeof drizzle<typeof coreDatabaseSchema>>,
+  database: NodePgDatabase<typeof coreRelations>,
   authUserId: string,
   moduleIds: readonly string[],
 ): Promise<void> => {
@@ -651,7 +657,7 @@ export const initializeLocalDevelopment = (
       try: async () => {
         const pool = new Pool({ connectionString: configuration.databaseAdminUrl });
         try {
-          const authDatabase = drizzle({ client: pool, schema: authDatabaseSchema });
+          const authDatabase = drizzle({ client: pool, relations: authRelations });
           return await ensureAuthUser(configuration, authDatabase);
         } finally {
           await pool.end();
@@ -666,7 +672,7 @@ export const initializeLocalDevelopment = (
       try: async () => {
         const pool = new Pool({ connectionString: configuration.databaseAdminUrl });
         try {
-          const coreDatabase = drizzle({ client: pool, schema: coreDatabaseSchema });
+          const coreDatabase = drizzle({ client: pool, relations: coreRelations });
           await reconcileCoreContext(coreDatabase, authUser.userId, moduleIds);
         } finally {
           await pool.end();

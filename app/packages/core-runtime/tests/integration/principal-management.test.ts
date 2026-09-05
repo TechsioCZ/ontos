@@ -13,19 +13,14 @@ import {
   setApiKeyBindingStatus,
 } from '../../src/auth/principal-management.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
-import {
-  coreDatabaseSchema,
-  principalAuthBindings,
-  principals,
-  tenants,
-} from '../../src/db/schema.ts';
+import { coreRelations, principalAuthBindings, principals, tenants } from '../../src/db/schema.ts';
 
 void test('persists managed key lifecycle without credential material and enforces global key cardinality', async () => {
   const tenantId = randomUUID();
   const providerKeyId = `better-auth-principal-management-${randomUUID()}`;
   const configuration = await Effect.runPromise(loadDatabaseConfig());
   const pool = new Pool({ connectionString: configuration.connectionString });
-  const database = drizzle({ client: pool, schema: coreDatabaseSchema });
+  const database = drizzle({ client: pool, relations: coreRelations });
   const cleanup = async () => {
     await database
       .delete(principalAuthBindings)

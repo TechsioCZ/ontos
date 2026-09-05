@@ -160,7 +160,10 @@ Every owner retains its own schema and Drizzle journal. Run the release phase in
 7. prove the previous and candidate application versions can use the expanded schema.
 
 Never share a migration journal between owners. Never omit a migration because only an owner-local
-path changed. Never execute deployment migrations through an assumed workspace pnpm layout after
+path changed. The first v1 `drizzle-kit migrate` against a database migrated before the
+[Drizzle v1 upgrade](./DRIZZLE_V1_UPGRADE.md) adds `name` and `applied_at` columns to that owner's
+bookkeeping table and backfills `name`; it applies no schema migration and needs no manual step
+beyond the administrative identity. Never execute deployment migrations through an assumed workspace pnpm layout after
 artifact relocation; use the verified owner-local runtime binary or an explicit migration artifact.
 
 Destructive contraction is a later release after all old readers and writers are gone. Ordinary

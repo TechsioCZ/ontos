@@ -142,11 +142,7 @@ export type {
   PrincipalKind,
   PrincipalStatus,
 } from './db/schema.ts';
-export {
-  enableGovernedRls,
-  tenantLegalEntityRlsPolicies,
-  tenantRlsPolicies,
-} from './db/scoped-transaction.ts';
+export { tenantLegalEntityRlsPolicies, tenantRlsPolicies } from './db/scoped-transaction.ts';
 export {
   ContextAccess,
   ContextAccessLive,

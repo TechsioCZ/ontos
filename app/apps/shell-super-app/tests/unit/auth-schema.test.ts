@@ -1,5 +1,5 @@
 import { expect, test } from '@rstest/core';
-import { getTableColumns } from 'drizzle-orm';
+import { getColumns } from 'drizzle-orm';
 import {
   AUTH_SCHEMA_NAME,
   AUTH_TABLE_INVENTORY,
@@ -31,19 +31,19 @@ test('owns the exact Better Auth model inside the auth schema', () => {
 });
 
 test('stores one nullable typed active tenant and legal entity on the private session row', () => {
-  const { activeLegalEntityId, activeTenantId } = getTableColumns(session);
+  const { activeLegalEntityId, activeTenantId } = getColumns(session);
   expect(activeTenantId.name).toBe('active_tenant_id');
   expect(activeTenantId.columnType).toBe('PgUUID');
-  expect(activeTenantId.dataType).toBe('string');
+  expect(activeTenantId.getSQLType()).toBe('uuid');
   expect(activeTenantId.notNull).toBe(false);
   expect(activeLegalEntityId.name).toBe('active_legal_entity_id');
   expect(activeLegalEntityId.columnType).toBe('PgUUID');
-  expect(activeLegalEntityId.dataType).toBe('string');
+  expect(activeLegalEntityId.getSQLType()).toBe('uuid');
   expect(activeLegalEntityId.notNull).toBe(false);
 });
 
 test('matches the generated API Key and Admin plugin persistence fields', () => {
-  expect(Object.keys(getTableColumns(apikey))).toEqual([
+  expect(Object.keys(getColumns(apikey))).toEqual([
     'id',
     'configId',
     'name',
@@ -67,10 +67,10 @@ test('matches the generated API Key and Admin plugin persistence fields', () => 
     'permissions',
     'metadata',
   ]);
-  expect(Object.keys(getTableColumns(user))).toEqual(
+  expect(Object.keys(getColumns(user))).toEqual(
     expect.arrayContaining(['role', 'banned', 'banReason', 'banExpires']),
   );
-  expect(Object.keys(getTableColumns(session))).toEqual(
+  expect(Object.keys(getColumns(session))).toEqual(
     expect.arrayContaining([
       'impersonatedBy',
       'impersonationReason',
@@ -81,12 +81,12 @@ test('matches the generated API Key and Admin plugin persistence fields', () => 
       'impersonationTargetPrincipalId',
     ]),
   );
-  expect(getTableColumns(session).impersonationActionId.columnType).toBe('PgText');
-  expect(getTableColumns(session).impersonationTargetPrincipalId.columnType).toBe('PgUUID');
-  expect(getTableColumns(session).impersonationOriginalAuthBindingId.columnType).toBe('PgUUID');
-  expect(getTableColumns(session).impersonationOriginalPrincipalId.columnType).toBe('PgUUID');
-  expect(getTableColumns(session).impersonationOriginalSessionId.columnType).toBe('PgText');
-  expect(Object.keys(getTableColumns(supportImpersonationRecovery))).toEqual([
+  expect(getColumns(session).impersonationActionId.columnType).toBe('PgText');
+  expect(getColumns(session).impersonationTargetPrincipalId.columnType).toBe('PgUUID');
+  expect(getColumns(session).impersonationOriginalAuthBindingId.columnType).toBe('PgUUID');
+  expect(getColumns(session).impersonationOriginalPrincipalId.columnType).toBe('PgUUID');
+  expect(getColumns(session).impersonationOriginalSessionId.columnType).toBe('PgText');
+  expect(Object.keys(getColumns(supportImpersonationRecovery))).toEqual([
     'impersonationSessionId',
     'originalAuthBindingId',
     'originalPrincipalId',

@@ -2,13 +2,14 @@
 import { reconcileStageContextBootstraps } from '@app/core-runtime/install/stage-context-bootstrap';
 import { betterAuth } from 'better-auth';
 import { verifyPassword } from 'better-auth/crypto';
-import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { admin } from 'better-auth/plugins';
 import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Effect, Schema } from 'effect';
 import { Pool } from 'pg';
-import { account, authDatabaseSchema, user } from './db/schema.ts';
+import { account, authDatabaseSchema, authRelations, user } from './db/schema.ts';
 import {
   StageDemoBootstrapError,
   classifyExactStageDemoRecord,
@@ -25,7 +26,7 @@ import type {
 const ensureAuthUser = async (
   configuration: StageDemoBootstrapConfig,
   accountConfiguration: StageDemoAccountConfig,
-  database: ReturnType<typeof drizzle<typeof authDatabaseSchema>>,
+  database: NodePgDatabase<typeof authRelations>,
 ): Promise<{ readonly status: 'created' | 'existing'; readonly userId: string }> => {
   const existingUsers = await database
     .select({ email: user.email, id: user.id, name: user.name })
@@ -107,7 +108,7 @@ const reconcileAuthUser = (
     try: async () => {
       const pool = new Pool({ connectionString: configuration.databaseAdminUrl });
       try {
-        const authDatabase = drizzle({ client: pool, schema: authDatabaseSchema });
+        const authDatabase = drizzle({ client: pool, relations: authRelations });
         return await ensureAuthUser(configuration, accountConfiguration, authDatabase);
       } finally {
         await pool.end();

@@ -2,7 +2,7 @@
 /* eslint-disable max-classes-per-file -- The provider adapter and its closed failure vocabulary form one boundary. */
 import { apiKey } from '@better-auth/api-key';
 import { APIError, betterAuth } from 'better-auth';
-import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { and, asc, eq, lte, sql } from 'drizzle-orm';
 import { Clock, Context, Effect, Layer, Schema, Predicate } from 'effect';
 import { AuthConfig } from './config.ts';

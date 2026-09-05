@@ -1,5 +1,14 @@
-import { relations, sql } from 'drizzle-orm';
-import { boolean, index, integer, pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { defineRelations, sql } from 'drizzle-orm';
+import {
+  boolean,
+  index,
+  integer,
+  pgSchema,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 
 export const AUTH_SCHEMA_NAME = 'auth';
 export const AUTH_TABLE_INVENTORY = [
@@ -75,6 +84,10 @@ export const account = authSchema.table(
   'account',
   {
     id: text('id').primaryKey(),
+    // Better Auth 1.7 keys provider identities on (issuer, accountId). Credential accounts use
+    // the synthetic issuer `local:credential`; OAuth providers use their trusted issuer or
+    // `local:oauth:<providerId>`.
+    issuer: text('issuer').notNull(),
     accountId: text('account_id').notNull(),
     providerId: text('provider_id').notNull(),
     userId: text('user_id')
@@ -90,7 +103,10 @@ export const account = authSchema.table(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
   },
-  (table) => [index('auth_account_user_id_idx').on(table.userId)],
+  (table) => [
+    uniqueIndex('auth_account_issuer_account_id_uk').on(table.issuer, table.accountId),
+    index('auth_account_user_id_idx').on(table.userId),
+  ],
 );
 
 export const verification = authSchema.table(
@@ -143,45 +159,35 @@ export const apikey = authSchema.table(
   ],
 );
 
-export const userRelations = relations(user, ({ many }) => ({
-  sessions: many(session),
-  accounts: many(account),
-  apiKeys: many(apikey),
-}));
-
-export const sessionRelations = relations(session, ({ one }) => ({
-  user: one(user, {
-    fields: [session.userId],
-    references: [user.id],
-  }),
-}));
-
-export const accountRelations = relations(account, ({ one }) => ({
-  user: one(user, {
-    fields: [account.userId],
-    references: [user.id],
-  }),
-}));
-
-export const apiKeyRelations = relations(apikey, ({ one }) => ({
-  user: one(user, {
-    fields: [apikey.referenceId],
-    references: [user.id],
-  }),
-}));
-
 export const authDatabaseSchema = {
   account,
-  accountRelations,
   apikey,
-  apiKeyRelations,
   session,
-  sessionRelations,
   supportImpersonationRecovery,
   user,
-  userRelations,
   verification,
 } as const;
+
+/**
+ * Relational Queries v2 graph for the Auth owner. Better Auth resolves models through the table
+ * map above; the relations only add typed `db.query` navigation and join support.
+ */
+export const authRelations = defineRelations(authDatabaseSchema, (r) => ({
+  user: {
+    sessions: r.many.session(),
+    accounts: r.many.account(),
+    apiKeys: r.many.apikey(),
+  },
+  session: {
+    user: r.one.user({ from: r.session.userId, to: r.user.id, optional: false }),
+  },
+  account: {
+    user: r.one.user({ from: r.account.userId, to: r.user.id, optional: false }),
+  },
+  apikey: {
+    user: r.one.user({ from: r.apikey.referenceId, to: r.user.id, optional: false }),
+  },
+}));
 
 export const AUTH_TABLES = [
   user,

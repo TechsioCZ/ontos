@@ -20,7 +20,7 @@ import { createNonHumanPrincipalAction } from '../../../../packages/core-runtime
 import {
   actionInvocations,
   auditEvents,
-  coreDatabaseSchema,
+  coreRelations,
   dataAccessEvents,
   principalAuthBindings,
   principals,
@@ -32,7 +32,7 @@ import { loadAuthConfig } from '../../api/auth/config.ts';
 import {
   account,
   apikey,
-  authDatabaseSchema,
+  authRelations,
   session,
   supportImpersonationRecovery,
   user,
@@ -57,8 +57,8 @@ void test('verifies provider keys and completes live support impersonation with 
   const baseConfiguration = await Effect.runPromise(loadAuthConfig());
   const authPool = new Pool({ connectionString: baseConfiguration.connectionString });
   const corePool = new Pool({ connectionString: baseConfiguration.connectionString });
-  const authDatabase = drizzle({ client: authPool, schema: authDatabaseSchema });
-  const coreDatabase = drizzle({ client: corePool, schema: coreDatabaseSchema });
+  const authDatabase = drizzle({ client: authPool, relations: authRelations });
+  const coreDatabase = drizzle({ client: corePool, relations: coreRelations });
   const tenantId = randomUUID();
   const originalPrincipalId = randomUUID();
   const targetPrincipalId = randomUUID();

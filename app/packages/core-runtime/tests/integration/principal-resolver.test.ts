@@ -7,12 +7,7 @@ import { Effect } from 'effect';
 import { Pool } from 'pg';
 import { makePrincipalResolver } from '../../src/auth/principal-resolver.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
-import {
-  coreDatabaseSchema,
-  principalAuthBindings,
-  principals,
-  tenants,
-} from '../../src/db/schema.ts';
+import { coreRelations, principalAuthBindings, principals, tenants } from '../../src/db/schema.ts';
 
 const tenantOne = '10000000-0000-4000-8000-000000000001';
 const tenantTwo = '10000000-0000-4000-8000-000000000002';
@@ -23,7 +18,7 @@ const subject = 'better-auth-integration-subject';
 void test('lists and selects multiple tenant-scoped principals and fails closed after access changes', async () => {
   const configuration = await Effect.runPromise(loadDatabaseConfig());
   const pool = new Pool({ connectionString: configuration.connectionString });
-  const database = drizzle({ client: pool, schema: coreDatabaseSchema });
+  const database = drizzle({ client: pool, relations: coreRelations });
   const resolver = makePrincipalResolver({ executor: database });
 
   const cleanup = async () =>

@@ -92,10 +92,6 @@ export const installOperationalScope = (
     scope,
   );
 
-/** Marks an owner table as RLS-governed while preserving its concrete Drizzle type. */
-export const enableGovernedRls = <Table>(table: { readonly enableRLS: () => Table }): Table =>
-  table.enableRLS();
-
 export const tenantRlsPolicies = (prefix: string, tenantColumn: AnyPgColumn) => {
   const predicate = sql`${tenantColumn} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`;
   return [

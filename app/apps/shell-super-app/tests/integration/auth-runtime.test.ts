@@ -23,9 +23,9 @@ import {
 } from '@app/core-runtime';
 import type { InstalledModuleCatalog } from '@app/core-runtime';
 import {
-  coreDatabaseSchema,
   actionInvocations,
   auditEvents,
+  coreRelations,
   dataAccessEvents,
   legalEntities,
   principalAuthBindings,
@@ -36,7 +36,7 @@ import {
 import { loadAuthConfig } from '../../api/auth/config.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import type { GatewayIssuerDependencies } from '../../api/auth/gateway-issuer.ts';
-import { account, authDatabaseSchema, session, user } from '../../api/auth/db/schema.ts';
+import { account, authRelations, session, user } from '../../api/auth/db/schema.ts';
 import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
 import { makeShellAuthenticationApiRuntime } from '../../api/index.ts';
 import { renderActionPrincipalServer } from '../../../../scripts/scaffolding/microvertical-action-boundary/scaffold.mts';
@@ -199,8 +199,8 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
   const configuration = await Effect.runPromise(loadAuthConfig());
   const corePool = new Pool({ connectionString: configuration.connectionString });
   const authPool = new Pool({ connectionString: configuration.connectionString });
-  const coreDatabase = drizzle({ client: corePool, schema: coreDatabaseSchema });
-  const authDatabase = drizzle({ client: authPool, schema: authDatabaseSchema });
+  const coreDatabase = drizzle({ client: corePool, relations: coreRelations });
+  const authDatabase = drizzle({ client: authPool, relations: authRelations });
   const resolver = makePrincipalResolver({ executor: coreDatabase });
   const authentication = makeAuthenticationService(configuration, authDatabase, resolver, {
     allowFixtureSignUp: true,
@@ -1006,9 +1006,9 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
   });
   const corePool = new Pool({ connectionString: configuration.connectionString });
   const authPool = new Pool({ connectionString: configuration.connectionString });
-  const coreDatabase = drizzle({ client: corePool, schema: coreDatabaseSchema });
-  const authDatabase = drizzle({ client: authPool, schema: authDatabaseSchema });
-  const adminAuthDatabase = drizzle({ client: adminPool, schema: authDatabaseSchema });
+  const coreDatabase = drizzle({ client: corePool, relations: coreRelations });
+  const authDatabase = drizzle({ client: authPool, relations: authRelations });
+  const adminAuthDatabase = drizzle({ client: adminPool, relations: authRelations });
   const resolver = makePrincipalResolver({ executor: coreDatabase });
   const authentication = makeAuthenticationService(configuration, authDatabase, resolver, {
     allowFixtureSignUp: true,

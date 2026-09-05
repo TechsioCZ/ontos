@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect } from 'effect';
 import {
-  enableGovernedRls,
   installOperationalScopeFromTransactionService,
   tenantLegalEntityRlsPolicies,
   tenantRlsPolicies,
@@ -74,12 +73,10 @@ void test('fails closed when transaction settings do not match', async () => {
 });
 
 void test('creates complete CRUD RLS policies with update using and with-check predicates', () => {
-  const fixture = enableGovernedRls(
-    pgTable('fixture', {
-      legalEntityId: uuid('legal_entity_id').notNull(),
-      tenantId: uuid('tenant_id').notNull(),
-    }),
-  );
+  const fixture = pgTable.withRLS('fixture', {
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  });
   assert.equal(getTableConfig(fixture).enableRLS, true);
   for (const policies of [
     tenantRlsPolicies('tenant_fixture', fixture.tenantId),
