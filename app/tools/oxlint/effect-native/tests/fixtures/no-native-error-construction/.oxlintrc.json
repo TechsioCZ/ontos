@@ -1,0 +1,5 @@
+{
+  "jsPlugins": [{ "name": "effect-native", "specifier": "../../fixture-plugin.ts" }],
+  "categories": { "correctness": "off" },
+  "rules": { "effect-native/no-native-error-construction": "error" }
+}

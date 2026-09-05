@@ -1,0 +1,32 @@
+{
+  "jsPlugins": [{ "name": "effect-native", "specifier": "../../fixture-plugin.ts" }],
+  "categories": { "correctness": "off" },
+  "rules": {
+    "effect-native/no-layer-provide-in-library": [
+      "error",
+      {
+        "ignore": [
+          "**/dist/**",
+          "**/dist-*/**",
+          "**/.output/**",
+          "**/node_modules/**",
+          "**/scripts/**",
+          "**/*.d.ts",
+          "**/fixtures/no-layer-provide-in-library/valid/ignored-*.ts"
+        ],
+        "rootFiles": [
+          "apps/*/api/index.ts",
+          "apps/*/api/index.tsx",
+          "verticals/*/api/index.ts",
+          "verticals/*/api/index.tsx",
+          "apps/*/src/entry.*.ts",
+          "apps/*/src/entry.*.tsx",
+          "**/fixtures/no-layer-provide-in-library/valid/root-*.ts",
+          "**/fixtures/no-layer-provide-in-library/valid/root-*.tsx"
+        ],
+        "compositionFiles": ["**/fixtures/no-layer-provide-in-library/valid/composition-*.ts"],
+        "alsoGovern": ["**/fixtures/no-layer-provide-in-library/**"]
+      }
+    ]
+  }
+}
