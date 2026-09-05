@@ -22,11 +22,11 @@ rstest.mock('better-auth', () => ({
     };
   }) => ({
     api: {
-      signInEmail: async (input: { context: object }) => {
-        await options.databaseHooks.session.create.before(
-          { userId: 'user' },
-          { context: input.context },
-        );
+      signInEmail: async (input: Record<string, unknown>) => {
+        // Better Auth 1.7.2 toAuthEndpoints spreads input, then replaces `context`.
+        // dispatchAuthEndpoint preserves those top-level fields for database hooks.
+        const forwarded = { ...input, context: { options: {} } };
+        await options.databaseHooks.session.create.before({ userId: 'user' }, forwarded);
         return {
           headers: new Headers(),
           response: { user: { id: 'user', email: 'user@example.test' } },
@@ -107,7 +107,8 @@ test('session hook retains each concurrent caller context', async () => {
   expect(seen.filter((value) => value === 'second')).toHaveLength(2);
 });
 
-test('caller abort interrupts the resolver hook without claiming to cancel Better Auth work', async () => {
+test('adapter forwarding retains caller service and abort signal despite replacing context', async () => {
+  const seen: string[] = [];
   const controller = new AbortController();
   let started!: () => void;
   const ready = new Promise<void>((resolve) => {
@@ -119,16 +120,23 @@ test('caller abort interrupts the resolver hook without claiming to cancel Bette
   });
   const result = Effect.runPromiseExit(
     signIn(() =>
-      Effect.sync(started).pipe(
+      Effect.context<never>().pipe(
+        Effect.tap((context) =>
+          Effect.sync(() => {
+            seen.push(Context.get(context as Context.Context<CallerMarker>, CallerMarker));
+            started();
+          }),
+        ),
         Effect.andThen(Effect.never),
         Effect.onInterrupt(() => Effect.sync(interrupted)),
       ),
-    ),
+    ).pipe(Effect.provideService(CallerMarker, 'forwarded')),
     { signal: controller.signal },
   );
   await ready;
   controller.abort();
   const exit = await result;
   await stopped;
+  expect(seen).toEqual(['forwarded']);
   expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
 });

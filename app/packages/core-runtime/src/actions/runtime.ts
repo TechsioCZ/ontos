@@ -1,5 +1,5 @@
 /* oxlint-disable sonarjs/no-duplicate-string, sonarjs/no-inverted-boolean-check */
-/* eslint-disable max-classes-per-file, promise/prefer-await-to-callbacks, unicorn/no-array-method-this-argument -- The public Effect service, private sentinels, Effect callbacks, and Effect dual flatMap API are deliberate. */
+/* eslint-disable promise/prefer-await-to-callbacks, unicorn/no-array-method-this-argument -- The public Effect service, private sentinels, Effect callbacks, and Effect dual flatMap API are deliberate. */
 // @effect-diagnostics asyncFunction:off
 // Drizzle owns the Promise transaction callback; Effect exits are carried
 // through a private rollback signal so typed handler failures remain typed.
@@ -197,31 +197,25 @@ const logInvocationPersistenceFailure = (
   annotations: Readonly<Record<string, string>>,
 ): Effect.Effect<void> => logActionInvocationPersistenceFailureCause(failure, annotations);
 
-const isCommitAcknowledgementFailure = <Failure>(error: Failure): boolean => {
+const isConfirmedTransactionAbort = <Failure>(error: Failure): boolean => {
   if (!Predicate.isObjectKeyword(error) || error === null) {
     return false;
   }
   if ('commitIndeterminate' in error && error.commitIndeterminate === true) {
-    return true;
+    return false;
+  }
+  // A ROLLBACK rejection may replace the COMMIT error in Drizzle. It cannot
+  // establish the outcome of the preceding COMMIT, even if it has a SQLSTATE.
+  if ('query' in error && error.query === 'rollback') {
+    return false;
   }
   if ('code' in error && Predicate.isString(error.code)) {
-    const networkCodes = new Set([
-      'ECONNABORTED',
-      'ECONNRESET',
-      'EHOSTDOWN',
-      'EHOSTUNREACH',
-      'ENETDOWN',
-      'ENETRESET',
-      'ENETUNREACH',
-      'EPIPE',
-      'ETIMEDOUT',
-    ]);
-    if (error.code.startsWith('08') || error.code === '57P01' || networkCodes.has(error.code)) {
-      return true;
-    }
+    // Serialization, deadlock, and integrity violations prove an abort.
+    // In particular, class 40 also includes 40003 (completion unknown).
+    return error.code === '40001' || error.code === '40P01' || /^23[0-9A-Z]{3}$/.test(error.code);
   }
   return 'cause' in error && error.cause !== error
-    ? isCommitAcknowledgementFailure(error.cause)
+    ? isConfirmedTransactionAbort(error.cause)
     : false;
 };
 
@@ -1035,30 +1029,16 @@ export const makeActionRuntime = (
       }
 
       const failure = Cause.findErrorOption(transactionExit.cause);
-      if (
-        failure._tag === 'Some' &&
-        failure.value instanceof CoreTransactionBridgeFailure
-      ) {
-        const transactionError = failure.value.original;
-        if (transactionBodyCompleted && isCommitAcknowledgementFailure(transactionError)) {
-          return yield* new ActionCommitIndeterminate({
-            code: 'action_commit_indeterminate',
-            invocationId: invocation.actionInvocationId,
-            reason: 'The database did not confirm whether the Action commit completed',
-          });
-        }
+      if (failure._tag === 'Some' && failure.value instanceof CoreTransactionBridgeFailure) {
         yield* Effect.annotateLogs(
-          Effect.logError('Unexpected Action transaction failure', transactionError),
+          Effect.logError('Unexpected Action transaction failure', failure.value.original),
           {
             actionKey: input.registration.descriptor.actionKey,
             correlationId: transport.correlationId,
             invocationId: invocation.actionInvocationId,
           },
         );
-        return yield* transactionFailure();
-      }
-
-      if (failure._tag === 'Some' && Schema.is(ActionTransactionError)(failure.value)) {
+      } else if (failure._tag === 'Some' && Schema.is(ActionTransactionError)(failure.value)) {
         const defectCause = getActionTransactionFailureCause(failure.value);
         if (defectCause !== undefined) {
           yield* Effect.annotateLogs(
@@ -1086,7 +1066,22 @@ export const makeActionRuntime = (
           );
         }
       }
-      return yield* Effect.failCause(transactionExit.cause);
+      return yield* Effect.failCause(
+        Cause.map(transactionExit.cause, (error) => {
+          if (!(error instanceof CoreTransactionBridgeFailure)) {
+            return error;
+          }
+          // Once the body completed, missing acknowledgement is not proof of
+          // rollback. Map only bridge failures, retaining every other Cause.
+          return transactionBodyCompleted && !isConfirmedTransactionAbort(error.original)
+            ? new ActionCommitIndeterminate({
+                code: 'action_commit_indeterminate',
+                invocationId: invocation.actionInvocationId,
+                reason: 'The database did not confirm whether the Action commit completed',
+              })
+            : transactionFailure();
+        }),
+      );
     });
 
   const resolveActionCommit: ActionRuntimeService['resolveActionCommit'] = (input) =>

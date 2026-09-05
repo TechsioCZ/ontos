@@ -220,17 +220,17 @@ const mapResolverError = (
 
 const AUTH_EFFECT_CONTEXT_KEY = '__ontosEffectContext';
 
-// Better Auth carries this private, per-call adapter into its Promise hooks. Capturing the
+// Better Auth spreads top-level API input into hooks but replaces its `context` field.
+// Keep this private, per-call adapter at the top level. Capturing the
 // caller's context retains services/tracing; its signal interrupts the resolver fiber, not
 // Better Auth's database work (the foreign API does not offer that cancellation contract).
 class AuthEffectExecution {
   readonly run: ReturnType<typeof Effect.runPromiseWith<never>>;
+  readonly signal: AbortSignal | undefined;
 
-  constructor(
-    context: Context.Context<never>,
-    readonly signal?: AbortSignal,
-  ) {
+  constructor(context: Context.Context<never>, signal?: AbortSignal) {
     this.run = Effect.runPromiseWith(context);
+    this.signal = signal;
   }
 
   resolveSession(resolver: PrincipalResolverService, userId: string) {
@@ -384,7 +384,7 @@ export const makeAuthenticationService = (
         create: {
           before: (session, context) => {
             const captured =
-              context === null ? undefined : Reflect.get(context.context, AUTH_EFFECT_CONTEXT_KEY);
+              context === null ? undefined : Reflect.get(context, AUTH_EFFECT_CONTEXT_KEY);
             const execution =
               captured instanceof AuthEffectExecution
                 ? captured
@@ -614,7 +614,7 @@ export const makeAuthenticationService = (
     runAuthPromise(
       (context) =>
         auth.api.getSession({
-          context,
+          ...context,
           headers: requestHeaders,
           returnHeaders: true,
         }),
@@ -702,7 +702,7 @@ export const makeAuthenticationService = (
               (context) =>
                 auth.api.updateSession({
                   body: { activeTenantId: identity.tenantId },
-                  context,
+                  ...context,
                   headers: requestHeaders,
                   returnHeaders: true,
                 }),
@@ -772,7 +772,7 @@ export const makeAuthenticationService = (
           (context) =>
             auth.api.updateSession({
               body: { activeLegalEntityId: null },
-              context,
+              ...context,
               headers: requestHeaders,
               returnHeaders: true,
             }),
@@ -820,7 +820,7 @@ export const makeAuthenticationService = (
         (context) =>
           auth.api.updateSession({
             body: { activeLegalEntityId: selection.selected.legalEntityId },
-            context,
+            ...context,
             headers: requestHeaders,
             returnHeaders: true,
           }),
@@ -858,7 +858,7 @@ export const makeAuthenticationService = (
                   name,
                   password,
                 },
-                context,
+                ...context,
               }),
             mapRuntimeError,
           ).pipe(Effect.map((result) => result.user.id))
@@ -906,7 +906,7 @@ export const makeAuthenticationService = (
               email,
               password,
             },
-            context,
+            ...context,
             headers: requestHeaders,
             returnHeaders: true,
           }),
@@ -926,7 +926,7 @@ export const makeAuthenticationService = (
       runAuthPromise(
         (context) =>
           auth.api.signOut({
-            context,
+            ...context,
             headers: requestHeaders,
             returnHeaders: true,
           }),
@@ -971,7 +971,7 @@ export const makeAuthenticationService = (
                     (context) =>
                       auth.api.updateSession({
                         body: { activeLegalEntityId: selected.legalEntityId },
-                        context,
+                        ...context,
                         headers: requestHeaders,
                         returnHeaders: true,
                       }),
@@ -1008,7 +1008,7 @@ export const makeAuthenticationService = (
                     (context) =>
                       auth.api.updateSession({
                         body: { activeLegalEntityId: null, activeTenantId: tenantId },
-                        context,
+                        ...context,
                         headers: requestHeaders,
                         returnHeaders: true,
                       }),

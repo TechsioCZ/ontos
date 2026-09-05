@@ -161,6 +161,116 @@ const snapshotDatabase = (
   } as unknown as Parameters<typeof makePostgresCoreSearchSnapshotBackend>[0];
 };
 
+for (const blocked of ['install-1', 'install-2', 'install-3'] as const) {
+  test(`snapshot waits for blocked ${blocked} before rollback and connection release`, async () => {
+    const events: string[] = [];
+    const blockedQuery = Effect.runSync(Deferred.make<void>());
+    const queryEntered = Effect.runSync(Deferred.make<void>());
+    let queue = Promise.resolve();
+    const submit = <Value>(statement: string, result: Value): Promise<Value> => {
+      events.push(statement);
+      const pending = queue.then(async () => {
+        if (statement === blocked) {
+          Effect.runSync(Deferred.succeed(queryEntered, undefined));
+          await Effect.runPromise(Deferred.await(blockedQuery));
+        }
+        return result;
+      });
+      queue = pending.then(() => undefined);
+      return pending;
+    };
+    let installs = 0;
+    let selects = 0;
+    const transaction = {
+      execute: (statement: SQL) => {
+        const query = new PgDialect().sqlToQuery(statement);
+        const isolation = query.sql === 'set transaction isolation level repeatable read';
+        return submit(isolation ? 'isolation' : `install-${++installs}`, {
+          rows: [{ legal_entity_id: query.params[1], tenant_id: query.params[0] }],
+        });
+      },
+      insert: () => ({
+        values: () => ({
+          onConflictDoUpdate: () => ({
+            returning: () => submit('generation', [{ version: 1n }]),
+          }),
+        }),
+      }),
+      select: () => ({
+        from: () => ({
+          where: () =>
+            ++selects === 1
+              ? submit('watermark', [{ version: '2' }])
+              : submit('entities', [{ legalEntityId }]),
+        }),
+      }),
+      update: () => ({ set: () => ({ where: () => submit('update-watermark', []) }) }),
+    } as unknown as CoreTransaction;
+    const database = {
+      executor: {
+        async transaction<Value>(
+          body: (current: CoreTransaction) => Promise<Value>,
+        ): Promise<Value> {
+          await submit('begin', undefined);
+          try {
+            const value = await body(transaction);
+            await submit('commit', undefined);
+            return value;
+          } catch (error) {
+            await submit('rollback', undefined);
+            throw error;
+          } finally {
+            events.push('release');
+          }
+        },
+      },
+    } as unknown as Parameters<typeof makePostgresCoreSearchSnapshotBackend>[0];
+    const source = makeCoreSearchWorkerSnapshot(makePostgresCoreSearchSnapshotBackend(database));
+    const controller = new AbortController();
+    let ownerReads = 0;
+    const result = Effect.runPromiseExit(
+      source.read(attestOutboxWorkerHandlerContext(context), (snapshot) =>
+        snapshot.forLegalEntity(legalEntityId, () =>
+          Effect.sync(() => {
+            ownerReads += 1;
+          }),
+        ),
+      ),
+      { signal: controller.signal },
+    );
+    await Effect.runPromise(Deferred.await(queryEntered));
+    controller.abort();
+    try {
+      // Drain the interruption without advancing the blocked driver's queue.
+      await Effect.runPromise(Effect.yieldNow);
+      assert.equal(events.includes('rollback'), false);
+      assert.equal(events.includes('release'), false);
+    } finally {
+      Effect.runSync(Deferred.succeed(blockedQuery, undefined));
+      await result;
+      await Effect.runPromise(Effect.yieldNow);
+      await queue;
+    }
+    const exit = await result;
+    assert(Exit.isFailure(exit));
+    assert(exit.cause.reasons.some(Cause.isInterruptReason));
+    assert.equal(ownerReads, blocked === 'install-3' ? 1 : 0);
+    assert.deepEqual(events, [
+      'begin',
+      'isolation',
+      'install-1',
+      'generation',
+      'watermark',
+      'update-watermark',
+      'entities',
+      ...(blocked === 'install-1' ? [] : ['install-2']),
+      ...(blocked === 'install-3' ? ['install-3'] : []),
+      'rollback',
+      'release',
+    ]);
+  });
+}
+
 test('worker snapshot keeps typed owner failures inside transaction boundary', async () => {
   const events: string[] = [];
   const database = snapshotDatabase(events);

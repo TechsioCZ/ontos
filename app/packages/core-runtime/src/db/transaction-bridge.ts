@@ -1,6 +1,5 @@
 // @effect-diagnostics asyncFunction:off
-/* eslint-disable promise/prefer-await-to-callbacks -- Drizzle owns this Promise callback boundary. */
-import { Cause, Context, Effect, Exit } from 'effect';
+import { Cause, Effect, Exit } from 'effect';
 import type { CoreDatabaseExecutor, CoreTransaction } from './types.ts';
 
 type TransactionRollbackToken = symbol;
@@ -34,24 +33,6 @@ export class CoreTransactionBridgeFailure {
   }
 }
 
-const runTransaction = <Value, Error, Requirements>(
-  executor: CoreDatabaseExecutor,
-  context: Context.Context<Requirements>,
-  body: (transaction: CoreTransaction) => Effect.Effect<Value, Error, Requirements>,
-  token: TransactionRollbackToken,
-  signal: AbortSignal,
-): Promise<Value> =>
-  executor.transaction((transaction) =>
-    Effect.runPromiseExitWith(context)(
-      Effect.suspend(() => body(transaction)),
-      { signal },
-    ).then((exit) =>
-      Exit.isSuccess(exit)
-        ? exit.value
-        : Promise.reject(new TransactionRollback(token, exit.cause)),
-    ),
-  );
-
 /**
  * Runs one complete Effect transaction body through Drizzle's Promise API.
  *
@@ -73,8 +54,21 @@ export const runCoreTransaction = <Value, Error, Requirements>(
 
     return yield* Effect.callback<Value, Error | CoreTransactionBridgeFailure, Requirements>(
       (resume, signal) => {
+        let failedBodyExit: Exit.Exit<Value, Error> | undefined;
         const transaction = Promise.resolve().then(() =>
-          runTransaction(executor, context, body, rollbackToken, signal),
+          executor.transaction((tx) =>
+            Effect.runPromiseExitWith(context)(
+              Effect.suspend(() => body(tx)),
+              { signal },
+            ).then((exit) => {
+              if (Exit.isSuccess(exit)) {
+                return exit.value;
+              }
+              // ROLLBACK may reject before the driver can rethrow our sentinel.
+              failedBodyExit = exit;
+              return Promise.reject(new TransactionRollback(rollbackToken, exit.cause));
+            }),
+          ),
         );
         transaction.then(
           (value) => resume(Effect.succeed(value)),
@@ -82,7 +76,14 @@ export const runCoreTransaction = <Value, Error, Requirements>(
             if (isOwnRollback(error)) {
               resume(Effect.failCause(error.cause));
             } else {
-              resume(Effect.fail(new CoreTransactionBridgeFailure(error)));
+              const driverCause = Cause.fail(new CoreTransactionBridgeFailure(error));
+              resume(
+                Effect.failCause(
+                  failedBodyExit !== undefined && Exit.isFailure(failedBodyExit)
+                    ? Cause.combine(failedBodyExit.cause, driverCause)
+                    : driverCause,
+                ),
+              );
             }
           },
         );

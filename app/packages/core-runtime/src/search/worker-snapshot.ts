@@ -127,11 +127,15 @@ const viewForSnapshot = (
       return Effect.gen(function* readOwnedScope() {
         const exit = yield* Effect.exit(
           Effect.tryPromise({ catch: unavailable, try: async () => install(legalEntityId) }).pipe(
+            // The foreign operation must settle before restoring scope or ending the transaction.
+            Effect.uninterruptible,
             Effect.flatMap(() => read(executor)),
           ),
         );
         const restoreExit = yield* Effect.exit(
-          Effect.tryPromise({ catch: unavailable, try: async () => install() }),
+          Effect.tryPromise({ catch: unavailable, try: async () => install() }).pipe(
+            Effect.uninterruptible,
+          ),
         );
         if (Exit.isFailure(restoreExit)) {
           return yield* Effect.failCause(
@@ -348,11 +352,12 @@ export const makePostgresCoreSearchSnapshotBackend = (
       install,
     };
   };
+  // Preparation issues sequential SQL; interruption must wait for its Promise to settle.
   const databaseCall = <Value>(run: () => PromiseLike<Value>) =>
     Effect.tryPromise({
       catch: (error) => new CoreSearchSnapshotPersistenceFailure(error),
       try: () => run(),
-    });
+    }).pipe(Effect.uninterruptible);
   const run = <Value, Failure, Requirements>(
     context: OutboxWorkerHandlerContext,
     use: (

@@ -75,6 +75,7 @@ const transport = (idempotencyKey = 'intent-1') => ({
 const QueryConfigSchema = Schema.Struct({ text: Schema.String });
 
 interface HarnessOptions {
+  readonly commitFailure?: Error;
   readonly commitFailureCode?: string;
   readonly createRecord?: ActionInvocationRecord;
   readonly legalEntityPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
@@ -86,6 +87,7 @@ interface HarnessOptions {
   readonly rejectionFailure?: boolean;
   readonly resolutionUnavailable?: boolean;
   readonly resourcePermissionDecision?: 'allowed' | 'denied' | 'unavailable';
+  readonly rollbackFailure?: Error;
   readonly tenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
   readonly transactionMode?: 'commit-definite' | 'definite-failure' | 'normal' | 'uncertain';
 }
@@ -100,6 +102,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
   const resourceChecks: unknown[] = [];
   const stages: ActionRuntimeStage[] = [];
   const tenantChecks: unknown[] = [];
+  const transactionCommands: string[] = [];
   let createCount = 0;
   let lockCount = 0;
   let permissionCheckCount = 0;
@@ -212,6 +215,12 @@ const makeHarness = (options: HarnessOptions = {}) => {
           installedLegalEntityId = legalEntityId;
         }
       }
+      if (text === 'begin' || text === 'commit' || text === 'rollback') {
+        transactionCommands.push(text);
+      }
+      if (text === 'rollback' && options.rollbackFailure !== undefined) {
+        throw options.rollbackFailure;
+      }
       if (text === 'begin') {
         transactionCount += 1;
         if (options.transactionMode === 'definite-failure') {
@@ -219,6 +228,9 @@ const makeHarness = (options: HarnessOptions = {}) => {
         }
       }
       if (text === 'commit') {
+        if (options.commitFailure !== undefined) {
+          throw options.commitFailure;
+        }
         if (options.transactionMode === 'uncertain') {
           throw { commitIndeterminate: true };
         }
@@ -387,6 +399,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     runtime,
     stages,
     tenantChecks,
+    transactionCommands,
   };
 };
 
@@ -2033,6 +2046,81 @@ test('handles committed, conflict, definite rollback, and indeterminate commit b
     acknowledgementErrors.map((error) => error._tag),
     acknowledgementFailureCodes.map(() => 'ActionCommitIndeterminate'),
   );
+});
+
+test('code-less COMMIT connection termination stays indeterminate without replay', async () => {
+  for (const message of ['Connection terminated', 'Connection terminated unexpectedly']) {
+    const harness = makeHarness({ commitFailure: new Error(message) });
+    const error = await Effect.runPromise(
+      Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 1 },
+          principal,
+          registration: registration(),
+          transport: transport('code-less-commit'),
+        }),
+      ),
+    );
+
+    assert.equal(error._tag, 'ActionCommitIndeterminate');
+    assert.equal(error.invocationId, 'invocation-1');
+    assert.equal(error.reason.includes('rolled back'), false);
+    assert.deepEqual(harness.transactionCommands, ['begin', 'commit', 'rollback']);
+    assert.equal(harness.gateCounts().handlerResolutionCount, 1);
+    assert.equal(harness.flushed.length, 1);
+  }
+});
+
+test('COMMIT reset masked by ROLLBACK rejection stays indeterminate without replay', async () => {
+  for (const rollbackFailure of [
+    new Error('Client has encountered a connection error and is not queryable'),
+    Object.assign(new Error('rollback failed'), { code: '40001' }),
+    Object.assign(new Error('rollback failed'), { code: '23505' }),
+  ]) {
+    const harness = makeHarness({ commitFailureCode: 'ECONNRESET', rollbackFailure });
+    const error = await Effect.runPromise(
+      Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 1 },
+          principal,
+          registration: registration(),
+          transport: transport('commit-rollback-rejection'),
+        }),
+      ),
+    );
+
+    assert.equal(error._tag, 'ActionCommitIndeterminate');
+    assert.equal(error.invocationId, 'invocation-1');
+    assert.equal(error.reason.includes('rolled back'), false);
+    assert.deepEqual(harness.transactionCommands, ['begin', 'commit', 'rollback']);
+    assert.equal(harness.gateCounts().handlerResolutionCount, 1);
+    assert.equal(harness.flushed.length, 1);
+  }
+});
+
+test('only confirmed COMMIT database aborts report rollback without replay', async () => {
+  for (const code of ['40001', '40P01', '23503', '23505', '23514', '40003']) {
+    const harness = makeHarness({ commitFailureCode: code });
+    const error = await Effect.runPromise(
+      Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 1 },
+          principal,
+          registration: registration(),
+          transport: transport(`commit-abort-${code}`),
+        }),
+      ),
+    );
+
+    assert.equal(
+      error._tag,
+      code === '40003' ? 'ActionCommitIndeterminate' : 'ActionTransactionError',
+    );
+    assert.equal(error.reason.includes('rolled back'), code !== '40003');
+    assert.deepEqual(harness.transactionCommands, ['begin', 'commit', 'rollback']);
+    assert.equal(harness.gateCounts().handlerResolutionCount, 1);
+    assert.equal(harness.flushed.length, 1);
+  }
 });
 
 test('resolves commit state explicitly and keeps unavailable outcomes indeterminate', async () => {

@@ -80,6 +80,93 @@ for (const [name, cause] of [
   });
 }
 
+test(
+  'rollback rejection retains the mixed body cause and waits for driver settlement',
+  { timeout: 2000 },
+  async () => {
+    const domainFailure = { _tag: 'ExpectedFailure', identity: {} };
+    const defect = new Error('body defect');
+    const cause = Cause.combine(Cause.fail(domainFailure), Cause.die(defect));
+    const rejection = new Error('rollback rejected');
+    const rollingBack = gate();
+    const releaseRollback = gate();
+    // Like Drizzle, the foreign wrapper awaits ROLLBACK before rethrowing the
+    // body's sentinel, so a physical rollback rejection replaces that sentinel.
+    const h = harness({
+      rollback: async () => {
+        rollingBack.resolve();
+        await releaseRollback.promise;
+        throw rejection;
+      },
+    });
+    let settled = false;
+    const result = Effect.runPromiseExit(
+      runCoreTransaction(h.executor, () => Effect.failCause(cause)),
+    ).then((exit) => {
+      settled = true;
+      return exit;
+    });
+    try {
+      await rollingBack.promise;
+      assert.equal(settled, false);
+      assert.deepEqual(h.events, ['begin', 'rollback-start']);
+      releaseRollback.resolve();
+      const exit = await result;
+      assert.ok(Exit.isFailure(exit));
+      assert.deepEqual(
+        exit.cause,
+        Cause.combine(cause, Cause.fail(new CoreTransactionBridgeFailure(rejection))),
+      );
+      assert.equal(exit.cause.reasons[0], cause.reasons[0]);
+      assert.equal(exit.cause.reasons[1], cause.reasons[1]);
+      assert.deepEqual(h.events, ['begin', 'rollback-start']);
+    } finally {
+      releaseRollback.resolve();
+      await result;
+    }
+  },
+);
+
+test('concurrent runs do not share a failed body Exit', { timeout: 2000 }, async () => {
+  const cause = Cause.fail({ _tag: 'ExpectedFailure' });
+  const rollbackRejection = new Error('rollback rejected');
+  const commitRejection = new Error('commit rejected');
+  const rollingBack = gate();
+  const releaseRollback = gate();
+  const h = harness({
+    rollback: async () => {
+      rollingBack.resolve();
+      await releaseRollback.promise;
+      throw rollbackRejection;
+    },
+    commit: async () => {
+      throw commitRejection;
+    },
+  });
+  let calls = 0;
+  const program = runCoreTransaction(h.executor, () =>
+    ++calls === 1 ? Effect.failCause(cause) : Effect.succeed(42),
+  );
+  const first = Effect.runPromiseExit(program);
+  try {
+    await rollingBack.promise;
+    const second = await Effect.runPromiseExit(program);
+    assert.ok(Exit.isFailure(second));
+    assert.deepEqual(second.cause, Cause.fail(new CoreTransactionBridgeFailure(commitRejection)));
+    releaseRollback.resolve();
+    const exit = await first;
+    assert.ok(Exit.isFailure(exit));
+    assert.deepEqual(
+      exit.cause,
+      Cause.combine(cause, Cause.fail(new CoreTransactionBridgeFailure(rollbackRejection))),
+    );
+    assert.equal(calls, 2);
+  } finally {
+    releaseRollback.resolve();
+    await first;
+  }
+});
+
 test('a synchronous body construction throw remains a defect and rolls back', async () => {
   const h = harness();
   const defect = new Error('construction defect');
