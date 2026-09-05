@@ -214,7 +214,10 @@ const databasePromise = async <Value>(
   await Effect.runPromise(withDatabase((database) => Effect.promise(() => operation(database))));
 
 // Capture the actual transaction connection, not a pooled observer connection.
-const transactionProbe = (database: ContextServiceContract) => {
+const transactionProbe = (
+  database: ContextServiceContract,
+  beforeCallback: Effect.Effect<unknown> = Effect.void,
+) => {
   const pid = Effect.runSync(Deferred.make<number>());
   const transactionOverride = {
     transaction: async (callback, configuration) =>
@@ -224,6 +227,7 @@ const transactionProbe = (database: ContextServiceContract) => {
           .from(sql`(select 1) as probe`);
         assert.ok(row);
         Effect.runSync(Deferred.succeed(pid, row.pid));
+        await Effect.runPromise(beforeCallback.pipe(Effect.timeout('3 seconds')));
         return await callback(transaction);
       }, configuration),
   } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
@@ -259,7 +263,7 @@ const waitForTransactionLock = (
       }
     }
     assert.fail(`Transaction ${blockedPid} never blocked on ${blockerPid}`);
-  });
+  }).pipe(Effect.timeout('2 seconds'));
 
 const liveModuleStateOptions = (database: ContextServiceContract) => {
   const moduleStateGate = makeModuleStateGate(makeTenantModuleStateService(database));
@@ -1310,8 +1314,12 @@ void test('serializes concurrent requests and enforces committed, open-retry, an
         testOperationalScopeResolver,
         openActionRuntimeOptions,
       );
-      const firstProbe = transactionProbe(database);
-      const secondProbe = transactionProbe(database);
+      const handlerStarted = Effect.runSync(Deferred.make<null>());
+      const handlerRelease = Effect.runSync(Deferred.make<null>());
+      // Both autocommit running transitions must finish before the first row lock.
+      // Otherwise the duplicate blocks before its transaction can publish a PID.
+      const secondProbe = transactionProbe(database, Deferred.await(handlerStarted));
+      const firstProbe = transactionProbe(database, Deferred.await(secondProbe.pid));
       const concurrentRuntime = (probe: ReturnType<typeof transactionProbe>) =>
         makeActionRuntime(
           probe.database,
@@ -1320,8 +1328,6 @@ void test('serializes concurrent requests and enforces committed, open-retry, an
           testOperationalScopeResolver,
           openActionRuntimeOptions,
         );
-      const handlerStarted = Effect.runSync(Deferred.make<null>());
-      const handlerRelease = Effect.runSync(Deferred.make<null>());
       let executions = 0;
       const concurrentKey = 'concurrent-once';
       const concurrentModule = `test.concurrent.${tenantId}`;
@@ -1344,15 +1350,23 @@ void test('serializes concurrent requests and enforces committed, open-retry, an
         const first = yield* Effect.forkChild(
           Effect.exit(concurrentRuntime(firstProbe).runAction(concurrentInput)),
         );
+        const second = yield* Effect.forkChild(
+          Effect.exit(concurrentRuntime(secondProbe).runAction(concurrentInput)),
+        );
         const concurrentResults = yield* Effect.gen(function* lockedDuplicate() {
-          yield* Deferred.await(handlerStarted);
-          const second = yield* Effect.forkChild(
-            Effect.exit(concurrentRuntime(secondProbe).runAction(concurrentInput)),
-          );
+          yield* Deferred.await(handlerStarted).pipe(Effect.timeout('3 seconds'));
           yield* waitForTransactionLock(database, secondProbe.pid, firstProbe.pid);
           yield* Deferred.succeed(handlerRelease, null);
           return yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
-        }).pipe(Effect.ensuring(Deferred.succeed(handlerRelease, null)));
+        }).pipe(
+          Effect.ensuring(
+            Effect.gen(function* releaseAndDrainTransactions() {
+              yield* Deferred.succeed(handlerRelease, null);
+              yield* Fiber.await(first);
+              yield* Fiber.await(second);
+            }),
+          ),
+        );
 
         assert.equal(executions, 1);
         assert.equal(concurrentResults.filter(Exit.isSuccess).length, 1);
@@ -1414,10 +1428,13 @@ void test('serializes concurrent requests and enforces committed, open-retry, an
 
 void test('serializes Domain Event allocation by tenant commit order', async () => {
   await databasePromise(async (database) => {
-    const firstProbe = transactionProbe(database);
-    const secondProbe = transactionProbe(database);
     const firstCommitRelease = await Effect.runPromise(Deferred.make<null>());
     const firstFlushed = await Effect.runPromise(Deferred.make<null>());
+    const secondCallbackRelease = await Effect.runPromise(Deferred.make<null>());
+    // Finish both autocommit invocation inserts before the tenant FOR UPDATE lock.
+    // Otherwise the second insert's tenant FK blocks before its transaction has a PID.
+    const secondProbe = transactionProbe(database, Deferred.await(secondCallbackRelease));
+    const firstProbe = transactionProbe(database, Deferred.await(secondProbe.pid));
     const delayedTransaction = {
       transaction: async (callback, configuration) =>
         await firstProbe.database.executor.transaction(async (transaction) => {
@@ -1460,8 +1477,6 @@ void test('serializes Domain Event allocation by tenant commit order', async () 
         transport: transport('sequence-first', firstModule),
       }),
     );
-    await Effect.runPromise(Deferred.await(firstFlushed));
-
     let secondCompleted = false;
     const second = Effect.runPromise(
       secondRuntime.runAction({
@@ -1477,12 +1492,19 @@ void test('serializes Domain Event allocation by tenant commit order', async () 
       secondCompleted = true;
     });
 
+    // Attach rejection handlers immediately, including failures before either rendezvous.
+    const drained = Promise.allSettled([first, second]);
     try {
+      await Effect.runPromise(Deferred.await(firstFlushed).pipe(Effect.timeout('3 seconds')));
+      // The first has allocated its event but cannot commit. Let the second transaction
+      // contend with that tenant lock (its business insert also checks the tenant FK).
+      Effect.runSync(Deferred.succeed(secondCallbackRelease, null));
       await Effect.runPromise(waitForTransactionLock(database, secondProbe.pid, firstProbe.pid));
       assert.equal(secondCompleted, false);
     } finally {
+      Effect.runSync(Deferred.succeed(secondCallbackRelease, null));
       Effect.runSync(Deferred.succeed(firstCommitRelease, null));
-      await Promise.allSettled([first, second]);
+      await drained;
     }
     await Promise.all([first, second]);
 
