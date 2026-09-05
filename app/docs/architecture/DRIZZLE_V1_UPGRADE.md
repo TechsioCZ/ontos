@@ -170,10 +170,12 @@ Better Auth 1.7 keys every provider identity on `(issuer, accountId)` and requir
 4. refuse to continue if two rows share an `(issuer, account_id)` identity;
 5. set `NOT NULL` and create `auth_account_issuer_account_id_uk`.
 
-Better Auth 1.6 writers cannot insert accounts once the column is non-null, so the Auth migration
-and the Shell release that carries Better Auth 1.7.2 ship in the same release window. This is the
-one place where this upgrade departs from the expand-only rule in
-[Deployment](./DEPLOYMENT.md); the migration itself is additive and carries no drop.
+Better Auth 1.6 writers do not supply `issuer`, so the migration also installs a `BEFORE INSERT`
+trigger (`auth.account_issuer_compat`) that derives the value with the same rule when a row arrives
+without one. That keeps the previous Shell release working against the expanded schema, as the
+[Deployment](./DEPLOYMENT.md) sequence requires, so the Auth migration stays expand-only. Drop the
+trigger and its function in a later contraction migration once no Better Auth 1.6 writer remains;
+Better Auth 1.7 always writes `issuer` explicitly, so the trigger is inert for the new release.
 
 ### New `db:check` script
 
