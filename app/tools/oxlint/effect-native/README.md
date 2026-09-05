@@ -29,8 +29,9 @@ RULE=no-nested-effect-run node --test tools/oxlint/effect-native/tests/fixtures.
 node tools/oxlint/effect-native/tests/run-on-repo.mts no-nested-effect-run
 ```
 
-`pnpm check` runs the dedicated rule typecheck and tests before linting the application. Existing
-application violations intentionally make `pnpm lint`, `pnpm lint:effect`, and therefore `pnpm check`
+`pnpm check` runs the dedicated rule typecheck and tests before linting the application. The CI
+matrix also runs them independently in **Effect Rule Implementation**, so expected application
+lint failures do not prevent verification of the detectors. Existing application violations intentionally make `pnpm lint`, `pnpm lint:effect`, and therefore `pnpm check`
 fail. Do not confuse those diagnostics with a failing rule test or a plugin crash. No new dependency
 or Effect test harness is installed by this change.
 

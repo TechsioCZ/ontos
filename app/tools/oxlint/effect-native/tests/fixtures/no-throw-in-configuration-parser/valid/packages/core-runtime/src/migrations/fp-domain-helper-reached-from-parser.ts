@@ -3,7 +3,7 @@
  * "configuration helper" just because the module's entrypoint happens to read the
  * environment.
  *
- * Shape copied verbatim from `verticals/contacts/scripts/prepare-contacts-migration.mts`
+ * Shape modeled after `verticals/contacts/scripts/prepare-contacts-migration.mts`
  * (only masked in the real tree because a nested `scripts/` directory is normalised away).
  *
  * `classifyJournalState` reads no environment value, takes no environment record, is
@@ -25,7 +25,7 @@ export const classifyJournalState = (row: JournalRow | undefined): JournalState 
 	}
 	if (row.legacy && row.contacts) {
 		// Database state, not configuration: two migration journals exist at once.
-		throw new Error("Ambiguous migration state: both CRM and Contacts journals exist");
+		throw new Error("Ambiguous migration state: both legacy and current journals exist");
 	}
 	return row.legacy ? "legacy" : "contacts";
 };
