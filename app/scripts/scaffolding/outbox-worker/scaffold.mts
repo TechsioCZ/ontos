@@ -130,7 +130,11 @@ const renderWorkerHostLayer = (
 ): string => `${OUTBOX_WORKER_HOST_HEADER}
 // @ontos-outbox-worker-host-owner ${consumer.moduleId}
 import { Layer } from 'effect';
-import { OutboxWorkerInfrastructureLive } from '@app/core-runtime';
+import {
+  CorePersistenceLive,
+  OutboxRepositoryLive,
+  OutboxWorkerInfrastructureLive,
+} from '@app/core-runtime';
 
 /** Add owner-local repositories and services required by worker handlers here. */
 const outboxWorkerHandlerLayer = Layer.empty;
@@ -138,6 +142,9 @@ const outboxWorkerHandlerLayer = Layer.empty;
 export const outboxWorkerLayer = Layer.merge(
   OutboxWorkerInfrastructureLive,
   outboxWorkerHandlerLayer,
+).pipe(
+  Layer.provide(OutboxRepositoryLive),
+  Layer.provide(CorePersistenceLive),
 );
 `;
 
