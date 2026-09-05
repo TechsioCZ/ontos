@@ -95,13 +95,14 @@ void test('publishes only the narrow server Action surface', () => {
   assert.equal('ActionPermissionCheckError' in publicSurface, true);
   assert.equal('resolveActionCommit' in publicSurface, true);
   assert.equal('ActionRepository' in publicSurface, false);
-  assert.equal('ActionRepositoryLive' in publicSurface, false);
+  // Deployment roots compose layers without exposing repository services or constructors.
+  assert.equal('ActionRepositoryLive' in publicSurface, true);
   assert.equal('createActionCollector' in publicSurface, false);
   assert.equal('makeActionRepository' in publicSurface, false);
   assert.equal('finalizePolicyDenial' in publicSurface, false);
   assert.equal('isActionPolicy' in publicSurface, false);
   assert.equal('ActionPermission' in publicSurface, false);
-  assert.equal('ActionPermissionLive' in publicSurface, false);
+  assert.equal('ActionPermissionLive' in publicSurface, true);
   assert.equal('SpiceDbConfig' in publicSurface, false);
   assert.equal('createPermissionCheckClient' in publicSurface, false);
   assert.equal('makeActionPermissionService' in publicSurface, false);
