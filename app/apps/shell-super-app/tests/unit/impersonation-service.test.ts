@@ -9,7 +9,8 @@ import {
   IdentityTargetInvalidError,
 } from '@app/core-runtime';
 import { makeSignature } from 'better-auth/crypto';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
+import type { AuthConfigValue } from '../../api/auth/config.ts';
 import type {
   SupportAuthProvider,
   SupportRecoveryRecord,
@@ -35,10 +36,10 @@ const tenantId = '40000000-0000-4000-8000-000000000001';
 const impersonationSessionId = 'impersonated-session-id';
 const restoredSessionId = 'restored-session-id';
 
-const configuration = {
+const configuration: AuthConfigValue = {
   baseUrl: 'http://localhost:3000',
-  connectionString: 'postgresql://unused',
-  secret: 'unit-test-secret-unit-test-secret',
+  connectionString: Redacted.make('postgresql://unused'),
+  secret: Redacted.make('unit-test-secret-unit-test-secret'),
   secureCookies: false,
   supportUserIds: ['original-provider-user'],
   trustedOrigins: ['http://localhost:3000'],
@@ -413,7 +414,7 @@ test('completes every pending checkpoint correlated to the restored session', as
 test('persists and completes stopped evidence on the first stop after impersonation expiry', async () => {
   const expiredToken = 'expired-impersonation-token';
   const signedToken = encodeURIComponent(
-    `${expiredToken}.${await makeSignature(expiredToken, configuration.secret)}`,
+    `${expiredToken}.${await makeSignature(expiredToken, Redacted.value(configuration.secret))}`,
   );
   let persistedRecovery: SupportRecoveryRecord | undefined;
   let deleteCalls = 0;
@@ -485,7 +486,7 @@ test('restores the original session and stopped checkpoint after the provider re
   const originalSessionToken = 'original-session-token';
   const adminValue = `${originalSessionToken}:true`;
   const adminCookie = encodeURIComponent(
-    `${adminValue}.${await makeSignature(adminValue, configuration.secret)}`,
+    `${adminValue}.${await makeSignature(adminValue, Redacted.value(configuration.secret))}`,
   );
   const requestHeaders = new Headers({
     cookie: `better-auth.admin_session=${adminCookie}; better-auth.session_token=deleted`,
@@ -560,7 +561,7 @@ test('completes stopped recovery when a lost response leaves only an expired ori
   const originalSessionToken = 'expired-original-session-token';
   const adminValue = `${originalSessionToken}:`;
   const adminCookie = encodeURIComponent(
-    `${adminValue}.${await makeSignature(adminValue, configuration.secret)}`,
+    `${adminValue}.${await makeSignature(adminValue, Redacted.value(configuration.secret))}`,
   );
   const recovery = {
     actionId: 'expired-original-action',
