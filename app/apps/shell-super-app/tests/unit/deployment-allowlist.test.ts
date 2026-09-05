@@ -119,7 +119,7 @@ test('defers input accessor evaluation and preserves its defect', async () => {
   const defect = new TypeError('unexpected environment accessor failure');
   let reads = 0;
   const effect = deriveDeploymentAllowlist({
-    get environment() {
+    get environment(): never {
       reads += 1;
       throw defect;
     },
