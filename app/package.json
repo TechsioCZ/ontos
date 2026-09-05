@@ -72,7 +72,7 @@
     "format": "oxfmt . '!repos/**'",
     "format:check": "oxfmt --check . '!repos/**'",
     "lint": "oxlint apps verticals packages scripts",
-    "lint:fix": "oxlint apps verticals packages --fix",
+    "lint:fix": "oxlint apps verticals packages scripts --fix",
     "skills:install": "node ./scripts/bootstrap-agent-skills.mts",
     "skills:check": "node ./scripts/bootstrap-agent-skills.mts --check",
     "agents:refs:install": "node ./scripts/setup-agent-reference-repos.mts",

@@ -7,7 +7,9 @@ export const testsDirectory = dirname(fileURLToPath(import.meta.url));
 export const pluginDirectory = resolve(testsDirectory, '..');
 export const appRoot = resolve(pluginDirectory, '..', '..', '..');
 export const fixturesDirectory = join(testsDirectory, 'fixtures');
-const oxlintBinary = join(appRoot, 'node_modules', '.bin', 'oxlint');
+const oxlintEntryPoint = fileURLToPath(
+  new URL('bin/oxlint', import.meta.resolve('oxlint/package.json')),
+);
 
 export interface Diagnostic {
   readonly code: string;
@@ -83,8 +85,8 @@ export function runOxlint(
       ? basename(dirname(configPath))
       : undefined);
   const result = spawnSync(
-    oxlintBinary,
-    ['-c', configPath, '--format=json', '--disable-nested-config', ...paths],
+    process.execPath,
+    [oxlintEntryPoint, '-c', configPath, '--format=json', '--disable-nested-config', ...paths],
     {
       cwd,
       encoding: 'utf8',

@@ -96,6 +96,9 @@ those guarantees. The audit's 145 clusters are not 145 syntactically decidable c
   fixture coverage, preserved typed lint options, and absence of fixer/suggestion metadata.
 - `tests/oxlint.test.mts`: regression coverage for loader failures, malformed JSON/diagnostics,
   inconsistent exits, empty-file runs, and stderr failures.
+- `tests/launcher.test.mts`: observes a real lint process to require Node plus Oxlint's JavaScript
+  entry point rather than platform-specific package-manager shims, and checks that the explicitly
+  opt-in `lint:fix` command covers the same directories as reporting-only `lint`.
 
 Each fixture configuration enables only its owned rule. The child process selects that one module
 so an unfinished sibling cannot conceal its test results; the separate production registration gate

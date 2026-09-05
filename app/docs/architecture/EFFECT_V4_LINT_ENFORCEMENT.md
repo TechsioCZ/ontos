@@ -6,15 +6,16 @@ No application violations are repaired, no new dependencies are installed, and n
 
 ## Verified snapshot
 
-- Source snapshot: main commit `9adca84e`, with the lint tooling at `1531cfb6`. No application-source
-  changes are included in this PR; upstream application changes were retained during rebase.
+- Source snapshot: main commit `9adca84e`, plus this PR's lint tooling. The report captured at
+  `1531cfb6` is unchanged by the portable-launcher follow-up. No application-source changes are
+  included in this PR; upstream application changes were retained during rebase.
 - Existing lint toolchain: Oxlint 1.79.0, `@oxlint/plugins` 1.79.0, Node 26.8.1 locally.
 - Scope: `apps verticals packages scripts`, including Party Registry; **753 files linted**.
 - Effect policy report: **5,286 diagnostics in 517 files**; **70 rules report**, one has zero hits.
 - Disjoint groups: **3,054 source**, **1,296 tests**, **936 scripts**. Test paths take precedence.
-- Dedicated strict tooling typecheck and **162 tests pass**, covering **2,248 fixture source
+- Dedicated strict tooling typecheck and **164 tests pass**, covering **2,248 fixture source
   files**, production defaults, registration, reporting failures, temporary cleanup, nested-script
-  scope and isolated file-URL discovery.
+  scope, isolated file-URL discovery, the portable launcher and lint-command scope parity.
 - The Effect-only scan completes without a plugin crash and exits 1 intentionally because
   application debt is reported, not repaired.
 
