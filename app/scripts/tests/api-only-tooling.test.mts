@@ -258,7 +258,7 @@ test('compiled Party CORS reader uses the nonlocal DefinePlugin origin without a
   const partyRoot = path.join(workspaceRoot, 'verticals/party-registry');
   const source = await readFile(path.join(partyRoot, 'api/index.ts'), 'utf-8');
   const reader =
-    /(?<reader>(?:interface PartyRegistryRuntimeGlobal|declare const ULTRAMODERN_SHELL_ORIGIN)[\s\S]+?)\nexport const makePartyRegistryApiRuntime/u.exec(
+    /(?<reader>(?:interface PartyRegistryRuntimeGlobal|declare const ULTRAMODERN_SHELL_ORIGIN)[\s\S]+?\nconst shellOrigin = readShellOrigin\(\);)/u.exec(
       source,
     )?.groups?.reader;
   assert.ok(reader, 'compile the actual API origin-reader boundary');
