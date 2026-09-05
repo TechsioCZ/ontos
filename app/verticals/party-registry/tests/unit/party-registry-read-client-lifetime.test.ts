@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 import { CounterpartyReadApi } from '../../shared/apis/counterparty-read.ts';
@@ -115,7 +115,7 @@ test('builds each Party registry read client once while retaining nothing from a
       read
         .executeCounterpartyReadWithAuthorization(
           { counterpartyRef },
-          'Bearer first',
+          Redacted.make('Bearer first'),
           'correlation-first',
         )
         .pipe(
@@ -126,7 +126,7 @@ test('builds each Party registry read client once while retaining nothing from a
             history
               .executeCounterpartyRoleHistoryWithAuthorization(
                 { counterpartyRef },
-                'Bearer second',
+                Redacted.make('Bearer second'),
                 'correlation-second',
               )
               .pipe(Effect.result),
@@ -137,22 +137,27 @@ test('builds each Party registry read client once while retaining nothing from a
                 read
                   .executeCounterpartyReadWithAuthorization(
                     { counterpartyRef },
-                    'Bearer a',
+                    Redacted.make('Bearer a'),
                     'correlation-a',
                   )
                   .pipe(Effect.result),
                 history
                   .executeCounterpartyRoleHistoryWithAuthorization(
                     { counterpartyRef },
-                    'Bearer b',
+                    Redacted.make('Bearer b'),
                     'correlation-b',
                     { baseUrl: 'https://party.example/party-registry-api' },
                   )
                   .pipe(Effect.result),
                 match
-                  .executePartyMatchWithAuthorization({ candidate }, 'Bearer c', 'correlation-c', {
-                    baseUrl: 'https://other.example/party-registry-api',
-                  })
+                  .executePartyMatchWithAuthorization(
+                    { candidate },
+                    Redacted.make('Bearer c'),
+                    'correlation-c',
+                    {
+                      baseUrl: 'https://other.example/party-registry-api',
+                    },
+                  )
                   .pipe(Effect.result),
               ],
               { concurrency: 'unbounded' },
@@ -247,7 +252,7 @@ test('bounds a stalled fetch and a stalled response body with a typed TimeoutErr
       read
         .executeCounterpartyReadWithAuthorization(
           { counterpartyRef },
-          'Bearer stalled-fetch',
+          Redacted.make('Bearer stalled-fetch'),
           'correlation-stalled-fetch',
           { timeoutMs: 25 },
         )
@@ -260,7 +265,7 @@ test('bounds a stalled fetch and a stalled response body with a typed TimeoutErr
       history
         .executeCounterpartyRoleHistoryWithAuthorization(
           { counterpartyRef },
-          'Bearer stalled-body',
+          Redacted.make('Bearer stalled-body'),
           'correlation-stalled-body',
           { timeoutMs: 25 },
         )
