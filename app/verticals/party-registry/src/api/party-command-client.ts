@@ -61,7 +61,13 @@ export interface PartyCommandRecoveryOptions {
 
 const DEFAULT_BASE_URL = '/party-registry-api';
 
-/** Whole-operation budget, response decode included. Overridable per call so tests stay bounded. */
+/**
+ * Budget for one HTTP leg — that leg's request and its response decode, end to end. It is not an
+ * end-to-end budget for a multi-leg operation: the gateway assertion each leg acquires is bounded
+ * separately by `GatewayContextClientOptions`, and a recovery that resolves the commit and then
+ * reads the durable decision spends this budget once per leg. Overridable per call so tests stay
+ * bounded.
+ */
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 export interface PartyCommandOptions extends PartyCommandRecoveryOptions {
@@ -664,7 +670,10 @@ export const recoverPartyCreate = (
         { actionInvocationId: payload.invocationId },
         authorization,
         options.correlationId,
-        options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl },
+        {
+          ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
+          ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+        },
       ),
     );
     const result = committedCreateResult(decision);

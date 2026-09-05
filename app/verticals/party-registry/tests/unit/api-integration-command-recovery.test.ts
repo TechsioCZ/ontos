@@ -1,8 +1,9 @@
 /* eslint-disable no-await-in-loop -- Recovery outcomes intentionally exercise separate sequential transport fixtures. */
 // @effect-diagnostics asyncFunction:off
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
 import test from 'node:test';
-import { Effect, Redacted, Result, Schema } from 'effect';
+import { Duration, Effect, Redacted, Result, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 import {
   PartyCommandCommitIndeterminateProblemSchema,
@@ -199,6 +200,64 @@ test('recovery acquires a fresh assertion without submitting an idempotency key 
   assert.equal(request.headers.get('x-trace-id'), 'trace');
   assert.deepEqual(await request.json(), { invocationId });
 });
+
+test(
+  'Create recovery bounds the durable decision read by the caller deadline and never replays Create',
+  { timeout: 5000 },
+  async () => {
+    const requests: Request[] = [];
+    let aborted = false;
+    const fakeFetch: typeof fetch = async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      if (new URL(request.url).hostname === 'shell.example') {
+        return Response.json({ expiresAt: 2_000_000_000, token: 'fresh' });
+      }
+      if (request.url.endsWith('/resolve')) {
+        return Response.json({
+          _tag: 'PartyCommandCommitResolution',
+          invocationId,
+          retryCommand: false,
+          state: 'COMMITTED',
+        });
+      }
+      // The decision read answers nothing on its own: the only thing that ends this leg is the
+      // forwarded deadline aborting the request, so an unbounded leg trips the test timeout.
+      request.signal.addEventListener(
+        'abort',
+        () => {
+          aborted = true;
+        },
+        { once: true },
+      );
+      await once(request.signal, 'abort');
+      throw new Error('decision read ended only by the forwarded deadline');
+    };
+    const [elapsed, result] = await Effect.runPromise(
+      recoverPartyCreate(
+        { invocationId },
+        {
+          baseUrl: 'https://party.example/party-registry-api',
+          correlationId: 'recover-deadline',
+          gateway: { baseUrl: 'https://shell.example/shell-super-app-api' },
+          timeoutMs: 25,
+        },
+      ).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.timed),
+    );
+    assert.ok(Result.isFailure(result));
+    assert.equal(result.failure._tag, 'TimeoutError');
+    // Far under the 10s default this leg spent before the caller deadline was forwarded.
+    assert.ok(Duration.toMillis(elapsed) < 2000, `recovery read took ${Duration.format(elapsed)}`);
+    assert.ok(aborted);
+    assert.ok(requests.some((request) => request.url.endsWith('/reads/party-match-decision')));
+    assert.ok(
+      requests.every(
+        (request) =>
+          !request.url.includes('/commands/') && request.headers.get('idempotency-key') === null,
+      ),
+    );
+  },
+);
 
 test('Create recovery resolves commit and returns exact original operation result with fresh read authority', async () => {
   for (const outcome of ['CREATED', 'MATCHED_EXISTING', 'AMBIGUOUS'] as const) {

@@ -40,11 +40,22 @@ export type ContactsOperationEffect<Success> = Effect.Effect<
   ContactsClientError | Cause.TimeoutError
 >;
 
+/** Preserve the generated operations while adding their deadline failure to the typed channel. */
+export type ContactsDeadlineClient = {
+  [Group in keyof ContactsClient]: {
+    [Operation in keyof ContactsClient[Group]]: ContactsClient[Group][Operation] extends (
+      ...args: infer Args
+    ) => Effect.Effect<infer Success, infer Failure, infer Requirements>
+      ? (...args: Args) => Effect.Effect<Success, Failure | Cause.TimeoutError, Requirements>
+      : ContactsClient[Group][Operation];
+  };
+};
+
 export interface ContactsClientOptions {
   readonly baseUrl?: string | URL;
   readonly locale?: string;
   readonly operationContext?: OperationContext;
-  /** Whole-operation deadline, decode included. Defaults to 10s and fails with `TimeoutError`. */
+  /** Request + decode deadline, default 10s. Mutations budget gateway acquisition separately. */
   readonly timeoutMs?: number;
   readonly traceparent?: string;
 }
@@ -175,44 +186,45 @@ const callTransport = (
 const deadlineOf = (options: ContactsClientOptions) => options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
 /**
- * Rebinds every operation of the shared client to one call's transport.
- *
- * A caller that holds the client runs those Effects on its own fiber, which cannot see a
- * `provideService` applied here, so the factory below has to hand back rebound operations — a bare
- * shared client would reach the fail-closed default and die. The operations are enumerated rather
- * than mapped reflectively so the compiler checks the set against `ContactsClient`: a contract that
- * gains an endpoint fails this file instead of silently returning a client missing it.
+ * Bind transport and request + decode deadline to each returned Effect, not the factory's fiber.
+ * Enumerating operations makes a newly added endpoint a compile-time omission rather than a silent one.
  */
-const bindCall = (transport: ContactsCallTransport): ContactsClient => {
-  const onCall = Effect.provideService(CurrentContactsCall, transport);
+const bindCall = (transport: ContactsCallTransport, deadlineMs: number): ContactsDeadlineClient => {
+  const onCall = <Success, Failure>(operation: Effect.Effect<Success, Failure>) =>
+    operation.pipe(
+      Effect.provideService(CurrentContactsCall, transport),
+      // Timeout never replays a write or establishes whether it committed.
+      Effect.timeout(deadlineMs),
+    );
   const { foundation, organizationEngagementMutations, personEngagementMutations } = contactsClient;
   return {
     foundation: {
-      readiness: (request) => foundation.readiness(request).pipe(onCall),
+      readiness: (request) => onCall(foundation.readiness(request)),
     },
     organizationEngagementMutations: {
-      archive: (request) => organizationEngagementMutations.archive(request).pipe(onCall),
-      attach: (request) => organizationEngagementMutations.attach(request).pipe(onCall),
-      unarchive: (request) => organizationEngagementMutations.unarchive(request).pipe(onCall),
+      archive: (request) => onCall(organizationEngagementMutations.archive(request)),
+      attach: (request) => onCall(organizationEngagementMutations.attach(request)),
+      unarchive: (request) => onCall(organizationEngagementMutations.unarchive(request)),
     },
     organizationEngagementProfile: {
-      execute: (request) =>
-        contactsClient.organizationEngagementProfile.execute(request).pipe(onCall),
+      execute: (request) => onCall(contactsClient.organizationEngagementProfile.execute(request)),
     },
     personEngagementMutations: {
-      archive: (request) => personEngagementMutations.archive(request).pipe(onCall),
-      attach: (request) => personEngagementMutations.attach(request).pipe(onCall),
-      unarchive: (request) => personEngagementMutations.unarchive(request).pipe(onCall),
+      archive: (request) => onCall(personEngagementMutations.archive(request)),
+      attach: (request) => onCall(personEngagementMutations.attach(request)),
+      unarchive: (request) => onCall(personEngagementMutations.unarchive(request)),
     },
     personEngagementProfile: {
-      execute: (request) => contactsClient.personEngagementProfile.execute(request).pipe(onCall),
+      execute: (request) => onCall(contactsClient.personEngagementProfile.execute(request)),
     },
   };
 };
 
+/** Reuse the shared schema client with this caller's transport and per-operation deadline. */
 export const createContactsClient = (
   options: ContactsClientOptions = {},
-): ContactsClientEffect<ContactsClient> => Effect.succeed(bindCall(callTransport(options)));
+): ContactsClientEffect<ContactsDeadlineClient> =>
+  Effect.succeed(bindCall(callTransport(options), deadlineOf(options)));
 
 const invoke = <Success, Failure>(
   options: ContactsOperationOptions,
@@ -232,10 +244,8 @@ const invoke = <Success, Failure>(
         CurrentContactsCall,
         callTransport({ ...options, operationContext }, authentication),
       ),
-      // One deadline over request and decode. `TimeoutError` is none of the declared Contacts
-      // problems, so a timed-out write reports an unknown commit rather than a known failure; the
-      // request is interrupted and never re-issued here, because re-issuing a side effect is the
-      // caller's decision (the idempotency key it already supplied is what makes that safe).
+      // Gateway acquisition has its own budget. This deadline covers request + decode;
+      // a timed-out write has an unknown commit outcome and is never replayed here.
       Effect.timeout(deadlineOf(options)),
     );
   }, options.gateway);

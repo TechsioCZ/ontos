@@ -269,6 +269,99 @@ test('expires the whole-operation deadline on a stalled body without a second at
   assert.deepEqual(aborts, attempts);
 });
 
+interface StallRecorder {
+  readonly aborts: string[];
+  readonly attempts: string[];
+  readonly fetch: typeof globalThis.fetch;
+}
+
+/** Headers arrive, the body never finishes: the stall a connect-only timeout misses. */
+const stalledBodyRecorder = (): StallRecorder => {
+  const aborts: string[] = [];
+  const attempts: string[] = [];
+  return {
+    aborts,
+    attempts,
+    fetch: async (input, init) => {
+      const url = urlOf(input);
+      attempts.push(url);
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"status":'));
+          init?.signal?.addEventListener('abort', () => {
+            aborts.push(url);
+            controller.error(new DOMException('The operation was aborted.', 'AbortError'));
+          });
+        },
+      });
+      return new Response(stream, {
+        headers: { 'content-type': 'application/json' },
+        status: 200,
+      });
+    },
+  };
+};
+
+/** No response at all. Settling on abort keeps no rejected promise of the test's own alive. */
+const stalledFetchRecorder = (): StallRecorder => {
+  const aborts: string[] = [];
+  const attempts: string[] = [];
+  return {
+    aborts,
+    attempts,
+    fetch: async (input, init) => {
+      const url = urlOf(input);
+      attempts.push(url);
+      const pending = Promise.withResolvers<Response>();
+      init?.signal?.addEventListener('abort', () => {
+        aborts.push(url);
+        pending.resolve(new Response(null, { status: 499 }));
+      });
+      return await pending.promise;
+    },
+  };
+};
+
+/**
+ * The factory hands the client to a caller that runs its operations on a fiber of its own, so an
+ * operation that is not already bound to the requested deadline has nowhere left to acquire one:
+ * `options` is gone by then. Both stall shapes are asserted through the same returned operation,
+ * because the leg being bounded is the request *and* its decode — and the attempt counter is what
+ * proves expiry interrupts rather than re-issues.
+ */
+test(
+  'binds the requested deadline to the operations createContactsClient returns',
+  { timeout: 5000 },
+  async () => {
+    for (const [shape, makeStall] of [
+      ['stalled body', stalledBodyRecorder],
+      ['stalled fetch', stalledFetchRecorder],
+    ] as const) {
+      const stall = makeStall();
+      const outcome = await withStubbedLocation(async () => {
+        const { createContactsClient } = await import('../../src/api/contacts-client.ts');
+        return await Effect.runPromise(
+          createContactsClient({ timeoutMs: 25 }).pipe(
+            Effect.flatMap((client) => client.foundation.readiness({})),
+            Effect.as('completed' as const),
+            Effect.catchTag('TimeoutError', () => Effect.succeed('timed-out' as const)),
+            Effect.catchCause(() => Effect.succeed('other-failure' as const)),
+            Effect.provideService(FetchHttpClient.Fetch, stall.fetch),
+          ),
+        );
+      });
+
+      assert.equal(outcome, 'timed-out', shape);
+      assert.deepEqual(
+        stall.attempts,
+        [contactsUrl('https://shell.example', '/contacts/readiness')],
+        shape,
+      );
+      assert.deepEqual(stall.aborts, stall.attempts, shape);
+    }
+  },
+);
+
 /** The same deadline must also cover a request that never produces a response at all. */
 test('expires the whole-operation deadline on a stalled fetch without a second attempt', async () => {
   const attempts: string[] = [];
