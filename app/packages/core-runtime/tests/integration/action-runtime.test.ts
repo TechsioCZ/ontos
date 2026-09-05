@@ -1130,7 +1130,11 @@ void test('keeps Policy rejection terminal and deduplicates repeated and concurr
           if (concurrentEvaluations === 2) {
             yield* Deferred.succeed(bothPoliciesReached, null);
           }
-          yield* Deferred.await(bothPoliciesReached).pipe(Effect.timeout('3 seconds'));
+          // A missed test rendezvous is a fixture defect, not a Policy outcome.
+          yield* Deferred.await(bothPoliciesReached).pipe(
+            Effect.timeout('3 seconds'),
+            Effect.orDie,
+          );
           return yield* denyPolicy('concurrent_rejection', 'Concurrent request rejected');
         }),
       policyKey: 'global.concurrent-rejection.v1',
