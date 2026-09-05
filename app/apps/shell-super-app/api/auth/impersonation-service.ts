@@ -1,5 +1,5 @@
 // @effect-diagnostics asyncFunction:off globalDateInEffect:off
-/* eslint-disable max-classes-per-file, unicorn/no-array-method-this-argument -- Support impersonation orchestration and typed Effect failures share one Auth service boundary. */
+/* eslint-disable max-classes-per-file -- Support impersonation orchestration and typed Effect failures share one Auth service boundary. */
 import type {
   ActionRuntimeService,
   PrincipalResolverService,

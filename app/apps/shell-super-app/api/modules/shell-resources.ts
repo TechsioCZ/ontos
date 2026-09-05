@@ -1,5 +1,5 @@
 // @effect-diagnostics anyUnknownInErrorContext:off catchUnfailableEffect:off effectSucceedWithVoid:off schemaSyncInEffect:off unnecessaryPipeChain:off
-/* eslint-disable complexity, max-classes-per-file, no-negated-condition, react-doctor/js-combine-iterations, react-doctor/js-set-map-lookups, unicorn/no-array-method-this-argument, unicorn/no-negated-condition -- Search/resource/media orchestration keeps its closed gate ordering visible in one module; provider and authorization batches are bounded by the installed catalog. */
+/* eslint-disable complexity, max-classes-per-file, no-negated-condition, react-doctor/js-combine-iterations, react-doctor/js-set-map-lookups, unicorn/no-negated-condition -- Search/resource/media orchestration keeps its closed gate ordering visible in one module; provider and authorization batches are bounded by the installed catalog. */
 import type {
   ContextAccessResult,
   ContextAccessService,

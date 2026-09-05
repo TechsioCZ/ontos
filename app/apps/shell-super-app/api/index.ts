@@ -1,5 +1,5 @@
 // @effect-diagnostics missedPipeableOpportunity:off
-/* eslint-disable complexity, no-nested-ternary, no-use-before-define, prefer-destructuring, unicorn/consistent-function-scoping, unicorn/no-array-for-each, unicorn/no-array-method-this-argument -- Typed Shell handlers keep their closed Problem Details mapping and Effect traversal visible. */
+/* eslint-disable complexity, no-nested-ternary, no-use-before-define, prefer-destructuring, unicorn/consistent-function-scoping, unicorn/no-array-for-each -- Typed Shell handlers keep their closed Problem Details mapping and Effect traversal visible. */
 import {
   Cookies,
   defineEffectBff,
