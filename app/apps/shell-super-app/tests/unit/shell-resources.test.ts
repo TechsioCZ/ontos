@@ -297,7 +297,7 @@ for (const phase of ['permission', 'assertion', 'provider'] as const) {
                   if (phase === 'assertion') {
                     yield* block(index);
                   }
-                  return `Bearer ${index}`;
+                  return Redacted.make(`Bearer ${index}`);
                 }),
             },
             {
@@ -305,7 +305,8 @@ for (const phase of ['permission', 'assertion', 'provider'] as const) {
                 Effect.gen(function* () {
                   providerCalls += 1;
                   const index = providerKeys.indexOf(searchKey);
-                  expect(authorization).toBe(`Bearer ${index}`);
+                  expect(Redacted.isRedacted(authorization)).toBe(true);
+                  expect(Redacted.value(authorization)).toBe(`Bearer ${index}`);
                   if (phase === 'provider') {
                     yield* block(index);
                   }
