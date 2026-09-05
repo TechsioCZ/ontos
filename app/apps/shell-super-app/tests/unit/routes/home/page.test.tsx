@@ -41,6 +41,7 @@ const translations = new Map(
     'shell.dashboard.tenant.failed': 'Tenant switching failed',
     'shell.dashboard.tenant.pending': 'Switching tenant',
     'shell.dashboard.tenant.unavailable': 'Tenants unavailable',
+    'shell.modules.discovery.timeout': 'Module deployment timed out',
     'shell.modules.state.active': 'Active',
     'shell.modules.state.readOnly': 'Read only',
     'shell.modules.unavailable': 'Module access unavailable',
@@ -79,8 +80,6 @@ const authenticatedModel = (): HomePageModel => ({
   identity: {
     displayName: 'Ada Lovelace',
     email: 'ada@example.test',
-    legalEntityId: 'legal-1',
-    legalName: 'Alpha company',
     principalId: 'principal-1',
     tenantId: 'tenant-1',
   },
@@ -107,6 +106,7 @@ const authenticatedModel = (): HomePageModel => ({
       },
     ],
     state: 'available',
+    unavailableDeployments: [],
   },
   selectedLegalEntityId: 'legal-1',
   state: 'authenticated',
@@ -120,9 +120,9 @@ const authenticatedModel = (): HomePageModel => ({
 });
 
 beforeEach(() => {
-  navigateMock.mockResolvedValue();
-  runEffectRequestMock.mockImplementation((effect: Effect.Effect<unknown, unknown>) =>
-    Effect.runPromise(effect),
+  navigateMock.mockResolvedValue(undefined);
+  runEffectRequestMock.mockImplementation(
+    async (effect: Effect.Effect<unknown, unknown>) => await Effect.runPromise(effect),
   );
   signOutMock.mockReturnValue(Effect.succeed({ signedOut: true }));
   switchTenantMock.mockReturnValue(Effect.succeed({ selectedTenantId: 'tenant-2' }));

@@ -14,6 +14,7 @@ import type { PartyCandidate } from '../../shared/domain/identity-contracts.ts';
 import { previewPartyMatch } from '../services/party-matching-persistence.service.ts';
 
 export const partyMatchEntrypoint = defineTenantModuleEntrypoint({
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   access: 'read',
   entrypointKey: 'party.registry.api.party-match',
   moduleKey: 'party.registry',

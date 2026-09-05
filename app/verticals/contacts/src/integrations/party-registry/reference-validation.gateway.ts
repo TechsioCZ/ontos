@@ -199,7 +199,7 @@ export const validatePartyRegistryReferences = (
       });
     }
     if (refs.counterpartyRef === undefined) {
-      return;
+      return yield* Effect.void;
     }
     const counterparty = yield* operations.readCounterparty(refs.counterpartyRef);
     if (
@@ -220,6 +220,7 @@ export const validatePartyRegistryReferences = (
         reason: 'An explicit commercial context requires a current CUSTOMER role',
       });
     }
+    return yield* Effect.void;
   });
 
 const usableBaseUrl = (url: URL) =>

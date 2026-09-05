@@ -77,15 +77,20 @@ It must preserve owner-local validation, Permission, Business Policy, Action, au
 
 ## Customer Configuration and implementations
 
-Customer Configuration declaratively selects permitted modules and explicit implementations:
+This section defines accepted target selection semantics. Current V0 supports one implicit
+`standard` implementation per `moduleId`; it does not yet serialize or select `implementationId`.
 
 - `moduleId` is the Module Contract Identity and owns public capability semantics.
 - `implementationId` identifies one catalogued executable implementation, for example `standard` or `akros`.
 - `appId` remains the independently deployable topology identity and exact gateway audience.
 
-Two implementations may share `moduleId` only while public semantics and compatibility contract remain the same. Different semantics require a different `moduleId`. Every implementation records immutable build revision/digest, public-contract hash/version, migration set, owner, health, and readiness. The catalog rejects missing, duplicate, ambiguous, incompatible, or invisible implementation identities.
-
-This identity/selection model is accepted target architecture. The current generated manifest and Installed Module Catalog do not yet implement `implementationId`; they support one implicit `standard` implementation per `moduleId`. Do not hand-author fields or customer branches as a substitute. Extend Codesmith, Effect Schemas, serialized contracts, topology/allowlist validation, Customer Configuration resolution, and tests as one change before adding an alternative.
+Once that target contract exists, two implementations may share `moduleId` only while public
+semantics and compatibility remain the same. Different semantics require a different `moduleId`.
+Each implementation records immutable build revision/digest, public-contract hash/version, migration
+set, owner, health, and readiness; the catalog rejects missing, duplicate, ambiguous, incompatible,
+or invisible implementation identities. Implement the target only by extending Codesmith, Effect
+Schemas, serialized contracts, topology/allowlist validation, Customer Configuration resolution,
+and tests together. Do not hand-author fields or customer branches as a substitute.
 
 Prefer shared behavior plus Business Policy. Add an implementation alternative only when an ordinary reusable capability cannot express the required behavior without distorting its contract. Never patch an implementation per customer under the same identity, and never move the exception into Shell/Core.
 
@@ -109,7 +114,8 @@ Before production activation, prove:
 - approved Purchase Proposal Revisions cannot bypass Approval Revalidation or Order Commitment Gate;
 - the Medusa facade matches its declared subset and native clients do not depend on it accidentally;
 - dependency failures produce typed partial degradation without unrelated outage;
-- Customer Configuration resolves one permitted, healthy implementation for every selected contract;
+- once explicit alternatives exist, Customer Configuration resolves one permitted, healthy
+  implementation for every selected contract;
 - contract/build skew is rejected and canary/rollback identifies exact artifacts;
 - Party/Counterparty linking and lifecycle events contain no credentials or cross-Tenant leakage; and
 - every Integration Route demonstrates idempotency, retry, reconciliation, observability, and recovery.

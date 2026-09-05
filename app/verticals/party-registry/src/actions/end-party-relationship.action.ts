@@ -111,6 +111,7 @@ export const endPartyRelationshipAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'party.registry.end-party-relationship',
       moduleKey: 'party.registry',
       role: 'action',

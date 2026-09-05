@@ -9,7 +9,8 @@ import { Select } from '@techsio/ui-kit/molecules/select';
 import { SearchForm } from '@techsio/ui-kit/molecules/search-form';
 import { Header } from '@techsio/ui-kit/organisms/header';
 import { useEffect, useState } from 'react';
-import type { FormEvent, ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import type { ShellUnavailableDeployment } from '../../shared/api.ts';
 
 interface DashboardAccount {
   readonly displayName: string;
@@ -35,20 +36,20 @@ interface DashboardLegalEntityItem {
 }
 
 export interface AuthenticatedDashboardLayoutProps {
-  readonly navigation: readonly DashboardNavigationItem[];
   readonly children: ReactNode;
-  readonly currentModuleId?: string;
   readonly currentLegalEntityId?: string;
+  readonly currentModuleId?: string;
   readonly currentTenantId: string;
-  readonly identity: DashboardAccount;
   readonly homeCurrent?: boolean;
-  readonly logoutPending: boolean;
+  readonly identity: DashboardAccount;
   readonly legalEntityChoices: readonly DashboardLegalEntityItem[];
   readonly legalEntityState: 'available' | 'unavailable';
   readonly legalEntitySwitchFailed: boolean;
   readonly legalEntitySwitchPending: boolean;
-  readonly onLogout: () => void;
+  readonly logoutPending: boolean;
+  readonly navigation: readonly DashboardNavigationItem[];
   readonly onLegalEntityChange: (legalEntityId: string) => void;
+  readonly onLogout: () => void;
   readonly onSearch: (query: string) => void;
   readonly onTenantChange: (tenantId: string) => void;
   readonly tenantChoices: readonly DashboardTenantItem[];
@@ -56,23 +57,24 @@ export interface AuthenticatedDashboardLayoutProps {
   readonly tenantSwitchFailed: boolean;
   readonly tenantSwitchPending: boolean;
   readonly title?: string;
+  readonly unavailableDeployments: readonly ShellUnavailableDeployment[];
 }
 
 export const AuthenticatedDashboardLayout = ({
-  navigation,
   children,
-  currentModuleId,
   currentLegalEntityId,
+  currentModuleId,
   currentTenantId,
-  identity,
   homeCurrent = true,
-  logoutPending,
+  identity,
   legalEntityChoices,
   legalEntityState,
   legalEntitySwitchFailed,
   legalEntitySwitchPending,
-  onLogout,
+  logoutPending,
+  navigation,
   onLegalEntityChange,
+  onLogout,
   onSearch,
   onTenantChange,
   tenantChoices,
@@ -80,6 +82,7 @@ export const AuthenticatedDashboardLayout = ({
   tenantSwitchFailed,
   tenantSwitchPending,
   title,
+  unavailableDeployments,
 }: AuthenticatedDashboardLayoutProps) => {
   const { t } = useModernI18n();
   const [searchValue, setSearchValue] = useState('');
@@ -237,7 +240,7 @@ export const AuthenticatedDashboardLayout = ({
           )}
         </Select>
         <SearchForm
-          onSubmit={(event: FormEvent<HTMLFormElement>) => {
+          onSubmit={(event) => {
             event.preventDefault();
             const query = searchValue.trim();
             if (query.length > 0) {
@@ -279,7 +282,7 @@ export const AuthenticatedDashboardLayout = ({
                     {module.label}
                   </Link>
                 ) : (
-                  <span aria-disabled="true">{module.label}</span>
+                  <span>{module.label}</span>
                 )}
                 {module.state === 'read_only' ? (
                   <Badge size="sm" variant="warning">
@@ -296,6 +299,21 @@ export const AuthenticatedDashboardLayout = ({
                     {t('shell.modules.unavailable')}
                   </StatusText>
                 ) : null}
+              </li>
+            ))}
+            {unavailableDeployments.map((deployment) => (
+              <li
+                className="shell:flex shell:flex-wrap shell:items-center shell:gap-2"
+                key={deployment.appId}
+              >
+                <span>{deployment.appId}</span>
+                <StatusText showIcon size="sm" status="warning">
+                  {t(
+                    `shell.modules.discovery.${
+                      deployment.status === 'unavailable' ? deployment.reason : deployment.status
+                    }`,
+                  )}
+                </StatusText>
               </li>
             ))}
           </ul>

@@ -10,6 +10,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'shell.seo.description',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'authenticated_principal' },
       entrypointKey: 'shell-super-app.page.home',
       moduleKey: 'shell-super-app',
       role: 'page',
@@ -33,6 +34,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'shell.moduleTarget.seoDescription',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'authenticated_principal' },
       entrypointKey: 'shell-super-app.page.contacts-contacts',
       moduleKey: 'shell-super-app',
       role: 'page',
@@ -56,6 +58,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'shell.moduleTarget.seoDescription',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'authenticated_principal' },
       entrypointKey: 'shell-super-app.page.contacts-customers-list',
       moduleKey: 'shell-super-app',
       role: 'page',
@@ -79,6 +82,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'shell.moduleTarget.seoDescription',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'authenticated_principal' },
       entrypointKey: 'shell-super-app.page.contacts-customer-detail',
       moduleKey: 'shell-super-app',
       role: 'page',
@@ -102,6 +106,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'shell.moduleTarget.seoDescription',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'authenticated_principal' },
       entrypointKey: 'shell-super-app.page.contacts-contact-detail',
       moduleKey: 'shell-super-app',
       role: 'page',
@@ -125,6 +130,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'shell.moduleTarget.seoDescription',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'authenticated_principal' },
       entrypointKey: 'shell-super-app.page.contacts-contact-edit',
       moduleKey: 'shell-super-app',
       role: 'page',
@@ -148,6 +154,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'shell.moduleTarget.seoDescription',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'authenticated_principal' },
       entrypointKey: 'shell-super-app.page.contacts-contact-create',
       moduleKey: 'shell-super-app',
       role: 'page',
@@ -171,6 +178,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'shell.moduleTarget.seoDescription',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'authenticated_principal' },
       entrypointKey: 'shell-super-app.page.contacts-customer-edit',
       moduleKey: 'shell-super-app',
       role: 'page',
@@ -194,6 +202,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'shell.moduleTarget.seoDescription',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'authenticated_principal' },
       entrypointKey: 'shell-super-app.page.contacts-customer-create',
       moduleKey: 'shell-super-app',
       role: 'page',
@@ -217,6 +226,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'shell.login.seo.description',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'public' },
       entrypointKey: 'shell-super-app.page.login',
       moduleKey: 'shell-super-app',
       role: 'page',
@@ -240,6 +250,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'shell.moduleTarget.seoDescription',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'authenticated_principal' },
       entrypointKey: 'shell-super-app.page.module-target',
       moduleKey: 'shell-super-app',
       role: 'page',
@@ -263,6 +274,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'shell.resource.seoDescription',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'authenticated_principal' },
       entrypointKey: 'shell-super-app.page.resource-detail',
       moduleKey: 'shell-super-app',
       role: 'page',
@@ -286,6 +298,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'shell.search.seoDescription',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'authenticated_principal' },
       entrypointKey: 'shell-super-app.page.search',
       moduleKey: 'shell-super-app',
       role: 'page',

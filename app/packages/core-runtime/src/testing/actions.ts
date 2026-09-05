@@ -1,3 +1,5 @@
+/* oxlint-disable sonarjs/no-nested-functions, typescript/no-unsafe-type-assertion, typescript/return-await, typescript/strict-void-return */
+// @effect-diagnostics asyncFunction:off
 import { randomUUID } from 'node:crypto';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { DateTime, Deferred, Effect, Layer, Schema } from 'effect';
@@ -42,9 +44,9 @@ export interface ActionTestServiceBinding {
 }
 
 export const bindActionTestServices = <
-  Payload extends Schema.ConstraintDecoder<unknown, never>,
-  Result extends Schema.ConstraintDecoder<unknown, never>,
-  DomainError extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
+  Payload extends Schema.ConstraintDecoder<unknown>,
+  Result extends Schema.ConstraintDecoder<unknown>,
+  DomainError extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
   Events extends DomainEventContractMap,
   Owner extends string,
   Services,
@@ -67,25 +69,25 @@ export interface ActionTestHarnessOptions {
   readonly actionPermission?: ContextAccessDecision;
   /** Persist the first commit, then simulate a database connection losing its acknowledgement. */
   readonly commitAcknowledgement?: 'indeterminate-once';
-  readonly tenantPermission?: ContextAccessDecision;
-  readonly legalEntityPermission?: ContextAccessDecision;
-  readonly resourcePermission?: ContextAccessDecision;
   readonly legalEntityAccess?: ContextAccessDecision;
+  readonly legalEntityPermission?: ContextAccessDecision;
   readonly moduleState?: TenantModuleState;
+  readonly resourcePermission?: ContextAccessDecision;
   readonly scope?: 'active' | 'denied' | 'unavailable';
   readonly services?: readonly ActionTestServiceBinding[];
+  readonly tenantPermission?: ContextAccessDecision;
 }
 
 export interface ActionTestInvocation extends ActionInvocationRecord {
   readonly actionKey: string;
-  readonly tenantId: string;
-  readonly principalId: string;
   readonly idempotencyKey: string | undefined;
+  readonly principalId: string;
+  readonly tenantId: string;
 }
 
 export interface ActionTestSnapshot {
-  readonly invocations: readonly ActionTestInvocation[];
   readonly committed: readonly FlushActionSuccessInput[];
+  readonly invocations: readonly ActionTestInvocation[];
   readonly permissionDenials: readonly RejectPermissionDeniedInput[];
   readonly policyDenials: readonly FinalizeActionPolicyDenialInput[];
   readonly stages: readonly ActionRuntimeStage[];
@@ -226,19 +228,19 @@ export const makeActionTestHarness = (options: ActionTestHarnessOptions = {}) =>
 
   const pool = new Pool();
   Object.defineProperty(pool, 'connect', {
-    value: () => {
+    value: async () => {
       const previous = connectionQueue;
       const released = Deferred.makeUnsafe<null>();
       connectionQueue = Deferred.await(released).pipe(Effect.asVoid);
       return Effect.runPromise(
         Effect.gen(function* acquireTestConnection() {
           yield* previous;
-          const connectionContext = yield* Effect.context<never>();
+          const connectionContext = yield* Effect.context();
           let tenantId = '';
           let legalEntityId = '';
           pendingCommit = [];
           return {
-            query: <Query, Values>(query: Query, values?: Values) =>
+            query: async <Query, Values>(query: Query, values?: Values) =>
               Effect.runPromiseWith(connectionContext)(
                 Effect.gen(function* executeTestQuery() {
                   const decoded = yield* Schema.decodeUnknownEffect(querySchema)(query);
@@ -357,9 +359,9 @@ export const makeActionTestHarness = (options: ActionTestHarnessOptions = {}) =>
     (options.services ?? []).map((binding) => [binding[bindingRegistration], binding]),
   );
   const resolveServiceFactory: typeof getActionServiceFactory = <
-    PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
-    ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
-    DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
+    PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+    ResultSchema extends Schema.ConstraintDecoder<unknown>,
+    DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
     DomainEvents extends DomainEventContractMap,
     Owner extends string,
     Services,

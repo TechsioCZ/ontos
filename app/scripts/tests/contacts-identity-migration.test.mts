@@ -102,9 +102,13 @@ test('Contacts Core identity migration is preserving, scoped, rerunnable, and co
         JSON.stringify(payload),
       ];
       const placeholders = names.map((_, index) => `$${index + 1}`).join(', ');
+      const quotedNames = names.map((name) => `"${name}"`).join(', ');
+      const unrelatedPlaceholders = names
+        .map((_, index) => `$${index + names.length + 1}`)
+        .join(', ');
       await pool.query(
-        `insert into ${quotedSchema}."${table}" (${names.map((name) => `"${name}"`).join(', ')})
-         values (${placeholders}), (${names.map((_, index) => `$${index + names.length + 1}`).join(', ')})`,
+        `insert into ${quotedSchema}."${table}" (${quotedNames})
+         values (${placeholders}), (${unrelatedPlaceholders})`,
         [...oldValues, ...unrelatedValues],
       );
     }
@@ -178,7 +182,7 @@ test('Contacts Core identity migration is preserving, scoped, rerunnable, and co
               ('contacts-collision', 'tenant-c', $2, '{}'::jsonb, now())`,
       [legacyModule, contactsModule],
     );
-    await assert.rejects(() => pool.query(statements[0] ?? ''), /would collide/u);
+    await assert.rejects(async () => await pool.query(statements[0] ?? ''), /would collide/u);
     const collisionRows = await pool.query<{ module_key: string }>(
       `select module_key from ${quotedSchema}.tenant_module_states order by module_key`,
     );

@@ -113,7 +113,7 @@ test('owns only engagement profile tables and has no cross-vertical foreign keys
 test('contains no compatibility mapping, backfill, dual-write, or legacy identity ownership', async () => {
   const [schema, migration, packageJson] = await Promise.all([
     readFile(new URL('../../src/db/schema.ts', import.meta.url), 'utf-8'),
-    readFile(new URL('../../drizzle/0003_tranquil_old_lace.sql', import.meta.url), 'utf-8'),
+    readFile(new URL('../../drizzle/0004_furry_dormammu.sql', import.meta.url), 'utf-8'),
     readFile(new URL('../../package.json', import.meta.url), 'utf-8'),
   ]);
 
@@ -257,30 +257,31 @@ test('validates Party and Counterparty references through injected public operat
 test('allows non-commercial profiles and PERSON or UNRESOLVED person engagement', async () => {
   let counterpartyReads = 0;
   await Promise.all(
-    (['ORGANIZATION', 'PERSON', 'UNRESOLVED'] as const).map((partyType) =>
-      Effect.runPromise(
-        validatePartyRegistryReferences(
-          {
-            readCounterparty: (ref) => {
-              counterpartyReads += 1;
-              return Effect.succeed({
-                counterpartyRef: ref,
-                partyRef: organizationPartyRef,
-                roleTypes: [],
-              });
+    (['ORGANIZATION', 'PERSON', 'UNRESOLVED'] as const).map(
+      async (partyType) =>
+        await Effect.runPromise(
+          validatePartyRegistryReferences(
+            {
+              readCounterparty: (ref) => {
+                counterpartyReads += 1;
+                return Effect.succeed({
+                  counterpartyRef: ref,
+                  partyRef: organizationPartyRef,
+                  roleTypes: [],
+                });
+              },
+              readParty: (ref) =>
+                Effect.succeed({
+                  archived: false,
+                  partyRef: ref,
+                  partyType,
+                  requestedPartyRef: ref,
+                }),
             },
-            readParty: (ref) =>
-              Effect.succeed({
-                archived: false,
-                partyRef: ref,
-                partyType,
-                requestedPartyRef: ref,
-              }),
-          },
-          { partyRef: organizationPartyRef },
-          { expectedPartyType: partyType === 'ORGANIZATION' ? 'ORGANIZATION' : 'PERSON' },
+            { partyRef: organizationPartyRef },
+            { expectedPartyType: partyType === 'ORGANIZATION' ? 'ORGANIZATION' : 'PERSON' },
+          ),
         ),
-      ),
     ),
   );
   assert.equal(counterpartyReads, 0);

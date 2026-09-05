@@ -8,6 +8,7 @@ import {
 import { evaluateDisabledMergeReadiness } from '../merge/merge-readiness.ts';
 
 export const partyMergeReadinessEntrypoint = defineTenantModuleEntrypoint({
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   access: 'read',
   entrypointKey: 'party.registry.api.party-merge-readiness',
   moduleKey: 'party.registry',

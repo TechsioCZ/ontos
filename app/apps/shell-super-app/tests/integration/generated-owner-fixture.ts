@@ -1,4 +1,3 @@
-/* eslint-disable node/no-sync -- This test-only builder adapts generated disposable owner artifacts. */
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -163,6 +162,7 @@ const addResourceType = async (root: string): Promise<void> => {
           contributionKey: '${GENERATED_OWNER.moduleId}.detail.record',
           entrypoint: {
             access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
             entrypointKey: '${GENERATED_OWNER.moduleId}.api.resource-detail',
             moduleKey: '${GENERATED_OWNER.moduleId}',
             role: 'api',
@@ -183,6 +183,7 @@ const addResourceType = async (root: string): Promise<void> => {
           contributionKey: '${GENERATED_OWNER.moduleId}.timeline.record',
           entrypoint: {
             access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
             entrypointKey: '${GENERATED_OWNER.moduleId}.api.resource-list',
             moduleKey: '${GENERATED_OWNER.moduleId}',
             role: 'api',
@@ -279,6 +280,7 @@ import { makeOwnerRepository } from '../isolation/owner-repository.ts';
 
 export const resourceDetailEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: '${GENERATED_OWNER.moduleId}.api.resource-detail',
   moduleKey: '${GENERATED_OWNER.moduleId}',
   role: 'api',
@@ -332,6 +334,7 @@ import { makeOwnerRepository } from '../isolation/owner-repository.ts';
 
 export const resourceListEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: '${GENERATED_OWNER.moduleId}.api.resource-list',
   moduleKey: '${GENERATED_OWNER.moduleId}',
   role: 'api',
@@ -389,6 +392,7 @@ import { makeOwnerRepository } from '../isolation/owner-repository.ts';
 
 export const recordsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: '${GENERATED_OWNER.moduleId}.search.records',
   moduleKey: '${GENERATED_OWNER.moduleId}',
   role: 'search',
@@ -460,6 +464,7 @@ export const createRecordAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: '${GENERATED_OWNER.actionKey}',
       moduleKey: '${GENERATED_OWNER.moduleId}',
       role: 'action',
@@ -531,9 +536,9 @@ const adaptGeneratedOwner = async (root: string, schemaName: string): Promise<vo
 };
 
 export interface GeneratedOwnerFixture {
+  readonly dispose: () => Promise<void>;
   readonly root: string;
   readonly verticalRoot: string;
-  readonly dispose: () => Promise<void>;
 }
 
 export const createGeneratedOwnerFixture = async (
@@ -555,30 +560,63 @@ export const createGeneratedOwnerFixture = async (
         GENERATED_OWNER.slug,
         '--action',
         'create-record',
+        '--authorization',
+        'action_execution',
         '--legal-entity-scope',
         'required',
+        '--provisioning',
+        'tenant_membership_default',
       ],
       { workspaceRoot: root },
     );
     await runScaffold(
       'module-api',
-      ['--vertical', GENERATED_OWNER.slug, '--name', 'resource-detail'],
+      [
+        '--vertical',
+        GENERATED_OWNER.slug,
+        '--name',
+        'resource-detail',
+        '--authorization',
+        'context_permission',
+        '--permission',
+        'module.access',
+      ],
       { workspaceRoot: root },
     );
     await runScaffold(
       'module-api',
-      ['--vertical', GENERATED_OWNER.slug, '--name', 'resource-list'],
+      [
+        '--vertical',
+        GENERATED_OWNER.slug,
+        '--name',
+        'resource-list',
+        '--authorization',
+        'context_permission',
+        '--permission',
+        'module.access',
+      ],
       { workspaceRoot: root },
     );
     await runScaffold(
       'search-provider',
-      ['--vertical', GENERATED_OWNER.slug, '--name', 'records', '--resource', 'record'],
+      [
+        '--vertical',
+        GENERATED_OWNER.slug,
+        '--name',
+        'records',
+        '--resource',
+        'record',
+        '--authorization',
+        'context_permission',
+        '--permission',
+        'module.access',
+      ],
       { workspaceRoot: root },
     );
     await adaptGeneratedOwner(root, schemaName);
     await linkRuntimeDependencies(root);
     return {
-      dispose: () => rm(root, { force: true, recursive: true }),
+      dispose: async () => await rm(root, { force: true, recursive: true }),
       root,
       verticalRoot: path.join(root, 'verticals', GENERATED_OWNER.slug),
     };

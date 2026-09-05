@@ -21,7 +21,7 @@ import {
 } from '../../src/auth/system-principal-context.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
-test('standalone governed-read evidence permits no Action invocation and requires outcome fields', () => {
+void test('standalone governed-read evidence permits no Action invocation and requires outcome fields', () => {
   const config = getTableConfig(dataAccessEvents);
   const column = (name: string) => config.columns.find((candidate) => candidate.name === name);
   assert.equal(column('action_invocation_id')?.notNull, false);
@@ -30,7 +30,7 @@ test('standalone governed-read evidence permits no Action invocation and require
   assert.equal(column('outcome_code')?.notNull, true);
 });
 
-test('commits live allowed evidence before releasing a governed read result', async () => {
+void test('commits live allowed evidence before releasing a governed read result', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
   const admin = new Pool({ connectionString: connections.admin.connectionString });
   const runtimePool = new Pool({ connectionString: connections.runtime.connectionString });
@@ -44,6 +44,7 @@ test('commits live allowed evidence before releasing a governed read result', as
       accessKind: 'list',
       entrypoint: defineSystemModuleEntrypoint({
         access: 'read',
+        authorization: { kind: 'context_permission', permission: 'module.access' },
         entrypointKey: readKey,
         moduleKey: 'core.shell',
         role: 'api',

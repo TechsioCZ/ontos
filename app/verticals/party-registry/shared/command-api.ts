@@ -1,4 +1,4 @@
-/* eslint-disable import/no-duplicates, no-duplicate-imports, oxc/no-barrel-file -- Canonical public command contracts re-export schema-only Action payloads and results. */
+/* eslint-disable import/no-duplicates, no-duplicate-imports -- Canonical public command contracts re-export schema-only Action payloads and results. */
 import {
   HttpApi,
   HttpApiEndpoint,

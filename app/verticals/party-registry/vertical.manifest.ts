@@ -191,6 +191,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
           contributionKey: 'party.registry.search.counterparties',
           entrypoint: {
             access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
             entrypointKey: 'party.registry.search.counterparties',
             moduleKey: 'party.registry',
             role: 'search',
@@ -202,6 +203,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
           contributionKey: 'party.registry.search.parties',
           entrypoint: {
             access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
             entrypointKey: 'party.registry.search.parties',
             moduleKey: 'party.registry',
             role: 'search',

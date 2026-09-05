@@ -24,6 +24,7 @@ const lifecycleAction = defineAction(
     domainEvents: { 'test.counter.incremented.v1': Schema.Struct({ amount: Schema.Finite }) },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'test.counter.increment',
       moduleKey: 'test.counter',
       role: 'action',
@@ -109,6 +110,7 @@ test('substitutes typed owner services without replacing the private handler', a
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'test.service.increment',
         moduleKey: 'test.service',
         role: 'action',

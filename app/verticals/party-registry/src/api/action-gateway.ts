@@ -282,7 +282,6 @@ const validateRequest = (request: AresApplyRequest) => {
   );
 };
 
-// eslint-disable-next-line complexity -- one closed fact-route match prevents permissive fallthrough
 const matchesObservation = (
   selection: ExecutableSelection,
   observation: AresSubjectEvidence,

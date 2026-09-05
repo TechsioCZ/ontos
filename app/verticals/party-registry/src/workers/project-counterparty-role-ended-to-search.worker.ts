@@ -27,6 +27,7 @@ export const projectCounterpartyRoleEndedToSearchWorker = defineOutboxWorker(
     consumerModuleKey: 'party.registry',
     entrypoint: defineTenantModuleEntrypoint({
       access: 'background',
+      authorization: { kind: 'owner_local_background' },
       entrypointKey: 'party.registry.project-counterparty-role-ended-to-search',
       moduleKey: 'party.registry',
       role: 'worker',

@@ -1,3 +1,5 @@
+/* oxlint-disable typescript/return-await */
+// @effect-diagnostics asyncFunction:off
 /* eslint-disable promise/prefer-await-to-then -- Promises are used only at the Node process edge. */
 import { Config, Effect, Layer, ManagedRuntime, Option, Random } from 'effect';
 import { DatabaseConfigLive } from '../db/config.ts';
@@ -19,20 +21,16 @@ export interface RunOutboxWorkerProcessInput<
   Registration extends AnyOutboxWorkerRegistration = AnyOutboxWorkerRegistration,
 > {
   readonly claimOwnerPrefix: string;
+  readonly health?: boolean;
   readonly registrations: readonly Registration[];
   readonly subscriptions: readonly OutboxWorkerSubscription[];
-  readonly health?: boolean;
 }
 
 export interface StartOutboxWorkerProcessInput<
   Registration extends AnyOutboxWorkerRegistration,
   LayerError,
 > extends RunOutboxWorkerProcessInput<Registration> {
-  readonly layer: Layer.Layer<
-    OutboxRuntime | OutboxWorkerRequirements<Registration>,
-    LayerError,
-    never
-  >;
+  readonly layer: Layer.Layer<OutboxRuntime | OutboxWorkerRequirements<Registration>, LayerError>;
 }
 
 const waitForShutdownSignal = Effect.callback<ShutdownSignal>((resume) => {
@@ -125,5 +123,5 @@ export const startOutboxWorkerProcess = <
         process.exitCode = 1;
       },
     )
-    .finally(() => runtime.dispose());
+    .finally(async () => runtime.dispose());
 };

@@ -27,7 +27,7 @@ export const testOperationalScopeResolver: OperationalScopeResolverService = {
               ...principal,
               correlationId,
             },
-            !(traceId === undefined),
+            traceId !== undefined,
             'traceId',
             traceId,
             {},

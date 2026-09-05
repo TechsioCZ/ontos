@@ -2,7 +2,6 @@ import type {
   PartySubjectEvidence,
   PartyEvidenceEvaluation,
 } from '../../shared/domain/identity-contracts.ts';
-/* eslint-disable sort-keys -- Typed columns follow the authoritative physical schema order. */
 import {
   enableGovernedRls,
   tenantLegalEntityRlsPolicies,

@@ -3,6 +3,7 @@ import { HttpApi } from 'effect/unstable/httpapi';
 import type { AnyActionRegistration } from '../actions/definition.ts';
 import { isActionRegistration } from '../actions/definition.ts';
 import { TENANT_PERMISSION_KEYS } from '../permissions/context-access.ts';
+import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 import { OntosShellContributionsSchema, validateShellContributions } from './shell-contribution.ts';
 import type { OntosShellContributions } from './shell-contribution.ts';
 
@@ -59,6 +60,7 @@ export const OntosModuleActivationSchema = Schema.Struct({
 export const OntosActionContractSchema = Schema.Struct({
   actionKey: OntosModuleIdSchema,
   auditProfile: Schema.Literals(['minimal', 'sensitive', 'standard']),
+  entrypoint: ModuleEntrypointSchema,
   idempotency: Schema.Literals(['optional', 'required']),
   legalEntityScope: Schema.Literals(['forbidden', 'optional', 'required']),
   owningModuleId: OntosModuleIdSchema,
@@ -121,6 +123,7 @@ export const OntosOutboxSubscriptionContractSchema = Schema.Struct({
   consumerModuleKey: OntosModuleIdSchema,
   entrypoint: Schema.Struct({
     access: Schema.Literal('background'),
+    authorization: Schema.Struct({ kind: Schema.Literal('owner_local_background') }),
     entrypointKey: OntosModuleIdSchema,
     moduleKey: OntosModuleIdSchema,
     role: Schema.Literal('worker'),
@@ -181,10 +184,7 @@ export type OntosManifestActionValue = AnyActionRegistration;
 export type OntosManifestComponentValue = (...arguments_: never[]) => void;
 
 export interface OntosAuthoredPublicEvent<
-  PayloadSchema extends Schema.ConstraintDecoder<unknown, never> = Schema.ConstraintDecoder<
-    unknown,
-    never
-  >,
+  PayloadSchema extends Schema.ConstraintDecoder<unknown> = Schema.ConstraintDecoder<unknown>,
 > extends Omit<OntosPublicEventContract, 'payloadContract'> {
   readonly payloadSchema: PayloadSchema;
 }
@@ -209,7 +209,7 @@ export interface OntosModuleManifestInput {
 export type OntosModuleManifest<Input extends OntosModuleManifestInput = OntosModuleManifestInput> =
   Readonly<Input>;
 
-const exactDecode = <S extends Schema.ConstraintDecoder<unknown, never>, Value>(
+const exactDecode = <S extends Schema.ConstraintDecoder<unknown>, Value>(
   schema: S,
   value: Value,
 ): S['Type'] => Schema.decodeUnknownSync(schema, { onExcessProperty: 'error' })(value);

@@ -2,7 +2,12 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { ActionResultValidationError, ActionRuntime, ReadRuntime } from '@app/core-runtime';
+import {
+  ActionResultValidationError,
+  ActionRuntime,
+  GatewayAssertionRedemptionService,
+  ReadRuntime,
+} from '@app/core-runtime';
 import type { ActionRuntimeService } from '@app/core-runtime';
 import { ConfigProvider, Effect, Layer, Schema } from 'effect';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
@@ -55,9 +60,9 @@ test('authenticates before dispatch and lets Core replay committed attach withou
   };
   let invocations = 0;
   let networkCalls = 0;
-  context.mock.method(globalThis, 'fetch', () => {
+  context.mock.method(globalThis, 'fetch', async () => {
     networkCalls += 1;
-    return Promise.reject(new Error('Committed replay must not call Party Registry'));
+    throw new Error('Committed replay must not call Party Registry');
   });
   const actionRuntime: ActionRuntimeService = {
     resolveActionCommit: () => Effect.die('Commit resolution is not used by this fixture'),
@@ -84,6 +89,7 @@ test('authenticates before dispatch and lets Core replay committed attach withou
     Layer.succeed(ActionRuntime, actionRuntime),
     Layer.succeed(ReadRuntime, { runRead: () => Effect.die('Read is not used by this fixture') }),
     ConfigProvider.layer(ConfigProvider.fromUnknown(environment)),
+    Layer.succeed(GatewayAssertionRedemptionService, { consume: () => Effect.void }),
   ).createHandler();
   const request = (authorization?: string) => {
     const headers = new Headers({

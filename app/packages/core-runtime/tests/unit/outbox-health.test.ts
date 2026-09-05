@@ -1,3 +1,5 @@
+/* oxlint-disable typescript/return-await */
+// @effect-diagnostics asyncFunction:off
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ConfigProvider, Effect, Layer, Result } from 'effect';
@@ -6,7 +8,7 @@ import { createOutboxWorkerHealth, serveOutboxWorkerHealth } from '../../src/out
 import { runOutboxWorkerProcess } from '../../src/outbox/process.ts';
 import { OutboxRuntime } from '../../src/outbox/runtime.ts';
 
-test('production health binds all IPv4 interfaces for external-container probes', () =>
+test('production health binds all IPv4 interfaces for external-container probes', async () =>
   Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* externallyReachableHealth() {
@@ -17,7 +19,7 @@ test('production health binds all IPv4 interfaces for external-container probes'
     ),
   ));
 
-test('readiness starts false, follows successful/failing cycles, expires, and closes on shutdown', () => {
+test('readiness starts false, follows successful/failing cycles, expires, and closes on shutdown', async () => {
   let now = 1000;
   return Effect.runPromise(
     Effect.scoped(
@@ -51,7 +53,7 @@ test('readiness starts false, follows successful/failing cycles, expires, and cl
   );
 });
 
-test('closing the health scope marks it unavailable and releases its dynamically allocated port', () =>
+test('closing the health scope marks it unavailable and releases its dynamically allocated port', async () =>
   Effect.runPromise(
     Effect.gen(function* releasedPort() {
       const health = yield* createOutboxWorkerHealth({ staleAfterMs: 5000 });
@@ -63,7 +65,7 @@ test('closing the health scope marks it unavailable and releases its dynamically
     }),
   ));
 
-test('a health port already in use produces a typed server startup failure', () =>
+test('a health port already in use produces a typed server startup failure', async () =>
   Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* occupiedPort() {
@@ -78,7 +80,7 @@ test('a health port already in use produces a typed server startup failure', () 
     ),
   ));
 
-test('invalid configured health ports fail startup with a typed configuration error before polling', () =>
+test('invalid configured health ports fail startup with a typed configuration error before polling', async () =>
   Effect.runPromise(
     Effect.gen(function* invalidPortConfiguration() {
       for (const port of ['0', '65536', '4102.5', 'invalid']) {

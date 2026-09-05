@@ -34,6 +34,8 @@ const access = (
   modules: ({ moduleIds }) =>
     Effect.succeed(moduleIds.map((key) => ({ decision: 'denied' as const, key }))),
   resources: () => Effect.succeed([]),
+  tenants: ({ tenantIds }) =>
+    Effect.succeed(tenantIds.map((key) => ({ decision: 'denied' as const, key }))),
 });
 
 test('auto-selects the only authorized entity and preserves an exact saved choice', async () => {

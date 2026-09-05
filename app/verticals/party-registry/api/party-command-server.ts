@@ -1,4 +1,4 @@
-/* eslint-disable complexity, promise/prefer-await-to-callbacks, promise/prefer-await-to-then, sort-keys, unicorn/switch-case-braces -- The typed Effect Action transport deliberately keeps every closed error mapping visible. */
+/* eslint-disable complexity, promise/prefer-await-to-callbacks, promise/prefer-await-to-then, unicorn/switch-case-braces -- The typed Effect Action transport deliberately keeps every closed error mapping visible. */
 import { ActionRuntime } from '@app/core-runtime';
 import type {
   ActionCoreError,

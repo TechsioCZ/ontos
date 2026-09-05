@@ -1,4 +1,3 @@
-/* eslint-disable typescript/no-non-null-assertion -- The synthetic catalog fixture always installs its single declared contract. */
 import { expect, test } from '@rstest/core';
 import { buildInstalledModuleCatalog } from '@app/core-runtime';
 import type {
@@ -36,6 +35,10 @@ const tenantContext = {
 const ref = { moduleId, resourceId: 'unit-1', resourceType } as const;
 const entrypoint = (role: 'api' | 'search', access: 'read' | 'write' = 'read') => ({
   access,
+  authorization: {
+    kind: 'context_permission' as const,
+    permission: access === 'write' ? 'resource_write' : 'resource_read',
+  },
   entrypointKey: `${moduleId}.${role}.${access}`,
   moduleKey: moduleId,
   role,
@@ -74,6 +77,17 @@ const catalog = (): InstalledModuleCatalog =>
               {
                 actionKey: 'property.registry.attach-media',
                 auditProfile: 'standard',
+                entrypoint: {
+                  access: 'write',
+                  authorization: {
+                    kind: 'action_execution',
+                    provisioning: 'tenant_membership_default',
+                  },
+                  entrypointKey: 'property.registry.attach-media',
+                  moduleKey: moduleId,
+                  role: 'action',
+                  scope: 'tenant',
+                },
                 idempotency: 'required',
                 legalEntityScope: 'required',
                 owningModuleId: moduleId,
@@ -236,7 +250,10 @@ test('search filters resource denials and reports partial provider failure', asy
   expect(result).toEqual({ partial: false, results: [] });
 
   const installed = catalog();
-  const contract = installed.contracts[0]!;
+  const [contract] = installed.contracts;
+  if (contract === undefined) {
+    throw new TypeError('The search fixture must install its module contract');
+  }
   const backupSearchKey = 'property.registry.backup-unit-search';
   const catalogWithBackupSearch = buildInstalledModuleCatalog([
     {
@@ -295,7 +312,14 @@ test('search filters resource denials and reports partial provider failure', asy
 
 test('tenant-scoped Party search needs no Legal Entity, forwards declared filters and preserves identity metadata', async () => {
   const installed = catalog();
-  const contract = installed.contracts[0]!;
+  const [contract] = installed.contracts;
+  if (contract === undefined) {
+    throw new Error('The test catalog must include one installed contract');
+  }
+  const [partyResourceDescriptor] = contract.manifest.publicSurface.resourceTypes;
+  if (partyResourceDescriptor === undefined) {
+    throw new Error('The test catalog must include one resource type');
+  }
   const partyResourceType = 'party.registry.party';
   const partySearchKey = 'party.registry.party-search';
   const partyModuleId = 'party.registry';
@@ -311,7 +335,7 @@ test('tenant-scoped Party search needs no Legal Entity, forwards declared filter
         api: [],
         resourceTypes: [
           {
-            ...contract.manifest.publicSurface.resourceTypes[0]!,
+            ...partyResourceDescriptor,
             key: partyResourceType,
             owningModuleId: partyModuleId,
           },
@@ -338,6 +362,7 @@ test('tenant-scoped Party search needs no Legal Entity, forwards declared filter
               contributionKey: 'party.registry.search.party',
               entrypoint: {
                 access: 'read' as const,
+                authorization: { kind: 'context_permission' as const, permission: 'module.access' },
                 entrypointKey: 'party.registry.search.party',
                 moduleKey: partyModuleId,
                 role: 'search' as const,
@@ -422,7 +447,10 @@ test('search fails only when every eligible provider fails', async () => {
 });
 
 test('Counterparty search preserves both identities, selected scope, roles and collision metadata', async () => {
-  const contract = catalog().contracts[0]!;
+  const [contract] = catalog().contracts;
+  if (contract === undefined) {
+    throw new Error('The test catalog must include one installed contract');
+  }
   const filteredCatalog = buildInstalledModuleCatalog([
     {
       contract: {

@@ -34,6 +34,7 @@ import { CounterpartyRefSchema } from '../../shared/resources/counterparty.ts';
 import { PartyRefSchema } from '../../shared/resources/party.ts';
 
 export const partiesEntrypoint = defineTenantModuleEntrypoint({
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   access: 'read',
   entrypointKey: 'party.registry.search.parties',
   moduleKey: 'party.registry',

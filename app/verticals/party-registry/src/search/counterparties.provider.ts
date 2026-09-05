@@ -22,6 +22,7 @@ import { PartySearchProjectionUnavailable } from '../../shared/domain/search-pro
 import { normalizeCounterpartySearchHits } from '../../shared/domain/search-semantics.ts';
 
 export const counterpartiesEntrypoint = defineTenantModuleEntrypoint({
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   access: 'read',
   entrypointKey: 'party.registry.search.counterparties',
   moduleKey: 'party.registry',

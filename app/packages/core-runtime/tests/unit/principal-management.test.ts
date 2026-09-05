@@ -15,40 +15,41 @@ const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
 const authBindingId = '30000000-0000-4000-8000-000000000001';
 
-const unconfigured = (operation: string) =>
-  Promise.reject(new Error(`${operation} is not configured in this test`));
+const unconfigured = async (operation: string) => {
+  throw new Error(`${operation} is not configured in this test`);
+};
 const repositoryDefaults: PrincipalManagementRepositoryService = {
-  createPrincipal: () => unconfigured('createPrincipal'),
-  insertApiKeyBinding: () => unconfigured('insertApiKeyBinding'),
-  loadApiKeyBinding: () => unconfigured('loadApiKeyBinding'),
-  loadPrincipal: () => unconfigured('loadPrincipal'),
-  loadSupportBindings: () => unconfigured('loadSupportBindings'),
-  updateApiKeyBindingStatus: () => unconfigured('updateApiKeyBindingStatus'),
-  updatePrincipalStatus: () => unconfigured('updatePrincipalStatus'),
+  createPrincipal: async () => await unconfigured('createPrincipal'),
+  insertApiKeyBinding: async () => await unconfigured('insertApiKeyBinding'),
+  loadApiKeyBinding: async () => await unconfigured('loadApiKeyBinding'),
+  loadPrincipal: async () => await unconfigured('loadPrincipal'),
+  loadSupportBindings: async () => await unconfigured('loadSupportBindings'),
+  updateApiKeyBindingStatus: async () => await unconfigured('updateApiKeyBindingStatus'),
+  updatePrincipalStatus: async () => await unconfigured('updatePrincipalStatus'),
 };
 const repository = (
   overrides: Partial<PrincipalManagementRepositoryService>,
 ): PrincipalManagementRepositoryService => ({ ...repositoryDefaults, ...overrides });
 const selectingPrincipal = (
   record: Awaited<ReturnType<PrincipalManagementRepositoryService['loadPrincipal']>>,
-) => repository({ loadPrincipal: () => Promise.resolve(record) });
+) => repository({ loadPrincipal: async () => record });
 const selectingBinding = (
   record: Awaited<ReturnType<PrincipalManagementRepositoryService['loadApiKeyBinding']>>,
-) => repository({ loadApiKeyBinding: () => Promise.resolve(record) });
+) => repository({ loadApiKeyBinding: async () => record });
 const repositoryForSupportParticipants = (
   results: readonly (readonly { readonly authBindingId: string }[])[],
 ) => {
   let call = 0;
   return repository({
-    loadSupportBindings: () => {
+    loadSupportBindings: async () => {
       const result = results[call] ?? [];
       call += 1;
-      return Promise.resolve(result);
+      return result;
     },
   });
 };
 
-test('rejects human principal administration and managed keys targeting humans', async () => {
+void test('rejects human principal administration and managed keys targeting humans', async () => {
   const transaction = selectingPrincipal({ kind: 'human', status: 'active' });
   const principalError = await Effect.runPromise(
     Effect.flip(
@@ -76,7 +77,7 @@ test('rejects human principal administration and managed keys targeting humans',
   assert.equal(bindingError._tag, 'IdentityTargetInvalidError');
 });
 
-test('enforces expected state, terminal revocation, and revocation reasons', async () => {
+void test('enforces expected state, terminal revocation, and revocation reasons', async () => {
   const conflictError = await Effect.runPromise(
     Effect.flip(
       setApiKeyBindingStatus(
@@ -142,7 +143,7 @@ test('enforces expected state, terminal revocation, and revocation reasons', asy
   assert.equal(reasonError._tag, 'IdentityTargetInvalidError');
 });
 
-test('rejects managed binding transitions for human or inactive targets', async () => {
+void test('rejects managed binding transitions for human or inactive targets', async () => {
   const records = [
     { bindingStatus: 'active', principalKind: 'human', principalStatus: 'active' },
     { bindingStatus: 'active', principalKind: 'service', principalStatus: 'disabled' },
@@ -166,16 +167,16 @@ test('rejects managed binding transitions for human or inactive targets', async 
   }
 });
 
-test('binds only eligible active self and managed principal kinds without secret material', async () => {
+void test('binds only eligible active self and managed principal kinds without secret material', async () => {
   let inserted:
     | Parameters<PrincipalManagementRepositoryService['insertApiKeyBinding']>[0]
     | undefined;
   const transaction = repository({
-    insertApiKeyBinding: (value) => {
+    insertApiKeyBinding: async (value) => {
       inserted = value;
-      return Promise.resolve({ authBindingId });
+      return { authBindingId };
     },
-    loadPrincipal: () => Promise.resolve({ kind: 'service', status: 'active' }),
+    loadPrincipal: async () => ({ kind: 'service', status: 'active' }),
   });
   const result = await Effect.runPromise(
     bindApiKey(transaction, {
@@ -193,15 +194,14 @@ test('binds only eligible active self and managed principal kinds without secret
   assert.equal('hash' in (inserted ?? {}), false);
 });
 
-test('maps wrapped PostgreSQL uniqueness failures to a lifecycle conflict', async () => {
+void test('maps wrapped PostgreSQL uniqueness failures to a lifecycle conflict', async () => {
   const transaction = repository({
-    insertApiKeyBinding: () =>
-      Promise.reject(
-        new Error('Drizzle query failed', {
-          cause: Object.assign(new Error('duplicate key'), { code: '23505' }),
-        }),
-      ),
-    loadPrincipal: () => Promise.resolve({ kind: 'service', status: 'active' }),
+    insertApiKeyBinding: async () => {
+      throw new Error('Drizzle query failed', {
+        cause: Object.assign(new Error('duplicate key'), { code: '23505' }),
+      });
+    },
+    loadPrincipal: async () => ({ kind: 'service', status: 'active' }),
   });
 
   const error = await Effect.runPromise(
@@ -218,7 +218,7 @@ test('maps wrapped PostgreSQL uniqueness failures to a lifecycle conflict', asyn
   assert.equal(error._tag, 'IdentityLifecycleConflictError');
 });
 
-test('requires exactly one active tenant-local user binding for both impersonation participants', async () => {
+void test('requires exactly one active tenant-local user binding for both impersonation participants', async () => {
   const original = [{ authBindingId }];
   const target = [{ authBindingId: '30000000-0000-4000-8000-000000000002' }];
   const input: Parameters<typeof validateSupportImpersonation>[1] = {

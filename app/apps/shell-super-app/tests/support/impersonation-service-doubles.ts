@@ -8,8 +8,9 @@ import type { AuthenticationServiceContract } from '../../api/auth/service.ts';
 
 const unconfiguredEffect = (operation: string) =>
   Effect.die(`${operation} is not configured in this test`);
-const unconfiguredPromise = (operation: string) =>
-  Promise.reject(new Error(`${operation} is not configured in this test`));
+const unconfiguredPromise = async (operation: string) => {
+  throw new Error(`${operation} is not configured in this test`);
+};
 
 const authenticationDefaults: AuthenticationServiceContract = {
   availableTenants: () => unconfiguredEffect('availableTenants'),
@@ -24,19 +25,19 @@ const authenticationDefaults: AuthenticationServiceContract = {
 };
 
 const providerDefaults: SupportAuthProvider['api'] = {
-  getSession: () => unconfiguredPromise('getSession'),
-  impersonateUser: () => unconfiguredPromise('impersonateUser'),
-  stopImpersonating: () => unconfiguredPromise('stopImpersonating'),
+  getSession: async () => await unconfiguredPromise('getSession'),
+  impersonateUser: async () => await unconfiguredPromise('impersonateUser'),
+  stopImpersonating: async () => await unconfiguredPromise('stopImpersonating'),
 };
 
 const storeDefaults: SupportImpersonationStore = {
-  deleteRecovery: () => unconfiguredPromise('deleteRecovery'),
-  deleteSession: () => unconfiguredPromise('deleteSession'),
-  insertRecovery: () => unconfiguredPromise('insertRecovery'),
-  loadExpiredRecovery: () => unconfiguredPromise('loadExpiredRecovery'),
-  loadOriginalSession: () => unconfiguredPromise('loadOriginalSession'),
-  loadRecoveries: () => unconfiguredPromise('loadRecoveries'),
-  updateImpersonationSession: () => unconfiguredPromise('updateImpersonationSession'),
+  deleteRecovery: async () => await unconfiguredPromise('deleteRecovery'),
+  deleteSession: async () => await unconfiguredPromise('deleteSession'),
+  insertRecovery: async () => await unconfiguredPromise('insertRecovery'),
+  loadExpiredRecovery: async () => await unconfiguredPromise('loadExpiredRecovery'),
+  loadOriginalSession: async () => await unconfiguredPromise('loadOriginalSession'),
+  loadRecoveries: async () => await unconfiguredPromise('loadRecoveries'),
+  updateImpersonationSession: async () => await unconfiguredPromise('updateImpersonationSession'),
 };
 
 const supportRecoveryDefaults: SupportRecoveryPrincipalContextResolverService = {

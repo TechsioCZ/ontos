@@ -188,48 +188,26 @@ export const createPersonEngagementProfile = (
     ),
   );
 
-const transition = <
-  Row extends OrganizationEngagementProfileRecord | PersonEngagementProfileRecord,
-  Value,
->(
-  transaction: ScopedTransaction,
-  table: typeof organizationEngagementProfiles | typeof personEngagementProfiles,
-  tenantId: string,
-  profileId: string,
+const transition = <Row extends { readonly archivedAt: Date | null }, Value>(
+  loadCurrent: () => PromiseLike<readonly Row[]>,
+  updateCurrent: (now: Date) => PromiseLike<readonly Row[]>,
   requestedState: 'active' | 'archived',
   toDto: (row: Row) => Value,
 ): Effect.Effect<LifecycleResult<Value>, EngagementProfilePersistenceUnavailable> =>
   Effect.gen(function* transitionProfile() {
-    const [current] = yield* attempt(() =>
-      transaction
-        .select()
-        .from(table)
-        .where(and(eq(table.tenantId, tenantId), eq(table.engagementProfileId, profileId)))
-        .limit(1)
-        .for('update'),
-    );
+    const [current] = yield* attempt(loadCurrent);
     if (current === undefined) {
       return { _tag: 'not_found' } as const;
     }
-    // SAFETY: the selected owner-local table and row mapper are paired by the two wrappers below.
-    const currentRow = current as Row;
-    if ((requestedState === 'archived') === (currentRow.archivedAt !== null)) {
-      return { _tag: 'conflict', value: toDto(currentRow) } as const;
+    if ((requestedState === 'archived') === (current.archivedAt !== null)) {
+      return { _tag: 'conflict', value: toDto(current) } as const;
     }
     const now = yield* DateTime.nowAsDate;
-    const [updated] = yield* attempt(() =>
-      transaction
-        .update(table)
-        .set({ archivedAt: requestedState === 'archived' ? now : null, updatedAt: now })
-        .where(and(eq(table.tenantId, tenantId), eq(table.engagementProfileId, profileId)))
-        .returning(),
-    );
+    const [updated] = yield* attempt(() => updateCurrent(now));
     if (updated === undefined) {
       return yield* unavailable();
     }
-    // SAFETY: returning() uses the same owner-local table and mapper as the selected current row.
-    const updatedRow = updated as Row;
-    return { _tag: 'found', value: toDto(updatedRow) } as const;
+    return { _tag: 'found', value: toDto(updated) } as const;
   });
 
 export const transitionOrganizationEngagementProfile = (
@@ -239,10 +217,29 @@ export const transitionOrganizationEngagementProfile = (
   state: 'active' | 'archived',
 ) =>
   transition(
-    transaction,
-    organizationEngagementProfiles,
-    tenantId,
-    profileId,
+    () =>
+      transaction
+        .select()
+        .from(organizationEngagementProfiles)
+        .where(
+          and(
+            eq(organizationEngagementProfiles.tenantId, tenantId),
+            eq(organizationEngagementProfiles.engagementProfileId, profileId),
+          ),
+        )
+        .limit(1)
+        .for('update'),
+    (now) =>
+      transaction
+        .update(organizationEngagementProfiles)
+        .set({ archivedAt: state === 'archived' ? now : null, updatedAt: now })
+        .where(
+          and(
+            eq(organizationEngagementProfiles.tenantId, tenantId),
+            eq(organizationEngagementProfiles.engagementProfileId, profileId),
+          ),
+        )
+        .returning(),
     state,
     organizationEngagementProfileFromRecord,
   );
@@ -252,7 +249,34 @@ export const transitionPersonEngagementProfile = (
   tenantId: string,
   profileId: string,
   state: 'active' | 'archived',
-) => transition(transaction, personEngagementProfiles, tenantId, profileId, state, personDto);
+) =>
+  transition(
+    () =>
+      transaction
+        .select()
+        .from(personEngagementProfiles)
+        .where(
+          and(
+            eq(personEngagementProfiles.tenantId, tenantId),
+            eq(personEngagementProfiles.engagementProfileId, profileId),
+          ),
+        )
+        .limit(1)
+        .for('update'),
+    (now) =>
+      transaction
+        .update(personEngagementProfiles)
+        .set({ archivedAt: state === 'archived' ? now : null, updatedAt: now })
+        .where(
+          and(
+            eq(personEngagementProfiles.tenantId, tenantId),
+            eq(personEngagementProfiles.engagementProfileId, profileId),
+          ),
+        )
+        .returning(),
+    state,
+    personDto,
+  );
 
 export const findOrganizationEngagementProfile = (
   transaction: ScopedTransaction,

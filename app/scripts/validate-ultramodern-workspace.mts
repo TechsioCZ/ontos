@@ -1937,7 +1937,7 @@ const workspaceValidationContract = {
         packageScope: 'app',
         packageManager: {
           name: 'pnpm',
-          version: '11.21.0',
+          version: '11.25.0',
         },
         node: {
           version: '26.5.0',
@@ -2392,7 +2392,7 @@ const workspaceValidationContract = {
     effect: '4.0.0-beta.107',
     moduleFederation: '2.8.0',
     node: '26.5.0',
-    pnpm: '11.17.0',
+    pnpm: '11.25.0',
   },
   tailwindEnabled: true,
   structuralShellPolicy: {
@@ -2768,7 +2768,7 @@ const workspaceValidationContract = {
       'node --test scripts/scaffolding/tests/module-contract-generator.test.mts scripts/scaffolding/tests/resource-generator.test.mts scripts/scaffolding/tests/retire-contribution.test.mts scripts/scaffolding/tests/scaffold-generators.test.mts',
     'test:integration': 'pnpm -r --if-present run test:integration',
     'test:scripts':
-      'node --test scripts/local-environment-values.test.mts scripts/tests/api-only-tooling.test.mts scripts/tests/database-access-boundaries.test.mts scripts/tests/initialize-local-development.test.mts scripts/tests/locki-feature.test.mts scripts/tests/migrate-contacts-authorization.test.mts scripts/tests/module-entrypoint-boundaries.test.mts scripts/tests/root-environment.test.mts scripts/tests/spicedb-database-bootstrap.test.mts scripts/tests/typecheck-project-references.test.mts',
+      'node --test scripts/local-environment-values.test.mts scripts/tests/audit-database-trust-boundaries.test.mts scripts/tests/authorization-rollout-contract.test.mts scripts/tests/check-authorization-readiness.test.mts scripts/tests/database-access-boundaries.test.mts scripts/tests/initialize-local-development.test.mts scripts/tests/locki-feature.test.mts scripts/tests/migrate-contacts-authorization.test.mts scripts/tests/module-entrypoint-boundaries.test.mts scripts/tests/plan-deployment-impact.test.mts scripts/tests/protected-entrypoint-inventory.test.mts scripts/tests/provision-current-action-authorization.test.mts scripts/tests/report-fail-closed-authorization-impact.test.mts scripts/tests/api-only-tooling.test.mts scripts/tests/root-environment.test.mts scripts/tests/typecheck-project-references.test.mts',
     'test:unit': 'pnpm -r --if-present run test:unit && pnpm -r --if-present run test:component',
   },
   cloudflareSecurity: {
@@ -5414,7 +5414,7 @@ const assertPublicHeadContract = (appId, publicHead, headModule, hasOwnerPage = 
     'name="twitter:card"',
     'application/ld+json',
     'route?.jsonLd',
-    "replaceAll('<', '\\\\u003c')",
+    "replaceAll('<', String.raw`\\u003c`)",
   ]) {
     assert(headModule.includes(snippet), `${appId} route head module is missing ${snippet}`);
   }
@@ -6013,8 +6013,10 @@ assert(
 );
 assert(
   workflowText.includes('mise exec -- pnpm deployment-impact:plan') &&
+    workflowText.includes('mise exec -- pnpm authorization:inventory:check') &&
+    workflowText.includes('--authorization-environment stage') &&
     workflowText.includes('## Reviewed deployment impact plan'),
-  'Stage deployment must invoke and summarize the topology-driven deployment impact planner',
+  'Stage deployment must derive the exact-build authorization inventory, enforce the stage authorization gate, and summarize the topology-driven deployment impact planner',
 );
 assert(
   workflowText.includes(
@@ -6940,6 +6942,41 @@ assert(
     'node ./scripts/ultramodern-performance-readiness.mts',
   'Root must expose default-on performance readiness diagnostics',
 );
+const actionAuthorizationProvisioningCommand =
+  'node ./scripts/provision-current-action-authorization.mts';
+assert(
+  rootPackage.scripts?.['authorization:provision-current-actions'] ===
+    actionAuthorizationProvisioningCommand,
+  'Root must expose the explicit current-Action authorization provisioning command',
+);
+assert(
+  rootPackage.scripts?.['local:initialize'] === 'node ./scripts/initialize-local-development.mts' &&
+    !readText('scripts/initialize-local-development.mts').includes(
+      'provision-current-action-authorization',
+    ) &&
+    !readText('scripts/initialize-local-development.mts').includes(
+      'authorization:provision-current-actions',
+    ),
+  'Ordinary local initialization must not provision Action authorization',
+);
+for (const startupPath of [
+  'scripts/locki-feature.sh',
+  'docker-compose.yml',
+  'scripts/run-zerops-spicedb.sh',
+]) {
+  assert(
+    !readText(startupPath).includes('provision-current-action-authorization') &&
+      !readText(startupPath).includes('authorization:provision-current-actions'),
+    `${startupPath} must not provision Action authorization automatically`,
+  );
+}
+for (const automaticScript of ['dev', 'build', 'cloudflare:build', 'cloudflare:deploy']) {
+  assert(
+    !rootPackage.scripts?.[automaticScript]?.includes('authorization:provision-current-actions') &&
+      !rootPackage.scripts?.[automaticScript]?.includes('provision-current-action-authorization'),
+    `${automaticScript} must not invoke Action authorization provisioning`,
+  );
+}
 if (hasBackendSurfaces) {
   assert(
     rootPackage.scripts?.['node:backend-federation:generate'] ===
@@ -7024,6 +7061,11 @@ if (hasDeliveryUnits) {
     return true;
   }).length;
   assert(zeropsYaml.includes('zerops:'), 'Zerops manifest must include zerops services');
+  assert(
+    !zeropsYaml.includes('provision-current-action-authorization') &&
+      !zeropsYaml.includes('authorization:provision-current-actions'),
+    'Zerops startup and deployment must not provision Action authorization automatically',
+  );
   assert(
     zeropsYaml.includes(`setup: ${quoteYamlString('shellsuperapp')}`),
     'Zerops manifest must include shell service',

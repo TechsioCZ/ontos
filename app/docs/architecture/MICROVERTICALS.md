@@ -33,12 +33,15 @@ The vertical seam between MicroVerticals is non-negotiable:
 - Moving a MicroVertical from a shared host to a separate host must require deployment configuration or adapter selection only. It must not require changes to consuming business logic.
 - A MicroVertical must not import another MicroVertical's implementation, access its database or repositories, call its internal Effect services, or participate in its database transaction.
 - Shell/Core and other MicroVerticals must not import another deployment's `vertical.manifest.ts`
-  or `vertical.registration.ts`. The serialized allowlisted module contract is the metadata seam;
-  executable registration remains inside its owning deployment.
+  or `vertical.registration.ts`. The serialized, composition-approved module contract is the
+  metadata seam; executable registration remains inside its owning deployment.
 - Shared packages may contain stable contracts and genuinely cross-cutting infrastructure. They must not become a back door for sharing MicroVertical business logic or persistence models.
 - Executable Policies owned by a MicroVertical are private, owner-local business behavior. Another MicroVertical must not import, register, or execute them. The only cross-module Policy reference exception is the narrow global Policy contract implemented and owned by Shell/Core; an Action may reference a global Policy without gaining access to Core repositories or another module's services.
 - Synchronous communication may cross the seam only through the provider's published, contract-derived Effect client.
 - Every module entrypoint crosses through the structured Shell/Core gateway and tenant-state rules in [Module Entrypoints and Tenant State](./MODULE_ENTRYPOINTS.md). Raw remote loads, direct private route/handler imports, and eager private implementations are forbidden.
+- Application Composition, not topology or tenant state, is the runtime authority for the approved
+  module graph and exact artifact revisions. First-party remote UI executes only in the browser;
+  independently deployed MicroVertical code never executes inside the Shell/Core Node.js process.
 - Asynchronous communication may cross the seam only through Outbox Messages and their published schemas, using the lifecycle in [Outbox Worker Architecture](./OUTBOX_WORKERS.md).
 - Every synchronous request must propagate tenant, principal or service identity, and correlation context. The receiving MicroVertical authenticates and authorizes the request independently; co-location never implies trust.
 - Contract adapters must have equivalent observable behavior whether communication is in-process or over the network.
@@ -167,7 +170,7 @@ Action runtime still performs the Action-specific SpiceDB permission check and e
 evaluation. Co-location with the Shell never bypasses this boundary.
 
 Prepare an existing MicroVertical once with
-`pnpm scaffold:microvertical-action-boundary -- --vertical <vertical>` before its BFF accepts
+`mise exec -- pnpm scaffold:microvertical-action-boundary -- --vertical <vertical>` before its BFF accepts
 Shell-user Action calls. The generated server verifier and client acquisition adapter embed the
 vertical's authoritative topology app ID. Actions remain independently generated, and adding an
 Action must never require a new Shell endpoint or a hand-maintained audience registry.

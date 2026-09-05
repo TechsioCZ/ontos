@@ -90,6 +90,7 @@ export const readPartyDetailFromServices = (
   });
 
 export const partyDetailEntrypoint = defineTenantModuleEntrypoint({
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   access: 'read',
   entrypointKey: 'party.registry.api.party-detail',
   moduleKey: 'party.registry',

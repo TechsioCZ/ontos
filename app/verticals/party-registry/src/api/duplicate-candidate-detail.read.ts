@@ -15,6 +15,7 @@ import { findDuplicateCandidateCase } from '../services/party-matching-persisten
 
 export const duplicateCandidateDetailEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'party.registry.api.duplicate-candidate-detail',
   moduleKey: 'party.registry',
   role: 'api',

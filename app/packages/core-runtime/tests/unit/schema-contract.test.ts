@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getTableName, is } from 'drizzle-orm';
-import { getTableConfig, PgDialect, PgTable } from 'drizzle-orm/pg-core';
+import { getTableName, isTable } from 'drizzle-orm';
+import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
+import type { PgTable } from 'drizzle-orm/pg-core';
 import * as schemaExports from '../../src/db/schema.ts';
 import {
   ACTION_INVOCATION_STATUSES,
@@ -14,6 +15,8 @@ import {
 
 const actionConfig = getTableConfig(actionInvocations);
 const dialect = new PgDialect();
+type SchemaExport = (typeof schemaExports)[keyof typeof schemaExports];
+const isPgTable = (value: SchemaExport): value is Extract<SchemaExport, PgTable> => isTable(value);
 
 const getColumn = (name: string) => {
   const column = actionConfig.columns.find((candidate) => candidate.name === name);
@@ -21,10 +24,13 @@ const getColumn = (name: string) => {
   return column;
 };
 
-test('exports exactly the declared Core table inventory in PostgreSQL schema core', () => {
-  const exportedTables: PgTable[] = Object.values(schemaExports).flatMap((value) =>
-    is(value, PgTable) ? [value] : [],
-  );
+void test('exports exactly the 18 Core tables in PostgreSQL schema core', () => {
+  const exportedTables: PgTable[] = [];
+  for (const value of Object.values(schemaExports)) {
+    if (isPgTable(value)) {
+      exportedTables.push(value);
+    }
+  }
   const qualifiedNames = exportedTables
     .map((table) => {
       const config = getTableConfig(table);
@@ -49,7 +55,7 @@ test('exports exactly the declared Core table inventory in PostgreSQL schema cor
   );
 });
 
-test('supports pre-authentication Action Invocation rows and indeterminate outcomes', () => {
+void test('supports pre-authentication Action Invocation rows and indeterminate outcomes', () => {
   assert.equal(getColumn('principal_id').notNull, false);
   assert.equal(getColumn('auth_binding_id').notNull, false);
   assert.equal(getColumn('auth_context_ref').notNull, false);
@@ -78,7 +84,7 @@ test('supports pre-authentication Action Invocation rows and indeterminate outco
   }
 });
 
-test('preserves critical Action foreign keys and unique idempotency index', () => {
+void test('preserves critical Action foreign keys and unique idempotency index', () => {
   const principalForeignKey = actionConfig.foreignKeys.find((foreignKey) =>
     foreignKey.reference().columns.some((column) => column.name === 'principal_id'),
   );
@@ -105,7 +111,7 @@ test('preserves critical Action foreign keys and unique idempotency index', () =
   );
 });
 
-test('allocates Domain Event order through a database-owned monotonic sequence', () => {
+void test('allocates Domain Event order through a database-owned monotonic sequence', () => {
   const domainEventConfig = getTableConfig(domainEvents);
   const sequenceColumn = domainEventConfig.columns.find(
     (candidate) => candidate.name === 'tenant_sequence_no',
@@ -127,7 +133,7 @@ test('allocates Domain Event order through a database-owned monotonic sequence',
   );
 });
 
-test('keeps the inferred Action status type aligned with the lifecycle union', () => {
+void test('keeps the inferred Action status type aligned with the lifecycle union', () => {
   type ActionInsert = typeof actionInvocations.$inferInsert;
   const status: ActionInsert['status'] = 'indeterminate';
 

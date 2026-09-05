@@ -1,3 +1,4 @@
+/* oxlint-disable typescript/strict-boolean-expressions */
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';

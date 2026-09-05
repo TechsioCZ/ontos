@@ -1,8 +1,19 @@
 # Deployment Architecture and Release Playbook
 
-This document is the authoritative release guidance for OntOS application delivery. It applies to
+This playbook is the authoritative release guidance for OntOS application delivery. It covers
 deployment configuration, CI/CD, PostgreSQL and SpiceDB changes, runtime packaging, Shell changes,
 and every new or changed MicroVertical.
+
+> [!IMPORTANT]
+> Explicit `implementationId`, dependency-closure selection, public-contract hashes, migration-set
+> identity, and full artifact metadata are accepted target architecture, not fields in the current
+> manifest/catalog schema. Requirements below that name them become mandatory with that contract.
+> Until then, releases use one implicit `standard` implementation per `moduleId` and the current
+> generated `buildMarker`; do not simulate missing fields with ad hoc configuration.
+
+Application Composition validation is implemented; publication and live Shell loading are not.
+Until #374–#377 wire those paths in, remote URL and generated lazy-registry changes still require
+Shell regeneration and redeployment. The composition promotion sequence below is the target flow.
 
 The rules exist because the first Zerops stage rollout was merged after source-level validation and
 then required 43 linear repair commits. Stage had become the first production-shaped integration
@@ -14,9 +25,10 @@ promotion.
 These are non-negotiable:
 
 1. **Topology is the delivery inventory.** Every deployable `appId`, service, package path, port,
-   readiness route, public URL, migration owner, dependency edge, and Shell remote must derive from
-   one generated or mechanically validated topology contract. Do not add a second hand-maintained
-   registry.
+   readiness route, public URL, and migration owner derives from one generated or mechanically
+   validated topology contract. Application Composition separately governs the approved runtime
+   module graph and exact contract/remote artifacts; neither tenant state nor a reachable service
+   may add an artifact.
 2. **Build once, promote unchanged.** A release deploys immutable artifacts identified by source SHA
    and digest. Do not rebuild the same revision separately for stage and production.
 3. **Prove the real artifact.** A successful source build is not a deploy test. CI must build,
@@ -28,8 +40,9 @@ These are non-negotiable:
    authoritative release flag and defaults inactive until canary verification succeeds.
 6. **Every overlap is backward compatible.** Database, authorization, manifest, BFF, Module
    Federation, and Shell/MicroVertical boundaries must work while old and new versions coexist.
-7. **Rollback is prepared before rollout.** Record a last-known-good immutable artifact for every
-   affected delivery unit. Application rollback must not depend on reversing a schema migration.
+7. **Rollback is prepared before rollout.** Record a previously validated immutable composition and
+   artifact for every affected delivery unit. Rollback is an explicit audited promotion, never an
+   automatic persistent fallback, and must not depend on reversing a schema migration.
 8. **One failed gate stops promotion.** Preserve the artifact and evidence, reproduce in the parity
    environment, fix the failure class, and rerun the release sequence from its first gate.
 9. **Continuous product delivery is not customer version pinning.** OntOS controls promotion of
@@ -40,14 +53,15 @@ These are non-negotiable:
 
 A new MicroVertical is not deployable until its delivery contract accounts for all of these fields:
 
-- topology `appId`, dotted Module Contract Identity `moduleId`, and explicit `implementationId`,
-  kept distinct;
+- topology `appId` and dotted Module Contract Identity `moduleId`, kept distinct; add explicit
+  `implementationId` when the accepted target contract is implemented;
 - package name and workspace-relative owner path;
 - provider service/setup identity and environment service-ID key;
 - build and runtime Node/pnpm versions;
 - declared `PORT`, service-specific port variable, and readiness route;
 - immutable artifact build/materialization command;
-- immutable build revision/digest, public-contract hash/version, and migration-set identity;
+- current immutable `buildMarker`, plus build revision/digest, public-contract hash/version, and
+  migration-set identity when the target metadata contract is implemented;
 - owned PostgreSQL schema, Drizzle journal, migration, grant, and verifier commands;
 - compatible SpiceDB schema requirements;
 - public URL and module-manifest URL;
@@ -71,7 +85,9 @@ The generated plan must conservatively include:
   changes;
 - every consumer when a shared runtime package or public contract changes;
 - SpiceDB whenever its schema, image, datastore bootstrap, transport, or client contract changes;
-- Shell whenever its code/config changes or a referenced public remote URL/contract changes;
+- Shell whenever its code/config or contribution ABI changes, including remote URL and generated
+  lazy-registry changes until the live composition loader is integrated. After that integration,
+  compatible remote updates move through a new composition revision without redeploying Shell;
 - a MicroVertical whenever its owner-local code, manifest, registration, migrations, configuration,
   or runtime dependencies change;
 - all Node delivery units whenever the common lockfile, workspace dependency policy, runtime
@@ -167,6 +183,39 @@ For every authorization-schema change:
 Bootstrap files are only for an empty installation. They are not the ongoing authorization-schema
 deployment mechanism.
 
+The fail-closed Action authorization rollout uses an explicit expand/provision/verify/deploy gate:
+
+1. prepare the candidate application/release artifact for the operator command while the previous
+   runtime remains active; this is separate from the PostgreSQL migration artifact;
+2. ensure the fixed stage contexts and their Tenant membership relationships already exist;
+3. run `mise exec -- pnpm authorization:provision-current-actions` in the stage-gated artifact to
+   publish the compatible schema and membership-set executor grants for the complete current Action
+   catalog across the fixed stage Tenants;
+4. verify every Action for the fixed stage Principals and verify representative non-members are
+   denied;
+5. only then deploy the runtime that treats missing `action#execute` permission as denial;
+6. smoke one provisioned Action and one deliberately unconfigured Action denial.
+
+The command is operator-invoked, idempotent, accepts no scope arguments, and must not be attached to
+PostgreSQL migrations, SpiceDB startup, application startup, or automatic deployment. A failure or
+catalog mismatch blocks promotion. Rollback restores the previous application artifact while
+leaving the additive schema and relationships in place.
+
+Provisioning is additive, not stale-grant reconciliation. Before narrowing an Action from
+`tenant_membership_default` to `explicit`, the operator must prepare its intended narrow grants,
+remove the obsolete `action:<encoded-key>#executor@tenant:<fixed-tenant>#member` relation for each
+affected fixed Tenant, and verify both the intended allowed Principal and a Tenant member who must
+now be denied. Removed Actions and revoked role/workload assignments likewise require an explicit,
+reviewed removal of their obsolete executor relations. Derive Action object IDs with
+`toSpiceDbActionObjectId`; never delete unrelated tuples or rely on rerunning `TOUCH` to revoke
+access. Record and verify this policy-data transition before promotion. An application rollback
+must not silently restore a revoked grant; any policy restoration needs its own reviewed decision.
+The fixed environment's provisioning input records at least one allowed and one denied Principal
+assertion for every `explicit` Action. Promotion verifies every fixed context plus the representative
+non-member for each `tenant_membership_default` Action; it verifies only those recorded per-Action
+assertions for an `explicit` Action. Missing, duplicate, unknown, allow-only, or deny-only explicit
+assertion sets fail before schema or relationship writes.
+
 ### Stage/demo bootstrap
 
 Stage bootstrap is an operator action, not a migration, startup hook, or automatic deploy step. It
@@ -198,8 +247,9 @@ the expanded PostgreSQL and SpiceDB models.
   module state or disable unrelated modules.
 - Server-governed schemas stay server-local and use the Core Effect runtime. Do not reuse a client
   package's runtime schema object inside the governed server registration.
-- A Customer Configuration resolves exactly one permitted healthy `implementationId` for each
-  selected `moduleId`; reject missing, ambiguous, invisible, or contract-incompatible alternatives.
+- Once explicit alternatives are supported, a Customer Configuration resolves exactly one permitted
+  healthy `implementationId` for each selected `moduleId` and rejects missing, ambiguous, invisible,
+  or contract-incompatible alternatives. Until then, one implicit `standard` implementation exists.
 - Compatibility versions and immutable build revisions are rollout evidence, not customer-selectable
   product releases.
 
@@ -215,6 +265,10 @@ consumer of public module contracts, not as Shell/Core business behavior.
 
 - React, Modern runtime, and provider-context packages such as i18n must be exact strict singletons
   on both Shell and remotes.
+- Promoted compositions pin immutable `mf-manifest.json` references and permit browser execution
+  only. Routine upgrades wait for a new browser document; they never force-replace a loaded remote.
+- Shell/Core SSR renders stable framing and typed placeholders. Any future MicroVertical SSR runs in
+  a MicroVertical-owned isolated process, not the Shell/Core Node.js process.
 - Every app owns a CSS prefix/namespace. A Shell or MicroVertical build must not scan, erase, or
   collide with another delivery unit's utility classes.
 - A remote is healthy only when its manifest, remote entry, chunks, shared runtime, localized page,
@@ -228,14 +282,18 @@ Use this sequence for a new or changed MicroVertical:
    migration, flag, smoke, and rollback declarations.
 2. **Preflight:** validate configuration and record last-known-good artifacts.
 3. **Build:** produce and verify immutable target-shaped artifacts.
-4. **Migrate:** expand PostgreSQL, refresh grants, verify schemas, then compatibly update SpiceDB.
+4. **Migrate:** expand PostgreSQL, refresh grants, verify schemas, then compatibly update SpiceDB
+   and complete any required operator-controlled relationship provisioning before deploying a
+   fail-closed consumer.
 5. **Deploy providers:** deploy affected MicroVerticals in dependency order, initially dark.
 6. **Expose providers:** verify readiness, module manifest, BFF, remote assets, and public endpoint;
    make endpoint provisioning idempotent by checking its final state.
-7. **Deploy Shell:** deploy only after every referenced provider is healthy.
-8. **Smoke:** execute the authenticated distributed smoke suite.
-9. **Canary:** activate the selected module implementation and affected Storefront Clients for one
-   approved tenant/cohort.
+7. **Promote composition:** validate and explicitly promote one immutable candidate revision. A
+   compatible MicroVertical update or installation does not redeploy Shell.
+8. **Smoke:** open a new browser document pinned to that revision and execute the authenticated
+   distributed smoke suite.
+9. **Canary:** activate the selected module—and its explicit implementation once supported—plus
+   affected Storefront Clients for one approved tenant/cohort.
 10. **Observe:** hold expansion until the canary window and required signals are healthy.
 11. **Expand:** activate additional tenants gradually.
 12. **Close:** record deployed digests, smoke evidence, and the new last-known-good set.
@@ -259,7 +317,7 @@ Provider readiness alone is insufficient. The post-deploy release gate exercises
 - logout redirect and cookie clearing;
 - isolation of staff and Commerce Portal BetterAuth cookies/sessions;
 - one Storefront Client plus anonymous, B2C, and B2B customer-context checks when Commerce is affected;
-- implementation-selection and contract/build-skew rejection;
+- contract/build-skew rejection and, once supported, explicit implementation-selection rejection;
 - native Commerce Storefront API and declared Medusa compatibility-route checks when present;
 - basic responsive layout/CSS geometry;
 - absence of unexpected browser errors and HTTP 5xx responses.
@@ -293,9 +351,11 @@ Rollback must be executable and tested before rollout:
 1. deactivate the affected tenant module state/canary;
 2. stop further promotion;
 3. identify the failed unit and the last successful phase from structured evidence;
-4. restore Shell first when it references an invalid remote; otherwise restore units in reverse
-   dependency order;
-5. restore each affected unit to its recorded last-known-good artifact;
+4. explicitly promote the previously validated composition revision;
+5. restore affected delivery units using the deployment automation's immutable release records.
+   Composition pins public contract and MF-manifest digests; its `buildMarker` alone is not an
+   executable artifact identity. The publisher in #374 must bind the composition revision to those
+   release records before supporting rollback;
 6. leave additive PostgreSQL and compatible SpiceDB changes in place;
 7. rerun the complete authenticated smoke suite;
 8. record the rollback artifacts and outcome.
@@ -334,22 +394,36 @@ After any failed rehearsal or rollout:
 Use the CI provider's rerun or manual dispatch for a genuine retry. Do not create empty commits to
 retrigger a pipeline.
 
-## Historical failure map
+## Historical release evidence
 
-These commits are retained as examples of the failure classes this playbook prevents:
+Git history and regression tests own the detailed rollout-failure record. When a failure class
+recurs or deployment behavior changes, add a permanent automated contract test instead of extending
+a prose commit list.
 
-- provider syntax and process semantics: `eb57b335`, `ef96d729`;
-- minimal runtime, cache, home, and artifact relocation: `d3ccf9a8`–`66e08e50`;
-- administrative database identity and serialized SpiceDB: `3dc494a8`, `a41d400f`;
-- pnpm store contamination: `1e8e5dd3`, `6e4cc89e`, `900ff534`, `c32c8312`;
-- dependency tracing, memory, host paths, OS/CPU, and generated plugin loading:
-  `d394f133`–`ab978ab8`;
-- ports and provider-before-Shell ordering: `46aced42`, `780d30f2`;
-- stage contexts and idempotent endpoint setup: `112571c8`, `4329b058`;
-- canonical auth origin and build-time stage discovery: `727a5c28`, `64b7f76b`;
-- public schema/runtime normalization: `61f3d96d`, `a86503d0`, `8a09f710`, `3ebf0569`;
-- federated i18n and CSS/runtime isolation: `1475532d`, `47e3ecb9`;
-- missing diagnostics discovered during rollout: `18716eba`, `83f79b5d`–`9eef5a3f`.
+## Fail-closed authorization promotion
 
-When changing deployment behavior, convert the relevant historical failure into a permanent
-automated contract test rather than relying on this list as institutional memory.
+Authorization changes deploy schema and data expansion first: the Contacts assertion-redemption
+migration and SpiceDB policy precede every provider and the Shell. Run the inventory check, collect
+sanitized report-only evidence for one source revision and inventory hash, reduce it with
+`pnpm authorization:impact:report`, and validate fixed-context evidence with
+`pnpm authorization:readiness:check -- stage`. The command accepts only a fixed environment name;
+it loads `topology/authorization-contexts/<environment>.json` and the fixed inventory, impact,
+observation, and negative-smoke report names. The resulting artifact binds the environment, source
+revision, inventory and context hashes, schema/data versions, replay migration, impact report,
+smoke evidence, observation bounds, and approval reference.
+
+Pass `--authorization-environment <environment>` to `pnpm deployment-impact:plan --` for a
+promotion plan. `report_only` is valid only before its declared expiry and never in production.
+`enforced` requires matching zero-impact, readiness, and negative-smoke artifacts from the exact
+build. Abort on an expired window, mixed build evidence, unresolved impact, missing
+policy/module/worker/issuer/replay data, or a failed negative smoke.
+
+Production remains blocked while no approved source-controlled production context exists; the
+development/stage provisioner must continue rejecting production and arbitrary tenant or Action
+arguments. Issue #173 owns technical implementation and readiness; issue #369 owns the separate
+production-promotion approval gate. Issue #169 is broader review context, not approval. Their current
+records—not this playbook—determine whether the gates are satisfied. An implementation override
+never records Petr/Jiří approval or permits production enforcement. The checked-in stage context
+remains `pending`; code-only override is not approval.
+Rollback restores the prior application mode only after preserving the exact evidence and must not
+remove the expanded schema or durable redemption rows while old/new consumers overlap.

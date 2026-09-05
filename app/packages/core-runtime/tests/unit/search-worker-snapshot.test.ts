@@ -1,3 +1,4 @@
+/* oxlint-disable typescript/return-await, unicorn/no-useless-promise-resolve-reject */
 // @effect-diagnostics asyncFunction:off
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -38,7 +39,7 @@ const executor: CoreSearchSnapshotReadExecutor = {
 test('worker snapshot rejects caller-created and unregistered contexts before opening persistence', async () => {
   let calls = 0;
   const backend: CoreSearchSnapshotBackend = {
-    run: () => {
+    run: async () => {
       calls += 1;
       return Promise.reject(new Error('unreachable'));
     },
@@ -64,7 +65,7 @@ test('worker snapshot rejects caller-created and unregistered contexts before op
 
 test('identifier-update worker receives the verified Core snapshot capability', async () => {
   const reader = makeCoreSearchWorkerSnapshot({
-    run: (_context, readSnapshot) =>
+    run: async (_context, readSnapshot) =>
       readSnapshot(
         {
           eventWatermark: '3',
@@ -73,7 +74,7 @@ test('identifier-update worker receives the verified Core snapshot capability', 
           tenantId,
         },
         executor,
-        () => Promise.resolve(),
+        async () => Promise.resolve(),
       ),
   });
   const version = await Effect.runPromise(
@@ -92,7 +93,7 @@ test('identifier-update worker receives the verified Core snapshot capability', 
 test('worker snapshot exposes select-only owner reads at one current watermark and restores scope', async () => {
   const installedScopes: (string | undefined)[] = [];
   const backend: CoreSearchSnapshotBackend = {
-    run: (_context, readSnapshot) =>
+    run: async (_context, readSnapshot) =>
       readSnapshot(
         {
           eventWatermark: '100',
@@ -101,7 +102,7 @@ test('worker snapshot exposes select-only owner reads at one current watermark a
           tenantId,
         },
         executor,
-        (scope) => {
+        async (scope) => {
           installedScopes.push(scope);
           return Promise.resolve();
         },
@@ -138,7 +139,7 @@ test('worker snapshot exposes select-only owner reads at one current watermark a
 test('worker snapshot rejects a Legal Entity outside its tenant enumeration and preserves owner failures', async () => {
   const installedScopes: (string | undefined)[] = [];
   const backend: CoreSearchSnapshotBackend = {
-    run: (_context, readSnapshot) =>
+    run: async (_context, readSnapshot) =>
       readSnapshot(
         {
           eventWatermark: '100',
@@ -147,7 +148,7 @@ test('worker snapshot rejects a Legal Entity outside its tenant enumeration and 
           tenantId,
         },
         executor,
-        (scope) => {
+        async (scope) => {
           installedScopes.push(scope);
           return Promise.resolve();
         },
@@ -177,7 +178,7 @@ test('worker snapshot rejects a Legal Entity outside its tenant enumeration and 
 
 test('worker snapshot maps persistence failure to a sanitized unavailable error', async () => {
   const snapshot = makeCoreSearchWorkerSnapshot({
-    run: () => Promise.reject(new Error('private database details')),
+    run: async () => Promise.reject(new Error('private database details')),
   });
   const failure = await Effect.runPromise(
     Effect.flip(
@@ -191,7 +192,7 @@ test('worker snapshot maps persistence failure to a sanitized unavailable error'
 test('snapshot generation retries serialization conflicts only and bounds repeated contention', async () => {
   let attempts = 0;
   assert.equal(
-    await retryCoreSearchSnapshot(() => {
+    await retryCoreSearchSnapshot(async () => {
       attempts += 1;
       if (attempts < 3) {
         return Promise.reject(new Error('wrapped serialization', { cause: { code: '40001' } }));
@@ -203,7 +204,7 @@ test('snapshot generation retries serialization conflicts only and bounds repeat
   assert.equal(attempts, 3);
   attempts = 0;
   await assert.rejects(
-    retryCoreSearchSnapshot(() => {
+    retryCoreSearchSnapshot(async () => {
       attempts += 1;
       return Promise.reject(Object.assign(new Error('contention'), { code: '40001' }));
     }),
@@ -212,7 +213,7 @@ test('snapshot generation retries serialization conflicts only and bounds repeat
   assert.equal(attempts, 4);
   attempts = 0;
   await assert.rejects(
-    retryCoreSearchSnapshot(() => {
+    retryCoreSearchSnapshot(async () => {
       attempts += 1;
       return Promise.reject(new Error('not serialization'));
     }),
@@ -223,11 +224,11 @@ test('snapshot generation retries serialization conflicts only and bounds repeat
 
 test('snapshot revokes escaped scope capabilities when the owner callback finishes', async () => {
   const reader = makeCoreSearchWorkerSnapshot({
-    run: (_context, readSnapshot) =>
+    run: async (_context, readSnapshot) =>
       readSnapshot(
         { eventWatermark: '3', legalEntityIds: [legalEntityId], projectionVersion: '1', tenantId },
         executor,
-        () => Promise.resolve(),
+        async () => Promise.resolve(),
       ),
   });
   const escaped: CoreSearchWorkerSnapshotView = await Effect.runPromise(
@@ -241,11 +242,11 @@ test('snapshot revokes escaped scope capabilities when the owner callback finish
 
 test('nested scope rejection does not unlock the active owner read', async () => {
   const reader = makeCoreSearchWorkerSnapshot({
-    run: (_context, readSnapshot) =>
+    run: async (_context, readSnapshot) =>
       readSnapshot(
         { eventWatermark: '3', legalEntityIds: [legalEntityId], projectionVersion: '1', tenantId },
         executor,
-        () => Promise.resolve(),
+        async () => Promise.resolve(),
       ),
   });
   await Effect.runPromise(

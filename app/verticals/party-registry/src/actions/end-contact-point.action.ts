@@ -130,6 +130,7 @@ export const endContactPointAction = defineAction(
     domainEvents: { 'party.registry.contact-point-ended.v1': ContactPointEndedEventSchema },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'party.registry.end-contact-point',
       moduleKey: 'party.registry',
       role: 'action',

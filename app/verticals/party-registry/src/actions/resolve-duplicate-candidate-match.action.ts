@@ -106,6 +106,7 @@ export const resolveDuplicateCandidateMatchAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'party.registry.resolve-duplicate-candidate-match',
       moduleKey: 'party.registry',
       role: 'action',

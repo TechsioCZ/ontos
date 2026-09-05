@@ -15,7 +15,7 @@ import {
   defineTenantModuleEntrypoint,
 } from '../../src/modules/module-entrypoint.ts';
 
-test('defines an immutable typed descriptor and decodes typed payloads and results', async () => {
+void test('defines an immutable typed descriptor and decodes typed payloads and results', async () => {
   const registration = defineAction(
     {
       accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
@@ -25,6 +25,7 @@ test('defines an immutable typed descriptor and decodes typed payloads and resul
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.change',
         moduleKey: 'core.shell',
         role: 'action',
@@ -75,6 +76,7 @@ test('keeps the Resource permission resolver private behind an immutable declara
 test('requires trusted Legal Entity scope for a Counterparty permission declaration', () => {
   const entrypoint = defineTenantModuleEntrypoint({
     access: 'write',
+    authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
     entrypointKey: 'party.registry.create-counterparty',
     moduleKey: 'party.registry',
     role: 'action',
@@ -109,6 +111,7 @@ test('uses Schema.Void for a no-payload Action', async () => {
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.cache.refresh',
         moduleKey: 'core.shell',
         role: 'action',
@@ -136,7 +139,7 @@ test('uses Schema.Void for a no-payload Action', async () => {
   assert.equal(invalid._tag, 'ActionPayloadValidationError');
 });
 
-test('keeps the private handler outside the public Action registration', () => {
+void test('keeps the private handler outside the public Action registration', () => {
   const registration = defineAction(
     {
       accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
@@ -146,6 +149,7 @@ test('keeps the private handler outside the public Action registration', () => {
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.change',
         moduleKey: 'core.shell',
         role: 'action',
@@ -165,7 +169,7 @@ test('keeps the private handler outside the public Action registration', () => {
   assert.deepEqual(Object.keys(registration), ['descriptor']);
 });
 
-test('rejects invalid declared results through a typed error', async () => {
+void test('rejects invalid declared results through a typed error', async () => {
   const error = await Effect.runPromise(
     Effect.flip(decodeActionResult(Schema.Struct({ id: Schema.String }), { id: 1 })),
   );
@@ -174,7 +178,7 @@ test('rejects invalid declared results through a typed error', async () => {
   assert.equal(error.code, 'action_result_invalid');
 });
 
-test('accepts global and same-owner Policy references and copies the collection', () => {
+void test('accepts global and same-owner Policy references and copies the collection', () => {
   const globalPolicy = defineGlobalPolicy<{ readonly amount: number }>({
     evaluate: () => Effect.void,
     policyKey: 'global.tenant-active.v1',
@@ -194,6 +198,7 @@ test('accepts global and same-owner Policy references and copies the collection'
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'inventory.stock.reserve',
         moduleKey: 'inventory.stock',
         role: 'action',
@@ -216,7 +221,7 @@ test('accepts global and same-owner Policy references and copies the collection'
   assert.equal(registration.descriptor.policies[1], modulePolicy);
 });
 
-test('rejects cross-owner, string, copied, and missing Policy references at definition time', () => {
+void test('rejects cross-owner, string, copied, and missing Policy references at definition time', () => {
   const foreignPolicy = defineMicroverticalPolicy<unknown, 'billing.invoice'>({
     evaluate: () => Effect.void,
     owningModuleKey: 'billing.invoice',
@@ -230,6 +235,7 @@ test('rejects cross-owner, string, copied, and missing Policy references at defi
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'inventory.stock.reserve',
       moduleKey: 'inventory.stock',
       role: 'action',
@@ -287,7 +293,7 @@ test('rejects cross-owner, string, copied, and missing Policy references at defi
   assert.throws(() => validateActionDescriptorInput(descriptor));
 });
 
-test('rejects Action entrypoint owner, scope, role/access, and forged immutability mismatches', () => {
+void test('rejects Action entrypoint owner, scope, role/access, and forged immutability mismatches', () => {
   const registration = defineAction(
     {
       accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'stock.read.v1' },
@@ -297,6 +303,7 @@ test('rejects Action entrypoint owner, scope, role/access, and forged immutabili
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'inventory.stock.reserve',
         moduleKey: 'inventory.stock',
         role: 'action',
@@ -316,6 +323,7 @@ test('rejects Action entrypoint owner, scope, role/access, and forged immutabili
       ...registration.descriptor,
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'billing.invoice.reserve',
         moduleKey: 'billing.invoice',
         role: 'action',
@@ -327,6 +335,7 @@ test('rejects Action entrypoint owner, scope, role/access, and forged immutabili
       ...registration.descriptor,
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'inventory.stock.reserve',
         moduleKey: 'inventory.stock',
         role: 'action',
@@ -338,6 +347,7 @@ test('rejects Action entrypoint owner, scope, role/access, and forged immutabili
       ...registration.descriptor,
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'core.modules.change-state',
         moduleKey: 'core.modules',
         role: 'action',

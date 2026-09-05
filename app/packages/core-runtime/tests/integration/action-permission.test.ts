@@ -1,4 +1,4 @@
-/* eslint-disable max-classes-per-file, no-await-in-loop, node/no-process-env, promise/prefer-await-to-callbacks -- The integration test owns explicit local dependency configuration, sequential isolated scenarios, and controlled Drizzle transaction faults. */
+/* eslint-disable no-await-in-loop, promise/prefer-await-to-callbacks -- The integration test owns explicit local dependency configuration, sequential isolated scenarios, and controlled Drizzle transaction faults. */
 // @effect-diagnostics asyncFunction:off globalDateInEffect:off processEnv:off
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -34,7 +34,9 @@ import {
   makeActionPermissionService,
   toSpiceDbActionObjectId,
 } from '../../src/permissions/service.ts';
+import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
 import type { SpiceDbConfigValue } from '../../src/permissions/config.ts';
+import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
 
 class TestWriteError extends Schema.TaggedError<TestWriteError>()('TestWriteError', {
   reason: Schema.String,
@@ -44,30 +46,50 @@ const suiteId = randomUUID();
 const tenantId = randomUUID();
 const legalEntityId = randomUUID();
 const principalId = randomUUID();
-const authBindingId = randomUUID();
+const principalAuthBindingId = randomUUID();
+const nonMemberPrincipalId = randomUUID();
+const nonMemberAuthBindingId = randomUUID();
+const otherTenantId = randomUUID();
+const otherTenantPrincipalId = randomUUID();
+const otherTenantAuthBindingId = randomUUID();
 const actionPrefix = `test.permission.${suiteId}`;
 const actionKeys = {
   allowed: `${actionPrefix}.allowed`,
   concurrentDenied: `${actionPrefix}.concurrent-denied`,
+  crossTenantDenied: `${actionPrefix}.cross-tenant-denied`,
   denied: `${actionPrefix}.denied`,
+  membershipAllowed: `${actionPrefix}.membership-allowed`,
+  missing: `${actionPrefix}.missing`,
+  nonMemberDenied: `${actionPrefix}.non-member-denied`,
   unavailable: `${actionPrefix}.unavailable`,
-  unconfigured: `${actionPrefix}.unconfigured`,
 } as const;
 
 const principal = {
-  authBindingId,
-  authContextRef: `better-auth-session:${authBindingId}`,
+  authBindingId: principalAuthBindingId,
+  authContextRef: `better-auth-session:${suiteId}:principal`,
   authMethod: 'session',
   legalEntityId,
   principalId,
   tenantId,
 } as const;
 
-const spiceDbConfig: SpiceDbConfigValue = {
-  endpoint: process.env['SPICEDB_ENDPOINT'] ?? 'localhost:50051',
-  insecureLocal: (process.env['SPICEDB_INSECURE'] ?? 'true') === 'true',
-  preSharedKey: process.env['SPICEDB_PRESHARED_KEY'] ?? 'ontos-local-development-key',
-};
+const nonMemberPrincipal = {
+  authBindingId: nonMemberAuthBindingId,
+  authContextRef: `better-auth-session:${suiteId}:non-member`,
+  authMethod: 'session',
+  principalId: nonMemberPrincipalId,
+  tenantId,
+} as const;
+
+const otherTenantPrincipal = {
+  authBindingId: otherTenantAuthBindingId,
+  authContextRef: `better-auth-session:${suiteId}:other-tenant`,
+  authMethod: 'session',
+  principalId: otherTenantPrincipalId,
+  tenantId: otherTenantId,
+} as const;
+
+const spiceDbConfig = await Effect.runPromise(loadSpiceDbConfig());
 
 const transport = (idempotencyKey: string, targetResourceId: string) => ({
   correlationId: `permission-integration-${idempotencyKey}`,
@@ -90,14 +112,31 @@ const withDatabase = <Value, Error>(
     }),
   );
 
-const databasePromise = <Value>(
+const databasePromise = async <Value>(
   operation: (database: ContextServiceContract) => PromiseLike<Value>,
 ): Promise<Value> =>
-  Effect.runPromise(withDatabase((database) => Effect.promise(() => operation(database))));
+  await Effect.runPromise(withDatabase((database) => Effect.promise(() => operation(database))));
 
 const relationshipActionKeys = new Set<string>();
 
-const relationship = (actionKey: string, relation: 'executor' | 'restriction') => {
+type ExecutorSubject =
+  | { readonly objectId: string; readonly objectType: 'principal' }
+  | {
+      readonly objectId: string;
+      readonly objectType: 'tenant';
+      readonly optionalRelation: 'member';
+    };
+
+const defaultExecutorSubject: ExecutorSubject = {
+  objectId: principalId,
+  objectType: 'principal',
+};
+
+const relationship = (
+  actionKey: string,
+  relation: 'executor' | 'restriction',
+  executorSubject: ExecutorSubject = defaultExecutorSubject,
+) => {
   relationshipActionKeys.add(actionKey);
   return v1.Relationship.create({
     relation,
@@ -112,10 +151,32 @@ const relationship = (actionKey: string, relation: 'executor' | 'restriction') =
               objectId: toSpiceDbActionObjectId(actionKey),
               objectType: 'action',
             })
-          : v1.ObjectReference.create({ objectId: principalId, objectType: 'principal' }),
+          : v1.ObjectReference.create({
+              objectId: executorSubject.objectId,
+              objectType: executorSubject.objectType,
+            }),
+      optionalRelation:
+        relation === 'executor' && executorSubject.objectType === 'tenant'
+          ? executorSubject.optionalRelation
+          : '',
     }),
   });
 };
+
+const tenantMembership = (membershipTenantId: string, membershipPrincipalId: string) =>
+  v1.Relationship.create({
+    relation: 'member',
+    resource: v1.ObjectReference.create({
+      objectId: membershipTenantId,
+      objectType: 'tenant',
+    }),
+    subject: v1.SubjectReference.create({
+      object: v1.ObjectReference.create({
+        objectId: membershipPrincipalId,
+        objectType: 'principal',
+      }),
+    }),
+  });
 
 const adminClient = v1.NewClient(
   spiceDbConfig.preSharedKey,
@@ -126,6 +187,9 @@ const adminClient = v1.NewClient(
 );
 
 before(async () => {
+  await adminClient.promises.writeSchema(
+    v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA }),
+  );
   await databasePromise(async (database) => {
     await database.executor.insert(tenants).values({
       defaultLocale: 'en',
@@ -133,6 +197,13 @@ before(async () => {
       slug: `action-permission-${tenantId}`,
       status: 'active',
       tenantId,
+    });
+    await database.executor.insert(tenants).values({
+      defaultLocale: 'en',
+      name: 'Other Action Permission Tenant',
+      slug: `action-permission-other-${otherTenantId}`,
+      status: 'active',
+      tenantId: otherTenantId,
     });
     await database.executor.insert(legalEntities).values({
       legalEntityId,
@@ -149,15 +220,51 @@ before(async () => {
       status: 'active',
       tenantId,
     });
-    await database.executor.insert(principalAuthBindings).values({
-      principalAuthBindingId: authBindingId,
-      principalId,
-      provider: 'better_auth',
-      providerSubjectId: `action-permission-${principalId}`,
-      status: 'active',
-      subjectType: 'user',
-      tenantId,
-    });
+    await database.executor.insert(principals).values([
+      {
+        displayName: 'Action Permission Non-member',
+        kind: 'human',
+        principalId: nonMemberPrincipalId,
+        status: 'active',
+        tenantId,
+      },
+      {
+        displayName: 'Other Tenant Action Permission Member',
+        kind: 'human',
+        principalId: otherTenantPrincipalId,
+        status: 'active',
+        tenantId: otherTenantId,
+      },
+    ]);
+    await database.executor.insert(principalAuthBindings).values([
+      {
+        principalAuthBindingId,
+        principalId,
+        provider: 'better_auth',
+        providerSubjectId: `action-permission-${principalId}`,
+        status: 'active',
+        subjectType: 'user',
+        tenantId,
+      },
+      {
+        principalAuthBindingId: nonMemberAuthBindingId,
+        principalId: nonMemberPrincipalId,
+        provider: 'better_auth',
+        providerSubjectId: `action-permission-${nonMemberPrincipalId}`,
+        status: 'active',
+        subjectType: 'user',
+        tenantId,
+      },
+      {
+        principalAuthBindingId: otherTenantAuthBindingId,
+        principalId: otherTenantPrincipalId,
+        provider: 'better_auth',
+        providerSubjectId: `action-permission-${otherTenantPrincipalId}`,
+        status: 'active',
+        subjectType: 'user',
+        tenantId: otherTenantId,
+      },
+    ]);
   });
 
   await adminClient.promises.writeRelationships(
@@ -165,8 +272,25 @@ before(async () => {
       updates: [
         relationship(actionKeys.allowed, 'restriction'),
         relationship(actionKeys.allowed, 'executor'),
+        relationship(actionKeys.membershipAllowed, 'executor', {
+          objectId: tenantId,
+          objectType: 'tenant',
+          optionalRelation: 'member',
+        }),
+        relationship(actionKeys.crossTenantDenied, 'executor', {
+          objectId: tenantId,
+          objectType: 'tenant',
+          optionalRelation: 'member',
+        }),
+        relationship(actionKeys.nonMemberDenied, 'executor', {
+          objectId: tenantId,
+          objectType: 'tenant',
+          optionalRelation: 'member',
+        }),
         relationship(actionKeys.denied, 'restriction'),
         relationship(actionKeys.concurrentDenied, 'restriction'),
+        tenantMembership(tenantId, principalId),
+        tenantMembership(otherTenantId, otherTenantPrincipalId),
       ].map((item) =>
         v1.RelationshipUpdate.create({
           operation: v1.RelationshipUpdate_Operation.TOUCH,
@@ -190,6 +314,16 @@ after(async () => {
         }),
       );
     }
+    for (const membershipTenantId of [tenantId, otherTenantId]) {
+      await adminClient.promises.deleteRelationships(
+        v1.DeleteRelationshipsRequest.create({
+          relationshipFilter: v1.RelationshipFilter.create({
+            optionalResourceId: membershipTenantId,
+            resourceType: 'tenant',
+          }),
+        }),
+      );
+    }
   } catch (error) {
     relationshipCleanupError = error;
   } finally {
@@ -197,6 +331,20 @@ after(async () => {
   }
 
   await databasePromise(async (database) => {
+    await database.executor
+      .delete(outboxMessages)
+      .where(eq(outboxMessages.tenantId, otherTenantId));
+    await database.executor.delete(domainEvents).where(eq(domainEvents.tenantId, otherTenantId));
+    await database.executor
+      .delete(dataAccessEvents)
+      .where(eq(dataAccessEvents.tenantId, otherTenantId));
+    await database.executor.delete(auditEvents).where(eq(auditEvents.tenantId, otherTenantId));
+    await database.executor
+      .delete(tenantModuleStates)
+      .where(eq(tenantModuleStates.tenantId, otherTenantId));
+    await database.executor
+      .delete(actionInvocations)
+      .where(eq(actionInvocations.tenantId, otherTenantId));
     await database.executor.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId));
     await database.executor.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId));
     await database.executor.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId));
@@ -209,10 +357,15 @@ after(async () => {
       .where(eq(actionInvocations.tenantId, tenantId));
     await database.executor
       .delete(principalAuthBindings)
+      .where(eq(principalAuthBindings.tenantId, otherTenantId));
+    await database.executor
+      .delete(principalAuthBindings)
       .where(eq(principalAuthBindings.tenantId, tenantId));
+    await database.executor.delete(principals).where(eq(principals.tenantId, otherTenantId));
     await database.executor.delete(principals).where(eq(principals.tenantId, tenantId));
     await database.executor.delete(legalEntities).where(eq(legalEntities.tenantId, tenantId));
     await database.executor.delete(tenants).where(eq(tenants.tenantId, tenantId));
+    await database.executor.delete(tenants).where(eq(tenants.tenantId, otherTenantId));
   });
 
   if (relationshipCleanupError !== undefined) {
@@ -244,6 +397,7 @@ const registration = (actionKey: string, moduleStateKey: string, onExecute: () =
       domainEvents: NoDomainEvents,
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: actionKey,
         moduleKey: 'core.shell',
         role: 'action',
@@ -293,25 +447,27 @@ const runWithLivePermission = async <Value>(
   }
 };
 
-test('allows unconfigured and explicitly granted Actions through the live permission gate', async () => {
+test('allows direct Principal and Tenant-membership executor grants', async () => {
   await databasePromise(async (database) => {
     for (const [kind, actionKey] of [
-      ['unconfigured', actionKeys.unconfigured],
-      ['allowed', actionKeys.allowed],
+      ['direct', actionKeys.allowed],
+      ['membership', actionKeys.membershipAllowed],
     ] as const) {
       let executions = 0;
       const moduleStateKey = `${actionPrefix}.state.${kind}`;
-      await runWithLivePermission(database, (runtime) =>
-        Effect.runPromise(
-          runtime.runAction({
-            payload: undefined,
-            principal,
-            registration: registration(actionKey, moduleStateKey, () => {
-              executions += 1;
+      await runWithLivePermission(
+        database,
+        async (runtime) =>
+          await Effect.runPromise(
+            runtime.runAction({
+              payload: undefined,
+              principal,
+              registration: registration(actionKey, moduleStateKey, () => {
+                executions += 1;
+              }),
+              transport: transport(kind, moduleStateKey),
             }),
-            transport: transport(kind, moduleStateKey),
-          }),
-        ),
+          ),
       );
       const rows = await database.executor
         .select()
@@ -327,21 +483,23 @@ test('allows unconfigured and explicitly granted Actions through the live permis
 test('persists one normalized terminal denial and no business or collected evidence', async () => {
   await databasePromise(async (database) => {
     let executions = 0;
-    const key = 'denied';
-    const moduleStateKey = `${actionPrefix}.state.denied`;
-    const failure = await runWithLivePermission(database, (runtime) =>
-      Effect.runPromise(
-        Effect.flip(
-          runtime.runAction({
-            payload: undefined,
-            principal,
-            registration: registration(actionKeys.denied, moduleStateKey, () => {
-              executions += 1;
+    const key = 'missing';
+    const moduleStateKey = `${actionPrefix}.state.missing`;
+    const failure = await runWithLivePermission(
+      database,
+      async (runtime) =>
+        await Effect.runPromise(
+          Effect.flip(
+            runtime.runAction({
+              payload: undefined,
+              principal,
+              registration: registration(actionKeys.missing, moduleStateKey, () => {
+                executions += 1;
+              }),
+              transport: transport(key, moduleStateKey),
             }),
-            transport: transport(key, moduleStateKey),
-          }),
+          ),
         ),
-      ),
     );
     const [invocation] = await database.executor
       .select()
@@ -388,13 +546,45 @@ test('persists one normalized terminal denial and no business or collected evide
       },
       {
         eventType: 'action.rejected',
-        evidenceJson: { actionKey: actionKeys.denied },
+        evidenceJson: { actionKey: actionKeys.missing },
         outcome: 'denied',
         outcomeCode: 'spicedb_permission_denied',
         outcomeStage: 'authz',
       },
     );
     assert.equal(JSON.stringify(audits[0]).includes(spiceDbConfig.preSharedKey), false);
+  });
+});
+
+test('denies a legacy marker without an executor and membership-set outsiders', async () => {
+  await databasePromise(async (database) => {
+    for (const [kind, actionKey, deniedPrincipal] of [
+      ['legacy-marker', actionKeys.denied, principal],
+      ['other-tenant', actionKeys.crossTenantDenied, otherTenantPrincipal],
+      ['non-member', actionKeys.nonMemberDenied, nonMemberPrincipal],
+    ] as const) {
+      let executions = 0;
+      const moduleStateKey = `${actionPrefix}.state.${kind}`;
+      const failure = await runWithLivePermission(
+        database,
+        async (runtime) =>
+          await Effect.runPromise(
+            Effect.flip(
+              runtime.runAction({
+                payload: undefined,
+                principal: deniedPrincipal,
+                registration: registration(actionKey, moduleStateKey, () => {
+                  executions += 1;
+                }),
+                transport: transport(kind, moduleStateKey),
+              }),
+            ),
+          ),
+      );
+
+      assert.equal(failure._tag, 'ActionPermissionDenied', kind);
+      assert.equal(executions, 0, kind);
+    }
   });
 });
 
@@ -412,10 +602,12 @@ test('serializes concurrent denials into one Audit Event without executing the h
       transport: transport(key, moduleStateKey),
     };
     const results = await Promise.all(
-      [1, 2].map(() =>
-        runWithLivePermission(database, (runtime) =>
-          Effect.runPromise(Effect.flip(runtime.runAction(input))),
-        ),
+      [1, 2].map(
+        async () =>
+          await runWithLivePermission(
+            database,
+            async (runtime) => await Effect.runPromise(Effect.flip(runtime.runAction(input))),
+          ),
       ),
     );
     const [invocation] = await database.executor
@@ -445,8 +637,8 @@ const withDenialPersistenceFailure = (
   stage: DenialFailureStage,
 ): ContextServiceContract => {
   const transactionOverride = {
-    transaction: (callback, configuration) =>
-      database.executor.transaction((transaction) => {
+    transaction: async (callback, configuration) =>
+      await database.executor.transaction(async (transaction) => {
         const insert: typeof transaction.insert = (table) => {
           if (stage === 'audit' && Object.is(table, auditEvents)) {
             throw new Error(`Injected denial ${stage} failure`);
@@ -463,7 +655,7 @@ const withDenialPersistenceFailure = (
           insert,
           update,
         });
-        return callback(faultingTransaction);
+        return await callback(faultingTransaction);
       }, configuration),
   } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
   const executor: ContextServiceContract['executor'] = Object.assign(
@@ -492,8 +684,8 @@ test('rolls back both denial evidence writes when either persistence step fails'
       );
       const failure = await runWithLivePermission(
         withDenialPersistenceFailure(database, stage),
-        (runtime) =>
-          Effect.runPromise(
+        async (runtime) =>
+          await Effect.runPromise(
             Effect.flip(
               runtime.runAction({
                 payload: undefined,
@@ -532,8 +724,8 @@ test('fails closed for invalid SpiceDB credentials and leaves retryable received
     const moduleStateKey = `${actionPrefix}.state.invalid-credentials`;
     const failure = await runWithLivePermission(
       database,
-      (runtime) =>
-        Effect.runPromise(
+      async (runtime) =>
+        await Effect.runPromise(
           Effect.flip(
             runtime.runAction({
               payload: undefined,

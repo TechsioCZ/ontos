@@ -1,5 +1,5 @@
 // @effect-diagnostics asyncFunction:off nodeBuiltinImport:off
-/* eslint-disable no-await-in-loop, sort-keys, unicorn/no-await-expression-member -- Live HTTP acceptance scenarios run sequentially to inspect each committed boundary. */
+/* eslint-disable unicorn/no-await-expression-member -- Live HTTP acceptance scenarios inspect each committed boundary. */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';

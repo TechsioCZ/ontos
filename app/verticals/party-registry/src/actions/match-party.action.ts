@@ -63,6 +63,7 @@ export const matchPartyAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'party.registry.match-party',
       moduleKey: 'party.registry',
       role: 'action',

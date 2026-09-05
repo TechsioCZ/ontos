@@ -41,8 +41,8 @@ const SearchPage = () => {
       </StatusText>
     ) : (
       <section
-        className="shell:grid shell:w-full shell:max-w-5xl shell:gap-6"
         aria-labelledby="search-results-title"
+        className="shell:grid shell:w-full shell:max-w-5xl shell:gap-6"
       >
         <h2 className="shell:text-title-lg" id="search-results-title">
           {t('shell.search.title')}
@@ -140,6 +140,7 @@ const SearchPage = () => {
       tenantSwitchFailed={controls.tenantSwitchFailed}
       tenantSwitchPending={controls.tenantSwitchPending}
       title={t('shell.search.title')}
+      unavailableDeployments={model.shell.navigation.unavailableDeployments}
     >
       {controls.logoutFailed ? (
         <StatusText aria-live="polite" showIcon status="error">

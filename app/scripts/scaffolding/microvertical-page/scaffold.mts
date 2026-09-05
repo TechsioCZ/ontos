@@ -333,11 +333,34 @@ const renderFormattedLegacyPage = (
     `            <h1 className="${vertical.tailwindPrefix}:text-3xl ${vertical.tailwindPrefix}:font-bold ${vertical.tailwindPrefix}:sm:text-4xl" id={headingId}>`,
   );
 
-const pageWiring = (vertical: PageVerticalMetadata, page: string, route: PageRoute) => {
+const renderReadAuthorization = (
+  config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
+): string => {
+  if (config.authorization === 'context_permission') {
+    if (
+      config.permission === undefined ||
+      !/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u.test(config.permission)
+    ) {
+      throw new Error('context_permission authorization requires a stable --permission value');
+    }
+    return `{ kind: 'context_permission', permission: '${config.permission}' }`;
+  }
+  if (config.permission !== undefined) {
+    throw new Error('--permission is valid only for context_permission authorization');
+  }
+  return `{ kind: '${config.authorization}' }`;
+};
+
+const pageWiring = (
+  vertical: PageVerticalMetadata,
+  page: string,
+  route: PageRoute,
+  config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
+) => {
   const componentName = `${toPascalCase(page)}Page`;
   const componentKey = `${vertical.moduleId}.page-${page}`;
   const contributionKey = `${vertical.moduleId}.page.${page}`;
-  const entrypoint = `{ access: 'read', entrypointKey: '${contributionKey}', moduleKey: '${vertical.moduleId}', role: 'page', scope: 'tenant' }`;
+  const entrypoint = `{ access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${contributionKey}', moduleKey: '${vertical.moduleId}', role: 'page', scope: 'tenant' }`;
   return {
     componentKey,
     componentName,
@@ -405,8 +428,9 @@ const patchPageWiring = (
   vertical: PageVerticalMetadata,
   page: string,
   route: PageRoute,
+  config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
 ): PageOwnerWiring => {
-  const wiring = pageWiring(vertical, page, route);
+  const wiring = pageWiring(vertical, page, route, config);
   let manifest = insertSortedSlot(
     vertical.manifestContent,
     MODULE_MANIFEST_IMPORT_SLOT_START,
@@ -451,6 +475,7 @@ const renderRouteMetadata = (
   vertical: PageVerticalMetadata,
   page: string,
   route: PageRoute,
+  config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
 ): string => {
   const keyRoot = `${vertical.namespace}.pages.${toCamelCase(page)}`;
   const localisedPaths = vertical.locales
@@ -463,6 +488,7 @@ const routeMeta = {
   descriptionKey: '${keyRoot}.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
+    authorization: ${renderReadAuthorization(config)},
     entrypointKey: '${vertical.moduleId}.page.${page}',
     moduleKey: '${vertical.moduleId}',
     role: 'page',
@@ -555,6 +581,7 @@ const renderShellConnectorMetadata = (
   vertical: PageVerticalMetadata,
   page: string,
   route: PageRoute,
+  config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
 ): string => {
   const localisedPaths = vertical.locales
     .map((locale) => `    ${locale}: '${route.canonicalPath}',`)
@@ -566,6 +593,7 @@ const routeMeta = {
   descriptionKey: 'shell.moduleTarget.seoDescription',
   entrypoint: defineSystemModuleEntrypoint({
     access: 'read',
+    authorization: ${renderReadAuthorization(config)},
     entrypointKey: 'shell-super-app.page.${vertical.appId}-${page}',
     moduleKey: 'shell-super-app',
     role: 'page',
@@ -834,8 +862,9 @@ const generatedWiringMatches = async (
   page: string,
   route: PageRoute,
   pageState: Exclude<GeneratedPageState, 'invalid'>,
+  config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
 ): Promise<boolean> => {
-  const wiring = pageWiring(vertical, page, route);
+  const wiring = pageWiring(vertical, page, route, config);
   const federationPath = resolveContainedPath(vertical.directory, 'module-federation.config.ts');
   const federation = await readFile(federationPath, 'utf-8');
   const shellClients = await readFile(
@@ -866,7 +895,7 @@ const generatedWiringMatches = async (
         ? renderShellConnectorLoader(vertical, page, route)
         : renderLegacyShellConnectorLoader(vertical, route),
     ],
-    ['route.meta.ts', renderShellConnectorMetadata(vertical, page, route)],
+    ['route.meta.ts', renderShellConnectorMetadata(vertical, page, route, config)],
   ] as const;
   const shellRouteMatches = await Promise.all(
     expectedShellFiles.map(async ([fileName, expected]) => {
@@ -963,6 +992,7 @@ const generatedPageState = async (
   routeDirectory: string,
   pagePath: string,
   routeMetadataPath: string,
+  config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
 ): Promise<GeneratedPageState> => {
   const entries = await readdir(routeDirectory, { withFileTypes: true });
   if (
@@ -977,7 +1007,7 @@ const generatedPageState = async (
     readFile(pagePath, 'utf-8'),
     readFile(routeMetadataPath, 'utf-8'),
   ]);
-  const expectedMetadata = renderRouteMetadata(vertical, page, route);
+  const expectedMetadata = renderRouteMetadata(vertical, page, route, config);
   if (routeMetadataContent !== expectedMetadata) {
     return 'invalid';
   }
@@ -1012,7 +1042,7 @@ const generatedPageState = async (
   if (!localeStates.every((state) => state === pageState)) {
     return 'invalid';
   }
-  return (await generatedWiringMatches(workspaceRoot, vertical, page, route, pageState))
+  return (await generatedWiringMatches(workspaceRoot, vertical, page, route, pageState, config))
     ? pageState
     : 'invalid';
 };
@@ -1053,6 +1083,7 @@ export const planPageScaffold = async (
       routeDirectory,
       pagePath,
       routeMetadataPath,
+      config,
     );
     if (state === 'current') {
       return {
@@ -1117,12 +1148,12 @@ export const planPageScaffold = async (
   const pageMutation = await createMutation(pagePath, renderPage(vertical, page, route));
   const routeMutation = await createMutation(
     routeMetadataPath,
-    renderRouteMetadata(vertical, page, route),
+    renderRouteMetadata(vertical, page, route, config),
   );
   const localeMutations = await Promise.all(
     vertical.locales.map((locale) => patchLocale(workspaceRoot, vertical, locale, page)),
   );
-  const wiring = patchPageWiring(vertical, page, route);
+  const wiring = patchPageWiring(vertical, page, route, config);
   const manifestMutation = updateMutation(
     vertical.manifestPath,
     vertical.manifestContent,
@@ -1170,7 +1201,7 @@ export const planPageScaffold = async (
       shellClientsContent,
       SHELL_PAGE_CLIENT_SLOT_START,
       SHELL_PAGE_CLIENT_SLOT_END,
-      [pageWiring(vertical, page, route).shellClient],
+      [pageWiring(vertical, page, route, config).shellClient],
       (candidate) => candidate.endsWith(','),
     ),
   );
@@ -1184,7 +1215,7 @@ export const planPageScaffold = async (
   );
   const shellRouteMetadataMutation = await createMutation(
     path.join(shellRouteDirectory, 'route.meta.ts'),
-    renderShellConnectorMetadata(vertical, page, route),
+    renderShellConnectorMetadata(vertical, page, route, config),
   );
   const mutations = [
     pageMutation,

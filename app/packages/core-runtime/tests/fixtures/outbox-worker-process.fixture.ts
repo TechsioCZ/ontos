@@ -9,6 +9,7 @@ const registration = defineOutboxWorker(
     consumerModuleKey: 'process-fixture',
     entrypoint: defineTenantModuleEntrypoint({
       access: 'background',
+      authorization: { kind: 'owner_local_background' },
       entrypointKey: 'process-fixture.lifecycle',
       moduleKey: 'process-fixture',
       role: 'worker',

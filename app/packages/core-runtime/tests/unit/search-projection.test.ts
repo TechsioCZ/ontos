@@ -1,5 +1,6 @@
+/* oxlint-disable typescript/return-await */
 // @effect-diagnostics asyncFunction:off
-/* eslint-disable no-await-in-loop, sort-keys, unicorn/no-await-expression-member, anti-slop/no-conditional-empty-object-spread, anti-slop/no-unsafe-dictionary-type -- Sequential state assertions and deliberately malformed unknown overrides make the projection boundary contract explicit. */
+/* eslint-disable no-await-in-loop, unicorn/no-await-expression-member, anti-slop/no-conditional-empty-object-spread, anti-slop/no-unsafe-dictionary-type -- Sequential state assertions and deliberately malformed unknown overrides make the projection boundary contract explicit. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect } from 'effect';
@@ -95,7 +96,7 @@ test('Core Search identifies alias-only matches while canonical evidence takes p
       kind: 'upsert',
     }),
   );
-  const search = (query: string) =>
+  const search = async (query: string) =>
     Effect.runPromise(
       runtime.search({
         includeArchived: false,
@@ -179,26 +180,26 @@ test('Core Search honors half-open evidence periods for canonical and subject al
             searchableText: [],
             temporalSearchableText: [
               {
-                value: 'old-private@example.test',
                 validFrom: '2026-01-01T00:00:00Z',
                 validTo: '2026-02-01T00:00:00Z',
+                value: 'old-private@example.test',
               },
             ],
           },
         ],
         temporalSearchableText: [
-          { value: 'current-private@example.test', validFrom: '2026-02-01T00:00:00Z' },
+          { validFrom: '2026-02-01T00:00:00Z', value: 'current-private@example.test' },
           {
-            value: 'long-lived@example.test',
             validFrom: '2000-01-01T00:00:00Z',
             validTo: '2100-01-01T00:00:00Z',
+            value: 'long-lived@example.test',
           },
         ],
       }),
       kind: 'upsert',
     }),
   );
-  const search = (query: string, effectiveAt?: string) =>
+  const search = async (query: string, effectiveAt?: string) =>
     Effect.runPromise(
       runtime.search({
         ...(effectiveAt === undefined ? {} : { effectiveAt }),

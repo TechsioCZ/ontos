@@ -75,9 +75,7 @@ type ShellAuthenticationApiGroups =
     : never;
 
 export type ShellAuthenticationClient = HttpApiClient.Client<
-  Extract<ShellAuthenticationApiGroups, HttpApiGroup.Constraint>,
-  never,
-  never
+  Extract<ShellAuthenticationApiGroups, HttpApiGroup.Constraint>
 >;
 
 export interface ShellAuthenticationClientOptions {

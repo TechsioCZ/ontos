@@ -1,3 +1,4 @@
+// @effect-diagnostics asyncFunction:off
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Context, Effect, Layer } from 'effect';
 import type { Scope } from 'effect';
@@ -33,7 +34,7 @@ export const acquirePoolResource = <Resource extends PoolResource>(
         }),
       try: acquire,
     }),
-    (pool) => Effect.promise(() => pool.end()),
+    (pool) => Effect.promise(async () => await pool.end()),
   );
 
 export type PoolFactory = (configuration: PoolConfig) => Pool;

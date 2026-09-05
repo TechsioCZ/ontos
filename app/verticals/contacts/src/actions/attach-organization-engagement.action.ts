@@ -61,6 +61,7 @@ export const attachOrganizationEngagementAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'contacts.core.attach-organization-engagement',
       moduleKey: 'contacts.core',
       role: 'action',

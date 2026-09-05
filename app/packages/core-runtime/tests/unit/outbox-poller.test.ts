@@ -1,5 +1,5 @@
 // @effect-diagnostics asyncFunction:off globalTimers:off newPromise:off processEnv:off
-/* eslint-disable promise/avoid-new, promise/param-names -- Controlled promises coordinate and bound the long-running test fiber. */
+/* eslint-disable promise/avoid-new -- Controlled promises coordinate and bound the long-running test fiber. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
@@ -14,6 +14,7 @@ const registration = defineOutboxWorker(
     consumerModuleKey: 'consumer',
     entrypoint: defineTenantModuleEntrypoint({
       access: 'background',
+      authorization: { kind: 'owner_local_background' },
       entrypointKey: 'consumer.logger',
       moduleKey: 'consumer',
       role: 'worker',
@@ -43,7 +44,7 @@ const emptyResult = {
   succeeded: 0,
 } as const;
 
-test('uses safe one-second defaults and accepts bounded scalar overrides', async () => {
+void test('uses safe one-second defaults and accepts bounded scalar overrides', async () => {
   assert.deepEqual(
     await Effect.runPromise(
       parseOutboxPollingConfig({ defaultClaimOwner: 'consumer:default', environment: {} }),
@@ -74,7 +75,7 @@ test('uses safe one-second defaults and accepts bounded scalar overrides', async
   );
 });
 
-test('rejects invalid polling values instead of falling back to a busy loop', async () => {
+void test('rejects invalid polling values instead of falling back to a busy loop', async () => {
   await assert.rejects(
     Effect.runPromise(
       parseOutboxPollingConfig({
@@ -86,7 +87,7 @@ test('rejects invalid polling values instead of falling back to a busy loop', as
   );
 });
 
-test('runs immediately, survives a typed cycle failure, and continues polling', async () => {
+void test('runs immediately, survives a typed cycle failure, and continues polling', async () => {
   let calls = 0;
   const healthTransitions: string[] = [];
   let completed!: () => void;

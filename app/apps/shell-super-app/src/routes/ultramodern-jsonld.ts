@@ -34,53 +34,53 @@ const withSchemaContext = <TType extends string, TInput extends object>(
 export const defineRouteJsonLd = <TJsonLd extends RouteJsonLd>(jsonLd: TJsonLd): TJsonLd => jsonLd;
 
 export interface WebPageJsonLdInput {
-  readonly name: string;
-  readonly url: string;
   readonly description?: string;
   readonly inLanguage?: string | readonly string[];
   readonly isPartOf?: ThingReference;
+  readonly name: string;
+  readonly url: string;
 }
 
 export const webPageJsonLd = (input: WebPageJsonLdInput) => withSchemaContext('WebPage', input);
 
 export interface WebApplicationJsonLdInput {
-  readonly name: string;
-  readonly url: string;
   readonly applicationCategory?: string;
   readonly browserRequirements?: string;
   readonly description?: string;
+  readonly name: string;
   readonly operatingSystem?: string;
+  readonly url: string;
 }
 
 export const webApplicationJsonLd = (input: WebApplicationJsonLdInput) =>
   withSchemaContext('WebApplication', input);
 
 export interface SoftwareApplicationJsonLdInput {
-  readonly name: string;
-  readonly url: string;
   readonly applicationCategory?: string;
   readonly applicationSubCategory?: string;
   readonly description?: string;
+  readonly name: string;
   readonly offers?: ThingReference;
   readonly operatingSystem?: string;
+  readonly url: string;
 }
 
 export const softwareApplicationJsonLd = (input: SoftwareApplicationJsonLdInput) =>
   withSchemaContext('SoftwareApplication', input);
 
 export interface OrganizationJsonLdInput {
-  readonly name: string;
-  readonly url?: string;
   readonly logo?: string;
+  readonly name: string;
   readonly sameAs?: readonly string[];
+  readonly url?: string;
 }
 
 export const organizationJsonLd = (input: OrganizationJsonLdInput) =>
   withSchemaContext('Organization', input);
 
 export interface BreadcrumbListItemInput {
-  readonly name: string;
   readonly item: string;
+  readonly name: string;
 }
 
 export const breadcrumbListJsonLd = (items: readonly BreadcrumbListItemInput[]) =>
@@ -94,10 +94,10 @@ export const breadcrumbListJsonLd = (items: readonly BreadcrumbListItemInput[]) 
   });
 
 export interface FAQPageQuestionInput {
-  readonly name: string;
   readonly acceptedAnswer: {
     readonly text: string;
   };
+  readonly name: string;
 }
 
 export const faqPageJsonLd = (questions: readonly FAQPageQuestionInput[]) =>

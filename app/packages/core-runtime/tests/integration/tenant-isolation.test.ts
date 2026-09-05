@@ -34,7 +34,7 @@ import type { ReadHandlerContext } from '../../src/reads/context.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
-test('declares the composite same-tenant parent keys used by isolation foreign keys', () => {
+void test('declares the composite same-tenant parent keys used by isolation foreign keys', () => {
   const names = [legalEntities, principals, principalAuthBindings, actionInvocations].flatMap(
     (table) =>
       getTableConfig(table)
@@ -71,7 +71,7 @@ test('declares the composite same-tenant parent keys used by isolation foreign k
   }
 });
 
-test('runtime RLS isolates tenant and legal-entity rows and never leaks transaction scope', async () => {
+void test('runtime RLS isolates tenant and legal-entity rows and never leaks transaction scope', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
   const admin = new Pool({ connectionString: connections.admin.connectionString });
   const runtime = new Pool({ connectionString: connections.runtime.connectionString, max: 1 });
@@ -199,7 +199,7 @@ test('runtime RLS isolates tenant and legal-entity rows and never leaks transact
   }
 });
 
-test('an unscoped owner repository remains isolated inside a governed read transaction', async () => {
+void test('an unscoped owner repository remains isolated inside a governed read transaction', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
   const admin = new Pool({ connectionString: connections.admin.connectionString });
   const runtimePool = new Pool({ connectionString: connections.runtime.connectionString });
@@ -225,12 +225,13 @@ test('an unscoped owner repository remains isolated inside a governed read trans
   const predicate = `tenant_id = nullif(current_setting('ontos.tenant_id', true), '')::uuid and legal_entity_id = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
   const entrypoint = defineSystemModuleEntrypoint({
     access: 'read',
+    authorization: { kind: 'context_permission', permission: 'module.access' },
     entrypointKey: 'core.shell.governed-isolation-fixture',
     moduleKey: 'core.shell',
     role: 'api',
   });
 
-  const runForScope = (scope: {
+  const runForScope = async (scope: {
     readonly authBindingId: string;
     readonly authMethod: 'session';
     readonly correlationId: string;
@@ -292,7 +293,7 @@ test('an unscoped owner repository remains isolated inside a governed read trans
       ),
       contextAccess,
     );
-    return Effect.runPromise(
+    return await Effect.runPromise(
       runtime.runRead({
         input: {},
         principal: {
@@ -414,7 +415,7 @@ test('an unscoped owner repository remains isolated inside a governed read trans
   }
 });
 
-test('PostgreSQL rejects cross-tenant entity, principal, and Action references', async () => {
+void test('PostgreSQL rejects cross-tenant entity, principal, and Action references', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
   const admin = new Pool({ connectionString: connections.admin.connectionString });
   const client = await admin.connect();

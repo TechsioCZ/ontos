@@ -47,7 +47,7 @@ export const isVerifiedOutboxWorkerHandlerContext = (
 ): boolean => verifiedHandlerContexts.has(context);
 
 export interface OutboxWorkerDescriptor<
-  PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
   Consumer extends string,
   Producer extends string,
 > {
@@ -63,7 +63,7 @@ export interface OutboxWorkerDescriptor<
 
 export type OutboxWorkerSubscription = Readonly<
   Pick<
-    OutboxWorkerDescriptor<Schema.ConstraintDecoder<unknown, never>, string, string>,
+    OutboxWorkerDescriptor<Schema.ConstraintDecoder<unknown>, string, string>,
     'consumerModuleKey' | 'entrypoint' | 'producerModuleKey' | 'topic' | 'workerKey'
   >
 >;
@@ -87,25 +87,25 @@ type BivariantOutboxWorkerHandler<Payload, Error, Requirements> = OutboxWorkerHa
 >['invoke'];
 
 export interface OutboxWorkerRegistration<
-  PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
   Consumer extends string,
   Producer extends string,
   HandlerError,
   HandlerRequirements = never,
 > {
-  readonly [outboxWorkerRegistration]: true;
+  readonly _handlerError?: HandlerError;
+  readonly _handlerRequirements?: HandlerRequirements;
+  readonly descriptor: Readonly<OutboxWorkerDescriptor<PayloadSchema, Consumer, Producer>>;
   readonly [outboxWorkerHandler]: BivariantOutboxWorkerHandler<
     PayloadSchema['Type'],
     HandlerError,
     HandlerRequirements
   >;
-  readonly descriptor: Readonly<OutboxWorkerDescriptor<PayloadSchema, Consumer, Producer>>;
-  readonly _handlerError?: HandlerError;
-  readonly _handlerRequirements?: HandlerRequirements;
+  readonly [outboxWorkerRegistration]: true;
 }
 
 export type AnyOutboxWorkerRegistration = OutboxWorkerRegistration<
-  Schema.ConstraintDecoder<unknown, never>,
+  Schema.ConstraintDecoder<unknown>,
   string,
   string,
   unknown,
@@ -132,7 +132,7 @@ export const extractOutboxWorkerSubscriptions = (
 
 export type OutboxWorkerRequirements<Registration extends AnyOutboxWorkerRegistration> =
   Registration extends OutboxWorkerRegistration<
-    Schema.ConstraintDecoder<unknown, never>,
+    Schema.ConstraintDecoder<unknown>,
     string,
     string,
     unknown,
@@ -143,7 +143,7 @@ export type OutboxWorkerRequirements<Registration extends AnyOutboxWorkerRegistr
 
 type OutboxWorkerHandlerError<Registration extends AnyOutboxWorkerRegistration> =
   Registration extends OutboxWorkerRegistration<
-    Schema.ConstraintDecoder<unknown, never>,
+    Schema.ConstraintDecoder<unknown>,
     string,
     string,
     infer HandlerError,
@@ -171,7 +171,7 @@ const assertFiniteInteger = (
 };
 
 export const defineOutboxWorker = <
-  PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
   const Consumer extends string,
   const Producer extends string,
   HandlerError,
@@ -243,13 +243,13 @@ export const defineOutboxWorker = <
   }
 
   const registration = Object.freeze({
-    [outboxWorkerHandler]: handler,
-    [outboxWorkerRegistration]: true as const,
     descriptor: Object.freeze({
       ...descriptor,
       entrypoint: descriptor.entrypoint,
       retryPolicy: Object.freeze({ ...descriptor.retryPolicy }),
     }),
+    [outboxWorkerHandler]: handler,
+    [outboxWorkerRegistration]: true as const,
   });
   return registration;
 };
@@ -259,7 +259,7 @@ export const validateOutboxWorkerRegistrations = <Registration extends AnyOutbox
 ): readonly Registration[] => {
   const workerKeys = new Set<string>();
   for (const registration of registrations) {
-    if (registration[outboxWorkerRegistration] !== true || !Object.isFrozen(registration)) {
+    if (!registration[outboxWorkerRegistration] || !Object.isFrozen(registration)) {
       throw descriptorError('every Outbox Worker must be created by defineOutboxWorker');
     }
     const { workerKey } = registration.descriptor;

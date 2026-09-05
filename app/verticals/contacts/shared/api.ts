@@ -1,4 +1,4 @@
-/* eslint-disable import/no-duplicates, no-duplicate-imports, oxc/no-barrel-file -- This is the public contract aggregate; the semantic API seam guard requires one exact API-only import per generated contract. */
+/* eslint-disable oxc/no-barrel-file, sonarjs/no-wildcard-import -- This is the public contract aggregate for the generated API seams. */
 import {
   HttpApi,
   HttpApiEndpoint,

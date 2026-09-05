@@ -1,4 +1,3 @@
-/* eslint-disable node/no-process-env -- The subprocess verifies hostile invocation environments. */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -13,7 +12,7 @@ const expectedEnvironmentPath = path.join(appRoot, '.env');
 
 test('apps contain no environment files that can override the app-root .env', () => {
   const result = spawnSync(
-    'find',
+    '/usr/bin/find',
     [
       path.join(appRoot, 'apps'),
       '-type',

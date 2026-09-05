@@ -215,7 +215,29 @@ export const ${value} = HttpApi.make('${value}').add(
 `;
 };
 
-const renderModuleApiRead = (vertical: OntosVerticalMetadata, name: string): string => {
+const renderReadAuthorization = (
+  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
+): string => {
+  if (config.authorization === 'context_permission') {
+    if (
+      config.permission === undefined ||
+      !/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u.test(config.permission)
+    ) {
+      throw new Error('context_permission authorization requires a stable --permission value');
+    }
+    return `{ kind: 'context_permission', permission: '${config.permission}' }`;
+  }
+  if (config.permission !== undefined) {
+    throw new Error('--permission is valid only for context_permission authorization');
+  }
+  return `{ kind: '${config.authorization}' }`;
+};
+
+const renderModuleApiRead = (
+  vertical: OntosVerticalMetadata,
+  name: string,
+  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
+): string => {
   const type = toPascalCase(name);
   return `${generatedHeader('module-api')}
 import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
@@ -224,6 +246,7 @@ import { ${type}RequestSchema, ${type}ResponseSchema } from '../../shared/apis/$
 
 export const ${toCamelCase(name)}Entrypoint = defineTenantModuleEntrypoint({
   access: 'read',
+  authorization: ${renderReadAuthorization(config)},
   entrypointKey: '${vertical.moduleId}.api.${name}',
   moduleKey: '${vertical.moduleId}',
   role: 'api',
@@ -300,6 +323,7 @@ const renderProvider = (
   kind: Extract<GovernedContributionKind, 'report' | 'search-provider'>,
   vertical: OntosVerticalMetadata,
   name: string,
+  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
 ): string => {
   const type = toPascalCase(name);
   const role = kind === 'report' ? 'report' : 'search';
@@ -318,6 +342,7 @@ import type { ${inputType}, ${resultType} } from '../../shared/apis/${contract}.
 
 export const ${toCamelCase(name)}Entrypoint = defineTenantModuleEntrypoint({
   access: 'read',
+  authorization: ${renderReadAuthorization(config)},
   entrypointKey: '${vertical.moduleId}.${role}.${name}',
   moduleKey: '${vertical.moduleId}',
   role: '${role}',
@@ -569,7 +594,7 @@ const renderGovernedServer = (
   /* eslint-enable no-nested-ternary, unicorn/no-nested-ternary */
   const problemStem = `${type}${isModuleApi ? '' : 'Provider'}`;
   return `${generatedHeader(kind)}
-import { ReadRuntime } from '@app/core-runtime';
+import { GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
 import type { ReadCoreError } from '@app/core-runtime';
 import {
   Effect,
@@ -702,8 +727,10 @@ export const ${toCamelCase(name)}ReadApiLive = HttpApiBuilder.group(
           ONTOS_GATEWAY_ISSUER: Config.string('ONTOS_GATEWAY_ISSUER'),
           ONTOS_GATEWAY_PUBLIC_JWKS: Config.string('ONTOS_GATEWAY_PUBLIC_JWKS'),
         }).pipe(Effect.mapError(unavailableProblem));
+        const redemption = yield* GatewayAssertionRedemptionService;
         const principal = yield* verifyOperationPrincipal(request.headers.authorization, {
           environment,
+          redemption,
         }).pipe(
           Effect.catch((error) => {
             if (
@@ -749,6 +776,7 @@ const slotLine = (
   vertical: OntosVerticalMetadata,
   name: string,
   resource: string | undefined,
+  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
 ): GovernedContributionSlots => {
   const key = `${vertical.moduleId}.${name}`;
   if (kind === 'public-component') {
@@ -762,7 +790,7 @@ const slotLine = (
         [
           MODULE_MANIFEST_SHELL_COMPONENT_SLOT_START,
           MODULE_MANIFEST_SHELL_COMPONENT_SLOT_END,
-          `{ componentKey: '${key}', contributionKey: '${vertical.moduleId}.component.${name}', entrypoint: { access: 'read', entrypointKey: '${vertical.moduleId}.component.${name}', moduleKey: '${vertical.moduleId}', role: 'public_component', scope: 'tenant' } },`,
+          `{ componentKey: '${key}', contributionKey: '${vertical.moduleId}.component.${name}', entrypoint: { access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${vertical.moduleId}.component.${name}', moduleKey: '${vertical.moduleId}', role: 'public_component', scope: 'tenant' } },`,
         ],
       ],
       registration: [
@@ -807,7 +835,7 @@ const slotLine = (
         [
           MODULE_MANIFEST_SHELL_SEARCH_SLOT_START,
           MODULE_MANIFEST_SHELL_SEARCH_SLOT_END,
-          `{ contributionKey: '${vertical.moduleId}.search.${name}', entrypoint: { access: 'read', entrypointKey: '${vertical.moduleId}.search.${name}', moduleKey: '${vertical.moduleId}', role: 'search', scope: 'tenant' }, searchKey: '${key}' },`,
+          `{ contributionKey: '${vertical.moduleId}.search.${name}', entrypoint: { access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${vertical.moduleId}.search.${name}', moduleKey: '${vertical.moduleId}', role: 'search', scope: 'tenant' }, searchKey: '${key}' },`,
         ],
       ],
       registration: [
@@ -829,7 +857,7 @@ const slotLine = (
       [
         MODULE_MANIFEST_SHELL_REPORT_SLOT_START,
         MODULE_MANIFEST_SHELL_REPORT_SLOT_END,
-        `{ contributionKey: '${vertical.moduleId}.report.${name}', entrypoint: { access: 'read', entrypointKey: '${vertical.moduleId}.report.${name}', moduleKey: '${vertical.moduleId}', role: 'report', scope: 'tenant' }, reportKey: '${key}' },`,
+        `{ contributionKey: '${vertical.moduleId}.report.${name}', entrypoint: { access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${vertical.moduleId}.report.${name}', moduleKey: '${vertical.moduleId}', role: 'report', scope: 'tenant' }, reportKey: '${key}' },`,
       ],
     ],
     registration: [
@@ -892,7 +920,7 @@ export const planGovernedContributionScaffold = async (
   } else if (isApi) {
     artifact = renderApiContract(name);
   } else if (isProviderContribution(kind)) {
-    artifact = renderProvider(kind, vertical, name);
+    artifact = renderProvider(kind, vertical, name, config);
   } else {
     const exhaustiveKind: never = kind;
     throw new Error(`unsupported governed contribution ${exhaustiveKind}`);
@@ -902,7 +930,7 @@ export const planGovernedContributionScaffold = async (
     mutations.push(
       await createMutation(
         resolveContainedPath(vertical.directory, 'src', 'api', `${name}.read.ts`),
-        renderModuleApiRead(vertical, name),
+        renderModuleApiRead(vertical, name, config),
       ),
     );
   }
@@ -960,7 +988,7 @@ export const planGovernedContributionScaffold = async (
       isModuleManifestImport,
     );
   }
-  const slots = slotLine(kind, vertical, name, resource);
+  const slots = slotLine(kind, vertical, name, resource, config);
   manifest = patchSlots(manifest, slots.manifest);
   const registration = patchSlots(vertical.registrationContent, slots.registration);
   const manifestMutation = updateMutation(

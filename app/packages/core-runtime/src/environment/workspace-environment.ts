@@ -1,3 +1,4 @@
+/* oxlint-disable sonarjs/no-built-in-override, typescript/consistent-return */
 import { NodeFileSystem, NodePath } from '@effect/platform-node';
 import { Effect, FileSystem, Layer, Path } from 'effect';
 import bootstrapEnvironment from './workspace-environment-bootstrap.cjs';

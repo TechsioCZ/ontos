@@ -108,8 +108,8 @@ export const supportRecoveryPrincipalContextResolverFromRepository = (
             code: 'support_recovery_context_unavailable',
             reason: 'The support recovery identity could not be revalidated',
           }),
-        try: () =>
-          repository.load({
+        try: async () =>
+          await repository.load({
             originalAuthBindingId: input.originalAuthBindingId,
             originalPrincipalId: input.originalPrincipalId,
             tenantId: input.tenantId,

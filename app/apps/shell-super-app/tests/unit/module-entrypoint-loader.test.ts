@@ -1,8 +1,10 @@
+// @effect-diagnostics lazyEffect:off
 import { expect, test } from '@rstest/core';
-import { Effect } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import {
   ModuleStateCheckUnavailableError,
   ModuleStateDeniedError,
+  TrustedPrincipalContextSchema,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import type {
@@ -15,6 +17,8 @@ import type {
 import {
   loadModuleEntrypointComposition,
   resolveThenLoadModuleTarget,
+  settleModuleEntrypointLoad,
+  settleModuleEntrypointLoads,
 } from '../../src/routes/module-entrypoint-loader.ts';
 
 const trustedContext: TrustedPrincipalContext = {
@@ -48,31 +52,46 @@ const makeFakeGateway = (options: FakeGatewayOptions = {}): ModuleEntrypointGate
         )
       : Effect.void;
   };
+  const prepareSnapshot: ModuleEntrypointGatewayService['prepareSnapshot'] = (
+    context,
+    entrypoints,
+  ) => {
+    options.onPrepare?.(entrypoints);
+    if (options.unavailable === true || context.tenantId.length === 0) {
+      return Effect.fail(
+        new ModuleStateCheckUnavailableError({
+          code: 'module_state_check_unavailable',
+          reason: 'Module state could not be checked safely',
+        }),
+      );
+    }
+    const snapshot: ModuleStateSnapshot = Object.freeze({
+      entrypointKeys: Object.freeze(entrypoints.map(({ entrypointKey }) => entrypointKey)),
+      moduleKeys: Object.freeze(
+        [...new Set(entrypoints.map(({ moduleKey }) => moduleKey))].toSorted(),
+      ),
+      tenantId: context.tenantId,
+    });
+    return Effect.succeed(snapshot);
+  };
   const gateway: ModuleEntrypointGatewayService = {
     check,
-    prepareSnapshot: (context, entrypoints) => {
-      options.onPrepare?.(entrypoints);
-      if (options.unavailable === true || context.tenantId.length === 0) {
-        return Effect.fail(
-          new ModuleStateCheckUnavailableError({
-            code: 'module_state_check_unavailable',
-            reason: 'Module state could not be checked safely',
-          }),
-        );
-      }
-      const snapshot: ModuleStateSnapshot = Object.freeze({
-        entrypointKeys: Object.freeze(entrypoints.map(({ entrypointKey }) => entrypointKey)),
-        moduleKeys: Object.freeze(
-          [...new Set(entrypoints.map(({ moduleKey }) => moduleKey))].toSorted(),
+    prepareSnapshot,
+    prepareSnapshotInput: (context, entrypoints) =>
+      Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(context).pipe(
+        Effect.mapError(
+          () =>
+            new ModuleStateCheckUnavailableError({
+              code: 'module_state_check_unavailable',
+              reason: 'Module state could not be checked safely',
+            }),
         ),
-        tenantId: context.tenantId,
-      });
-      return Effect.succeed(snapshot);
-    },
+        Effect.flatMap((trusted) => prepareSnapshot(trusted, entrypoints)),
+      ),
     run: (input) =>
       check(input.snapshot, input.entrypoint).pipe(
         Effect.andThen(input.authorize),
-        Effect.andThen(input.load),
+        Effect.andThen(Effect.suspend(input.load)),
       ),
   };
   return gateway;
@@ -80,16 +99,21 @@ const makeFakeGateway = (options: FakeGatewayOptions = {}): ModuleEntrypointGate
 
 const page = defineTenantModuleEntrypoint({
   access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'inventory.stock.page.orders',
   moduleKey: 'inventory.stock',
   role: 'page',
 });
 const component = defineTenantModuleEntrypoint({
   access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'inventory.stock.component.summary',
   moduleKey: 'inventory.stock',
   role: 'public_component',
 });
+
+const compatibleRemoteModule = (value: { readonly default: unknown }) =>
+  Predicate.isFunction(value.default);
 
 test('prepares one complete trusted composition and invokes allowed lazy loaders', async () => {
   let batches = 0;
@@ -107,10 +131,11 @@ test('prepares one complete trusted composition and invokes allowed lazy loaders
       [page, component].map((entrypoint) => ({
         authorize: Effect.void,
         entrypoint,
-        load: Effect.sync(() => {
-          loads += 1;
-          return `loaded-${loads}`;
-        }),
+        load: () =>
+          Effect.sync(() => {
+            loads += 1;
+            return `loaded-${loads}`;
+          }),
       })),
     ),
   );
@@ -134,10 +159,11 @@ test('checks the complete composition before authorizing or invoking any loader'
             authorizations += 1;
           }),
           entrypoint,
-          load: Effect.sync(() => {
-            loads += 1;
-            return loads;
-          }),
+          load: () =>
+            Effect.sync(() => {
+              loads += 1;
+              return loads;
+            }),
         })),
       ),
     ),
@@ -170,7 +196,7 @@ test('preserves typed gate and remote-load failures for exhaustive UI mapping', 
   const gateFailure = await Effect.runPromise(
     Effect.flip(
       loadModuleEntrypointComposition(makeFakeGateway({ unavailable: true }), trustedContext, [
-        { authorize: Effect.void, entrypoint: page, load: Effect.succeed('unreachable') },
+        { authorize: Effect.void, entrypoint: page, load: () => Effect.succeed('unreachable') },
       ]),
     ),
   );
@@ -182,13 +208,94 @@ test('preserves typed gate and remote-load failures for exhaustive UI mapping', 
         {
           authorize: Effect.void,
           entrypoint: page,
-          load: Effect.fail<RemoteLoadUnavailable>({ _tag: 'RemoteLoadUnavailable' }),
+          load: () => Effect.fail<RemoteLoadUnavailable>({ _tag: 'RemoteLoadUnavailable' }),
         },
       ]),
     ),
   );
   expect(remoteFailure).toEqual({ _tag: 'RemoteLoadUnavailable' });
   expect(mapFakeUnavailableUiState(remoteFailure)).toBe('unavailable');
+});
+
+test('settles browser entrypoint success, rejection, incompatibility, and timeout independently', async () => {
+  const pending = Promise.withResolvers<{ readonly default: () => null }>();
+
+  const [ready, unavailable, incompatible, timedOut] = await Promise.all([
+    Effect.runPromise(
+      settleModuleEntrypointLoad(async () => ({ default: () => null }), compatibleRemoteModule, 50),
+    ),
+    Effect.runPromise(
+      settleModuleEntrypointLoad(
+        async () => {
+          throw new Error('remote unavailable');
+        },
+        compatibleRemoteModule,
+        50,
+      ),
+    ),
+    Effect.runPromise(
+      settleModuleEntrypointLoad(
+        async () => ({ default: 'not a component' }),
+        compatibleRemoteModule,
+        50,
+      ),
+    ),
+    Effect.runPromise(
+      settleModuleEntrypointLoad(async () => await pending.promise, compatibleRemoteModule, 1),
+    ),
+  ]);
+
+  expect(ready.state).toBe('ready');
+  expect(unavailable).toEqual({ reason: 'unavailable', state: 'unavailable' });
+  expect(incompatible).toEqual({ reason: 'incompatible', state: 'unavailable' });
+  expect(timedOut).toEqual({ reason: 'timeout', state: 'unavailable' });
+});
+
+test('settles several browser entrypoints without one failure hiding healthy loads', async () => {
+  const results = await Effect.runPromise(
+    settleModuleEntrypointLoads([
+      {
+        identity: 'documents-center/page',
+        isCompatible: compatibleRemoteModule,
+        load: async () => ({ default: () => null }),
+        timeoutMs: 50,
+      },
+      {
+        identity: 'property-registry/page',
+        isCompatible: compatibleRemoteModule,
+        load: async () => {
+          throw new Error('remote unavailable');
+        },
+        timeoutMs: 50,
+      },
+      {
+        identity: 'throwing-validator/page',
+        isCompatible: () => {
+          throw new TypeError('malformed runtime value');
+        },
+        load: async () => ({ default: () => null }),
+        timeoutMs: 50,
+      },
+    ]),
+  );
+
+  expect(results).toEqual([
+    {
+      identity: 'documents-center/page',
+      state: 'ready',
+      value: expect.objectContaining({ default: expect.any(Function) }),
+    },
+    {
+      identity: 'property-registry/page',
+      reason: 'unavailable',
+      state: 'unavailable',
+    },
+    {
+      identity: 'throwing-validator/page',
+      reason: 'incompatible',
+      state: 'unavailable',
+    },
+  ]);
 });
 
 test.each(['selection_required', 'not_found', 'forbidden', 'unavailable'] as const)(

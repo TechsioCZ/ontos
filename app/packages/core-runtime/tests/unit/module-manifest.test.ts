@@ -1,3 +1,5 @@
+/* oxlint-disable typescript/return-await, unicorn/no-useless-promise-resolve-reject */
+// @effect-diagnostics asyncFunction:off
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
@@ -30,6 +32,7 @@ const createAction = (owner = 'property.registry') =>
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: `${owner}.create-unit`,
         moduleKey: owner,
         role: 'action',
@@ -88,7 +91,7 @@ const emptyManifestInput = () => ({
   },
 });
 
-test('defines a valid empty manifest, preserves literals, and freezes its public shape', () => {
+void test('defines a valid empty manifest, preserves literals, and freezes its public shape', () => {
   const manifest = defineOntosModuleManifest(emptyManifestInput());
   const literal: 'property.registry' = manifest.module.id;
 
@@ -104,7 +107,7 @@ test('defines a valid empty manifest, preserves literals, and freezes its public
   );
 });
 
-test('accepts populated typed surfaces and keeps executable values out of safe descriptors', () =>
+test('accepts populated typed surfaces and keeps executable values out of safe descriptors', async () =>
   Effect.runPromise(
     Effect.gen(function* verifySafeDescriptors() {
       const action = createAction();
@@ -175,8 +178,8 @@ test('accepts populated typed surfaces and keeps executable values out of safe d
       const registration = defineVerticalRuntimeRegistration({
         actions: [action],
         entrypoints: {
-          api: { resource: () => Promise.resolve(apiValue) },
-          components: { dashboard: () => Promise.resolve(componentValue) },
+          api: { resource: async () => Promise.resolve(apiValue) },
+          components: { dashboard: async () => Promise.resolve(componentValue) },
           pages: {},
           reports: {},
           search: {},
@@ -187,19 +190,23 @@ test('accepts populated typed surfaces and keeps executable values out of safe d
       const descriptors = extractVerticalRuntimeSafeDescriptors(registration);
 
       assert.equal(manifest.publicSurface.actions[0], action);
-      assert.equal(manifest.publicSurface.api['PropertyClient'], apiValue);
-      assert.equal(manifest.publicSurface.api['PropertyDetail'], parameterizedApiValue);
-      assert.equal(manifest.publicSurface.components['PropertyUnitCard'], componentValue);
+      assert.equal(manifest.publicSurface.api.PropertyClient, apiValue);
+      assert.equal(manifest.publicSurface.api.PropertyDetail, parameterizedApiValue);
+      assert.equal(manifest.publicSurface.components.PropertyUnitCard, componentValue);
       assert.deepEqual(Object.keys(registration), ['moduleId']);
       assert.equal(getVerticalRuntimeActions(registration)[0], action);
       const loadDashboard = getVerticalRuntimeEntrypoints(registration).components['dashboard'];
       assert.ok(loadDashboard);
-      assert.equal(yield* Effect.promise(() => Promise.resolve(loadDashboard())), componentValue);
+      assert.equal(
+        yield* Effect.promise(async () => Promise.resolve(loadDashboard())),
+        componentValue,
+      );
       assert.deepEqual(descriptors, {
         actions: [
           {
             actionKey: 'property.registry.create-unit',
             auditProfile: 'standard',
+            entrypoint: action.descriptor.entrypoint,
             idempotency: 'required',
             legalEntityScope: 'optional',
             owningModuleId: 'property.registry',
@@ -213,7 +220,7 @@ test('accepts populated typed surfaces and keeps executable values out of safe d
     }),
   ));
 
-test('rejects invalid identities, private fields, duplicates, cross-owner values, and undeclared references', () => {
+void test('rejects invalid identities, private fields, duplicates, cross-owner values, and undeclared references', () => {
   assert.throws(() =>
     defineOntosModuleManifest({
       ...emptyManifestInput(),
@@ -305,7 +312,7 @@ test('rejects invalid identities, private fields, duplicates, cross-owner values
   );
 });
 
-test('deployment contract decoding is exact and versioned', () => {
+void test('deployment contract decoding is exact and versioned', () => {
   const contract = {
     deployment: { appId: 'property-registry', buildMarker: 'build-1' },
     manifest: {

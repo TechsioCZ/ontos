@@ -1,5 +1,5 @@
 // @effect-diagnostics asyncFunction:off nodeBuiltinImport:off globalDate:off missedPipeableOpportunity:off strictEffectProvide:off
-/* eslint-disable no-await-in-loop, sort-keys, react-hooks/rules-of-hooks, unicorn/consistent-function-scoping, unicorn/no-await-expression-member -- Sequential live assertions use Effect service accessors and fixture-bound helpers, not React hooks. */
+/* eslint-disable no-await-in-loop, react-hooks/rules-of-hooks, unicorn/consistent-function-scoping, unicorn/no-await-expression-member -- Sequential live assertions use Effect service accessors and fixture-bound helpers, not React hooks. */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';

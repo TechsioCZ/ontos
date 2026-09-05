@@ -154,6 +154,7 @@ export const addContactPointAction = defineAction(
     domainEvents: { 'party.registry.contact-point-added.v1': ContactPointAddedEventSchema },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'party.registry.add-contact-point',
       moduleKey: 'party.registry',
       role: 'action',

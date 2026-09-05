@@ -1,4 +1,43 @@
 export {
+  ACTION_PROVISIONING_INTENTS,
+  ActionExecutionAuthorizationSchema,
+  ActionProvisioningIntentSchema,
+  AuthenticatedPrincipalAuthorizationSchema,
+  CapabilityIssuanceAuthorizationSchema,
+  ContextPermissionAuthorizationSchema,
+  EntrypointAuthorizationSchema,
+  IntentionalPublicAuthorizationSchema,
+  OwnerLocalBackgroundAuthorizationSchema,
+  decodeEntrypointAuthorization,
+} from './authorization/entrypoint-classification.ts';
+export {
+  AUTHORIZATION_WOULD_DENY_SCHEMA_VERSION,
+  decideAuthorizationRollout,
+} from './authorization/rollout-decision.ts';
+export type {
+  AuthorizationDenialReason,
+  AuthorizationRolloutDecisionInput,
+  AuthorizationRolloutDecisionOptions,
+  AuthorizationRolloutMode,
+  AuthorizationRolloutRuntimeContract,
+  AuthorizationWouldDenyEvent,
+} from './authorization/rollout-decision.ts';
+export {
+  GatewayAssertionRedemptionService,
+  GatewayAssertionRedemptionUnavailableError,
+  GatewayAssertionReplayError,
+} from './auth/gateway-assertion-redemption.ts';
+export type {
+  GatewayAssertionRedemption,
+  GatewayAssertionRedemptionError,
+  GatewayAssertionRedemptionInput,
+} from './auth/gateway-assertion-redemption.ts';
+export type {
+  ActionExecutionAuthorization,
+  ActionProvisioningIntent,
+  EntrypointAuthorization,
+} from './authorization/entrypoint-classification.ts';
+export {
   PrincipalBindingAmbiguousError,
   PrincipalBindingInactiveError,
   PrincipalBindingMissingError,
@@ -371,6 +410,25 @@ export {
   validateTenantModuleStateTransition,
 } from './modules/tenant-module-state-service.ts';
 export {
+  ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION,
+  ApplicationCompositionArtifactReferenceSchema,
+  ApplicationCompositionModuleSchema,
+  ApplicationCompositionSchema,
+  ApplicationCompositionSingletonSchema,
+  ApplicationCompositionValidationError,
+  ApplicationCompositionVersionedIdentitySchema,
+  canonicalizeApplicationComposition,
+  validateApplicationCompositionCandidate,
+} from './modules/application-composition.ts';
+export type {
+  ApplicationComposition,
+  ApplicationCompositionCandidateEvidence,
+  ApplicationCompositionModule,
+  ApplicationCompositionVersionedIdentity,
+  ObservedApplicationCompositionContract,
+  ObservedModuleFederationManifest,
+} from './modules/application-composition.ts';
+export {
   MODULE_ENTRYPOINT_ACCESSES,
   MODULE_ENTRYPOINT_ROLES,
   MODULE_ENTRYPOINT_SCOPES,
@@ -486,9 +544,13 @@ export {
   OntosModuleCatalogValidationError,
   InstalledModuleCatalogService,
   buildInstalledModuleCatalog,
+  resolveInstalledModuleCatalog,
 } from './modules/catalog.ts';
 export type {
   InstalledDeploymentContractInput,
+  InstalledDeploymentFailureReason,
+  InstalledDeploymentResolutionInput,
+  InstalledDeploymentStatus,
   InstalledModuleCatalog,
   InstalledModuleCatalogServiceContract,
 } from './modules/catalog.ts';
@@ -506,6 +568,10 @@ export type {
   VerticalRuntimeRegistrationInput,
   VerticalRuntimeSafeDescriptors,
 } from './modules/runtime-registration.ts';
+
+export { coreActionCatalog } from './modules/actions/catalog.ts';
+export type { CoreActionDescriptor } from './modules/actions/catalog.ts';
+export { ONTOS_SPICEDB_SCHEMA } from './permissions/schema.ts';
 
 // <generated-core-action-exports>
 export { bindManagedApiKeyAction } from './modules/actions/bind-managed-api-key.action.ts';

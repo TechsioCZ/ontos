@@ -3,7 +3,7 @@
 import { apiKey } from '@better-auth/api-key';
 import { APIError, betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { and, asc, eq, like, lte } from 'drizzle-orm';
+import { and, asc, eq, lte, sql } from 'drizzle-orm';
 import { Clock, Context, Effect, Layer, Schema, Predicate } from 'effect';
 import { AuthConfig } from './config.ts';
 import type { AuthConfigValue } from './config.ts';
@@ -131,23 +131,24 @@ const mapProviderError = <Failure>(error: Failure): ApiKeyProviderError => {
 };
 const PENDING_BINDING_LEASE_MILLISECONDS = 5 * 60 * 1000;
 const PENDING_CLEANUP_BATCH_SIZE = 100;
-/* eslint-disable sort-keys -- The stable marker prefix is intentionally indexed and queried. */
-const pendingBindingMarker = (input: {
+interface PendingBindingScope {
   readonly issuerPrincipalId: string;
-  readonly lifecycleOperationId: string;
-  readonly tenantId: string;
-}) => ({
-  ontosLifecycle: 'binding_pending_v1' as const,
-  tenantId: input.tenantId,
-  issuerPrincipalId: input.issuerPrincipalId,
-  lifecycleOperationId: input.lifecycleOperationId,
-});
-/* eslint-enable sort-keys */
-interface PendingBindingMarker {
-  readonly issuerPrincipalId: string;
-  readonly lifecycleOperationId: string;
   readonly tenantId: string;
 }
+interface PendingBindingMarker extends PendingBindingScope {
+  readonly lifecycleOperationId: string;
+}
+const pendingBindingScope = (input: PendingBindingScope) => ({
+  issuerPrincipalId: input.issuerPrincipalId,
+  ontosLifecycle: 'binding_pending_v1' as const,
+  tenantId: input.tenantId,
+});
+const pendingBindingMarker = (input: PendingBindingMarker) => ({
+  ...pendingBindingScope(input),
+  lifecycleOperationId: input.lifecycleOperationId,
+});
+const encodePendingBindingScope = (input: PendingBindingScope): string =>
+  JSON.stringify(pendingBindingScope(input));
 const decodePendingBindingMarker = (metadata: null | string): PendingBindingMarker | undefined => {
   if (metadata === null) {
     return undefined;
@@ -264,19 +265,19 @@ export const makeApiKeyService = (
     issue: (requestHeaders, input) =>
       Effect.tryPromise({
         catch: mapProviderError,
-        try: () =>
-          auth.api.createApiKey({
+        try: async () =>
+          await auth.api.createApiKey({
             body: withOptionalProperty(
               withOptionalProperty(
                 {
                   expiresIn: input.expiresIn ?? null,
                 },
-                !(input.name === undefined),
+                input.name !== undefined,
                 'name',
                 input.name,
                 {},
               ),
-              !(input.prefix === undefined),
+              input.prefix !== undefined,
               'prefix',
               input.prefix,
               {
@@ -305,10 +306,9 @@ export const makeApiKeyService = (
               .where(
                 and(
                   lte(apikey.createdAt, staleBefore),
-                  like(
-                    apikey.metadata,
-                    `{"ontosLifecycle":"binding_pending_v1","tenantId":"${input.tenantId}","issuerPrincipalId":"${input.issuerPrincipalId}"%`,
-                  ),
+                  // Better Auth stores metadata as text, so Drizzle's typed predicates cannot
+                  // express this order-insensitive JSON containment check without a JSONB cast.
+                  sql`${apikey.metadata}::jsonb @> ${encodePendingBindingScope(input)}::jsonb`,
                 ),
               )
               .orderBy(asc(apikey.createdAt), asc(apikey.id))
@@ -353,7 +353,7 @@ export const makeApiKeyService = (
     verify: (rawKey) =>
       Effect.tryPromise({
         catch: mapProviderError,
-        try: () => auth.api.verifyApiKey({ body: { key: rawKey } }),
+        try: async () => await auth.api.verifyApiKey({ body: { key: rawKey } }),
       }).pipe(
         Effect.flatMap((result): Effect.Effect<VerifiedApiKey, ApiKeyProviderError> => {
           if (result.valid && result.key !== null) {

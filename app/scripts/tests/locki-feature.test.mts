@@ -12,7 +12,7 @@ const workflowScript = path.join(workspaceRoot, 'scripts/locki-feature.sh');
 test('pins pnpm to the npm mise backend for cross-platform sandbox installation', async () => {
   const miseConfiguration = await readFile(path.join(workspaceRoot, '.mise.toml'), 'utf-8');
   assert.match(miseConfiguration, /\[tool_alias\][\s\S]*pnpm = "npm:pnpm"/u);
-  assert.match(miseConfiguration, /\[tools\][\s\S]*pnpm = "11\.17\.0"/u);
+  assert.match(miseConfiguration, /\[tools\][\s\S]*pnpm = "11\.25\.0"/u);
 });
 
 interface Fixture {

@@ -1,7 +1,7 @@
 import { config as loadDotenv } from 'dotenv';
 import { Client } from 'pg';
 import { APP_ENV_PATH } from '../../packages/core-runtime/src/environment/workspace-environment.ts';
-import { parseSpiceDbDatabaseBootstrapConfig } from './spicedb-database-config.mts';
+import { parseSpiceDbDatabaseBootstrapConfig } from '../../packages/core-runtime/src/install/spicedb-database-config.ts';
 
 loadDotenv({ path: APP_ENV_PATH, quiet: true });
 

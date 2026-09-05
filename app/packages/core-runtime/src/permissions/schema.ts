@@ -1,0 +1,52 @@
+export const ONTOS_SPICEDB_SCHEMA = `definition principal {}
+
+definition tenant {
+  relation member: principal
+  relation identity_admin: principal
+  relation party_identity_manager: principal
+  relation party_identity_merger: principal
+  relation party_identity_reader: principal
+  relation party_identity_reviewer: principal
+  relation party_relationship_manager: principal
+  relation support: principal
+  permission access = member
+  permission manage_identity = identity_admin & access
+  permission manage_party_identity = party_identity_manager & access
+  permission manage_party_relationships = party_relationship_manager & access
+  permission merge_party_identity = party_identity_merger & access
+  permission read_party_identity = party_identity_reader & access
+  permission review_party_identity = party_identity_reviewer & access
+  permission impersonate = support & access
+}
+
+definition legal_entity {
+  relation tenant: tenant
+  relation member: principal
+  relation counterparty_manager: principal
+  relation counterparty_reader: principal
+  permission access = member & tenant->access
+  permission manage_counterparty = counterparty_manager & access
+  permission read_counterparty = counterparty_reader & access
+}
+
+definition module_access {
+  relation legal_entity: legal_entity
+  relation accessor: principal
+  permission access = accessor & legal_entity->access
+}
+
+definition resource {
+  relation module: module_access
+  relation reader: principal
+  relation writer: principal
+  permission read = reader & module->access
+  permission write = writer & module->access
+}
+
+definition action {
+  relation restriction: action
+  relation executor: principal | tenant#member
+
+  permission is_restricted = restriction
+  permission execute = executor
+}`;

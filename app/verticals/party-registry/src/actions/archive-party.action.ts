@@ -110,6 +110,7 @@ export const archivePartyAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'party.registry.archive-party',
       moduleKey: 'party.registry',
       role: 'action',

@@ -1,5 +1,6 @@
+/* oxlint-disable perfectionist/sort-object-types, perfectionist/sort-objects, sonarjs/no-undefined-assignment, typescript/no-unsafe-assignment */
 // @effect-diagnostics asyncFunction:off nodeBuiltinImport:off
-/* eslint-disable no-await-in-loop, sort-keys, node/callback-return, promise/prefer-await-to-callbacks -- Sequential disposable setup and Drizzle transaction callbacks preserve real authorization and commit boundaries. */
+/* eslint-disable no-await-in-loop, node/callback-return, promise/prefer-await-to-callbacks -- Sequential disposable setup and Drizzle transaction callbacks preserve real authorization and commit boundaries. */
 import { randomUUID } from 'node:crypto';
 import { v1 } from '@authzed/authzed-node';
 import { eq } from 'drizzle-orm';
@@ -38,8 +39,8 @@ const relationship = (
 ) =>
   v1.Relationship.create({
     relation,
-    resource: { objectType: resourceType, objectId: resourceId },
-    subject: { object: { objectType: subjectType, objectId: subjectId } },
+    resource: { objectId: resourceId, objectType: resourceType },
+    subject: { object: { objectId: subjectId, objectType: subjectType } },
   });
 
 /** Real Core persistence and SpiceDB. Call only against a disposable local database. */
@@ -78,39 +79,39 @@ export const makeLiveOperationFixture = async (configuration: {
   const denied = actor();
   try {
     await executor.insert(tenants).values({
-      tenantId,
+      defaultLocale: 'en',
       name: 'Disposable live acceptance',
       slug: `live-${tenantId}`,
       status: 'active',
-      defaultLocale: 'en',
+      tenantId,
     });
     await executor.insert(legalEntities).values({
-      tenantId,
       legalEntityId,
       legalName: 'Disposable live acceptance',
       registrationCountry: 'CZ',
       registrationNumber: legalEntityId,
       status: 'active',
+      tenantId,
     });
     await executor
       .insert(tenantModuleStates)
-      .values({ tenantId, moduleKey: 'party.registry', state: 'active' });
+      .values({ moduleKey: 'party.registry', state: 'active', tenantId });
     for (const principal of [manager, legalEntityOnly, denied]) {
       await executor.insert(principals).values({
-        tenantId,
-        principalId: principal.principalId,
         displayName: 'Live actor',
         kind: 'human',
+        principalId: principal.principalId,
         status: 'active',
+        tenantId,
       });
       await executor.insert(principalAuthBindings).values({
-        tenantId,
-        principalId: principal.principalId,
         principalAuthBindingId: principal.authBindingId,
+        principalId: principal.principalId,
         provider: 'better_auth',
         providerSubjectId: principal.authBindingId,
-        subjectType: 'user',
         status: 'active',
+        subjectType: 'user',
+        tenantId,
       });
     }
     const entityObject = toLegalEntityAccessObjectId(tenantId, legalEntityId);
@@ -177,12 +178,17 @@ export const makeLiveOperationFixture = async (configuration: {
     ReadRuntimeLive.pipe(Layer.provide(Layer.succeed(CoreDatabase, { executor }))),
   );
   return {
-    manager,
-    legalEntityOnly,
     denied,
-    tenantId,
-    legalEntityId,
-    layer,
+    evidence: async () => {
+      const [invocations, audits, accesses, events, outbox] = await Promise.all([
+        executor.select().from(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
+        executor.select().from(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
+        executor.select().from(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
+        executor.select().from(domainEvents).where(eq(domainEvents.tenantId, tenantId)),
+        executor.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
+      ]);
+      return { invocations, audits, accesses, events, outbox };
+    },
     faultNextTransaction: (fault: 'lost-ack' | 'rollback') => {
       nextFault = fault;
     },
@@ -222,16 +228,11 @@ export const makeLiveOperationFixture = async (configuration: {
         }),
       );
     },
-    evidence: async () => {
-      const [invocations, audits, accesses, events, outbox] = await Promise.all([
-        executor.select().from(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
-        executor.select().from(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
-        executor.select().from(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
-        executor.select().from(domainEvents).where(eq(domainEvents.tenantId, tenantId)),
-        executor.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
-      ]);
-      return { invocations, audits, accesses, events, outbox };
-    },
+    layer,
+    legalEntityId,
+    legalEntityOnly,
+    manager,
+    tenantId,
     // Retain append-only proof rows until the disposable database is removed.
     close: async () => {
       spice.close();

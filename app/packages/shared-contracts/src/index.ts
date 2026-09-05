@@ -47,19 +47,19 @@ export type UltramodernPublicSitemapChangeFrequency =
   | 'never';
 
 export interface UltramodernPublicSitemapEntry {
+  changeFrequency?: UltramodernPublicSitemapChangeFrequency;
+  draft?: boolean;
+  indexable?: boolean;
+  lastModified?: string;
+  /**
+   * Per-locale overrides when translated URLs use translated params.
+   */
+  localeParams?: Partial<Record<'en' | 'cs', Record<string, string | number | boolean>>>;
   /**
    * Params used to expand every localized route pattern, for example
    * { slug: 'platform-story' } for /talks/:slug.
    */
   params: Record<string, string | number | boolean>;
-  /**
-   * Per-locale overrides when translated URLs use translated params.
-   */
-  localeParams?: Partial<Record<'en' | 'cs', Record<string, string | number | boolean>>>;
-  draft?: boolean;
-  indexable?: boolean;
-  lastModified?: string;
-  changeFrequency?: UltramodernPublicSitemapChangeFrequency;
   priority?: number;
 }
 
@@ -130,14 +130,14 @@ export type UltramodernWorkspaceJsonObject = Readonly<
 >;
 
 export interface UltramodernNavigatePayload {
-  to: string;
   replace?: boolean;
   state?: UltramodernWorkspaceJsonObject;
+  to: string;
 }
 
 export interface UltramodernRouteSettledPayload {
-  pathname: string;
   locale?: UltramodernWorkspaceLocale;
+  pathname: string;
   title?: string;
 }
 
@@ -149,10 +149,10 @@ export interface UltramodernRemoteReadyPayload {
 }
 
 export interface UltramodernPerformanceSignalPayload {
+  detail?: UltramodernWorkspaceJsonObject;
+  durationMs?: number;
   signalId: UltramodernPerformanceReadinessSignalId;
   status: UltramodernPerformanceReadinessSignalStatus;
-  durationMs?: number;
-  detail?: UltramodernWorkspaceJsonObject;
 }
 
 export interface UltramodernWorkspaceEventPayloadMap {

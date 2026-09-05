@@ -101,6 +101,7 @@ export const createPartyRelationshipAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'party.registry.create-party-relationship',
       moduleKey: 'party.registry',
       role: 'action',

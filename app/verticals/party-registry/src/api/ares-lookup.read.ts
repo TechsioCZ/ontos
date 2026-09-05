@@ -21,6 +21,7 @@ import type {
 
 export const aresLookupEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'party.registry.api.ares-lookup',
   moduleKey: 'party.registry',
   role: 'api',

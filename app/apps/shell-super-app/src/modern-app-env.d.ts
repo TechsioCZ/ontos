@@ -2,9 +2,10 @@
 
 declare const ULTRAMODERN_SITE_URL: string;
 
-declare module 'contacts/PageContacts' {
-  const PageContacts: React.FunctionComponent<{
-    readonly target: unknown;
+declare module 'contacts/Page*' {
+  const VerticalPage: React.FunctionComponent<{
+    readonly routeParams: Readonly<Record<string, string>>;
+    readonly target: import('../shared/api.ts').ResolvedModuleTarget;
   }>;
-  export default PageContacts;
+  export default VerticalPage;
 }

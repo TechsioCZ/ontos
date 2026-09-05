@@ -46,7 +46,7 @@ schema: |-
 
   definition action {
     relation restriction: action
-    relation executor: principal
+    relation executor: principal | tenant#member
 
     permission is_restricted = restriction
     permission execute = executor

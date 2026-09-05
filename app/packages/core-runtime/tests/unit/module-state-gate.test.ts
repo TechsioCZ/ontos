@@ -1,4 +1,4 @@
-// @effect-diagnostics asyncFunction:off
+// @effect-diagnostics asyncFunction:off lazyEffect:off
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Tracer, Predicate } from 'effect';
@@ -38,7 +38,6 @@ const makeRecordingTracer = (spans: Tracer.Span[]): Tracer.Tracer =>
   Tracer.make({
     span(options) {
       const attributes = new Map<string, unknown>();
-      const events: string[] = [];
       const links = [...options.links];
       let status: Tracer.SpanStatus = { _tag: 'Started', startTime: options.startTime };
       const span: Tracer.Span = {
@@ -54,8 +53,8 @@ const makeRecordingTracer = (spans: Tracer.Span[]): Tracer.Tracer =>
         end: (endTime, exit) => {
           status = { _tag: 'Ended', endTime, exit, startTime: options.startTime };
         },
-        event: (name) => {
-          events.push(name);
+        event: () => {
+          // This recording tracer's assertions inspect spans, attributes, links, and status only.
         },
         kind: options.kind,
         links,
@@ -86,7 +85,7 @@ const expectedAllowed = {
   suspended: accessSet('historical_read'),
 } satisfies Readonly<Record<TenantModuleState, ReadonlySet<ModuleEntrypointAccess>>>;
 
-test('encodes the exhaustive state/access matrix once, including missing state', () => {
+void test('encodes the exhaustive state/access matrix once, including missing state', () => {
   for (const state of TENANT_MODULE_STATES) {
     for (const access of MODULE_ENTRYPOINT_ACCESSES) {
       assert.equal(
@@ -105,15 +104,17 @@ test('encodes the exhaustive state/access matrix once, including missing state',
   }
 });
 
-test('constructs frozen tenant and explicit system entrypoints and rejects forged combinations', () => {
+void test('constructs frozen tenant and explicit system entrypoints and rejects forged combinations', () => {
   const tenant = defineTenantModuleEntrypoint({
     access: 'write',
+    authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
     entrypointKey: 'inventory.stock.reserve',
     moduleKey: 'inventory.stock',
     role: 'action',
   });
   const system = defineSystemModuleEntrypoint({
     access: 'write',
+    authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
     entrypointKey: 'core.modules.change-state',
     moduleKey: 'core.modules',
     role: 'action',
@@ -132,6 +133,7 @@ test('constructs frozen tenant and explicit system entrypoints and rejects forge
   assert.throws(() =>
     defineSystemModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'Invalid',
       moduleKey: 'inventory.stock',
       role: 'action',
@@ -148,6 +150,10 @@ test('constructs frozen tenant and explicit system entrypoints and rejects forge
     assert.equal(
       defineTenantModuleEntrypoint({
         access,
+        authorization:
+          role === 'worker'
+            ? { kind: 'owner_local_background' }
+            : { kind: 'context_permission', permission: 'module.access' },
         entrypointKey: `inventory.stock.${role.replace('_', '-')}`,
         moduleKey: 'inventory.stock',
         role,
@@ -157,7 +163,7 @@ test('constructs frozen tenant and explicit system entrypoints and rejects forge
   }
 });
 
-test('deduplicates one batch, reuses an immutable snapshot, and fails undeclared keys closed', async () => {
+void test('deduplicates one batch, reuses an immutable snapshot, and fails undeclared keys closed', async () => {
   let reads = 0;
   let observedKeys: readonly string[] = [];
   const service: TenantModuleStateServiceContract = {
@@ -177,18 +183,21 @@ test('deduplicates one batch, reuses an immutable snapshot, and fails undeclared
   const descriptors = [
     defineTenantModuleEntrypoint({
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'inventory.stock.page',
       moduleKey: 'inventory.stock',
       role: 'page',
     }),
     defineTenantModuleEntrypoint({
       access: 'historical_read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'inventory.stock.report',
       moduleKey: 'inventory.stock',
       role: 'report',
     }),
     defineTenantModuleEntrypoint({
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'billing.invoice.search',
       moduleKey: 'billing.invoice',
       role: 'search',
@@ -208,6 +217,7 @@ test('deduplicates one batch, reuses an immutable snapshot, and fails undeclared
 
   const undeclared = defineTenantModuleEntrypoint({
     access: 'read',
+    authorization: { kind: 'context_permission', permission: 'module.access' },
     entrypointKey: 'people.directory.page',
     moduleKey: 'people.directory',
     role: 'page',
@@ -216,6 +226,7 @@ test('deduplicates one batch, reuses an immutable snapshot, and fails undeclared
   assert.equal(failure._tag, 'ModuleStateCheckUnavailableError');
   const undeclaredSameModule = defineTenantModuleEntrypoint({
     access: 'write',
+    authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
     entrypointKey: 'inventory.stock.undeclared-action',
     moduleKey: 'inventory.stock',
     role: 'action',
@@ -227,11 +238,12 @@ test('deduplicates one batch, reuses an immutable snapshot, and fails undeclared
   assert.equal(reads, 1);
 });
 
-test('records safe acquisition and evaluation telemetry including snapshot reuse', async () => {
+void test('records safe acquisition and evaluation telemetry including snapshot reuse', async () => {
   const spans: Tracer.Span[] = [];
   const tracer = makeRecordingTracer(spans);
   const descriptor = defineTenantModuleEntrypoint({
     access: 'read',
+    authorization: { kind: 'context_permission', permission: 'module.access' },
     entrypointKey: 'inventory.stock.page',
     moduleKey: 'inventory.stock',
     role: 'page',
@@ -273,7 +285,7 @@ test('records safe acquisition and evaluation telemetry including snapshot reuse
   }
 });
 
-test('empty and system-only compositions perform zero reads', async () => {
+void test('empty and system-only compositions perform zero reads', async () => {
   let reads = 0;
   const service: TenantModuleStateServiceContract = {
     getTenantModuleStates: () => {
@@ -285,6 +297,7 @@ test('empty and system-only compositions perform zero reads', async () => {
   };
   const system = defineSystemModuleEntrypoint({
     access: 'read',
+    authorization: { kind: 'context_permission', permission: 'module.access' },
     entrypointKey: 'core.audit.page',
     moduleKey: 'core.audit',
     role: 'page',
@@ -298,10 +311,11 @@ test('empty and system-only compositions perform zero reads', async () => {
   assert.equal(reads, 0);
 });
 
-test('the gateway rejects missing trusted principal context before state acquisition', async () => {
+void test('the gateway rejects missing trusted principal context before state acquisition', async () => {
   let reads = 0;
   const descriptor = defineTenantModuleEntrypoint({
     access: 'read',
+    authorization: { kind: 'context_permission', permission: 'module.access' },
     entrypointKey: 'inventory.stock.page',
     moduleKey: 'inventory.stock',
     role: 'page',
@@ -321,7 +335,7 @@ test('the gateway rejects missing trusted principal context before state acquisi
   assert.equal(reads, 0);
 });
 
-test('gates every future entrypoint category before its fake implementation load', async () => {
+void test('gates every future entrypoint category before its fake implementation load', async () => {
   let reads = 0;
   let authorizationCalls = 0;
   let loadCalls = 0;
@@ -346,54 +360,63 @@ test('gates every future entrypoint category before its fake implementation load
   const allowed = [
     defineTenantModuleEntrypoint({
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'module.active.page',
       moduleKey: 'module.active',
       role: 'page',
     }),
     defineTenantModuleEntrypoint({
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'module.active.component',
       moduleKey: 'module.active',
       role: 'public_component',
     }),
     defineTenantModuleEntrypoint({
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'module.read-only.api',
       moduleKey: 'module.read-only',
       role: 'api',
     }),
     defineTenantModuleEntrypoint({
       access: 'historical_read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'module.suspended.api-history',
       moduleKey: 'module.suspended',
       role: 'api',
     }),
     defineTenantModuleEntrypoint({
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'module.deprecated.search',
       moduleKey: 'module.deprecated',
       role: 'search',
     }),
     defineTenantModuleEntrypoint({
       access: 'historical_read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'module.inactive.search-history',
       moduleKey: 'module.inactive',
       role: 'search',
     }),
     defineTenantModuleEntrypoint({
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'module.deprecated.report',
       moduleKey: 'module.deprecated',
       role: 'report',
     }),
     defineTenantModuleEntrypoint({
       access: 'historical_read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'module.archived.report-history',
       moduleKey: 'module.archived',
       role: 'report',
     }),
     defineSystemModuleEntrypoint({
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'core.audit.page',
       moduleKey: 'core.audit',
       role: 'page',
@@ -402,24 +425,28 @@ test('gates every future entrypoint category before its fake implementation load
   const denied = [
     defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'module.read-only.api-write',
       moduleKey: 'module.read-only',
       role: 'api',
     }),
     defineTenantModuleEntrypoint({
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'module.inactive.search',
       moduleKey: 'module.inactive',
       role: 'search',
     }),
     defineTenantModuleEntrypoint({
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'module.archived.report',
       moduleKey: 'module.archived',
       role: 'report',
     }),
     defineTenantModuleEntrypoint({
       access: 'historical_read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'module.missing.report-history',
       moduleKey: 'module.missing',
       role: 'report',
@@ -436,14 +463,15 @@ test('gates every future entrypoint category before its fake implementation load
         authorizationCalls += 1;
       }),
       entrypoint,
-      load: Effect.sync(() => {
-        loadCalls += 1;
-      }),
+      load: () =>
+        Effect.sync(() => {
+          loadCalls += 1;
+        }),
       snapshot,
     });
-  await Promise.all(allowed.map((entrypoint) => Effect.runPromise(run(entrypoint))));
+  await Promise.all(allowed.map(async (entrypoint) => await Effect.runPromise(run(entrypoint))));
   const deniedFailures = await Promise.all(
-    denied.map((entrypoint) => Effect.runPromise(Effect.flip(run(entrypoint)))),
+    denied.map(async (entrypoint) => await Effect.runPromise(Effect.flip(run(entrypoint)))),
   );
   for (const failure of deniedFailures) {
     assert.equal(failure._tag, 'ModuleStateDeniedError');
@@ -453,7 +481,7 @@ test('gates every future entrypoint category before its fake implementation load
   assert.equal(reads, 1);
 });
 
-test('the gateway never evaluates authorization or lazy implementation on denial', async () => {
+void test('the gateway never evaluates authorization or lazy implementation on denial', async () => {
   const gate = makeModuleStateGate({
     getTenantModuleStates: () =>
       Effect.succeed([{ moduleKey: 'inventory.stock', state: 'read_only' }]),
@@ -463,12 +491,14 @@ test('the gateway never evaluates authorization or lazy implementation on denial
   const gateway = makeModuleEntrypointGateway(gate);
   const descriptor = defineTenantModuleEntrypoint({
     access: 'write',
+    authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
     entrypointKey: 'inventory.stock.reserve',
     moduleKey: 'inventory.stock',
     role: 'action',
   });
   const snapshot = await Effect.runPromise(gateway.prepareSnapshot(trustedContext(), [descriptor]));
   let authorizationCalls = 0;
+  let loadFactoryCalls = 0;
   let loadCalls = 0;
   const failure = await Effect.runPromise(
     Effect.flip(
@@ -477,22 +507,27 @@ test('the gateway never evaluates authorization or lazy implementation on denial
           authorizationCalls += 1;
         }),
         entrypoint: descriptor,
-        load: Effect.sync(() => {
-          loadCalls += 1;
-          return 'loaded';
-        }),
+        load: () => {
+          loadFactoryCalls += 1;
+          return Effect.sync(() => {
+            loadCalls += 1;
+            return 'loaded';
+          });
+        },
         snapshot,
       }),
     ),
   );
   assert.equal(failure._tag, 'ModuleStateDeniedError');
   assert.equal(authorizationCalls, 0);
+  assert.equal(loadFactoryCalls, 0);
   assert.equal(loadCalls, 0);
 });
 
-test('a missing row is a definite denial rather than an unavailable read', async () => {
+void test('a missing row is a definite denial rather than an unavailable read', async () => {
   const descriptor = defineTenantModuleEntrypoint({
     access: 'read',
+    authorization: { kind: 'context_permission', permission: 'module.access' },
     entrypointKey: 'inventory.stock.page',
     moduleKey: 'inventory.stock',
     role: 'page',

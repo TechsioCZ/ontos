@@ -1,4 +1,3 @@
-/* eslint-disable promise/prefer-await-to-callbacks -- Better Auth exposes a Promise-based server API. */
 // @effect-diagnostics asyncFunction:off nodeBuiltinImport:off processEnv:off
 import { reconcileStageContextBootstraps } from '@app/core-runtime/install/stage-context-bootstrap';
 import { betterAuth } from 'better-auth';

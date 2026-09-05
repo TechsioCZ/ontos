@@ -1,3 +1,4 @@
+/* oxlint-disable react-doctor/js-combine-iterations */
 // @effect-diagnostics preferSchemaOverJson:off schemaSyncInEffect:off nodeBuiltinImport:off
 /* eslint-disable max-classes-per-file, anti-slop/no-conditional-empty-object-spread, anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters -- Public unknown inputs are decoded immediately by the declared schemas; canonical JSON and optional output fields are private representation mechanics. */
 import { createHash } from 'node:crypto';
@@ -150,6 +151,10 @@ export interface CoreSearchProjectionStoreService {
   readonly apply: (
     input: unknown,
   ) => Effect.Effect<void, CoreSearchProjectionInvalid | CoreSearchProjectionUnavailable>;
+  /** Candidate access is Core-private: the query runtime strips searchable evidence before return. */
+  readonly queryCandidates: (
+    input: CoreSearchQuery,
+  ) => Effect.Effect<readonly CoreSearchProjectionDocument[], CoreSearchProjectionUnavailable>;
   /**
    * Replaces one tenant/module/resource projection as one physical rebuild unit. Implementations
    * must leave the prior unit intact when validation or persistence fails.
@@ -157,10 +162,6 @@ export interface CoreSearchProjectionStoreService {
   readonly replace: (
     input: unknown,
   ) => Effect.Effect<void, CoreSearchProjectionInvalid | CoreSearchProjectionUnavailable>;
-  /** Candidate access is Core-private: the query runtime strips searchable evidence before return. */
-  readonly queryCandidates: (
-    input: CoreSearchQuery,
-  ) => Effect.Effect<readonly CoreSearchProjectionDocument[], CoreSearchProjectionUnavailable>;
 }
 
 /** Production persistence implements this Core-owned port; business modules never own an index. */
@@ -315,7 +316,7 @@ export const makeInMemoryCoreSearchProjectionStore = (): CoreSearchProjectionSto
     readonly projectionVersion: string;
   }>;
   const units = new Map<string, Map<string, Stored>>();
-  const rebuilds = new Map<string, { readonly version: bigint; readonly fingerprint: string }>();
+  const rebuilds = new Map<string, { readonly fingerprint: string; readonly version: bigint }>();
   const apply: CoreSearchProjectionStoreService['apply'] = (input: unknown) =>
     Effect.try({
       catch: (error) =>

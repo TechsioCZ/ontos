@@ -51,12 +51,12 @@ interface PersistedScopeRecord {
   readonly bindingRevokedAt: Date | null;
   readonly bindingStatus: null | string;
   readonly bindingTenantId: null | string;
+  readonly impersonatorStatus?: null | string;
+  readonly impersonatorTenantId?: null | string;
   readonly legalEntityStatus: null | string;
   readonly legalEntityTenantId: null | string;
   readonly principalStatus: null | string;
   readonly principalTenantId: null | string;
-  readonly impersonatorStatus?: null | string;
-  readonly impersonatorTenantId?: null | string;
   readonly tenantStatus: null | string;
 }
 
@@ -67,18 +67,18 @@ export interface OperationalScopeRepository {
 }
 
 export interface LegalEntityScopeAccess {
-  readonly tenants?: (input: {
-    readonly permission: TenantPermissionKey;
-    readonly principalId: string;
-    readonly tenantIds: readonly string[];
-  }) => Effect.Effect<
-    readonly { readonly decision: 'allowed' | 'denied' | 'unavailable'; readonly key: string }[]
-  >;
   readonly legalEntities: (input: {
     readonly legalEntityIds: readonly string[];
     readonly permission?: LegalEntityPermissionKey;
     readonly principalId: string;
     readonly tenantId: string;
+  }) => Effect.Effect<
+    readonly { readonly decision: 'allowed' | 'denied' | 'unavailable'; readonly key: string }[]
+  >;
+  readonly tenants?: (input: {
+    readonly permission: TenantPermissionKey;
+    readonly principalId: string;
+    readonly tenantIds: readonly string[];
   }) => Effect.Effect<
     readonly { readonly decision: 'allowed' | 'denied' | 'unavailable'; readonly key: string }[]
   >;
@@ -322,7 +322,7 @@ export const makeOperationalScopeResolver = (
               ...principal,
               correlationId: input.correlationId,
             },
-            !(input.traceId === undefined),
+            input.traceId !== undefined,
             'traceId',
             input.traceId,
             {},

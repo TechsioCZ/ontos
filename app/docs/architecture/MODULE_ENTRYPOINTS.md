@@ -93,10 +93,17 @@ atomic claim query. Producer state never authorizes a consumer. Ineligible or mi
 delivery pending with no claim or attempt. Private Worker handler resolution follows a successful
 eligible claim.
 
+The active immutable Application Composition revision is the runtime authority for which module and
+Shell contributions may be resolved. One browser document remains pinned to one revision. Tenant
+state may disable or revoke a module immediately, but it never selects another artifact and the
+runtime never hot-swaps an already loaded container.
+
 Page/public-component composition uses the approved Shell lazy adapter: collect the full descriptor
 set, prepare one snapshot, evaluate every load, then call loader thunks. Raw `loadRemote(...)`
-strings, eager remote imports, and one state request per component are forbidden. Module APIs need
-verified trusted tenant context and the server gateway; write APIs delegate to registered Actions.
+strings, eager remote imports, remote SSR inside Shell/Core, and one state request per component are
+forbidden. The current generated lazy registry is a compatibility bridge until the composition
+loader is integrated. Module APIs need verified trusted tenant context and the server gateway;
+write APIs delegate to registered Actions.
 
 The Shell first establishes exactly one trusted tenant and active legal entity. Composition then
 uses one tenant-state batch and one module-permission batch. Every direct target independently
@@ -135,3 +142,17 @@ approved generator can patch registration atomically and an approved gateway ada
 Extend Codesmith first with disposable compile, overwrite, traversal, and no-partial-write tests.
 Repository checks reject missing/mismatched registration, raw remote loads, private cross-vertical
 imports, direct private handler access, and public exports of private implementations.
+
+## Authorization classification and inventory
+
+Every descriptor must declare exactly one authorization classification. `public` is an intentional
+authorization result, not the route-discovery `public` or `indexable` flag. Protected descriptors
+use `authenticated_principal`, `context_permission` with a stable permission, `action_execution`
+with a provisioning intent, `owner_local_background`, or API-only `capability_issuance` with its
+credential kind. Role-incompatible and excess fields fail decoding and generation.
+
+`pnpm authorization:inventory:check` is the single repository derivation pass. It reconciles
+generated route metadata with runtime descriptors, current Action registrations, Outbox workers,
+and both Shell gateway issuers, then writes the non-secret deterministic artifact at
+`.codex/reports/authorization/protected-entrypoints.json`. Duplicate, missing, stale, ambiguous,
+or unclassified entries fail the check.

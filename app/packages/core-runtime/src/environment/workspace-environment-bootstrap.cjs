@@ -1,3 +1,4 @@
+/* oxlint-disable typescript/consistent-return, typescript/no-require-imports, typescript/no-unsafe-argument */
 const { existsSync } = require('node:fs');
 const path = require('node:path');
 

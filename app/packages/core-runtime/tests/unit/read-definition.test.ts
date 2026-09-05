@@ -8,12 +8,13 @@ import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoin
 
 const modulePermissionTarget = () => ({ kind: 'module', moduleId: 'core.shell' }) as const;
 
-test('defines immutable read metadata while keeping handler and service factory private', () => {
+void test('defines immutable read metadata while keeping handler and service factory private', () => {
   const registration = defineRead(
     {
       accessKind: 'list',
       entrypoint: defineSystemModuleEntrypoint({
         access: 'read',
+        authorization: { kind: 'context_permission', permission: 'module.access' },
         entrypointKey: 'core.shell.list',
         moduleKey: 'core.shell',
         role: 'api',
@@ -37,11 +38,12 @@ test('defines immutable read metadata while keeping handler and service factory 
   assert.equal(Object.isFrozen(registration.descriptor.policies), true);
 });
 
-test('requires an explicit valid owner-scoped read entrypoint', () => {
+void test('requires an explicit valid owner-scoped read entrypoint', () => {
   assert.throws(() =>
     validateReadDescriptorInput({
       entrypoint: defineSystemModuleEntrypoint({
         access: 'read',
+        authorization: { kind: 'context_permission', permission: 'module.access' },
         entrypointKey: 'core.foreign.detail',
         moduleKey: 'core.foreign',
         role: 'api',
@@ -52,7 +54,7 @@ test('requires an explicit valid owner-scoped read entrypoint', () => {
   );
 });
 
-test('supports every governed access kind and rejects forged scope metadata', () => {
+void test('supports every governed access kind and rejects forged scope metadata', () => {
   for (const accessKind of ['detail', 'download', 'export', 'list', 'report', 'search'] as const) {
     assert.doesNotThrow(() =>
       defineRead(
@@ -60,6 +62,7 @@ test('supports every governed access kind and rejects forged scope metadata', ()
           accessKind,
           entrypoint: defineSystemModuleEntrypoint({
             access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
             entrypointKey: `core.shell.${accessKind}`,
             moduleKey: 'core.shell',
             role: 'api',
@@ -88,6 +91,7 @@ test('supports every governed access kind and rejects forged scope metadata', ()
     validateReadDescriptorInput({
       entrypoint: defineSystemModuleEntrypoint({
         access: 'read',
+        authorization: { kind: 'context_permission', permission: 'module.access' },
         entrypointKey: 'core.shell.valid',
         moduleKey: 'core.shell',
         role: 'api',
@@ -98,7 +102,7 @@ test('supports every governed access kind and rejects forged scope metadata', ()
   );
 });
 
-test('keeps low-level read runtime construction and Core schema out of package exports', async () => {
+void test('keeps low-level read runtime construction and Core schema out of package exports', async () => {
   const [indexSource, packageSource] = await Promise.all([
     readFile(new URL('../../src/index.ts', import.meta.url), 'utf-8'),
     readFile(new URL('../../package.json', import.meta.url), 'utf-8'),

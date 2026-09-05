@@ -39,7 +39,7 @@ const claims = {
   ver: 1 as const,
 };
 
-test('decodes the exact versioned public assertion contract', async () => {
+void test('decodes the exact versioned public assertion contract', async () => {
   assert.deepEqual(await Effect.runPromise(decodeGatewayContextClaims(claims)), claims);
   assert.deepEqual(
     Schema.decodeUnknownSync(GatewayContextProtectedHeaderSchema)({
@@ -68,7 +68,7 @@ test('decodes the exact versioned public assertion contract', async () => {
   );
 });
 
-test('rejects malformed audiences, invalid ordering, and subject mismatch', async () => {
+void test('rejects malformed audiences, invalid ordering, and subject mismatch', async () => {
   await assert.rejects(
     Effect.runPromise(Schema.decodeUnknownEffect(GatewayContextRequestSchema)({ audience: '' })),
   );
@@ -88,7 +88,7 @@ test('rejects malformed audiences, invalid ordering, and subject mismatch', asyn
   );
 });
 
-test('rejects credential, display, authorization, Action, and business claim expansion', async () => {
+void test('rejects credential, display, authorization, Action, and business claim expansion', async () => {
   const forbiddenFields = [
     'email',
     'displayName',
@@ -105,12 +105,12 @@ test('rejects credential, display, authorization, Action, and business claim exp
   ] as const;
 
   await Promise.all(
-    forbiddenFields.map((field) =>
-      assert.rejects(
-        Effect.runPromise(decodeGatewayContextClaims({ ...claims, [field]: 'must-not-pass' })),
-        undefined,
-        field,
-      ),
+    forbiddenFields.map(
+      async (field) =>
+        await assert.rejects(
+          Effect.runPromise(decodeGatewayContextClaims({ ...claims, [field]: 'must-not-pass' })),
+          field,
+        ),
     ),
   );
   await assert.rejects(
@@ -123,7 +123,7 @@ test('rejects credential, display, authorization, Action, and business claim exp
   );
 });
 
-test('schemas publish only the required public field names', () => {
+void test('schemas publish only the required public field names', () => {
   assert.equal(GatewayTrustedPrincipalContextSchema, TrustedPrincipalContextSchema);
   assert.deepEqual(Object.keys(GatewayContextClaimsSchema.fields).toSorted(), [
     'aud',
@@ -142,7 +142,7 @@ test('schemas publish only the required public field names', () => {
   ]);
 });
 
-test('publishes the exact API-key credential boundary and failure statuses', () => {
+void test('publishes the exact API-key credential boundary and failure statuses', () => {
   assert.deepEqual(Object.keys(ApiKeyGatewayHeadersSchema.fields), ['x-api-key']);
   assert.deepEqual(
     endpointStatuses(GatewayContextApiGroup.endpoints.issueApiKeyGatewayContext),

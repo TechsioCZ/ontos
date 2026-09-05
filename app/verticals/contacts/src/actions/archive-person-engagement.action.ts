@@ -65,6 +65,7 @@ export const archivePersonEngagementAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'contacts.core.archive-person-engagement',
       moduleKey: 'contacts.core',
       role: 'action',

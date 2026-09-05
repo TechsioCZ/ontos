@@ -1,3 +1,4 @@
+/* oxlint-disable react-doctor/async-await-in-loop, sonarjs/no-nested-functions, typescript/return-await */
 // @effect-diagnostics asyncFunction:off globalDate:off preferSchemaOverJson:off
 /* eslint-disable no-await-in-loop, anti-slop/no-conditional-empty-object-spread, anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters -- Rebuild writes must remain sequential in one transaction; canonical JSON and optional fields are private persistence mechanics. */
 import { and, eq, isNull, sql } from 'drizzle-orm';
@@ -139,7 +140,7 @@ const currentRow = (transaction: CoreTransaction, ref: CoreSearchResourceRef) =>
 
 const currentRebuild = (
   transaction: CoreTransaction,
-  unit: Readonly<{ tenantId: string; moduleId: string; resourceType: string }>,
+  unit: Readonly<{ moduleId: string; resourceType: string; tenantId: string }>,
 ) =>
   transaction.query.searchProjectionRebuilds.findFirst({
     where: and(
@@ -352,7 +353,7 @@ export const makePostgresCoreSearchProjectionStore = (
       Effect.flatMap((mutation) =>
         Effect.tryPromise({
           catch: (error) => (Schema.is(CoreSearchProjectionInvalid)(error) ? error : unavailable()),
-          try: () =>
+          try: async () =>
             database.executor.transaction(async (transaction) => {
               const ref = mutation.kind === 'upsert' ? mutation.document.ref : mutation.ref;
               await installTenantScope(transaction, ref.tenantId);
@@ -376,7 +377,7 @@ export const makePostgresCoreSearchProjectionStore = (
   queryCandidates: (input: CoreSearchQuery) =>
     Effect.tryPromise({
       catch: () => unavailable(),
-      try: () =>
+      try: async () =>
         database.executor.transaction(async (transaction) => {
           await installTenantScope(transaction, input.tenantId, input.selectedLegalEntityId);
           const rows = await transaction.query.searchIndexEntries.findMany({
@@ -410,7 +411,7 @@ export const makePostgresCoreSearchProjectionStore = (
       Effect.flatMap((replacement) =>
         Effect.tryPromise({
           catch: (error) => (Schema.is(CoreSearchProjectionInvalid)(error) ? error : unavailable()),
-          try: () =>
+          try: async () =>
             database.executor.transaction(async (transaction) => {
               await installTenantScope(transaction, replacement.tenantId);
               await replaceProjection(transaction, replacement);

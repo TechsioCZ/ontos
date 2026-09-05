@@ -13,6 +13,7 @@ import {
 import { listOfficialIdentifierHistory } from '../services/party-official-identifier-persistence.service.ts';
 
 export const partyOfficialIdentifierHistoryEntrypoint = defineTenantModuleEntrypoint({
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   access: 'historical_read',
   entrypointKey: 'party.registry.api.party-official-identifier-history',
   moduleKey: 'party.registry',

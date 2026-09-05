@@ -52,6 +52,10 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
         'shell.dashboard.tenant.failed': 'Tenant switching failed. Try again.',
         'shell.dashboard.tenant.pending': 'Switching tenant…',
         'shell.dashboard.tenant.unavailable': 'Tenant choices are temporarily unavailable.',
+        'shell.modules.discovery.incompatible': 'Incompatible module deployment',
+        'shell.modules.discovery.revoked': 'Module revoked',
+        'shell.modules.discovery.timeout': 'Module deployment timed out',
+        'shell.modules.discovery.unavailable': 'Module deployment unavailable',
       })[key] ?? key,
   }),
 }));
@@ -118,6 +122,7 @@ const tenantProps = {
   tenantState: 'available' as const,
   tenantSwitchFailed: false,
   tenantSwitchPending: false,
+  unavailableDeployments: [],
 };
 const testingWorkspaceTitle = 'Testing workspace';
 
@@ -139,9 +144,9 @@ test('renders the default Home dashboard contract and preserves page children', 
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       title={homeOverviewTitle}
     >
@@ -179,10 +184,10 @@ test('supports an alternate title and current MicroVertical without changing chi
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       currentModuleId="testing.one"
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       title={testingWorkspaceTitle}
     >
@@ -202,10 +207,10 @@ test('supports module pages without a shell heading and keeps reduced horizontal
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       currentModuleId="testing.one"
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
     >
       <section>Module content</section>
@@ -222,9 +227,9 @@ test('keeps Home as the only navigation link when no active modules are supplied
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={[]}
       identity={identity}
       logoutPending={false}
+      navigation={[]}
       onLogout={noopLogout}
       title={homeTitle}
     >
@@ -237,15 +242,45 @@ test('keeps Home as the only navigation link when no active modules are supplied
   ).toHaveLength(1);
 });
 
+test('shows failed installed deployments as disabled identities with typed reasons', () => {
+  render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      identity={identity}
+      logoutPending={false}
+      navigation={navigation}
+      onLogout={noopLogout}
+      title={homeTitle}
+      unavailableDeployments={[
+        { appId: 'property-registry', reason: 'timeout', status: 'unavailable' },
+        { appId: 'reporting-center', reason: 'incompatible', status: 'unavailable' },
+        { appId: 'legacy-center', status: 'revoked' },
+      ]}
+    >
+      Content
+    </AuthenticatedDashboardLayout>,
+  );
+
+  expect(screen.getByText('property-registry')).toBeTruthy();
+  expect(screen.getByText('Module deployment timed out')).toBeTruthy();
+  expect(screen.getByText('reporting-center')).toBeTruthy();
+  expect(screen.getByText('Incompatible module deployment')).toBeTruthy();
+  expect(screen.getByText('legacy-center')).toBeTruthy();
+  expect(screen.getByText('Module revoked')).toBeTruthy();
+  expect(screen.queryByRole('link', { name: 'property-registry' })).toBeNull();
+  expect(screen.queryByRole('link', { name: 'reporting-center' })).toBeNull();
+  expect(screen.queryByRole('link', { name: 'legacy-center' })).toBeNull();
+});
+
 test('renders the account Menu last and dispatches only the logout command by keyboard', async () => {
   const onLogout = rstest.fn();
   const user = userEvent.setup();
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={onLogout}
       title={homeTitle}
     >
@@ -257,7 +292,9 @@ test('renders the account Menu last and dispatches only the logout command by ke
   const trigger = screen.getByRole('button', { name: 'Ada Lovelace' });
   expect(header?.lastElementChild?.contains(trigger)).toBe(true);
   const accountMenu = header?.lastElementChild;
-  expect(accountMenu instanceof HTMLElement ? accountMenu.dataset.position : undefined).toBe('end');
+  expect(accountMenu instanceof HTMLElement ? accountMenu.dataset['position'] : undefined).toBe(
+    'end',
+  );
 
   trigger.focus();
   await user.keyboard('{Enter}');
@@ -277,9 +314,9 @@ test('retains the account trigger and disables the sole command while logout is 
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending
+      navigation={navigation}
       onLogout={onLogout}
       title={homeTitle}
     >
@@ -301,9 +338,9 @@ test('renders complete ordered tenant items and dispatches keyboard selection on
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       onTenantChange={onTenantChange}
       title={homeTitle}
@@ -316,7 +353,7 @@ test('renders complete ordered tenant items and dispatches keyboard selection on
   await user.click(trigger);
   const options = await screen.findAllByRole('option');
   expect(options.map((option) => option.textContent)).toEqual(['Alpha tenant', 'Zeta tenant']);
-  expect(options.map((option) => option.dataset.value)).toEqual(['tenant-1', 'tenant-2']);
+  expect(options.map((option) => option.dataset['value'])).toEqual(['tenant-1', 'tenant-2']);
   expect(options.every((option) => option.querySelector('span') !== null)).toBe(true);
   await user.keyboard('{ArrowDown}{Enter}');
   expect(onTenantChange).toHaveBeenCalledWith('tenant-2');
@@ -334,9 +371,9 @@ test('disables unavailable, one-choice, and pending tenant states with associate
   const { rerender } = render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       tenantChoices={tenantProps.tenantChoices.slice(0, 1)}
       title={homeTitle}
@@ -351,9 +388,9 @@ test('disables unavailable, one-choice, and pending tenant states with associate
   rerender(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       tenantChoices={[]}
       title={homeTitle}
@@ -368,9 +405,9 @@ test('disables unavailable, one-choice, and pending tenant states with associate
   rerender(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       tenantState="unavailable"
       title={homeTitle}
@@ -386,9 +423,9 @@ test('disables unavailable, one-choice, and pending tenant states with associate
   rerender(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       tenantSwitchPending
       title={homeTitle}
@@ -406,9 +443,9 @@ test('associates failed tenant feedback and keeps multiple choices operable', ()
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       tenantSwitchFailed
       title={homeTitle}

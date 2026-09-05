@@ -1,4 +1,4 @@
-// @effect-diagnostics asyncFunction:off globalDateInEffect:off
+// @effect-diagnostics asyncFunction:off globalDate:off globalDateInEffect:off
 import { and, eq, isNull } from 'drizzle-orm';
 import { DateTime, Effect, Predicate } from 'effect';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
@@ -211,7 +211,7 @@ const loadPrincipal = (
 ) =>
   Effect.tryPromise({
     catch: persistenceFailure,
-    try: () => repository.loadPrincipal(tenantId, principalId),
+    try: async () => await repository.loadPrincipal(tenantId, principalId),
   });
 
 export interface CreateNonHumanPrincipalInput {
@@ -278,7 +278,7 @@ export const changePrincipalStatus = (
     }
     const updated = yield* Effect.tryPromise({
       catch: persistenceFailure,
-      try: () => repository.updatePrincipalStatus(input),
+      try: async () => await repository.updatePrincipalStatus(input),
     });
     if (updated === undefined) {
       return yield* conflict('The principal status changed concurrently');
@@ -346,13 +346,13 @@ export const validateSupportImpersonation = (
     const loadHumanBindings = (principalId: string, authBindingId?: string) =>
       Effect.tryPromise({
         catch: persistenceFailure,
-        try: () => {
+        try: async () => {
           const query = {
             activeOnly: input.checkpoint !== 'stopped',
             principalId,
             tenantId: input.tenantId,
           };
-          return repository.loadSupportBindings(
+          return await repository.loadSupportBindings(
             authBindingId === undefined ? query : { ...query, authBindingId },
           );
         },
@@ -381,7 +381,7 @@ export const setApiKeyBindingStatus = (
   Effect.gen(function* setBindingStatus() {
     const binding = yield* Effect.tryPromise({
       catch: persistenceFailure,
-      try: () => repository.loadApiKeyBinding(input),
+      try: async () => await repository.loadApiKeyBinding(input),
     });
     if (binding === undefined) {
       return yield* invalid('The API key binding is unavailable');
@@ -412,7 +412,7 @@ export const setApiKeyBindingStatus = (
     }
     const updated = yield* Effect.tryPromise({
       catch: persistenceFailure,
-      try: () => repository.updateApiKeyBindingStatus(input),
+      try: async () => await repository.updateApiKeyBindingStatus(input),
     });
     if (updated === undefined) {
       return yield* conflict('The binding status changed concurrently');

@@ -135,9 +135,9 @@ const classifyExactRecord = <Expected extends ExactRecord>(
   if (existing === undefined) {
     return 'create';
   }
-  const conflictingFields = Object.entries(expected)
-    .filter(([key, value]) => existing[key] !== value)
-    .map(([key]) => key);
+  const conflictingFields = Object.entries(expected).flatMap(([key, value]) =>
+    existing[key] === value ? [] : [key],
+  );
   if (conflictingFields.length > 0) {
     throw new Error(
       `Existing ${label} conflicts with the stage bootstrap definition (${conflictingFields.join(', ')})`,

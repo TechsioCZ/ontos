@@ -41,7 +41,7 @@ Read fresh copies of:
 - every file referenced by the applicable instructions that governs a changed file, behavior, boundary, artifact type, or validation step;
 - task-relevant product and architectural context referenced by those files.
 
-Follow references transitively when they contain further mandatory guidance. For user-facing work, include all applicable frontend, accessibility, responsive, design-system, and runtime guidance. Resolve conflicts according to `AGENTS.md` and report any conflict that requires a developer decision.
+Follow references transitively when they contain further mandatory guidance. Keep that traversal scoped to guidance that can govern the review surface; do not bulk-read unrelated neighboring architecture, completed specifications, or historical evidence. For user-facing work, include all applicable frontend, accessibility, responsive, design-system, and runtime guidance. Resolve conflicts according to `AGENTS.md` and report any conflict that requires a developer decision.
 
 This step is complete when every rule governing the reviewed change has been identified from source rather than memory.
 

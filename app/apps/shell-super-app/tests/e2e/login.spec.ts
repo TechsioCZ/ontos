@@ -1,39 +1,8 @@
 import { Predicate } from 'effect';
 import { expect, test } from '@playwright/test';
-import { shellGatewayContextContract } from '@app/shared-contracts';
 import type { Page } from '@playwright/test';
-import { contactsApiContract } from '../../../../verticals/contacts/shared/api.ts';
 import { shellAuthenticationApiContract } from '../../shared/api.ts';
-import {
-  createAuthenticationFixture,
-  e2eCredentials,
-  e2eContacts,
-  e2eCustomers,
-  e2eTenants,
-} from './auth-fixture.ts';
-
-const customerListPath = `${contactsApiContract.basePath}/customers/list`;
-const customerDetailPath = `${contactsApiContract.basePath}/customers/detail`;
-const contactDetailPath = `${contactsApiContract.basePath}/contacts/detail`;
-const contactCreatePath = `${contactsApiContract.basePath}/contacts/create`;
-const contactEditPath = `${contactsApiContract.basePath}/contacts/edit`;
-const contactEditUrl = (language: 'cs' | 'en') =>
-  `/${language}/contacts/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}/edit`;
-const contactEditDetailUrl = (language: 'cs' | 'en') =>
-  `/${language}/contacts/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`;
-
-const mockContactsGateway = async (page: Page) => {
-  const payloads: unknown[] = [];
-  await page.route(`**${shellGatewayContextContract.issueGatewayContextPath}`, (route) => {
-    payloads.push(route.request().postDataJSON());
-    return route.fulfill({
-      body: JSON.stringify({ expiresAt: 2_000_000_000, token: 'e2e-contacts-gateway-token' }),
-      contentType: 'application/json',
-      status: 200,
-    });
-  });
-  return payloads;
-};
+import { createAuthenticationFixture, e2eCredentials, e2eTenants } from './auth-fixture.ts';
 
 const hydratedLoginForm = (page: Page) => page.locator('form[data-e2e-hydrated-login="true"]');
 
@@ -53,102 +22,66 @@ const gotoHydratedLogin = async (page: Page, language: 'cs' | 'en') => {
       return false;
     }
     for (const form of forms) {
-      delete form.dataset.e2eHydratedLogin;
+      delete form.dataset['e2eHydratedLogin'];
     }
-    const hydratedSince = Number(hydratedForm.dataset.e2eHydratedSince);
+    const hydratedSince = Number(hydratedForm.dataset['e2eHydratedSince']);
     if (!Number.isFinite(hydratedSince)) {
-      hydratedForm.dataset.e2eHydratedSince = String(performance.now());
+      hydratedForm.dataset['e2eHydratedSince'] = String(performance.now());
       return false;
     }
     if (performance.now() - hydratedSince < 1000) {
       return false;
     }
-    hydratedForm.dataset.e2eHydratedLogin = 'true';
+    hydratedForm.dataset['e2eHydratedLogin'] = 'true';
     return true;
   });
 };
 
-const login = async (page: Page) => {
-  await gotoHydratedLogin(page, 'en');
-  const form = hydratedLoginForm(page);
-  await form.locator('input[name="login"]').fill(e2eCredentials.email);
-  await form.locator('input[name="password"]').fill(e2eCredentials.password);
-  await form.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/en\/?$/u);
-  const sessionResponse = await page.request.get(shellAuthenticationApiContract.currentSessionPath);
-  const sessionBody = await sessionResponse.text();
-  expect(sessionResponse.status(), sessionBody).toBe(200);
-  expect(sessionBody).toContain(e2eCredentials.email);
-};
-
-const customerResponse = (customer: typeof e2eCustomers.active | typeof e2eCustomers.archived) => ({
-  archivedAt: customer.archivedAt,
-  createdAt: customer.createdAt,
-  customerId: customer.customerId,
-  dic: customer.dic,
-  dissolvedOn: customer.dissolvedOn,
-  establishedOn: customer.establishedOn,
-  ico: customer.ico,
-  legalFormCode: customer.legalFormCode,
-  name: customer.name,
-  updatedAt: customer.updatedAt,
-});
-
-const contactDetailResponse = (
-  contact: typeof e2eContacts.active | typeof e2eContacts.archived,
-) => ({
-  archivedAt: 'archivedAt' in contact ? contact.archivedAt : null,
-  contactId: contact.contactId,
-  createdAt: contact.createdAt,
-  customerId: contact.customerId,
-  email: contact.email,
-  name: contact.name,
-  phone: contact.phone,
-  updatedAt: contact.updatedAt,
-});
-
 let cleanupFixture: (() => Promise<void>) | undefined;
 
-test.beforeAll(() =>
-  createAuthenticationFixture().then((cleanup) => {
-    cleanupFixture = cleanup;
-  }),
+test.beforeAll(
+  async () =>
+    await createAuthenticationFixture().then((cleanup) => {
+      cleanupFixture = cleanup;
+    }),
 );
 
-test.afterAll(() => cleanupFixture?.());
+test.afterAll(async () => await cleanupFixture?.());
 
-test('renders the exact anonymous English and Czech home states', ({ page }) =>
-  page
+test('renders the exact anonymous English and Czech home states', async ({ page }) =>
+  await page
     .goto('/en/')
-    .then(() =>
-      Promise.all([
-        expect(page.getByRole('link', { name: 'Login' })).toBeVisible(),
-        expect(page.getByRole('link')).toHaveCount(1),
-        expect(page.getByRole('button')).toHaveCount(0),
-        expect(page.getByRole('checkbox')).toHaveCount(0),
-        expect(page.locator('header[aria-label]')).toHaveCount(0),
-        expect(page.getByRole('complementary')).toHaveCount(0),
-        expect(page.getByRole('region')).toHaveCount(0),
-      ]),
+    .then(
+      async () =>
+        await Promise.all([
+          expect(page.getByRole('link', { name: 'Login' })).toBeVisible(),
+          expect(page.getByRole('link')).toHaveCount(1),
+          expect(page.getByRole('button')).toHaveCount(0),
+          expect(page.getByRole('checkbox')).toHaveCount(0),
+          expect(page.locator('header[aria-label]')).toHaveCount(0),
+          expect(page.getByRole('complementary')).toHaveCount(0),
+          expect(page.getByRole('region')).toHaveCount(0),
+        ]),
     )
-    .then(() => page.goto('/cs/'))
-    .then(() =>
-      Promise.all([
-        expect(page.getByRole('link', { name: 'Přihlásit se' })).toBeVisible(),
-        expect(page.getByRole('link')).toHaveCount(1),
-        expect(page.getByRole('button')).toHaveCount(0),
-        expect(page.getByRole('checkbox')).toHaveCount(0),
-        expect(page.locator('header[aria-label]')).toHaveCount(0),
-        expect(page.getByRole('complementary')).toHaveCount(0),
-        expect(page.getByRole('region')).toHaveCount(0),
-      ]),
+    .then(async () => await page.goto('/cs/'))
+    .then(
+      async () =>
+        await Promise.all([
+          expect(page.getByRole('link', { name: 'Přihlásit se' })).toBeVisible(),
+          expect(page.getByRole('link')).toHaveCount(1),
+          expect(page.getByRole('button')).toHaveCount(0),
+          expect(page.getByRole('checkbox')).toHaveCount(0),
+          expect(page.locator('header[aria-label]')).toHaveCount(0),
+          expect(page.getByRole('complementary')).toHaveCount(0),
+          expect(page.getByRole('region')).toHaveCount(0),
+        ]),
     ));
 
 test('keeps English and Czech login pages free of authenticated dashboard chrome', async ({
   page,
 }) => {
-  const expectDashboardAbsent = () =>
-    Promise.all([
+  const expectDashboardAbsent = async () =>
+    await Promise.all([
       expect(page.locator('header[aria-label]')).toHaveCount(0),
       expect(page.getByRole('complementary')).toHaveCount(0),
       expect(page.locator('button[aria-haspopup="menu"]')).toHaveCount(0),
@@ -160,24 +93,27 @@ test('keeps English and Czech login pages free of authenticated dashboard chrome
   await expectDashboardAbsent();
 });
 
-test('shows one generic error for invalid English credentials', ({ page }) =>
-  gotoHydratedLogin(page, 'en')
-    .then(() =>
-      hydratedLoginForm(page)
-        .getByRole('textbox', { name: /^Login\s*\*$/u })
-        .fill(e2eCredentials.email),
+test('shows one generic error for invalid English credentials', async ({ page }) =>
+  await gotoHydratedLogin(page, 'en')
+    .then(
+      async () =>
+        await hydratedLoginForm(page)
+          .getByRole('textbox', { name: /^Login\s*\*$/u })
+          .fill(e2eCredentials.email),
     )
-    .then(() =>
-      hydratedLoginForm(page)
-        .getByLabel(/^Password/u)
-        .fill('wrong-password'),
+    .then(
+      async () =>
+        await hydratedLoginForm(page)
+          .getByLabel(/^Password/u)
+          .fill('wrong-password'),
     )
-    .then(() => hydratedLoginForm(page).getByRole('button', { name: 'Login' }).click())
-    .then(() =>
-      Promise.all([
-        expect(page.getByText('The email address or password is invalid.')).toHaveCount(1),
-        expect(page.getByRole('textbox', { name: /^Login\s*\*$/u })).toBeFocused(),
-      ]),
+    .then(async () => await hydratedLoginForm(page).getByRole('button', { name: 'Login' }).click())
+    .then(
+      async () =>
+        await Promise.all([
+          expect(page.getByText('The email address or password is invalid.')).toHaveCount(1),
+          expect(page.getByRole('textbox', { name: /^Login\s*\*$/u })).toBeFocused(),
+        ]),
     ));
 
 test('logs a user in without any server-error response', async ({ page }, testInfo) => {
@@ -310,42 +246,48 @@ test('keeps authenticated Shell chrome on search and guarded direct-target route
   );
 });
 
-test('persists an English session, logs out, clears the cookie, and stays anonymous', ({ page }) =>
-  gotoHydratedLogin(page, 'en')
-    .then(() =>
-      hydratedLoginForm(page)
-        .getByRole('textbox', { name: /^Login\s*\*$/u })
-        .fill(e2eCredentials.email),
+test('persists an English session, logs out, clears the cookie, and stays anonymous', async ({
+  page,
+}) =>
+  await gotoHydratedLogin(page, 'en')
+    .then(
+      async () =>
+        await hydratedLoginForm(page)
+          .getByRole('textbox', { name: /^Login\s*\*$/u })
+          .fill(e2eCredentials.email),
     )
-    .then(() =>
-      hydratedLoginForm(page)
-        .getByLabel(/^Password/u)
-        .fill(e2eCredentials.password),
+    .then(
+      async () =>
+        await hydratedLoginForm(page)
+          .getByLabel(/^Password/u)
+          .fill(e2eCredentials.password),
     )
-    .then(() => hydratedLoginForm(page).getByRole('button', { name: 'Login' }).click())
-    .then(() => expect(page).toHaveURL(/\/en\/?$/u))
-    .then(() =>
-      Promise.all([
-        expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible(),
-        expect(page.getByText(e2eCredentials.email)).toBeVisible(),
-        expect(page.getByRole('link', { name: 'Home' })).toHaveCount(1),
-      ]),
+    .then(async () => await hydratedLoginForm(page).getByRole('button', { name: 'Login' }).click())
+    .then(async () => await expect(page).toHaveURL(/\/en\/?$/u))
+    .then(
+      async () =>
+        await Promise.all([
+          expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible(),
+          expect(page.getByText(e2eCredentials.email)).toBeVisible(),
+          expect(page.getByRole('link', { name: 'Home' })).toHaveCount(1),
+        ]),
     )
-    .then(() => page.reload())
-    .then(() => expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible())
-    .then(() => page.getByRole('button', { name: 'E2E user' }).click())
-    .then(() => page.getByRole('menuitem', { name: 'Logout' }).click())
-    .then(() => expect(page).toHaveURL(/\/en\/login\/?$/u))
-    .then(() =>
-      Promise.all([
-        expect(page.getByRole('heading', { name: 'Login' })).toBeVisible(),
-        expect(page.getByRole('button', { name: 'Login' })).toBeVisible(),
-        expect(page.locator('header[aria-label]')).toHaveCount(0),
-        expect(page.getByRole('complementary')).toHaveCount(0),
-      ]),
+    .then(async () => await page.reload())
+    .then(async () => await expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible())
+    .then(async () => await page.getByRole('button', { name: 'E2E user' }).click())
+    .then(async () => await page.getByRole('menuitem', { name: 'Logout' }).click())
+    .then(async () => await expect(page).toHaveURL(/\/en\/login\/?$/u))
+    .then(
+      async () =>
+        await Promise.all([
+          expect(page.getByRole('heading', { name: 'Login' })).toBeVisible(),
+          expect(page.getByRole('button', { name: 'Login' })).toBeVisible(),
+          expect(page.locator('header[aria-label]')).toHaveCount(0),
+          expect(page.getByRole('complementary')).toHaveCount(0),
+        ]),
     )
-    .then(() => page.reload())
-    .then(() => expect(page.getByRole('heading', { name: 'Login' })).toBeVisible()));
+    .then(async () => await page.reload())
+    .then(async () => await expect(page.getByRole('heading', { name: 'Login' })).toBeVisible()));
 
 test('switches tenant by pointer, fully reloads, and persists the selected context', async ({
   page,
@@ -398,12 +340,13 @@ test('retains Czech tenant context after one failed switch and supports keyboard
   await form.getByLabel(/^Heslo/u).fill(e2eCredentials.password);
   await form.getByRole('button', { name: 'Přihlásit se' }).click();
   await expect(page).toHaveURL(/\/cs\/?$/u);
-  await page.route(`**${shellAuthenticationApiContract.switchTenantPath}`, (route) => {
+  await page.route(`**${shellAuthenticationApiContract.switchTenantPath}`, async (route) => {
     if (failSwitch) {
       failSwitch = false;
-      return route.abort('failed');
+      await route.abort('failed');
+      return;
     }
-    return route.continue();
+    await route.continue();
   });
 
   const tenant = page.getByRole('combobox', { name: 'Aktuální tenant' });
@@ -432,50 +375,66 @@ test('retains Czech tenant context after one failed switch and supports keyboard
   );
 });
 
-test('keeps keyboard logout operable after a Czech failure and succeeds on retry', ({ page }) => {
+test('keeps keyboard logout operable after a Czech failure and succeeds on retry', async ({
+  page,
+}) => {
   let failLogout = true;
 
-  return gotoHydratedLogin(page, 'cs')
-    .then(() => hydratedLoginForm(page).locator('input[name="login"]').fill(e2eCredentials.email))
-    .then(() =>
-      hydratedLoginForm(page).locator('input[name="password"]').fill(e2eCredentials.password),
+  await gotoHydratedLogin(page, 'cs')
+    .then(
+      async () =>
+        await hydratedLoginForm(page).locator('input[name="login"]').fill(e2eCredentials.email),
     )
-    .then(() => hydratedLoginForm(page).getByRole('button', { name: 'Přihlásit se' }).click())
-    .then(() => expect(page).toHaveURL(/\/cs\/?$/u))
-    .then(() =>
-      page.route('**/shell-super-app-api/auth/sign-out', (route) => {
-        if (failLogout) {
-          failLogout = false;
-          return route.abort('failed');
-        }
-        return route.continue();
-      }),
+    .then(
+      async () =>
+        await hydratedLoginForm(page)
+          .locator('input[name="password"]')
+          .fill(e2eCredentials.password),
     )
-    .then(() => page.getByRole('button', { name: 'E2E user' }).focus())
-    .then(() => page.keyboard.press('Enter'))
-    .then(() =>
-      expect(page.getByRole('menuitem', { name: 'Odhlásit se' })).toHaveAttribute(
-        'data-highlighted',
-        '',
-      ),
+    .then(
+      async () =>
+        await hydratedLoginForm(page).getByRole('button', { name: 'Přihlásit se' }).click(),
     )
-    .then(() => page.getByRole('menuitem', { name: 'Odhlásit se' }).click())
-    .then(() =>
-      Promise.all([
-        expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible(),
-        expect(page.getByText('Odhlášení selhalo. Zkuste to znovu.')).toBeVisible(),
-        expect(page.getByRole('button', { name: 'E2E user' })).toBeFocused(),
-      ]),
+    .then(async () => await expect(page).toHaveURL(/\/cs\/?$/u))
+    .then(
+      async () =>
+        await page.route('**/shell-super-app-api/auth/sign-out', async (route) => {
+          if (failLogout) {
+            failLogout = false;
+            await route.abort('failed');
+            return;
+          }
+          await route.continue();
+        }),
     )
-    .then(() => page.keyboard.press('Enter'))
-    .then(() =>
-      expect(page.getByRole('menuitem', { name: 'Odhlásit se' })).toHaveAttribute(
-        'data-highlighted',
-        '',
-      ),
+    .then(async () => await page.getByRole('button', { name: 'E2E user' }).focus())
+    .then(async () => await page.keyboard.press('Enter'))
+    .then(
+      async () =>
+        await expect(page.getByRole('menuitem', { name: 'Odhlásit se' })).toHaveAttribute(
+          'data-highlighted',
+          '',
+        ),
     )
-    .then(() => page.getByRole('menuitem', { name: 'Odhlásit se' }).click())
-    .then(() => expect(page).toHaveURL(/\/cs\/login\/?$/u));
+    .then(async () => await page.getByRole('menuitem', { name: 'Odhlásit se' }).click())
+    .then(
+      async () =>
+        await Promise.all([
+          expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible(),
+          expect(page.getByText('Odhlášení selhalo. Zkuste to znovu.')).toBeVisible(),
+          expect(page.getByRole('button', { name: 'E2E user' })).toBeFocused(),
+        ]),
+    )
+    .then(async () => await page.keyboard.press('Enter'))
+    .then(
+      async () =>
+        await expect(page.getByRole('menuitem', { name: 'Odhlásit se' })).toHaveAttribute(
+          'data-highlighted',
+          '',
+        ),
+    )
+    .then(async () => await page.getByRole('menuitem', { name: 'Odhlásit se' }).click())
+    .then(async () => await expect(page).toHaveURL(/\/cs\/login\/?$/u));
 });
 
 test('keeps the login form keyboard- and mobile-usable', async ({ page }) => {
@@ -508,8 +467,9 @@ test('keeps the authenticated dashboard reachable without horizontal overflow at
   await form.getByLabel(/^Password/u).fill(e2eCredentials.password);
   await form.getByRole('button', { name: 'Login' }).click();
   await expect(page).toHaveURL(/\/en\/?$/u);
-  await page.route(`**${shellAuthenticationApiContract.switchTenantPath}`, (route) =>
-    route.abort('failed'),
+  await page.route(
+    `**${shellAuthenticationApiContract.switchTenantPath}`,
+    async (route) => await route.abort('failed'),
   );
 
   await expect(page.getByRole('complementary', { name: 'Dashboard sidebar' })).toBeInViewport();
@@ -530,1004 +490,4 @@ test('keeps the authenticated dashboard reachable without horizontal overflow at
       () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
     ),
   ).toBe(true);
-});
-
-test('customers stay private anonymously and load real localized BFF data after login', async ({
-  page,
-}) => {
-  let customerRequests = 0;
-  page.on('request', (request) => {
-    if (new URL(request.url()).pathname === customerListPath) {
-      customerRequests += 1;
-    }
-  });
-
-  await page.goto('/en/contacts/customers');
-  await expect(page.getByRole('heading', { name: 'Customers' })).toHaveCount(0);
-  await expect(page.getByText(e2eCustomers.active.name)).toHaveCount(0);
-  expect(customerRequests).toBe(0);
-
-  await login(page);
-  const englishResponsePromise = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname === customerListPath &&
-      response.request().method() === 'POST',
-  );
-  await page.goto('/en/contacts/customers');
-  const englishResponse = await englishResponsePromise;
-  expect(englishResponse.status(), await englishResponse.text()).toBe(200);
-  await expect(page.getByRole('heading', { name: 'Customers' })).toBeVisible();
-  await expect(page.getByRole('table', { name: 'Customers' })).toBeVisible();
-  await expect(page.getByText(e2eCustomers.active.name)).toBeVisible();
-  await expect(page.getByText(e2eCustomers.archived.name)).toHaveCount(0);
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard sidebar' });
-  const main = page.getByRole('main');
-  await expect(sidebar).toHaveCount(1);
-  await expect(sidebar.getByRole('link', { name: 'Contacts' })).toHaveCount(1);
-  await expect(sidebar.getByRole('link', { name: 'Contacts' })).toHaveAttribute(
-    'href',
-    '/en/contacts',
-  );
-  await expect(page.locator('header[aria-label="Dashboard header"]')).toHaveCount(1);
-  const [sidebarBox, mainBox] = await Promise.all([sidebar.boundingBox(), main.boundingBox()]);
-  if (sidebarBox === null || mainBox === null) {
-    throw new Error('The authenticated dashboard layout must be measurable');
-  }
-  expect(sidebarBox.y).toBe(mainBox.y);
-  expect(sidebarBox.x + sidebarBox.width).toBeLessThanOrEqual(mainBox.x);
-  expect(sidebarBox.width).toBeLessThan(mainBox.width);
-  const reviewScreenshotPath = process.env['ULTRAMODERN_REVIEW_SCREENSHOT_PATH'];
-  if (reviewScreenshotPath !== undefined) {
-    await page.screenshot({ fullPage: true, path: reviewScreenshotPath });
-  }
-  const czechResponsePromise = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname === customerListPath &&
-      response.request().method() === 'POST',
-  );
-  await page.goto('/cs/contacts/customers');
-  const czechResponse = await czechResponsePromise;
-  expect(czechResponse.status(), await czechResponse.text()).toBe(200);
-  await expect(page.getByRole('heading', { name: 'Zákazníci' })).toBeVisible();
-  await expect(page.getByRole('table', { name: 'Zákazníci' })).toBeVisible();
-  await expect(page.getByText(e2eCustomers.active.name)).toBeVisible();
-  await expect(page.getByRole('complementary', { name: 'Postranní panel přehledu' })).toHaveCount(
-    1,
-  );
-});
-
-test('customers empty state keeps the table and omits the pager', async ({ page }) => {
-  await login(page);
-  await page.route(`**${customerListPath}`, (route) =>
-    route.fulfill({
-      body: JSON.stringify({ items: [], nextOffset: null }),
-      contentType: 'application/json',
-      status: 200,
-    }),
-  );
-
-  await page.goto('/en/contacts/customers');
-  const table = page.getByRole('table', { name: 'Customers' });
-  await expect(table).toBeVisible();
-  await expect(table.locator('tbody tr')).toHaveCount(0);
-  await expect(page.getByText('No Customers match this filter.')).toHaveAttribute(
-    'id',
-    'customers-empty-description',
-  );
-  await expect(table).toHaveAttribute('aria-describedby', 'customers-empty-description');
-  await expect(page.getByRole('navigation', { name: 'Customer list pages' })).toHaveCount(0);
-});
-
-test('customers return an empty table for a tenant without Customer rows', async ({ page }) => {
-  await login(page);
-  const tenant = page.getByRole('combobox', { name: 'Current tenant' });
-  await tenant.click();
-  await Promise.all([
-    page.waitForEvent('framenavigated', { predicate: (frame) => frame === page.mainFrame() }),
-    page.getByRole('option', { name: e2eTenants.second.name }).click(),
-  ]);
-
-  const responsePromise = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname === customerListPath &&
-      response.request().method() === 'POST',
-  );
-  await page.goto('/cs/contacts/customers');
-  const response = await responsePromise;
-
-  expect(response.status(), await response.text()).toBe(200);
-  const table = page.getByRole('table', { name: 'Zákazníci' });
-  await expect(table).toBeVisible();
-  await expect(table.locator('tbody tr')).toHaveCount(0);
-});
-
-test('customers retry a temporary BFF failure from the keyboard and restore results focus', async ({
-  page,
-}) => {
-  await login(page);
-  let attempts = 0;
-  await page.route(`**${customerListPath}`, (route) => {
-    attempts += 1;
-    if (attempts === 1) {
-      return route.fulfill({
-        body: JSON.stringify({
-          _tag: 'CustomerListUnavailableProblem',
-          detail: 'The E2E customer list is temporarily unavailable.',
-          retryable: true,
-          status: 503,
-          title: 'Customer list unavailable',
-          type: 'https://ontos.dev/problems/contacts/customer-list-unavailable',
-        }),
-        contentType: 'application/problem+json',
-        status: 503,
-      });
-    }
-    return route.fulfill({
-      body: JSON.stringify({ items: [customerResponse(e2eCustomers.active)], nextOffset: null }),
-      contentType: 'application/json',
-      status: 200,
-    });
-  });
-
-  await page.goto('/en/contacts/customers');
-  const retry = page.getByRole('button', { name: 'Try again' });
-  await expect(retry).toBeVisible();
-  await retry.focus();
-  await page.keyboard.press('Enter');
-  await expect(page.getByText(e2eCustomers.active.name)).toBeVisible();
-  await expect(page.getByTestId('customers-results')).toBeFocused();
-  expect(attempts).toBe(2);
-});
-
-test('customers keep filter and pagination in the URL without page overflow at 375px', async ({
-  page,
-}) => {
-  await page.setViewportSize({ height: 667, width: 375 });
-  await login(page);
-  const payloads: unknown[] = [];
-  const longCustomer = {
-    ...customerResponse(e2eCustomers.archived),
-    name: `${e2eCustomers.archived.name} with a deliberately long business name`,
-  };
-  await page.route(`**${customerListPath}`, (route) => {
-    const payload = route.request().postDataJSON();
-    payloads.push(payload);
-    return route.fulfill({
-      body: JSON.stringify({
-        items: [longCustomer],
-        nextOffset: payload.offset === 0 ? 25 : null,
-      }),
-      contentType: 'application/json',
-      status: 200,
-    });
-  });
-
-  await page.goto('/en/contacts/customers?view=compact');
-  await expect(page.getByText(longCustomer.name)).toBeVisible();
-  const status = page.getByRole('combobox', { name: 'Customer status' });
-  await status.focus();
-  await page.keyboard.press('Enter');
-  const archived = page.getByRole('option', { name: 'Archived' });
-  await expect(archived).toBeVisible();
-  const statusListbox = page.getByRole('listbox');
-  await statusListbox.press('ArrowDown');
-  const archivedOptionId = await archived.getAttribute('id');
-  expect(archivedOptionId).not.toBeNull();
-  await expect(statusListbox).toHaveAttribute('aria-activedescendant', archivedOptionId ?? '');
-  await statusListbox.press('Enter');
-  await expect(page).toHaveURL(/\/en\/contacts\/customers\?view=compact&status=archived$/u);
-  await expect(page.getByText(longCustomer.name)).toBeVisible();
-
-  await page.getByRole('link', { name: 'Next' }).click();
-  await expect(page).toHaveURL(
-    /\/en\/contacts\/customers\?view=compact&status=archived&offset=25$/u,
-  );
-  await expect(page.getByText(longCustomer.name)).toBeVisible();
-  expect(payloads).toContainEqual({ filter: 'active', limit: 25, offset: 0 });
-  expect(payloads).toContainEqual({ filter: 'archived', limit: 25, offset: 0 });
-  expect(payloads).toContainEqual({ filter: 'archived', limit: 25, offset: 25 });
-
-  const overflow = page.getByTestId('customers-table-overflow');
-  const dimensions = await overflow.evaluate((element) => ({
-    clientWidth: element.clientWidth,
-    scrollWidth: element.scrollWidth,
-  }));
-  expect(dimensions.scrollWidth).toBeGreaterThan(dimensions.clientWidth);
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
-    ),
-  ).toBe(true);
-});
-
-test.describe('Customer detail flows', () => {
-  test.describe.configure({ timeout: 90_000 });
-
-  test('Customer detail keeps the same layout after a full-page reload', async ({ page }) => {
-    await login(page);
-    await page.setViewportSize({ height: 900, width: 1440 });
-    await page.goto('/en/contacts/customers');
-    await page.getByRole('link', { name: e2eCustomers.active.name }).click();
-    await expect(page).toHaveURL(`/en/contacts/customers/${e2eCustomers.active.customerId}`);
-
-    const heading = page.getByRole('heading', { name: e2eCustomers.active.name });
-    await expect(heading).toBeVisible();
-    const navigatedLayout = await heading.evaluate((element) => {
-      const bounds = element.getBoundingClientRect();
-      const style = getComputedStyle(element);
-      return {
-        fontSize: style.fontSize,
-        fontWeight: style.fontWeight,
-        left: bounds.left,
-        lineHeight: style.lineHeight,
-      };
-    });
-
-    await page.reload();
-    await expect(heading).toBeVisible();
-    const reloadedLayout = await heading.evaluate((element) => {
-      const bounds = element.getBoundingClientRect();
-      const style = getComputedStyle(element);
-      return {
-        fontSize: style.fontSize,
-        fontWeight: style.fontWeight,
-        left: bounds.left,
-        lineHeight: style.lineHeight,
-      };
-    });
-
-    expect(reloadedLayout).toEqual(navigatedLayout);
-  });
-
-  test('Customer detail stays private anonymously and renders real English and Czech BFF data', async ({
-    page,
-  }) => {
-    let customerDetailRequests = 0;
-    const payloads: unknown[] = [];
-    page.on('request', (request) => {
-      if (new URL(request.url()).pathname === customerDetailPath) {
-        customerDetailRequests += 1;
-        payloads.push(request.postDataJSON());
-      }
-    });
-
-    await page.goto(`/en/contacts/customers/${e2eCustomers.active.customerId}`);
-    await expect(page.getByText(e2eCustomers.active.name)).toHaveCount(0);
-    await page.goto(`/cs/contacts/customers/${e2eCustomers.active.customerId}`);
-    await expect(page.getByText(e2eCustomers.active.name)).toHaveCount(0);
-    expect(customerDetailRequests).toBe(0);
-
-    await login(page);
-    const englishResponsePromise = page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === customerDetailPath &&
-        response.request().method() === 'POST',
-    );
-    await page.goto(`/en/contacts/customers/${e2eCustomers.active.customerId}`);
-    const englishResponse = await englishResponsePromise;
-    expect(englishResponse.status(), await englishResponse.text()).toBe(200);
-    await expect(page.getByRole('heading', { name: e2eCustomers.active.name })).toBeVisible();
-    await expect(page.getByText(e2eCustomers.active.customerId)).toBeVisible();
-    await expect(page.getByTestId('customer-detail-results').getByText('Active')).toBeVisible();
-    await expect(page.getByRole('link', { exact: true, name: 'Back' })).toHaveAttribute(
-      'href',
-      '/en/contacts/customers',
-    );
-    await page.setViewportSize({ height: 667, width: 375 });
-    const czechResponsePromise = page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === customerDetailPath &&
-        response.request().method() === 'POST',
-    );
-    await page.goto(`/cs/contacts/customers/${e2eCustomers.archived.customerId}`);
-    const czechResponse = await czechResponsePromise;
-    expect(czechResponse.status(), await czechResponse.text()).toBe(200);
-    await expect(page.getByRole('heading', { name: e2eCustomers.archived.name })).toBeVisible();
-    await expect(page.getByText(e2eCustomers.archived.customerId)).toBeVisible();
-    await expect(page.getByText('Archivovaný')).toBeVisible();
-    await expect(page.getByRole('link', { exact: true, name: 'Zpět' })).toHaveAttribute(
-      'href',
-      '/cs/contacts/customers',
-    );
-    expect(payloads).toContainEqual({ customerId: e2eCustomers.active.customerId });
-    expect(payloads).toContainEqual({ customerId: e2eCustomers.archived.customerId });
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
-      ),
-    ).toBe(true);
-    const screenshotPath = process.env['ULTRAMODERN_CUSTOMER_DETAIL_REVIEW_SCREENSHOT_PATH'];
-    if (screenshotPath !== undefined) {
-      await page.screenshot({ fullPage: true, path: screenshotPath });
-    }
-  });
-
-  for (const [state, status, tag, message] of [
-    ['not found', 404, 'CustomerDetailNotFoundProblem', 'This Customer could not be found.'],
-    [
-      'forbidden',
-      403,
-      'CustomerDetailForbiddenProblem',
-      'You do not have permission to view this Customer.',
-    ],
-  ] as const) {
-    test(`Customer detail renders a declared ${state} response without retry`, async ({ page }) => {
-      await login(page);
-      await page.route(`**${customerDetailPath}`, (route) =>
-        route.fulfill({
-          body: JSON.stringify({
-            _tag: tag,
-            detail: message,
-            status,
-            title: message,
-            type: `https://ontos.dev/problems/contacts/customer-detail-${status}`,
-          }),
-          contentType: 'application/problem+json',
-          status,
-        }),
-      );
-
-      await page.goto(`/en/contacts/customers/${e2eCustomers.active.customerId}`);
-      await expect(page.getByText(message)).toBeVisible({ timeout: 60_000 });
-      await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0);
-    });
-  }
-
-  test('Customer detail retries an unavailable response with the exact URL ID and restores focus', async ({
-    page,
-  }) => {
-    await login(page);
-    const payloads: unknown[] = [];
-    let attempts = 0;
-    await page.route(`**${customerDetailPath}`, (route) => {
-      attempts += 1;
-      payloads.push(route.request().postDataJSON());
-      if (attempts === 1) {
-        return route.fulfill({
-          body: JSON.stringify({
-            _tag: 'CustomerDetailUnavailableProblem',
-            detail: 'The E2E Customer is temporarily unavailable.',
-            retryable: true,
-            status: 503,
-            title: 'Customer unavailable',
-            type: 'https://ontos.dev/problems/contacts/customer-detail-unavailable',
-          }),
-          contentType: 'application/problem+json',
-          status: 503,
-        });
-      }
-      return route.fulfill({
-        body: JSON.stringify(customerResponse(e2eCustomers.active)),
-        contentType: 'application/json',
-        status: 200,
-      });
-    });
-
-    await page.goto(`/en/contacts/customers/${e2eCustomers.active.customerId}`);
-    await expect(page.getByText('The Customer is temporarily unavailable. Try again.')).toBeVisible(
-      { timeout: 60_000 },
-    );
-    const retry = page.getByRole('button', { name: 'Try again' });
-    await retry.focus();
-    await page.keyboard.press('Enter');
-    await expect(page.getByRole('heading', { name: e2eCustomers.active.name })).toBeVisible();
-    await expect(page.getByTestId('customer-detail-results')).toBeFocused();
-    expect(attempts).toBe(2);
-    expect(payloads).toEqual([
-      { customerId: e2eCustomers.active.customerId },
-      { customerId: e2eCustomers.active.customerId },
-    ]);
-  });
-});
-
-test.describe('Contact create flows', () => {
-  test.describe.configure({ timeout: 90_000 });
-
-  const contactCorsHeaders = {
-    'access-control-allow-origin': 'http://127.0.0.1:3020',
-  } as const;
-  const contactResponse = {
-    archivedAt: null,
-    contactId: '7c000000-0000-4000-8000-000000000001',
-    createdAt: '2026-08-16T08:00:00.000Z',
-    customerId: e2eCustomers.active.customerId,
-    email: 'ada@example.test',
-    name: 'Ada Lovelace',
-    phone: '123456789',
-    updatedAt: '2026-08-16T08:00:00.000Z',
-  } as const;
-
-  test('Contact create stays private, renders localized forms, and submits the real page request', async ({
-    page,
-  }) => {
-    let contactRequests = 0;
-    const payloads: unknown[] = [];
-    page.on('request', (request) => {
-      if (new URL(request.url()).pathname === contactCreatePath) {
-        contactRequests += 1;
-      }
-    });
-
-    await page.goto(`/en/contacts/customers/${e2eCustomers.active.customerId}/contacts/new`);
-    await expect(page.getByRole('heading', { name: 'Create Contact' })).toHaveCount(0);
-    await page.goto(`/cs/contacts/customers/${e2eCustomers.active.customerId}/contacts/new`);
-    await expect(page.getByRole('heading', { name: 'Vytvořit kontakt' })).toHaveCount(0);
-    expect(contactRequests).toBe(0);
-
-    await login(page);
-    const gatewayPayloads = await mockContactsGateway(page);
-    await page.route(`**${contactCreatePath}`, (route) => {
-      if (route.request().method() === 'OPTIONS') {
-        return route.fallback();
-      }
-      payloads.push(route.request().postDataJSON());
-      return route.fulfill({
-        body: JSON.stringify(contactResponse),
-        contentType: 'application/json',
-        headers: contactCorsHeaders,
-        status: 200,
-      });
-    });
-
-    await page.goto(`/cs/contacts/customers/${e2eCustomers.active.customerId}/contacts/new`);
-    await expect(page.getByRole('heading', { name: 'Vytvořit kontakt' })).toBeVisible();
-    await expect(page.getByRole('textbox', { name: /^Jméno kontaktu/u })).toBeVisible();
-    await expect(page.getByRole('textbox', { name: /^E-mail/u })).toBeVisible();
-    await expect(page.getByRole('textbox', { name: /^Telefon/u })).toHaveAttribute(
-      'placeholder',
-      'Telefonní číslo',
-    );
-    await expect(
-      page.getByRole('combobox', { name: 'Vybrat zemi telefonního čísla' }),
-    ).toBeVisible();
-
-    await page.setViewportSize({ height: 667, width: 375 });
-    await page.goto(`/en/contacts/customers/${e2eCustomers.active.customerId}/contacts/new`);
-    await expect(page.getByRole('heading', { name: 'Create Contact' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Back to Customer' })).toHaveAttribute(
-      'href',
-      `/en/contacts/customers/${e2eCustomers.active.customerId}`,
-    );
-    await page.getByRole('textbox', { name: /^Contact name/u }).fill(contactResponse.name);
-    await page.getByRole('textbox', { name: /^Email/u }).fill(contactResponse.email);
-    await page.getByRole('textbox', { name: /^Phone/u }).fill(contactResponse.phone);
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
-      ),
-    ).toBe(true);
-    const screenshotPath = process.env['ULTRAMODERN_CONTACT_CREATE_REVIEW_SCREENSHOT_PATH'];
-    if (screenshotPath !== undefined) {
-      await page.screenshot({ fullPage: true, path: screenshotPath });
-    }
-
-    await page.getByRole('textbox', { name: /^Email/u }).focus();
-    await page.keyboard.press('Enter');
-    await expect.poll(() => payloads.length).toBe(1);
-    expect(payloads).toEqual([
-      {
-        customerId: e2eCustomers.active.customerId,
-        email: contactResponse.email,
-        name: contactResponse.name,
-        phone: contactResponse.phone,
-      },
-    ]);
-    await expect(page).toHaveURL(`/en/contacts/customers/${e2eCustomers.active.customerId}`);
-    await expect.poll(() => gatewayPayloads.length).toBe(2);
-    expect(gatewayPayloads).toEqual([{ audience: 'contacts' }, { audience: 'contacts' }]);
-  });
-
-  test('Contact create preserves values and reuses its key after a mocked uncertain failure', async ({
-    page,
-  }) => {
-    await login(page);
-    const gatewayPayloads = await mockContactsGateway(page);
-    let attempts = 0;
-    const headers: { readonly correlationId?: string; readonly idempotencyKey?: string }[] = [];
-    await page.route(`**${contactCreatePath}`, (route) => {
-      if (route.request().method() === 'OPTIONS') {
-        return route.fallback();
-      }
-      attempts += 1;
-      const requestHeaders = route.request().headers();
-      headers.push({
-        correlationId: requestHeaders['x-correlation-id'],
-        idempotencyKey: requestHeaders['idempotency-key'],
-      });
-      if (attempts === 1) {
-        return route.fulfill({
-          body: JSON.stringify({
-            _tag: 'ContactsUnavailableProblem',
-            detail: 'The E2E Contact service is unavailable.',
-            retryable: true,
-            status: 503,
-            title: 'Contact service unavailable',
-            type: 'https://ontos.dev/problems/contacts-unavailable',
-          }),
-          contentType: 'application/problem+json',
-          headers: contactCorsHeaders,
-          status: 503,
-        });
-      }
-      return route.fulfill({
-        body: JSON.stringify(contactResponse),
-        contentType: 'application/json',
-        headers: contactCorsHeaders,
-        status: 200,
-      });
-    });
-
-    await page.goto(`/en/contacts/customers/${e2eCustomers.active.customerId}/contacts/new`);
-    await page.getByRole('textbox', { name: /^Contact name/u }).fill(contactResponse.name);
-    await page.getByRole('textbox', { name: /^Email/u }).fill(contactResponse.email);
-    await page.getByRole('textbox', { name: /^Phone/u }).fill(contactResponse.phone);
-    await page.getByRole('button', { name: 'Create Contact' }).click();
-
-    await expect(page.getByText(/request may have completed/u)).toBeVisible();
-    await expect(page.getByRole('textbox', { name: /^Contact name/u })).toHaveValue(
-      contactResponse.name,
-    );
-    await page.getByRole('button', { name: 'Create Contact' }).click();
-    await expect.poll(() => attempts).toBe(2);
-    expect(headers[0]?.idempotencyKey).toBeTruthy();
-    expect(headers[1]?.idempotencyKey).toBe(headers[0]?.idempotencyKey);
-    expect(headers[1]?.correlationId).not.toBe(headers[0]?.correlationId);
-    await expect(page).toHaveURL(`/en/contacts/customers/${e2eCustomers.active.customerId}`);
-    await expect.poll(() => gatewayPayloads.length).toBe(3);
-    expect(gatewayPayloads).toEqual([
-      { audience: 'contacts' },
-      { audience: 'contacts' },
-      { audience: 'contacts' },
-    ]);
-  });
-});
-
-test.describe('Contact detail flows', () => {
-  test.describe.configure({ timeout: 90_000 });
-
-  test('Contact detail keeps the same layout after a full-page reload', async ({ page }) => {
-    await login(page);
-    await page.setViewportSize({ height: 900, width: 1440 });
-    await page.goto(`/en/contacts/customers/${e2eContacts.active.customerId}`);
-    await page.getByRole('link', { name: e2eContacts.active.name }).click();
-    await expect(page).toHaveURL(
-      `/en/contacts/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
-    );
-
-    const heading = page.getByRole('heading', { name: e2eContacts.active.name });
-    await expect(heading).toBeVisible();
-    const navigatedLayout = await heading.evaluate((element) => {
-      const bounds = element.getBoundingClientRect();
-      const style = getComputedStyle(element);
-      return {
-        fontSize: style.fontSize,
-        fontWeight: style.fontWeight,
-        left: bounds.left,
-        lineHeight: style.lineHeight,
-      };
-    });
-
-    await page.reload();
-    await expect(heading).toBeVisible();
-    const reloadedLayout = await heading.evaluate((element) => {
-      const bounds = element.getBoundingClientRect();
-      const style = getComputedStyle(element);
-      return {
-        fontSize: style.fontSize,
-        fontWeight: style.fontWeight,
-        left: bounds.left,
-        lineHeight: style.lineHeight,
-      };
-    });
-
-    expect(reloadedLayout).toMatchObject({
-      fontSize: '36px',
-      fontWeight: '700',
-      lineHeight: '40px',
-    });
-    expect(reloadedLayout).toEqual(navigatedLayout);
-  });
-
-  test('Contact detail stays private anonymously and renders real English and Czech BFF data', async ({
-    page,
-  }) => {
-    let contactRequests = 0;
-    const payloads: unknown[] = [];
-    page.on('request', (request) => {
-      if (new URL(request.url()).pathname === contactDetailPath) {
-        contactRequests += 1;
-        payloads.push(request.postDataJSON());
-      }
-    });
-
-    await page.goto(
-      `/en/contacts/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
-    );
-    await expect(page.getByText(e2eContacts.active.name)).toHaveCount(0);
-    await page.goto(
-      `/cs/contacts/customers/${e2eContacts.archived.customerId}/contacts/${e2eContacts.archived.contactId}`,
-    );
-    await expect(page.getByText(e2eContacts.archived.name)).toHaveCount(0);
-    expect(contactRequests).toBe(0);
-
-    await login(page);
-    const englishResponsePromise = page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === contactDetailPath &&
-        response.request().method() === 'POST',
-    );
-    await page.goto(
-      `/en/contacts/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
-    );
-    const englishResponse = await englishResponsePromise;
-    expect(englishResponse.status(), await englishResponse.text()).toBe(200);
-    await expect(page.getByRole('heading', { name: e2eContacts.active.name })).toBeVisible();
-    await expect(page.getByText(e2eContacts.active.contactId)).toBeVisible();
-    await expect(page.getByText(e2eContacts.active.customerId)).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Send email to this Contact' })).toHaveAttribute(
-      'href',
-      `mailto:${e2eContacts.active.email}`,
-    );
-    await expect(page.getByRole('link', { name: 'Call this Contact' })).toHaveAttribute(
-      'href',
-      `tel:${e2eContacts.active.phone}`,
-    );
-    await expect(page.getByRole('link', { exact: true, name: 'Back' })).toHaveAttribute(
-      'href',
-      `/en/contacts/customers/${e2eContacts.active.customerId}`,
-    );
-
-    await page.setViewportSize({ height: 667, width: 375 });
-    const czechResponsePromise = page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === contactDetailPath &&
-        response.request().method() === 'POST',
-    );
-    await page.goto(
-      `/cs/contacts/customers/${e2eContacts.archived.customerId}/contacts/${e2eContacts.archived.contactId}`,
-    );
-    const czechResponse = await czechResponsePromise;
-    expect(czechResponse.status(), await czechResponse.text()).toBe(200);
-    await expect(page.getByRole('heading', { name: e2eContacts.archived.name })).toBeVisible();
-    await expect(page.getByText(e2eContacts.archived.email)).toBeVisible();
-    await expect(page.getByText('Archivovaný')).toBeVisible();
-    await expect(page.getByRole('link', { exact: true, name: 'Zpět' })).toHaveAttribute(
-      'href',
-      `/cs/contacts/customers/${e2eContacts.archived.customerId}`,
-    );
-    const emailLayout = await page
-      .getByRole('link', { name: 'Napsat e-mail tomuto kontaktu' })
-      .evaluate((element) => {
-        const range = document.createRange();
-        range.selectNodeContents(element);
-        const style = getComputedStyle(element);
-        return {
-          className: element.className,
-          display: style.display,
-          parentClientWidth: element.parentElement?.clientWidth,
-          parentScrollWidth: element.parentElement?.scrollWidth,
-          rectangles: Array.from(range.getClientRects(), (rectangle) => ({
-            right: rectangle.right,
-            width: rectangle.width,
-          })),
-          scrollWidth: element.scrollWidth,
-          width: element.clientWidth,
-          wordBreak: style.wordBreak,
-        };
-      });
-    expect(emailLayout.rectangles.length, JSON.stringify(emailLayout)).toBeGreaterThan(1);
-    expect(
-      emailLayout.rectangles.every((rectangle) => rectangle.right <= 375 && rectangle.width <= 375),
-    ).toBe(true);
-    expect(payloads).toEqual([
-      { contactId: e2eContacts.active.contactId },
-      { contactId: e2eContacts.archived.contactId },
-    ]);
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
-      ),
-    ).toBe(true);
-    const screenshotPath = process.env['ULTRAMODERN_CONTACT_DETAIL_REVIEW_SCREENSHOT_PATH'];
-    if (screenshotPath !== undefined) {
-      await page.screenshot({ fullPage: true, path: screenshotPath });
-    }
-  });
-
-  test('Contact detail rejects malformed IDs and suppresses a Contact under the wrong Customer', async ({
-    page,
-  }) => {
-    await login(page);
-    let attempts = 0;
-    page.on('request', (request) => {
-      if (new URL(request.url()).pathname === contactDetailPath) {
-        attempts += 1;
-      }
-    });
-
-    await page.goto('/en/contacts/customers/not-a-uuid/contacts/not-a-contact');
-    await expect(
-      page.getByText('This Contact could not be found for the selected Customer.'),
-    ).toBeVisible({ timeout: 60_000 });
-    expect(attempts).toBe(0);
-
-    await page.goto(
-      `/en/contacts/customers/${e2eCustomers.archived.customerId}/contacts/${e2eContacts.active.contactId}`,
-    );
-    await expect(
-      page.getByText('This Contact could not be found for the selected Customer.'),
-    ).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText(e2eContacts.active.name)).toHaveCount(0);
-    await expect(page.getByText(e2eContacts.active.email)).toHaveCount(0);
-    expect(attempts).toBe(1);
-  });
-
-  for (const [state, status, tag, message] of [
-    [
-      'not found',
-      404,
-      'ContactDetailNotFoundProblem',
-      'This Contact could not be found for the selected Customer.',
-    ],
-    [
-      'forbidden',
-      403,
-      'ContactDetailForbiddenProblem',
-      'You do not have permission to view this Contact.',
-    ],
-  ] as const) {
-    test(`Contact detail renders a declared ${state} response without retry`, async ({ page }) => {
-      await login(page);
-      await page.route(`**${contactDetailPath}`, (route) =>
-        route.fulfill({
-          body: JSON.stringify({
-            _tag: tag,
-            detail: message,
-            status,
-            title: message,
-            type: `https://ontos.dev/problems/contacts/contact-detail-${status}`,
-          }),
-          contentType: 'application/problem+json',
-          status,
-        }),
-      );
-
-      await page.goto(
-        `/en/contacts/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
-      );
-      await expect(page.getByText(message)).toBeVisible({ timeout: 60_000 });
-      await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0);
-    });
-  }
-
-  test('Contact detail retries a 503 from the keyboard with only the Contact ID and restores focus', async ({
-    page,
-  }) => {
-    await login(page);
-    const payloads: unknown[] = [];
-    let attempts = 0;
-    await page.route(`**${contactDetailPath}`, (route) => {
-      attempts += 1;
-      payloads.push(route.request().postDataJSON());
-      if (attempts === 1) {
-        return route.fulfill({
-          body: JSON.stringify({
-            _tag: 'ContactDetailUnavailableProblem',
-            detail: 'The E2E Contact is temporarily unavailable.',
-            retryable: true,
-            status: 503,
-            title: 'Contact unavailable',
-            type: 'https://ontos.dev/problems/contacts/contact-detail-unavailable',
-          }),
-          contentType: 'application/problem+json',
-          status: 503,
-        });
-      }
-      return route.fulfill({
-        body: JSON.stringify(contactDetailResponse(e2eContacts.active)),
-        contentType: 'application/json',
-        status: 200,
-      });
-    });
-
-    await page.goto(
-      `/en/contacts/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
-    );
-    await expect(page.getByText('The Contact is temporarily unavailable. Try again.')).toBeVisible({
-      timeout: 60_000,
-    });
-    const retry = page.getByRole('button', { name: 'Try again' });
-    await retry.focus();
-    await page.keyboard.press('Enter');
-    await expect(page.getByRole('heading', { name: e2eContacts.active.name })).toBeVisible();
-    await expect(page.getByTestId('contact-detail-results')).toBeFocused();
-    expect(attempts).toBe(2);
-    expect(payloads).toEqual([
-      { contactId: e2eContacts.active.contactId },
-      { contactId: e2eContacts.active.contactId },
-    ]);
-  });
-});
-
-test.describe('Contact edit flows', () => {
-  test.describe.configure({ timeout: 90_000 });
-
-  const contactCorsHeaders = {
-    'access-control-allow-origin': 'http://127.0.0.1:3020',
-  } as const;
-  const editedContact = {
-    ...contactDetailResponse(e2eContacts.active),
-    email: 'grace@example.test',
-    name: 'Grace Hopper',
-    phone: '987654321',
-    updatedAt: '2026-08-16T10:00:00.000Z',
-  } as const;
-  test('Contact edit stays private, prefills localized forms, submits the strict request, and remains responsive', async ({
-    page,
-  }) => {
-    let anonymousContactsRequests = 0;
-    page.on('request', (request) => {
-      const { pathname } = new URL(request.url());
-      if (pathname === contactDetailPath || pathname === contactEditPath) {
-        anonymousContactsRequests += 1;
-      }
-    });
-
-    await page.goto(contactEditUrl('en'));
-    await expect(page.getByRole('heading', { name: 'Edit Contact' })).toHaveCount(0);
-    await page.goto(contactEditUrl('cs'));
-    await expect(page.getByRole('heading', { name: 'Upravit kontakt' })).toHaveCount(0);
-    expect(anonymousContactsRequests).toBe(0);
-
-    await login(page);
-    await mockContactsGateway(page);
-    const detailPayloads: unknown[] = [];
-    const editPayloads: unknown[] = [];
-    const editHeaders: { readonly correlationId?: string; readonly idempotencyKey?: string }[] = [];
-    await page.route(`**${contactDetailPath}`, (route) => {
-      if (route.request().method() === 'OPTIONS') {
-        return route.fallback();
-      }
-      detailPayloads.push(route.request().postDataJSON());
-      return route.fulfill({
-        body: JSON.stringify(contactDetailResponse(e2eContacts.active)),
-        contentType: 'application/json',
-        headers: contactCorsHeaders,
-        status: 200,
-      });
-    });
-    await page.route(`**${contactEditPath}`, (route) => {
-      if (route.request().method() === 'OPTIONS') {
-        return route.fallback();
-      }
-      editPayloads.push(route.request().postDataJSON());
-      const headers = route.request().headers();
-      editHeaders.push({
-        correlationId: headers['x-correlation-id'],
-        idempotencyKey: headers['idempotency-key'],
-      });
-      return route.fulfill({
-        body: JSON.stringify(editedContact),
-        contentType: 'application/json',
-        headers: contactCorsHeaders,
-        status: 200,
-      });
-    });
-
-    await page.goto(contactEditUrl('cs'));
-    await expect(page.getByRole('heading', { name: 'Upravit kontakt' })).toBeVisible();
-    await expect(page.getByRole('textbox', { name: /^Jméno kontaktu/u })).toHaveValue(
-      e2eContacts.active.name,
-    );
-    await expect(page.getByRole('link', { exact: true, name: 'Zpět' })).toHaveAttribute(
-      'href',
-      contactEditDetailUrl('cs'),
-    );
-
-    await page.setViewportSize({ height: 667, width: 375 });
-    await page.goto(contactEditUrl('en'));
-    await expect(page.getByRole('heading', { name: 'Edit Contact' })).toBeVisible();
-    await page.getByRole('textbox', { name: /^Contact name/u }).fill('  Grace Hopper  ');
-    await page.getByRole('textbox', { name: /^Email/u }).fill('  Grace@Example.Test  ');
-    await page.getByRole('textbox', { name: /^Phone/u }).fill('  987654321  ');
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
-      ),
-    ).toBe(true);
-    const screenshotPath = process.env['ULTRAMODERN_CONTACT_EDIT_REVIEW_SCREENSHOT_PATH'];
-    if (screenshotPath !== undefined) {
-      await page.screenshot({ fullPage: true, path: screenshotPath });
-    }
-
-    await page.getByRole('textbox', { name: /^Email/u }).focus();
-    await page.keyboard.press('Enter');
-    await expect.poll(() => editPayloads.length).toBe(1);
-    expect(editPayloads).toEqual([
-      {
-        contactId: e2eContacts.active.contactId,
-        email: 'Grace@Example.Test',
-        name: 'Grace Hopper',
-        phone: '98 765 432 1',
-      },
-    ]);
-    expect(editHeaders[0]?.idempotencyKey).toBeTruthy();
-    expect(editHeaders[0]?.correlationId).toBeTruthy();
-    await expect(page).toHaveURL(contactEditDetailUrl('en'));
-    expect(
-      detailPayloads.every(
-        (payload) =>
-          JSON.stringify(payload) ===
-          JSON.stringify({
-            contactId: e2eContacts.active.contactId,
-          }),
-      ),
-    ).toBe(true);
-  });
-
-  test('Contact edit retains values and reuses its key after a typed uncertain failure', async ({
-    page,
-  }) => {
-    await login(page);
-    await mockContactsGateway(page);
-    let attempts = 0;
-    const headers: { readonly correlationId?: string; readonly idempotencyKey?: string }[] = [];
-    await page.route(`**${contactDetailPath}`, (route) =>
-      route.fulfill({
-        body: JSON.stringify(contactDetailResponse(e2eContacts.active)),
-        contentType: 'application/json',
-        headers: contactCorsHeaders,
-        status: 200,
-      }),
-    );
-    await page.route(`**${contactEditPath}`, (route) => {
-      if (route.request().method() === 'OPTIONS') {
-        return route.fallback();
-      }
-      attempts += 1;
-      const requestHeaders = route.request().headers();
-      headers.push({
-        correlationId: requestHeaders['x-correlation-id'],
-        idempotencyKey: requestHeaders['idempotency-key'],
-      });
-      if (attempts === 1) {
-        return route.fulfill({
-          body: JSON.stringify({
-            _tag: 'ContactsUnavailableProblem',
-            detail: 'The E2E Contact service is unavailable.',
-            retryable: true,
-            status: 503,
-            title: 'Contact service unavailable',
-            type: 'https://ontos.dev/problems/contacts-unavailable',
-          }),
-          contentType: 'application/problem+json',
-          headers: contactCorsHeaders,
-          status: 503,
-        });
-      }
-      return route.fulfill({
-        body: JSON.stringify(editedContact),
-        contentType: 'application/json',
-        headers: contactCorsHeaders,
-        status: 200,
-      });
-    });
-
-    await page.goto(contactEditUrl('en'));
-    await expect(page.getByRole('textbox', { name: /^Contact name/u })).toHaveValue(
-      e2eContacts.active.name,
-    );
-    await page.getByRole('button', { name: 'Save Contact' }).click();
-    await expect(page.getByText(/request may have completed/u)).toBeVisible();
-    await expect(page.getByRole('textbox', { name: /^Contact name/u })).toHaveValue(
-      e2eContacts.active.name,
-    );
-    await page.getByRole('button', { name: 'Save Contact' }).click();
-
-    await expect.poll(() => attempts).toBe(2);
-    expect(headers[0]?.idempotencyKey).toBeTruthy();
-    expect(headers[1]?.idempotencyKey).toBe(headers[0]?.idempotencyKey);
-    expect(headers[1]?.correlationId).not.toBe(headers[0]?.correlationId);
-    await expect(page).toHaveURL(contactEditDetailUrl('en'));
-  });
 });

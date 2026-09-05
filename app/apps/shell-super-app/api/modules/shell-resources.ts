@@ -1,6 +1,7 @@
 // @effect-diagnostics anyUnknownInErrorContext:off catchUnfailableEffect:off effectSucceedWithVoid:off schemaSyncInEffect:off unnecessaryPipeChain:off
-/* eslint-disable complexity, max-classes-per-file, no-negated-condition, promise/prefer-await-to-then, unicorn/no-array-method-this-argument, unicorn/no-negated-condition -- Search/resource/media orchestration keeps its closed gate ordering visible in one module. */
+/* eslint-disable complexity, max-classes-per-file, no-negated-condition, react-doctor/js-combine-iterations, react-doctor/js-set-map-lookups, unicorn/no-array-method-this-argument, unicorn/no-negated-condition -- Search/resource/media orchestration keeps its closed gate ordering visible in one module; provider and authorization batches are bounded by the installed catalog. */
 import type {
+  ContextAccessResult,
   ContextAccessService,
   InstalledModuleCatalog,
   TenantModuleState,
@@ -353,9 +354,10 @@ export const makeShellSearch = (
         .getTenantModuleStates(context.tenantId, moduleIds)
         .pipe(Effect.mapError(unavailable));
       const stateKeys = states.map(({ moduleKey }) => moduleKey);
+      const moduleIdSet = new Set(moduleIds);
       if (
         new Set(stateKeys).size !== stateKeys.length ||
-        stateKeys.some((moduleId) => !moduleIds.includes(moduleId))
+        stateKeys.some((moduleId) => !moduleIdSet.has(moduleId))
       ) {
         return yield* unavailable();
       }
@@ -496,19 +498,19 @@ export const makeShellSearch = (
             .map((ref) => [resourceKey(ref), ref]),
         ).values(),
       ];
-      if (resourceCandidates.length > 0 && context.legalEntityId === undefined) {
-        return yield* unavailable();
+      let resourcePermissions: readonly ContextAccessResult[] = [];
+      if (resourceCandidates.length > 0) {
+        const { legalEntityId } = context;
+        if (legalEntityId === undefined) {
+          return yield* unavailable();
+        }
+        resourcePermissions = yield* dependencies.contextAccess.resources({
+          legalEntityId,
+          principalId: context.principalId,
+          resources: resourcesToAuthorize,
+          tenantId: context.tenantId,
+        });
       }
-      const resourcePermissions =
-        resourceCandidates.length === 0
-          ? []
-          : yield* dependencies.contextAccess.resources({
-              // SAFETY: a nonempty resource batch was rejected above when selected Legal Entity is absent.
-              legalEntityId: context.legalEntityId as string,
-              principalId: context.principalId,
-              resources: resourcesToAuthorize,
-              tenantId: context.tenantId,
-            });
       if (
         resourcePermissions.length !== resourcesToAuthorize.length ||
         resourcePermissions.some(({ decision, key }, index) => {

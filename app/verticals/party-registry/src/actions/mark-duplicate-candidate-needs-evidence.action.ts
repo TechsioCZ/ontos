@@ -60,6 +60,7 @@ export const markDuplicateCandidateNeedsEvidenceAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'party.registry.mark-duplicate-candidate-needs-evidence',
       moduleKey: 'party.registry',
       role: 'action',

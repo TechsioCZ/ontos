@@ -28,8 +28,8 @@ export interface AvailableTenant {
 export interface ResolvedPrincipalIdentity {
   readonly authBindingId: string;
   readonly displayName: string;
-  readonly principalKind: PrincipalKind;
   readonly principalId: string;
+  readonly principalKind: PrincipalKind;
   readonly tenantId: string;
 }
 
@@ -76,7 +76,7 @@ const loadPrincipalResolutionRecords = (
       new PrincipalResolverUnavailableError({
         reason: 'Unable to resolve the authenticated principal',
       }),
-    try: () => repository.load(subject, tenantId),
+    try: async () => await repository.load(subject, tenantId),
   });
 
 const compareText = (left: string, right: string): number => {
@@ -212,32 +212,32 @@ export const classifyApiKeyPrincipal = (
   });
 
 export interface PrincipalResolverService {
-  readonly resolveBetterAuthUserForPrincipal: (input: {
-    readonly principalId: string;
-    readonly tenantId: string;
-  }) => Effect.Effect<string, PrincipalResolutionError>;
-  readonly resolveApiKeyBindingSubject: (input: {
-    readonly authBindingId: string;
-    readonly principalId: string;
-    readonly tenantId: string;
-  }) => Effect.Effect<string, PrincipalResolutionError>;
+  readonly listAvailableTenants: (
+    betterAuthUserId: string,
+  ) => Effect.Effect<readonly AvailableTenant[], PrincipalResolutionError>;
   readonly loadApiKeyBindingForAdministration: (input: {
     readonly authBindingId: string;
     readonly principalId: string;
     readonly tenantId: string;
   }) => Effect.Effect<ApiKeyBindingAdministration, PrincipalResolutionError>;
-  readonly listAvailableTenants: (
-    betterAuthUserId: string,
-  ) => Effect.Effect<readonly AvailableTenant[], PrincipalResolutionError>;
-  readonly resolveDefaultBetterAuthUser: (
-    betterAuthUserId: string,
+  readonly resolveApiKeyBindingSubject: (input: {
+    readonly authBindingId: string;
+    readonly principalId: string;
+    readonly tenantId: string;
+  }) => Effect.Effect<string, PrincipalResolutionError>;
+  readonly resolveBetterAuthApiKey: (
+    betterAuthApiKeyId: string,
   ) => Effect.Effect<ResolvedPrincipalIdentity, PrincipalResolutionError>;
+  readonly resolveBetterAuthUserForPrincipal: (input: {
+    readonly principalId: string;
+    readonly tenantId: string;
+  }) => Effect.Effect<string, PrincipalResolutionError>;
   readonly resolveBetterAuthUserForTenant: (
     betterAuthUserId: string,
     tenantId: string,
   ) => Effect.Effect<ResolvedPrincipalIdentity, PrincipalResolutionError>;
-  readonly resolveBetterAuthApiKey: (
-    betterAuthApiKeyId: string,
+  readonly resolveDefaultBetterAuthUser: (
+    betterAuthUserId: string,
   ) => Effect.Effect<ResolvedPrincipalIdentity, PrincipalResolutionError>;
   readonly resolveProviderSubject: (
     subject: ProviderSubject,

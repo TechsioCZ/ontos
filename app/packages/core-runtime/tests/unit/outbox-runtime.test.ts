@@ -56,6 +56,7 @@ const worker = <HandlerError, HandlerRequirements = never>(
       consumerModuleKey: 'consumer',
       entrypoint: defineTenantModuleEntrypoint({
         access: 'background',
+        authorization: { kind: 'owner_local_background' },
         entrypointKey: 'consumer.logger',
         moduleKey: 'consumer',
         role: 'worker',
@@ -113,25 +114,22 @@ const repository = (
 };
 
 type NoRequirementsWorker = OutboxWorkerRegistration<
-  Schema.ConstraintDecoder<unknown, never>,
+  Schema.ConstraintDecoder<unknown>,
   string,
   string,
-  unknown,
-  never
+  unknown
 >;
 
 interface WorkerInvocation {
-  readonly context: Parameters<
-    OutboxWorkerHandler<{ readonly messageKey: string }, never, never>
-  >[1];
+  readonly context: Parameters<OutboxWorkerHandler<{ readonly messageKey: string }, never>>[1];
   readonly payload: { readonly messageKey: string };
 }
 
-const run = (
+const run = async (
   service: OutboxRepositoryService,
   registration: NoRequirementsWorker = worker(() => Effect.void),
 ) =>
-  Effect.runPromise(
+  await Effect.runPromise(
     makeOutboxRuntime(service).runCycle({
       claimOwner: 'unit-runtime',
       registrations: [registration],
@@ -139,7 +137,7 @@ const run = (
     }),
   );
 
-test('owner-local cycles do not perform global matching', async () => {
+void test('owner-local cycles do not perform global matching', async () => {
   const controlled = repository({ match: { deliveriesCreated: 0, messagesMatched: 2 } });
 
   assert.deepEqual(await run(controlled.service), {
@@ -155,7 +153,7 @@ test('owner-local cycles do not perform global matching', async () => {
   assert.deepEqual(controlled.probe.failed, []);
 });
 
-test('matches messages only through the explicit Core matcher snapshot', async () => {
+void test('matches messages only through the explicit Core matcher snapshot', async () => {
   const controlled = repository({ match: { deliveriesCreated: 3, messagesMatched: 2 } });
   const registration = worker(() => Effect.void);
   const result = await Effect.runPromise(
@@ -167,7 +165,7 @@ test('matches messages only through the explicit Core matcher snapshot', async (
   assert.deepEqual(result, { deliveriesCreated: 3, messagesMatched: 2 });
 });
 
-test('rejects an owner-local worker missing from the installed subscription catalog', async () => {
+void test('rejects an owner-local worker missing from the installed subscription catalog', async () => {
   const controlled = repository();
   const registration = worker(() => Effect.void);
   await assert.rejects(
@@ -184,7 +182,7 @@ test('rejects an owner-local worker missing from the installed subscription cata
   );
 });
 
-test('rejects deployed owner descriptors without a matching local worker registration', async () => {
+void test('rejects deployed owner descriptors without a matching local worker registration', async () => {
   const controlled = repository();
   const registration = worker(() => Effect.void);
   await assert.rejects(
@@ -198,6 +196,7 @@ test('rejects deployed owner descriptors without a matching local worker registr
             ...registration.descriptor,
             entrypoint: defineTenantModuleEntrypoint({
               access: 'background',
+              authorization: { kind: 'owner_local_background' },
               entrypointKey: 'consumer.second-worker',
               moduleKey: registration.descriptor.consumerModuleKey,
               role: 'worker',
@@ -213,7 +212,7 @@ test('rejects deployed owner descriptors without a matching local worker registr
   );
 });
 
-test('decodes a published payload, supplies exact context, and completes success', async () => {
+void test('decodes a published payload, supplies exact context, and completes success', async () => {
   const selected = claim();
   const controlled = repository({ claims: [selected] });
   let observed: WorkerInvocation | undefined;
@@ -246,7 +245,7 @@ test('decodes a published payload, supplies exact context, and completes success
   });
 });
 
-test('runs a worker with Effect services provided by its owning MicroVertical host', async () => {
+void test('runs a worker with Effect services provided by its owning MicroVertical host', async () => {
   const selected = { ...claim(), workerKey: 'consumer.layered-logger' };
   const controlled = repository({ claims: [selected] });
   const observed: string[] = [];
@@ -255,6 +254,7 @@ test('runs a worker with Effect services provided by its owning MicroVertical ho
       consumerModuleKey: 'consumer',
       entrypoint: defineTenantModuleEntrypoint({
         access: 'background',
+        authorization: { kind: 'owner_local_background' },
         entrypointKey: 'consumer.layered-logger',
         moduleKey: 'consumer',
         role: 'worker',
@@ -290,7 +290,7 @@ test('runs a worker with Effect services provided by its owning MicroVertical ho
   assert.deepEqual(observed, ['message-1']);
 });
 
-test('records decode failures as retries without calling the handler or completion', async () => {
+void test('records decode failures as retries without calling the handler or completion', async () => {
   const controlled = repository({
     claims: [claim(1, { messageKey: 42 })],
     failureStatuses: ['pending'],
@@ -312,7 +312,7 @@ test('records decode failures as retries without calling the handler or completi
   );
 });
 
-test('classifies declared failures, defects, retry exhaustion, and never completes them', async () => {
+void test('classifies declared failures, defects, retry exhaustion, and never completes them', async () => {
   const declared = repository({ claims: [claim()], failureStatuses: ['pending'] });
   const declaredResult = await run(
     declared.service,
@@ -336,7 +336,7 @@ test('classifies declared failures, defects, retry exhaustion, and never complet
   assert.deepEqual(defect.probe.completed, []);
 });
 
-test('surfaces stale-claim finalization and leaves checkpoint responsibility with the repository', async () => {
+void test('surfaces stale-claim finalization and leaves checkpoint responsibility with the repository', async () => {
   const controlled = repository({
     claims: [claim()],
     completeError: new OutboxClaimLostError({

@@ -1,3 +1,4 @@
+/* oxlint-disable sonarjs/no-duplicate-string, sonarjs/no-inverted-boolean-check */
 /* eslint-disable max-classes-per-file, promise/prefer-await-to-callbacks, unicorn/no-array-method-this-argument -- The public Effect service, private sentinels, Effect callbacks, and Effect dual flatMap API are deliberate. */
 // @effect-diagnostics asyncFunction:off
 // Drizzle owns the Promise transaction callback; Effect exits are carried
@@ -111,9 +112,9 @@ export const ACTION_RUNTIME_STAGES = [
 export type ActionRuntimeStage = (typeof ACTION_RUNTIME_STAGES)[number];
 
 export interface RunActionInput<
-  PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
-  ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
-  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
   DomainEvents extends DomainEventContractMap,
   Owner extends string = string,
   Services = Readonly<Record<string, never>>,
@@ -144,10 +145,21 @@ export interface ActionCommitOpen {
 }
 
 export interface ActionRuntimeService {
+  readonly resolveActionCommit: (
+    input: ResolveActionCommitInput,
+  ) => Effect.Effect<
+    ActionCommitOpen,
+    | ActionAlreadyCommitted
+    | ActionCommitIndeterminate
+    | ActionInvocationNotFound
+    | ActionInvocationStateError
+    | ActionPayloadValidationError
+    | ActionTrustedContextValidationError
+  >;
   readonly runAction: <
-    PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
-    ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
-    DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
+    PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+    ResultSchema extends Schema.ConstraintDecoder<unknown>,
+    DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
     DomainEvents extends DomainEventContractMap,
     Owner extends string,
     Services,
@@ -167,27 +179,16 @@ export interface ActionRuntimeService {
     ActionCoreError | DomainErrorSchema['Type'],
     HandlerRequirements
   >;
-  readonly resolveActionCommit: (
-    input: ResolveActionCommitInput,
-  ) => Effect.Effect<
-    ActionCommitOpen,
-    | ActionAlreadyCommitted
-    | ActionCommitIndeterminate
-    | ActionInvocationNotFound
-    | ActionInvocationStateError
-    | ActionPayloadValidationError
-    | ActionTrustedContextValidationError
-  >;
 }
 
 export interface ActionRuntimeOptions {
   readonly contextAccess?: (typeof ContextAccess)['Service'];
+  readonly installScope?: typeof installOperationalScope;
   readonly moduleEntrypointGateway: ModuleEntrypointGatewayService;
   readonly moduleStateGate: ModuleStateGateService;
   readonly onStage?: (stage: ActionRuntimeStage) => void;
   readonly resolveHandler?: typeof getActionHandler;
   readonly resolveServiceFactory?: typeof getActionServiceFactory;
-  readonly installScope?: typeof installOperationalScope;
 }
 
 type ActionRollbackToken = symbol;
@@ -610,9 +611,9 @@ export const makeActionRuntime = (
   };
 
   const runAction = <
-    PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
-    ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
-    DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
+    PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+    ResultSchema extends Schema.ConstraintDecoder<unknown>,
+    DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
     DomainEvents extends DomainEventContractMap,
     Owner extends string,
     Services,
@@ -649,7 +650,7 @@ export const makeActionRuntime = (
             legalEntityScope: input.registration.descriptor.legalEntityScope,
             principal,
           },
-          !(transport.traceId === undefined),
+          transport.traceId !== undefined,
           'traceId',
           transport.traceId,
           {},
@@ -898,7 +899,7 @@ export const makeActionRuntime = (
             {
               correlationId: transport.correlationId,
             },
-            !(transport.traceId === undefined),
+            transport.traceId !== undefined,
             'traceId',
             transport.traceId,
             {},
@@ -981,8 +982,8 @@ export const makeActionRuntime = (
       const rollbackToken = Symbol('@app/core-runtime/actions/rollback');
       const transaction = Effect.tryPromise({
         catch: (error) => new TransactionBridgeFailure(error),
-        try: () =>
-          database.executor.transaction(async (drizzleTransaction: CoreTransaction) => {
+        try: async () =>
+          await database.executor.transaction(async (drizzleTransaction: CoreTransaction) => {
             const lockedInvocation = exitValueOrRollback(
               await Effect.runPromiseExit(
                 repository.lockInvocation(drizzleTransaction, invocation.actionInvocationId),
@@ -1240,9 +1241,9 @@ export const ActionRuntimeLive = Layer.effect(
 );
 
 export const runAction = <
-  PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
-  ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
-  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
   DomainEvents extends DomainEventContractMap,
   Owner extends string,
   Services,

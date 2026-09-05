@@ -2,6 +2,9 @@ name: Ultramodern Workspace Gates and Stage Deploy
 
 on:
   push:
+    branches:
+      - main
+      - stage
   pull_request:
 
 permissions:
@@ -191,6 +194,7 @@ jobs:
       - name: Build Node deployment artifacts
         working-directory: app
         env:
+          GIT_CEILING_DIRECTORIES: ${{ github.workspace }}
           MODERN_PUBLIC_SITE_URL: http://localhost:8080
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: mise exec -- pnpm build
@@ -199,6 +203,7 @@ jobs:
         working-directory: app
         env:
           DATABASE_URL: postgresql://ontos_proof:ontos_proof@localhost:5432/ontos_proof
+          GIT_CEILING_DIRECTORIES: ${{ github.workspace }}
           MODERN_PUBLIC_SITE_URL: http://localhost:8080
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: mise exec -- pnpm node:proof
@@ -234,6 +239,7 @@ jobs:
       - name: Build and prove Cloudflare/workerd artifacts
         working-directory: app
         env:
+          GIT_CEILING_DIRECTORIES: ${{ github.workspace }}
           MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
           ULTRAMODERN_PUBLIC_URL_CONTACTS: https://contacts.invalid
           ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: https://party-registry.invalid
@@ -280,6 +286,12 @@ jobs:
         working-directory: app
         run: mise exec -- pnpm install --frozen-lockfile
 
+      - name: Derive exact-build authorization inventory
+        working-directory: app
+        env:
+          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+        run: mise exec -- pnpm authorization:inventory:check
+
       - name: Generate topology-driven deployment impact plan
         id: impact
         working-directory: app
@@ -287,6 +299,7 @@ jobs:
           BEFORE_SHA: ${{ github.event.before }}
         run: >-
           mise exec -- pnpm deployment-impact:plan --
+          --authorization-environment stage
           --base "$BEFORE_SHA"
           --head "$GITHUB_SHA"
 

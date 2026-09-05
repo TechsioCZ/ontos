@@ -1,3 +1,4 @@
+/* oxlint-disable typescript/return-await */
 // @effect-diagnostics asyncFunction:off nodeBuiltinImport:off
 /* eslint-disable unicorn/no-await-expression-member -- Direct assertions keep durable queries next to their expected transaction state. */
 import assert from 'node:assert/strict';
@@ -147,7 +148,7 @@ test('durably rebuilds tenant projections with tombstones and selected-Legal-Ent
       ['Acme current'],
     );
     assert.doesNotMatch(JSON.stringify(partyHits), /private@example\.test/u);
-    const evidenceSearch = (query: string, effectiveAt = '2026-02-01T00:00:00Z') =>
+    const evidenceSearch = async (query: string, effectiveAt = '2026-02-01T00:00:00Z') =>
       Effect.runPromise(
         search.search({
           effectiveAt,
@@ -192,7 +193,7 @@ test('durably rebuilds tenant projections with tombstones and selected-Legal-Ent
     const restarted = makePostgresCoreSearchProjectionStore({
       executor: drizzle({ client: runtimePool, schema: coreDatabaseSchema }),
     });
-    const floorSearch = () =>
+    const floorSearch = async () =>
       Effect.runPromise(
         makeCoreSearchQueryRuntime(restarted).search({
           includeArchived: false,

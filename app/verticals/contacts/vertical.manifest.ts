@@ -83,6 +83,7 @@ export const contactsManifest = defineOntosModuleManifest({
           contributionKey: 'contacts.core.navigation.contacts',
           entrypoint: {
             access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
             entrypointKey: 'contacts.core.page.contacts',
             moduleKey: 'contacts.core',
             role: 'page',
@@ -101,6 +102,7 @@ export const contactsManifest = defineOntosModuleManifest({
           contributionKey: 'contacts.core.page.contacts',
           entrypoint: {
             access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
             entrypointKey: 'contacts.core.page.contacts',
             moduleKey: 'contacts.core',
             role: 'page',

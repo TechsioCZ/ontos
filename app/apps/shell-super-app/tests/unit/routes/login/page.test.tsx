@@ -5,17 +5,15 @@ import { toaster } from '@techsio/ui-kit/molecules/toast';
 import LoginPage from '../../../../src/routes/[lang]/login/page';
 
 const { navigateMock, runEffectRequestMock, signInMock } = rstest.hoisted(() => ({
-  navigateMock: rstest.fn(() => Promise.resolve()),
-  runEffectRequestMock: rstest.fn(() =>
-    Promise.resolve({
-      identity: {
-        displayName: 'Ada',
-        email: 'ada@example.test',
-        principalId: 'principal-1',
-        tenantId: 'tenant-1',
-      },
-    }),
-  ),
+  navigateMock: rstest.fn(async () => {}),
+  runEffectRequestMock: rstest.fn(async () => ({
+    identity: {
+      displayName: 'Ada',
+      email: 'ada@example.test',
+      principalId: 'principal-1',
+      tenantId: 'tenant-1',
+    },
+  })),
   signInMock: rstest.fn(() => ({ operation: 'signIn' })),
 }));
 
@@ -89,11 +87,11 @@ test('shows the required login controls through the UI kit', () => {
   );
 });
 
-test('shows both field errors and one Toast when both values are missing', () => {
+test('shows both field errors and one Toast when both values are missing', async () => {
   const user = userEvent.setup();
   renderLogin();
 
-  return user.click(getSubmit()).then(() => {
+  await user.click(getSubmit()).then(() => {
     const login = getLogin();
     const password = getPassword();
 
@@ -107,26 +105,26 @@ test('shows both field errors and one Toast when both values are missing', () =>
   });
 });
 
-test('creates one Toast per repeated invalid submission', () => {
+test('creates one Toast per repeated invalid submission', async () => {
   const user = userEvent.setup();
   renderLogin();
 
-  return user
+  await user
     .click(getSubmit())
-    .then(() => user.click(getSubmit()))
+    .then(async () => await user.click(getSubmit()))
     .then(() => {
       expect(screen.getAllByText('Login details are incomplete')).toHaveLength(2);
       expect(screen.getAllByText('Fill in both required fields.')).toHaveLength(2);
     });
 });
 
-test('shows only the Login error when the password is present', () => {
+test('shows only the Login error when the password is present', async () => {
   const user = userEvent.setup();
   renderLogin();
 
-  return user
+  await user
     .type(getPassword(), 'secret')
-    .then(() => user.click(getSubmit()))
+    .then(async () => await user.click(getSubmit()))
     .then(() => {
       expect(getLogin().getAttribute('aria-invalid')).toBe('true');
       expect(getPassword().getAttribute('aria-invalid')).toBeNull();
@@ -137,13 +135,13 @@ test('shows only the Login error when the password is present', () => {
     });
 });
 
-test('shows only the Password error when the login is present', () => {
+test('shows only the Password error when the login is present', async () => {
   const user = userEvent.setup();
   renderLogin();
 
-  return user
+  await user
     .type(getLogin(), 'admin')
-    .then(() => user.click(getSubmit()))
+    .then(async () => await user.click(getSubmit()))
     .then(() => {
       expect(getLogin().getAttribute('aria-invalid')).toBeNull();
       expect(getPassword().getAttribute('aria-invalid')).toBe('true');
@@ -154,14 +152,14 @@ test('shows only the Password error when the login is present', () => {
     });
 });
 
-test('treats a whitespace-only Login as missing', () => {
+test('treats a whitespace-only Login as missing', async () => {
   const user = userEvent.setup();
   renderLogin();
 
-  return user
+  await user
     .type(getLogin(), '   ')
-    .then(() => user.type(getPassword(), 'secret'))
-    .then(() => user.click(getSubmit()))
+    .then(async () => await user.type(getPassword(), 'secret'))
+    .then(async () => await user.click(getSubmit()))
     .then(() => {
       expect(getLogin().getAttribute('aria-invalid')).toBe('true');
       expect(screen.getByText('Enter your login.')).toBeTruthy();
@@ -169,14 +167,14 @@ test('treats a whitespace-only Login as missing', () => {
     });
 });
 
-test('accepts a non-empty whitespace Password', () => {
+test('accepts a non-empty whitespace Password', async () => {
   const user = userEvent.setup();
   renderLogin();
 
-  return user
+  await user
     .type(getLogin(), 'admin')
-    .then(() => user.type(getPassword(), ' '))
-    .then(() => user.click(getSubmit()))
+    .then(async () => await user.type(getPassword(), ' '))
+    .then(async () => await user.click(getSubmit()))
     .then(() => {
       expect(getLogin().getAttribute('aria-invalid')).toBeNull();
       expect(getPassword().getAttribute('aria-invalid')).toBeNull();
@@ -184,15 +182,15 @@ test('accepts a non-empty whitespace Password', () => {
     });
 });
 
-test('clears stale errors after both fields are corrected', () => {
+test('clears stale errors after both fields are corrected', async () => {
   const user = userEvent.setup();
   renderLogin();
 
-  return user
+  await user
     .click(getSubmit())
-    .then(() => user.type(getLogin(), 'admin'))
-    .then(() => user.type(getPassword(), 'secret'))
-    .then(() => user.click(getSubmit()))
+    .then(async () => await user.type(getLogin(), 'admin'))
+    .then(async () => await user.type(getPassword(), 'secret'))
+    .then(async () => await user.click(getSubmit()))
     .then(() => {
       expect(getLogin().getAttribute('aria-invalid')).toBeNull();
       expect(getPassword().getAttribute('aria-invalid')).toBeNull();
@@ -201,13 +199,13 @@ test('clears stale errors after both fields are corrected', () => {
     });
 });
 
-test('runs the same validation when submitted with Enter', () => {
+test('runs the same validation when submitted with Enter', async () => {
   const user = userEvent.setup();
   renderLogin();
 
-  return user
+  await user
     .click(getLogin())
-    .then(() => user.keyboard('{Enter}'))
+    .then(async () => await user.keyboard('{Enter}'))
     .then(() => {
       expect(getLogin().getAttribute('aria-invalid')).toBe('true');
       expect(getPassword().getAttribute('aria-invalid')).toBe('true');
@@ -216,14 +214,14 @@ test('runs the same validation when submitted with Enter', () => {
     });
 });
 
-test('submits valid values through the Shell authentication client and navigates home', () => {
+test('submits valid values through the Shell authentication client and navigates home', async () => {
   const user = userEvent.setup();
   renderLogin();
 
-  return user
+  await user
     .type(getLogin(), 'admin')
-    .then(() => user.type(getPassword(), 'secret'))
-    .then(() => user.click(getSubmit()))
+    .then(async () => await user.type(getPassword(), 'secret'))
+    .then(async () => await user.click(getSubmit()))
     .then(() => {
       expect(signInMock).toHaveBeenCalledWith(
         {

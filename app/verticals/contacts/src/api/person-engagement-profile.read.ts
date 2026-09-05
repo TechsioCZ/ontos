@@ -21,6 +21,7 @@ import type { LookupResult } from '../services/engagement-profile-persistence.se
 
 export const personEngagementProfileEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'contacts.core.api.person-engagement-profile',
   moduleKey: 'contacts.core',
   role: 'api',

@@ -60,6 +60,7 @@ export const dismissDuplicateCandidateAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'party.registry.dismiss-duplicate-candidate',
       moduleKey: 'party.registry',
       role: 'action',

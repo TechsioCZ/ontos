@@ -1,9 +1,79 @@
 {
-  "id": "8415b3d3-33d7-4e60-a218-dcb689a874a9",
-  "prevId": "f6f4ad84-5030-4d71-9a6b-479e06ad0330",
+  "id": "ec5eda96-ad88-49b7-abb9-7165b7ff7009",
+  "prevId": "9c6a58c6-58f2-4331-909a-ceb3025a9035",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
+    "contacts.gateway_assertion_redemptions": {
+      "name": "gateway_assertion_redemptions",
+      "schema": "contacts",
+      "columns": {
+        "audience": {
+          "name": "audience",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "issuer": {
+          "name": "issuer",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "jti": {
+          "name": "jti",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "redeemed_at": {
+          "name": "redeemed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "contacts_gateway_assertion_redemptions_expiry_idx": {
+          "name": "contacts_gateway_assertion_redemptions_expiry_idx",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "contacts_gateway_assertion_redemptions_identity_uk": {
+          "name": "contacts_gateway_assertion_redemptions_identity_uk",
+          "nullsNotDistinct": false,
+          "columns": [
+            "issuer",
+            "audience",
+            "jti"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "contacts.organization_engagement_profiles": {
       "name": "organization_engagement_profiles",
       "schema": "contacts",

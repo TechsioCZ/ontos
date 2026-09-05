@@ -19,6 +19,7 @@ import type {
 import { Context, Effect, Layer, Schema } from 'effect';
 import {
   ResourceRefSchema,
+  ShellCompositionSchema,
   ShellResourceResponseSchema,
   ShellSearchPayloadSchema,
   ShellSearchResponseSchema,
@@ -69,12 +70,12 @@ export interface ShellGovernedReadsService {
   readonly composition: (
     input: ShellReadInvocation,
   ) => Effect.Effect<ShellComposition, ReadCoreError>;
-  readonly resourceDetail: (
-    input: ShellReadInvocation & { readonly ref: ResourceRef },
-  ) => Effect.Effect<ShellResourceResponse, ReadCoreError>;
   readonly moduleTarget: (
     input: ShellReadInvocation & { readonly entrypointKey?: string; readonly moduleId: string },
   ) => Effect.Effect<ResolvedModuleTarget, ReadCoreError>;
+  readonly resourceDetail: (
+    input: ShellReadInvocation & { readonly ref: ResourceRef },
+  ) => Effect.Effect<ShellResourceResponse, ReadCoreError>;
   readonly search: (
     input: ShellReadInvocation & {
       readonly includeArchived?: boolean;
@@ -90,46 +91,30 @@ export class ShellGovernedReads extends Context.Service<
 >()('@app/shell-super-app/api/modules/shell-governed-reads/ShellGovernedReads') {}
 
 const emptyInput = Schema.Struct({});
-const governedShellNavigationItemSchema = Schema.Struct({
-  appId: Schema.String,
-  enabled: Schema.Boolean,
-  groupKey: Schema.String,
-  href: Schema.optionalKey(Schema.String),
-  label: Schema.String,
-  moduleId: Schema.String,
-  order: Schema.Finite.check(Schema.isInt()),
-  state: Schema.Literals(['active', 'deprecated', 'read_only']),
-  unavailable: Schema.Boolean,
-  writable: Schema.Boolean,
-});
-const governedShellCompositionSchema: Schema.Codec<ShellComposition> = Schema.Union([
-  Schema.Struct({ navigation: Schema.Tuple([]), state: Schema.Literal('access_blocked') }),
-  Schema.Struct({ navigation: Schema.Tuple([]), state: Schema.Literal('selection_required') }),
-  Schema.Struct({
-    navigation: Schema.Array(governedShellNavigationItemSchema),
-    state: Schema.Literal('available'),
-  }),
-]);
 const compositionEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'core.shell.composition',
   moduleKey: 'core.shell',
   role: 'api',
 });
 const searchEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'core.shell.search',
   moduleKey: 'core.shell',
   role: 'search',
 });
 const moduleTargetEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'core.shell.module-target',
   moduleKey: 'core.shell',
   role: 'api',
 });
 const resourceDetailEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'core.shell.resource-detail-timeline',
   moduleKey: 'core.shell',
   role: 'api',
@@ -183,7 +168,7 @@ const makeRegistrations = (
       permissionTarget: 'legal_entity',
       policies: [],
       readKey: 'core.shell.composition',
-      resultSchema: governedShellCompositionSchema,
+      resultSchema: ShellCompositionSchema,
       schemaVersion: '1',
     },
     (_input, context) =>
@@ -259,7 +244,7 @@ const makeRegistrations = (
       context.services.composition
         .resolveModuleTarget(
           context.scope,
-          withOptionalProperty({}, !(entrypointKey === undefined), 'entrypointKey', entrypointKey, {
+          withOptionalProperty({}, entrypointKey !== undefined, 'entrypointKey', entrypointKey, {
             moduleId,
           }),
         )
@@ -432,7 +417,7 @@ export const createShellGovernedReadsLayer = (
           runtime.runRead({
             input: withOptionalProperty(
               {},
-              !(entrypointKey === undefined),
+              entrypointKey !== undefined,
               'entrypointKey',
               entrypointKey,
               {

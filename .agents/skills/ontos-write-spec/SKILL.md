@@ -21,7 +21,7 @@ Ask a question only when its answer would materially change scope, observable be
 
 - Work from the OntOS `app/` directory.
 - If project context is not fresh, use `$ontos-prime` before continuing.
-- Read `../AGENTS.md`, `AGENTS.md`, `README.md`, and every task-relevant guidance file referenced by `AGENTS.md`.
+- Read `../AGENTS.md`, `AGENTS.md`, `README.md`, and every task-relevant guidance file referenced by `AGENTS.md`. Follow mandatory references transitively when they govern the requested behavior, but do not bulk-read unrelated documentation, completed specifications, or historical evidence.
 - Research the real codebase to understand existing patterns, architecture, conventions, tests, package scripts, and ownership before planning.
 - Create the plan in `specs/<type>-<descriptive-name>.md`, using a short kebab-case description. Do not overwrite an existing plan.
 - Write one plan by default. Split the request only when the pieces can be implemented and validated independently; record dependencies and intended order.
@@ -31,7 +31,7 @@ Ask a question only when its answer would materially change scope, observable be
 - Follow existing patterns and conventions. Do not reinvent the wheel or add an abstraction without a concrete reuse case.
 - Include tests throughout `Step by Step Tasks`; do not defer all test writing until the final step.
 - Make the last task run the `Validation Commands`.
-- Include the matching Codesmith generator as the first implementation task when creating an Action, MicroVertical page, Outbox Message, or Policy. Run it from `app/` through `mise exec -- pnpm`.
+- Include the matching Codesmith generator as the first implementation task when creating an Action, MicroVertical page, Outbox Message, or Policy. Confirm its `scaffold:*` script in `package.json`, inspect its `--help` output, and run it from `app/` through `mise exec -- pnpm`.
 - If business functionality requires a new file type without a Codesmith generator, record a blocking developer decision instead of planning to create it manually.
 - For user-facing work, plan loading, empty, error, forbidden, validation, conflict, retry, accessibility, and responsive behavior as applicable.
 - Stop after writing the plan. Do not implement it, modify application code, create a branch or commit, push, open a pull request, or create a GitHub issue.
@@ -52,7 +52,7 @@ Start with:
 - `topology/**` — generated ownership and topology metadata.
 - `../docs/**` — task-relevant product and architectural context.
 
-Focus on files relevant to the request. Do not read or plan changes under `mvp/` or `mvp2/`; they are read-only.
+These are candidate areas, not instructions to read every file. Use `README.md` and `../CONTEXT-MAP.md` to select the task-relevant subset, follow its mandatory references, and treat completed specifications and historical evidence as provenance unless the request explicitly requires them.
 
 ## Feature Plan Format
 

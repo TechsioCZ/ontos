@@ -38,7 +38,7 @@ const makeCollector = () =>
     Schema.Struct({ checkpoint: Schema.String, nested: Schema.optionalKey(Schema.Json) }),
   );
 
-test('preserves event order, multiple messages, and events without messages', async () => {
+void test('preserves event order, multiple messages, and events without messages', async () => {
   const collector = makeCollector();
   const first = await Effect.runPromise(collector.addDomainEvent(event('first')));
   await Effect.runPromise(collector.addDomainEvent(event('second')));
@@ -72,7 +72,7 @@ test('preserves event order, multiple messages, and events without messages', as
   assert.equal(snapshot.dataAccessEvents.length, 1);
 });
 
-test('rejects orphan and foreign Domain Event references', async () => {
+void test('rejects orphan and foreign Domain Event references', async () => {
   const first = makeCollector();
   const second = makeCollector();
   const foreign = await Effect.runPromise(first.addDomainEvent(event('foreign')));
@@ -88,7 +88,7 @@ test('rejects orphan and foreign Domain Event references', async () => {
   assert.equal(orphanError._tag, 'ActionCollectorError');
 });
 
-test('does not expose externally mutable collector arrays or captured payloads', async () => {
+void test('does not expose externally mutable collector arrays or captured payloads', async () => {
   const collector = makeCollector();
   const mutablePayload = { value: 1 };
   await Effect.runPromise(
@@ -114,7 +114,7 @@ test('does not expose externally mutable collector arrays or captured payloads',
   });
 });
 
-test('captures one immutable JSON audit-evidence object and rejects invalid repeats', async () => {
+void test('captures one immutable JSON audit-evidence object and rejects invalid repeats', async () => {
   const collector = makeCollector();
   const nested = { reason: 'support request' };
   await Effect.runPromise(collector.recordAuditEvidence({ checkpoint: 'started', nested }));
@@ -126,7 +126,7 @@ test('captures one immutable JSON audit-evidence object and rejects invalid repe
     nested: { reason: 'support request' },
   });
   assert.equal(Object.isFrozen(snapshot.auditEvidence), true);
-  assert.equal(Object.isFrozen(snapshot.auditEvidence['nested']), true);
+  assert.equal(Object.isFrozen(snapshot.auditEvidence.nested), true);
 
   const repeated = await Effect.runPromise(
     Effect.flip(collector.recordAuditEvidence({ checkpoint: 'stopped' })),
@@ -153,7 +153,7 @@ test('captures one immutable JSON audit-evidence object and rejects invalid repe
   assert.equal(missingSchema._tag, 'ActionCollectorError');
 });
 
-test('applies descriptor evidence policy and rejects incompatible evidence', async () => {
+void test('applies descriptor evidence policy and rejects incompatible evidence', async () => {
   const collector = createActionCollector(domainEventContracts, 'shell.core', {
     captureMode: 'redacted_payload',
     policyKey: 'counter.read.redacted.v1',
@@ -193,7 +193,7 @@ test('applies descriptor evidence policy and rejects incompatible evidence', asy
   );
 });
 
-test('rejects an Outbox producer that differs from its registered Domain Event', async () => {
+void test('rejects an Outbox producer that differs from its registered Domain Event', async () => {
   const collector = makeCollector();
   const reference = await Effect.runPromise(collector.addDomainEvent(event('producer')));
   const error = await Effect.runPromise(
@@ -209,7 +209,7 @@ test('rejects an Outbox producer that differs from its registered Domain Event',
   assert.equal(error._tag, 'ActionCollectorError');
 });
 
-test('enforces Action-declared event payloads and producer ownership', async () => {
+void test('enforces Action-declared event payloads and producer ownership', async () => {
   const collector = makeCollector();
   const invalidPayload = await Effect.runPromise(
     Effect.flip(

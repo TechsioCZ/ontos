@@ -19,6 +19,7 @@ import { listPartyContactPointRecords } from '../services/party-contact-point-pe
 
 export const partyContactPointsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'party.registry.api.party-contact-points',
   moduleKey: 'party.registry',
   role: 'api',

@@ -1,3 +1,4 @@
+/* oxlint-disable sonarjs/no-undefined-assignment, typescript/strict-boolean-expressions */
 // @effect-diagnostics asyncFunction:off
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -26,6 +27,7 @@ test('committed retry and explicit recovery return the same invocation without r
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'test.recovery.execute',
         moduleKey: 'test.recovery',
         role: 'action',
@@ -108,6 +110,7 @@ test('lost commit acknowledgement recovers the committed invocation and faults o
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'test.recovery.acknowledgement',
         moduleKey: 'test.recovery',
         role: 'action',

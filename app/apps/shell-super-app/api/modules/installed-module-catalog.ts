@@ -3,9 +3,13 @@
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
   ONTOS_MODULE_CONTRACT_TIMEOUT_MS,
-  buildInstalledModuleCatalog,
+  resolveInstalledModuleCatalog,
 } from '@app/core-runtime';
-import type { InstalledModuleCatalog } from '@app/core-runtime';
+import type {
+  InstalledDeploymentFailureReason,
+  InstalledDeploymentResolutionInput,
+  InstalledModuleCatalog,
+} from '@app/core-runtime';
 import { Context, Effect, Layer, Schema } from 'effect';
 import type { DeploymentAllowlist } from './deployment-allowlist.ts';
 import { deploymentAllowlist } from './deployment-allowlist.ts';
@@ -111,7 +115,7 @@ const fetchContract = async (
   contractUrl: string,
   fetchContractDocument: ModuleContractFetch,
   options: Required<InstalledModuleCatalogLoaderOptions>,
-): Promise<{ readonly contract: JsonValue; readonly expectedAppId: string }> => {
+): Promise<InstalledDeploymentResolutionInput> => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
   try {
@@ -120,21 +124,25 @@ const fetchContract = async (
       redirect: 'manual',
       signal: controller.signal,
     });
-    return { contract: await readBoundedJson(response, options.maxBytes), expectedAppId: appId };
+    return {
+      contract: await readBoundedJson(response, options.maxBytes),
+      expectedAppId: appId,
+      outcome: 'fetched',
+    };
   } catch (error) {
-    if (
-      error instanceof InstalledModuleCatalogInvalidError ||
-      error instanceof InstalledModuleCatalogUnavailableError
-    ) {
-      throw error;
+    let reason: InstalledDeploymentFailureReason = 'unavailable';
+    if (controller.signal.aborted) {
+      reason = 'timeout';
+    } else if (error instanceof InstalledModuleCatalogInvalidError) {
+      reason = 'incompatible';
     }
-    throw unavailable();
+    return { expectedAppId: appId, outcome: 'failed', reason };
   } finally {
     clearTimeout(timeout);
   }
 };
 
-/** Creates one lazy, all-or-nothing cache for one injected allowlist revision. */
+/** Creates one lazy cache for a fully healthy allowlist revision; degraded reads retry. */
 export const makeInstalledModuleCatalogLoader = (
   allowlist: DeploymentAllowlist,
   fetchContractDocument: ModuleContractFetch = globalThis.fetch,
@@ -148,25 +156,28 @@ export const makeInstalledModuleCatalogLoader = (
   let loading: Promise<InstalledModuleCatalog> | undefined;
   return Effect.tryPromise({
     catch: (error) => (error instanceof InstalledModuleCatalogUnavailableError ? error : invalid()),
-    try: () => {
+    try: async () => {
       if (cached !== undefined) {
-        return Promise.resolve(cached);
+        return cached;
       }
       loading ??= (async () => {
         try {
           const contracts = await Promise.all(
-            allowlist.entries.map(({ appId, contractUrl }) =>
-              fetchContract(appId, contractUrl, fetchContractDocument, options),
+            allowlist.entries.map(
+              async ({ appId, contractUrl }) =>
+                await fetchContract(appId, contractUrl, fetchContractDocument, options),
             ),
           );
-          const catalog = buildInstalledModuleCatalog(contracts);
-          cached = catalog;
+          const catalog = resolveInstalledModuleCatalog(contracts);
+          if (catalog.deploymentStatuses.every(({ status }) => status === 'available')) {
+            cached = catalog;
+          }
           return catalog;
         } finally {
           loading = undefined;
         }
       })();
-      return loading;
+      return await loading;
     },
   });
 };

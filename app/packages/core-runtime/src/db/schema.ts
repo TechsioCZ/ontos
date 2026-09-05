@@ -1,4 +1,3 @@
-/* eslint-disable sort-keys -- Typed columns follow the authoritative physical schema order. */
 import { sql } from 'drizzle-orm';
 import {
   bigint,

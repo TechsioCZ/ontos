@@ -61,6 +61,7 @@ export const attachPersonEngagementAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'contacts.core.attach-person-engagement',
       moduleKey: 'contacts.core',
       role: 'action',

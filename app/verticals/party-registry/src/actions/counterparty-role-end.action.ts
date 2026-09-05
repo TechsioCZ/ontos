@@ -169,6 +169,7 @@ export const counterpartyRoleEndAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'party.registry.counterparty-role-end',
       moduleKey: 'party.registry',
       role: 'action',

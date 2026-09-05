@@ -69,7 +69,7 @@ const shell = {
     tenantId: 'tenant-1',
   },
   legalEntities: { items: [], state: 'available' as const },
-  navigation: { items: [], state: 'available' as const },
+  navigation: { items: [], state: 'available' as const, unavailableDeployments: [] },
   selectedLegalEntityId: 'legal-1',
   state: 'authenticated' as const,
   tenants: { items: [], state: 'available' as const },
@@ -127,11 +127,22 @@ test('invokes the exact private page loader only after a resolved authenticated 
   expect(await screen.findByText('contacts.core.page-customers:customer-1')).toBeTruthy();
 });
 
-test('maps remote loading failure to an unavailable state after target approval', async () => {
+test('maps an unreachable approved remote to its safe local diagnostic', async () => {
+  loadRemotePageMock.mockRejectedValueOnce(new Error('private remote error'));
   useLoaderDataMock.mockReturnValue(resolvedModel);
-  loadRemotePageMock.mockRejectedValueOnce(new Error('Remote unavailable'));
+
   render(<ModuleTargetPage />);
+
   expect(await screen.findByText('shell.moduleTarget.unavailable')).toBeTruthy();
+});
+
+test('rejects a malformed remote module before React receives it', async () => {
+  loadRemotePageMock.mockResolvedValueOnce({ default: 'not a component' });
+  useLoaderDataMock.mockReturnValue(resolvedModel);
+
+  render(<ModuleTargetPage />);
+
+  expect(await screen.findByText('shell.moduleTarget.incompatible')).toBeTruthy();
   expect(remotePropsMock).not.toHaveBeenCalled();
 });
 

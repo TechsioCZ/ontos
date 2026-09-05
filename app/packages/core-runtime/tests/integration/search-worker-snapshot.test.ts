@@ -1,3 +1,4 @@
+/* oxlint-disable typescript/return-await */
 // @effect-diagnostics asyncFunction:off nodeBuiltinImport:off
 /* eslint-disable no-await-in-loop -- The bounded lock-observation loop intentionally proves sequential blocking before releasing the competing snapshot. */
 import assert from 'node:assert/strict';
@@ -82,7 +83,7 @@ test('worker projection uses independent generations and one repeatable snapshot
                 .where(eq(domainEvents.domainEventId, eventId)),
             ),
           );
-          newerVersion = yield* Effect.tryPromise(() => insertEvent(randomUUID()));
+          newerVersion = yield* Effect.tryPromise(async () => insertEvent(randomUUID()));
           const rows = yield* snapshot.tenant((executor) =>
             Effect.tryPromise(() =>
               executor
@@ -129,7 +130,7 @@ test('worker projection uses independent generations and one repeatable snapshot
       source.read(context, (snapshot) =>
         Effect.gen(function* firstSnapshot() {
           started.resolve(null);
-          yield* Effect.promise(() => release.promise);
+          yield* Effect.promise(async () => release.promise);
           return {
             eventWatermark: snapshot.eventWatermark,
             generation: snapshot.projectionVersion,

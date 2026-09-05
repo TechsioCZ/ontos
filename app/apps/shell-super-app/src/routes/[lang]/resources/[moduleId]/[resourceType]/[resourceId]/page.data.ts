@@ -22,17 +22,16 @@ export type ResourcePageModel =
       readonly state: 'ready';
     };
 
-export const loader = ({ params, request }: ResourceLoaderArguments): Promise<ResourcePageModel> =>
-  runEffectRequest(
-    Effect.gen(function* loadResourcePage() {
-      const shell = yield* Effect.promise(() => loadHomePageModel(request));
-      if (shell.state !== 'authenticated') {
-        return {
-          shell,
-          state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
-        } as const;
-      }
-      return yield* shellAuthenticationClientOptionsFromRequest(request).pipe(
+export const loader = ({ params, request }: ResourceLoaderArguments) =>
+  loadHomePageModel(request).then((shell) => {
+    if (shell.state !== 'authenticated') {
+      return {
+        shell,
+        state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
+      } as const;
+    }
+    return runEffectRequest(
+      shellAuthenticationClientOptionsFromRequest(request).pipe(
         Effect.flatMap((options) => resourceDetail(params, options)),
         Effect.map((resource): ResourcePageModel => ({ resource, shell, state: 'ready' })),
         Effect.catch((error) =>
@@ -49,6 +48,6 @@ export const loader = ({ params, request }: ResourceLoaderArguments): Promise<Re
                     : 'unavailable',
           }),
         ),
-      );
-    }),
-  );
+      ),
+    );
+  });

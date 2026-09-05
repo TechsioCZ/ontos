@@ -27,6 +27,7 @@ export const projectPartyCreatedToSearchWorker = defineOutboxWorker(
     consumerModuleKey: 'party.registry',
     entrypoint: defineTenantModuleEntrypoint({
       access: 'background',
+      authorization: { kind: 'owner_local_background' },
       entrypointKey: 'party.registry.project-party-created-to-search',
       moduleKey: 'party.registry',
       role: 'worker',

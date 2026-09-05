@@ -91,6 +91,7 @@ export const ${workerVariable} = defineOutboxWorker(
     consumerModuleKey: '${consumer.moduleId}',
     entrypoint: defineTenantModuleEntrypoint({
       access: 'background',
+      authorization: { kind: 'owner_local_background' },
       entrypointKey: '${consumer.moduleId}.${worker}',
       moduleKey: '${consumer.moduleId}',
       role: 'worker',

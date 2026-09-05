@@ -4,6 +4,7 @@ import {
   ActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
+  GatewayAssertionRedemptionService,
   makeReadRuntimeLive,
 } from '@app/core-runtime';
 import type {
@@ -55,6 +56,7 @@ import type { PartyRegistryReferenceRequestOptions } from '../src/integrations/p
 import { organizationEngagementProfileReadApiLive } from './organization-engagement-profile-read-server.ts';
 import { personEngagementProfileReadApiLive } from './person-engagement-profile-read-server.ts';
 import { verifyOperationPrincipal } from './auth/action-principal.ts';
+import { GatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
 
 interface OperationSpanAttributes extends Readonly<Record<string, string | undefined>> {
   'modernjs.operation.id': string;
@@ -217,7 +219,16 @@ const verifyPrincipal = (authorization: string | undefined) =>
     ONTOS_GATEWAY_PUBLIC_JWKS: Config.string('ONTOS_GATEWAY_PUBLIC_JWKS'),
   }).pipe(
     Effect.mapError(() => problem.unavailable()),
-    Effect.flatMap((environment) => verifyOperationPrincipal(authorization, { environment })),
+    Effect.flatMap((environment) =>
+      GatewayAssertionRedemptionService.pipe(
+        Effect.flatMap((redemption) =>
+          verifyOperationPrincipal(authorization, {
+            environment,
+            redemption,
+          }),
+        ),
+      ),
+    ),
     Effect.catch((error) => {
       if ('_tag' in error && error._tag === 'ContactsUnavailableProblem') {
         return Effect.fail(error);
@@ -230,9 +241,9 @@ const verifyPrincipal = (authorization: string | undefined) =>
   );
 
 const runContactsAction = <
-  PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
-  ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
-  DomainErrorSchema extends Schema.ConstraintDecoder<ContactsActionError, never>,
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<ContactsActionError>,
   DomainEvents extends DomainEventContractMap,
   Owner extends string,
   Services,
@@ -389,8 +400,8 @@ export const makeContactsApiRuntime = (
   actionRuntime: Layer.Layer<ActionRuntime>,
   readRuntime: Layer.Layer<ReadRuntime>,
   configuration: Layer.Layer<never> = ConfigProvider.layer(ConfigProvider.fromEnv()),
-): EffectBffDefinition<typeof contactsApi, EffectRuntimeLayer> &
-  EffectBffRuntime<typeof contactsApi, EffectRuntimeLayer> => {
+  gatewayAssertionRedemption: Layer.Layer<GatewayAssertionRedemptionService> = GatewayAssertionRedemptionLive,
+): EffectBffDefinition<typeof contactsApi> & EffectBffRuntime<typeof contactsApi> => {
   const apiHandlersLive = Layer.mergeAll(
     foundationLive,
     organizationEngagementMutationsLive.pipe(
@@ -405,7 +416,7 @@ export const makeContactsApiRuntime = (
     personEngagementProfileReadApiLive.pipe(Layer.provide(readRuntime)),
   ).pipe(Layer.provide(configuration));
   const layer = HttpApiBuilder.layer(contactsApi).pipe(
-    Layer.provide(apiHandlersLive),
+    Layer.provide(apiHandlersLive.pipe(Layer.provide(gatewayAssertionRedemption))),
     Layer.merge(
       HttpRouter.cors({
         allowedHeaders: [...contactsCorsAllowedHeaders],

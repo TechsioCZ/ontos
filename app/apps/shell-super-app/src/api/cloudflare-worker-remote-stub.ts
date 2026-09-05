@@ -1,4 +1,4 @@
 /** The current topology has no server-composed Contacts UI fragment. */
-const CloudflareWorkerRemoteStub = () => null;
+const cloudflareWorkerRemoteStub = () => null;
 
-export default CloudflareWorkerRemoteStub;
+export default cloudflareWorkerRemoteStub;

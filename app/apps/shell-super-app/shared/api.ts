@@ -10,9 +10,9 @@ import { GatewayContextApiGroup } from '@app/shared-contracts';
 export interface SafeTenantIdentity {
   readonly displayName: string;
   readonly email: string;
+  readonly impersonating?: true;
   readonly principalId: string;
   readonly tenantId: string;
-  readonly impersonating?: true;
 }
 
 export interface SafeAuthenticatedIdentity extends SafeTenantIdentity {
@@ -108,10 +108,22 @@ export interface ShellNavigationItem {
   readonly writable: boolean;
 }
 
+export type ShellUnavailableDeployment =
+  | { readonly appId: string; readonly status: 'disabled' | 'revoked' }
+  | {
+      readonly appId: string;
+      readonly reason: 'incompatible' | 'timeout' | 'unavailable';
+      readonly status: 'unavailable';
+    };
+
 export type ShellComposition =
   | { readonly navigation: readonly []; readonly state: 'access_blocked' }
   | { readonly navigation: readonly []; readonly state: 'selection_required' }
-  | { readonly navigation: readonly ShellNavigationItem[]; readonly state: 'available' };
+  | {
+      readonly navigation: readonly ShellNavigationItem[];
+      readonly state: 'available';
+      readonly unavailableDeployments: readonly ShellUnavailableDeployment[];
+    };
 
 export interface ResolveModuleTargetPayload {
   readonly entrypointKey?: string;
@@ -598,12 +610,23 @@ export const ShellNavigationItemSchema: Schema.Codec<ShellNavigationItem> = Sche
   writable: Schema.Boolean,
 });
 
+export const ShellUnavailableDeploymentSchema: Schema.Codec<ShellUnavailableDeployment> =
+  Schema.Union([
+    Schema.Struct({ appId: Schema.String, status: Schema.Literals(['disabled', 'revoked']) }),
+    Schema.Struct({
+      appId: Schema.String,
+      reason: Schema.Literals(['incompatible', 'timeout', 'unavailable']),
+      status: Schema.Literal('unavailable'),
+    }),
+  ]);
+
 export const ShellCompositionSchema: Schema.Codec<ShellComposition> = Schema.Union([
   Schema.Struct({ navigation: Schema.Tuple([]), state: Schema.Literal('access_blocked') }),
   Schema.Struct({ navigation: Schema.Tuple([]), state: Schema.Literal('selection_required') }),
   Schema.Struct({
     navigation: Schema.Array(ShellNavigationItemSchema),
     state: Schema.Literal('available'),
+    unavailableDeployments: Schema.Array(ShellUnavailableDeploymentSchema),
   }),
 ]);
 

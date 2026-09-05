@@ -10,6 +10,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'contacts.seo.description',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'contacts.core.page.home',
       moduleKey: 'contacts.core',
       role: 'page',
@@ -34,6 +35,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'contacts.pages.contacts.description',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'contacts.core.page.contacts',
       moduleKey: 'contacts.core',
       role: 'page',

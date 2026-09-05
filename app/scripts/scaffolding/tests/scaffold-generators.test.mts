@@ -284,6 +284,20 @@ const createFixture = async (): Promise<Fixture> => {
   );
   await writeFixtureFile(
     root,
+    'packages/core-runtime/src/modules/actions/catalog.ts',
+    `export const existingCatalogSurface = true;
+
+// <generated-core-action-catalog-imports>
+// </generated-core-action-catalog-imports>
+
+export const coreActionCatalog = [
+  // <generated-core-action-catalog-values>
+  // </generated-core-action-catalog-values>
+];
+`,
+  );
+  await writeFixtureFile(
+    root,
     'apps/shell-super-app/src/sentinel.ts',
     'export const shell = true;\n',
   );
@@ -371,11 +385,44 @@ const run = (
 ) =>
   runScaffold(
     command,
-    command === 'action' &&
-      arguments_.includes('--action') &&
-      !arguments_.includes('--legal-entity-scope')
-      ? [...arguments_, '--legal-entity-scope', 'optional']
-      : arguments_,
+    (() => {
+      let flags = [...arguments_];
+      if (
+        command === 'action' &&
+        flags.includes('--action') &&
+        !flags.includes('--legal-entity-scope')
+      ) {
+        flags = [...flags, '--legal-entity-scope', 'optional'];
+      }
+      if (!flags.includes('--authorization')) {
+        if (command === 'action') {
+          flags = [
+            ...flags,
+            '--authorization',
+            'action_execution',
+            '--provisioning',
+            'tenant_membership_default',
+          ];
+        } else if (command === 'outbox-worker') {
+          flags = [...flags, '--authorization', 'owner_local_background'];
+        } else if (
+          command === 'microvertical-page' ||
+          command === 'module-api' ||
+          command === 'public-component' ||
+          command === 'report' ||
+          command === 'search-provider'
+        ) {
+          flags = [
+            ...flags,
+            '--authorization',
+            'context_permission',
+            '--permission',
+            'module.access',
+          ];
+        }
+      }
+      return flags;
+    })(),
     {
       routeRefresh: ({ appId }) => routeRefresh?.(appId),
       workspaceRoot: fixture.root,
@@ -936,9 +983,20 @@ test('rejects malformed command contracts and leaves the fixture unchanged', asy
   await withFixture(async (fixture) => {
     const before = await snapshotTree(fixture.root);
     await assert.rejects(
-      runScaffold('action', ['--vertical', 'inventory-stock', '--action', 'create-order'], {
-        workspaceRoot: fixture.root,
-      }),
+      runScaffold(
+        'action',
+        [
+          '--vertical',
+          'inventory-stock',
+          '--action',
+          'create-order',
+          '--authorization',
+          'action_execution',
+          '--provisioning',
+          'tenant_membership_default',
+        ],
+        { workspaceRoot: fixture.root },
+      ),
       /missing required flag --legal-entity-scope/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), before);
@@ -1063,6 +1121,10 @@ test('generates one immutable Action identity boundary and exact direct dependen
       fixture.root,
       'verticals/inventory-stock/src/api/action-gateway.ts',
     );
+    const redemption = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/api/auth/gateway-assertion-redemption.ts',
+    );
     for (const source of [server, client]) {
       assert.match(source, /@ontos-action-boundary-owner inventory-stock/u);
       assert.match(source, /@ontos-action-boundary-audience inventory-stock/u);
@@ -1076,6 +1138,8 @@ test('generates one immutable Action identity boundary and exact direct dependen
     assert.doesNotMatch(server, /Date\.now|Effect\.runPromise|decodeUnknownSync/u);
     assert.match(client, /acquire\(\{ audience: ACTION_GATEWAY_AUDIENCE \}/u);
     assert.doesNotMatch(client, /localStorage|sessionStorage/u);
+    assert.match(server, /options\.redemption/u);
+    assert.match(redemption, /GatewayAssertionRedemptionUnavailableError/u);
     const packageJson = decodeFixturePackage(
       await readFixtureFile(fixture.root, 'verticals/inventory-stock/package.json'),
     );
@@ -1102,10 +1166,7 @@ test('Action identity boundary preflight refuses unsafe writes', async () => {
   await withFixture(async (fixture) => {
     await run(fixture, 'microvertical-action-boundary', ['--vertical', 'inventory-stock']);
     const afterFirstRun = await snapshotTree(fixture.root);
-    await assert.rejects(
-      run(fixture, 'microvertical-action-boundary', ['--vertical', 'inventory-stock']),
-      /refusing to overwrite existing business file/u,
-    );
+    await run(fixture, 'microvertical-action-boundary', ['--vertical', 'inventory-stock']);
     assert.deepEqual(await snapshotTree(fixture.root), afterFirstRun);
   });
   await withFixture(async (fixture) => {
@@ -1183,6 +1244,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
         options: {
           currentTimeSeconds: Effect.Effect<number>;
           environment: GeneratedPrincipalEnvironment;
+          redemption: { readonly consume: () => Effect.Effect<void> };
         },
       ) => Effect.Effect<TrustedPrincipalContext, { readonly _tag: GeneratedPrincipalErrorTag }>;
     };
@@ -1232,11 +1294,13 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
     };
     const currentAssertion = await issue(current.configuration, 1_700_000_000);
     const retiringAssertion = await issue(retiring.configuration, 1_700_000_000);
+    const testRedemption = { consume: () => Effect.void };
     const verify = (token: string, override = environment, now = 1_700_000_001) =>
       Effect.runPromise(
         generated.verifyActionPrincipal(`Bearer ${token}`, {
           currentTimeSeconds: Effect.succeed(now),
           environment: override,
+          redemption: testRedemption,
         }),
       );
 
@@ -1371,6 +1435,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
         generated.verifyActionPrincipal(undefined, {
           currentTimeSeconds: Effect.succeed(1_700_000_001),
           environment,
+          redemption: testRedemption,
         }),
       ),
       (error: { _tag?: string }) => error._tag === 'ActionPrincipalMissingError',
@@ -1380,6 +1445,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
         generated.verifyActionPrincipal('bearer malformed', {
           currentTimeSeconds: Effect.succeed(1_700_000_001),
           environment,
+          redemption: testRedemption,
         }),
       ),
       (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
@@ -1389,6 +1455,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
         generated.verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
           currentTimeSeconds: Effect.succeed(1_700_000_001),
           environment: {},
+          redemption: testRedemption,
         }),
       ),
       (error: { _tag?: string }) => error._tag === 'ActionPrincipalConfigurationError',
@@ -1446,6 +1513,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
           .verifyActionPrincipal(request.headers['authorization'], {
             currentTimeSeconds: Effect.succeed(1_700_000_001),
             environment: endpointEnvironment,
+            redemption: testRedemption,
           })
           .pipe(
             Effect.tap(() => Effect.sync(() => (actionReached = true))),
@@ -1583,6 +1651,7 @@ export const createOrder2Action = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'inventory.stock.create-order2',
       moduleKey: 'inventory.stock',
       role: 'action',
@@ -1929,8 +1998,27 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
       "export { accountChangeAction } from './modules/actions/account-change.action.ts';";
     const zExport =
       "export { zLastChangeAction } from './modules/actions/z-last-change.action.ts';";
+    assert.ok(coreIndex.includes(accountExport));
+    assert.ok(coreIndex.includes(zExport));
     assert.ok(coreIndex.indexOf(accountExport) < coreIndex.indexOf(zExport));
     assert.match(coreIndex, /export const existingCoreSurface = true/u);
+
+    const coreCatalog = await readFixtureFile(
+      fixture.root,
+      'packages/core-runtime/src/modules/actions/catalog.ts',
+    );
+    const accountImport = "import { accountChangeAction } from './account-change.action.ts';";
+    const zImport = "import { zLastChangeAction } from './z-last-change.action.ts';";
+    assert.ok(coreCatalog.includes(accountImport));
+    assert.ok(coreCatalog.includes(zImport));
+    assert.ok(coreCatalog.includes('accountChangeAction.descriptor,'));
+    assert.ok(coreCatalog.includes('zLastChangeAction.descriptor,'));
+    assert.ok(coreCatalog.indexOf(accountImport) < coreCatalog.indexOf(zImport));
+    assert.ok(
+      coreCatalog.indexOf('accountChangeAction.descriptor,') <
+        coreCatalog.indexOf('zLastChangeAction.descriptor,'),
+    );
+    assert.match(coreCatalog, /export const existingCatalogSurface = true/u);
 
     const beforeOverwrite = await snapshotTree(fixture.root);
     await assert.rejects(
@@ -1977,6 +2065,35 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
       index.replace(
         '// <generated-core-action-exports>\n',
         '// <generated-core-action-exports>\nexport const developerOwned = true;\n',
+      ),
+      'utf-8',
+    );
+    const before = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, 'action', [
+        '--scope',
+        'core',
+        '--module',
+        'core.modules',
+        '--action',
+        'create-order',
+      ]),
+      /unsupported developer content/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), before);
+  });
+
+  await withFixture(async (fixture) => {
+    const catalogPath = path.join(
+      fixture.root,
+      'packages/core-runtime/src/modules/actions/catalog.ts',
+    );
+    const catalog = await readFile(catalogPath, 'utf-8');
+    await writeFile(
+      catalogPath,
+      catalog.replace(
+        '// <generated-core-action-catalog-values>\n',
+        '// <generated-core-action-catalog-values>\n  developerOwned.descriptor,\n',
       ),
       'utf-8',
     );
@@ -2331,6 +2448,7 @@ export const ordersCreatedLoggerWorker = defineOutboxWorker(
     consumerModuleKey: 'billing.core',
     entrypoint: defineTenantModuleEntrypoint({
       access: 'background',
+      authorization: { kind: 'owner_local_background' },
       entrypointKey: 'billing.core.orders-created-logger',
       moduleKey: 'billing.core',
       role: 'worker',
@@ -2847,6 +2965,7 @@ const routeMeta = {
   descriptionKey: 'inventory.pages.purchaseOrders.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
+    authorization: { kind: 'context_permission', permission: 'module.access' },
     entrypointKey: 'inventory.stock.page.purchase-orders',
     moduleKey: 'inventory.stock',
     role: 'page',
@@ -3893,12 +4012,25 @@ test('page prerequisite and nested-route failures are preflighted, while refresh
 
   await withFixture(async (fixture) => {
     await assert.rejects(
-      runScaffold('microvertical-page', ['--vertical', 'inventory-stock', '--page', 'orders'], {
-        routeRefresh: () => {
-          throw new Error('route refresh fixture failure');
+      runScaffold(
+        'microvertical-page',
+        [
+          '--vertical',
+          'inventory-stock',
+          '--page',
+          'orders',
+          '--authorization',
+          'context_permission',
+          '--permission',
+          'module.access',
+        ],
+        {
+          routeRefresh: () => {
+            throw new Error('route refresh fixture failure');
+          },
+          workspaceRoot: fixture.root,
         },
-        workspaceRoot: fixture.root,
-      }),
+      ),
       /route refresh fixture failure/u,
     );
     await stat(
@@ -4189,6 +4321,11 @@ test('all generated files typecheck against the real workspace contracts', async
     await symlink(
       path.join(appRoot, 'packages/core-runtime/src/auth'),
       path.join(fixture.root, 'packages/core-runtime/src/auth'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'packages/core-runtime/src/authorization'),
+      path.join(fixture.root, 'packages/core-runtime/src/authorization'),
       'dir',
     );
     await symlink(

@@ -53,7 +53,7 @@ const cookieHeader = (setCookieHeaders: readonly string[]): string => {
   return [...cookies.values()].join('; ');
 };
 
-test('verifies provider keys and completes live support impersonation with durable stopped evidence', async () => {
+void test('verifies provider keys and completes live support impersonation with durable stopped evidence', async (context) => {
   const baseConfiguration = await Effect.runPromise(loadAuthConfig());
   const authPool = new Pool({ connectionString: baseConfiguration.connectionString });
   const corePool = new Pool({ connectionString: baseConfiguration.connectionString });
@@ -80,7 +80,15 @@ test('verifies provider keys and completes live support impersonation with durab
       permission,
       tenantIds,
     }: {
-      readonly permission: 'access' | 'impersonate' | 'manage_identity';
+      readonly permission:
+        | 'access'
+        | 'impersonate'
+        | 'manage_identity'
+        | 'manage_party_identity'
+        | 'manage_party_relationships'
+        | 'merge_party_identity'
+        | 'read_party_identity'
+        | 'review_party_identity';
       readonly tenantIds: readonly string[];
     }) =>
       Effect.succeed(
@@ -244,6 +252,61 @@ test('verifies provider keys and completes live support impersonation with durab
     if (resolvedOriginal.state !== 'authenticated') {
       throw new Error('The live original session did not resolve');
     }
+    await context.test(
+      'finds stale pending API keys with current and legacy metadata orders',
+      async () => {
+        const nowEpochMillis = Date.now();
+        const lifecycleOperationId = randomUUID();
+        const pending = await Effect.runPromise(
+          keys.issue(originalHeaders, {
+            issuerPrincipalId: originalPrincipalId,
+            lifecycleOperationId,
+            name: 'Pending cleanup integration key',
+            tenantId,
+          }),
+        );
+        await authDatabase
+          .update(apikey)
+          .set({ createdAt: new Date(nowEpochMillis - 10 * 60 * 1000) })
+          .where(eq(apikey.id, pending.providerKeyId));
+
+        assert.deepEqual(
+          await Effect.runPromise(
+            keys.pendingCleanup({
+              issuerPrincipalId: originalPrincipalId,
+              lifecycleOperationId: randomUUID(),
+              nowEpochMillis,
+              tenantId,
+            }),
+          ),
+          { hasMore: false, providerKeyIds: [pending.providerKeyId] },
+        );
+        await authDatabase
+          .update(apikey)
+          .set({
+            metadata: JSON.stringify({
+              issuerPrincipalId: originalPrincipalId,
+              lifecycleOperationId,
+              ontosLifecycle: 'binding_pending_v1',
+              tenantId,
+            }),
+          })
+          .where(eq(apikey.id, pending.providerKeyId));
+        assert.deepEqual(
+          await Effect.runPromise(
+            keys.pendingCleanup({
+              issuerPrincipalId: originalPrincipalId,
+              lifecycleOperationId: randomUUID(),
+              nowEpochMillis,
+              tenantId,
+            }),
+          ),
+          { hasMore: false, providerKeyIds: [pending.providerKeyId] },
+        );
+        await Effect.runPromise(keys.setEnabled(pending.providerKeyId, false));
+        await Effect.runPromise(keys.clearPendingCleanup(pending.providerKeyId));
+      },
+    );
     const lifecycle = makeIdentityLifecycleService(actionRuntime, keys, resolver);
     const issued = await Effect.runPromise(
       lifecycle.issue({
@@ -407,7 +470,10 @@ test('verifies provider keys and completes live support impersonation with durab
       .from(session)
       .where(and(eq(session.userId, targetUserId), eq(session.impersonatedBy, originalUserId)))
       .limit(1);
-    assert.ok(impersonationSession);
+    assert.notEqual(impersonationSession, undefined);
+    if (impersonationSession === undefined) {
+      throw new TypeError('The support impersonation session was not persisted');
+    }
     assert.equal(Predicate.isString(impersonationSession.actionId), true);
     if (!Predicate.isString(impersonationSession.actionId)) {
       throw new TypeError('The approved support start did not persist its Action correlation');

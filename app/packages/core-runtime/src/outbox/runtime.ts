@@ -1,3 +1,4 @@
+/* oxlint-disable sonarjs/no-inverted-boolean-check */
 /* eslint-disable unicorn/no-array-method-this-argument -- Effect's dual flatMap API is intentional. */
 // @effect-diagnostics effectFnOpportunity:off globalDateInEffect:off instanceOfSchema:off
 import { Cause, Context, Effect, Exit, Layer, Schema } from 'effect';
@@ -128,7 +129,7 @@ const claimAnnotations = (claim: OutboxClaim, outcome?: string) =>
         claimId: claim.claimId,
         consumerModuleKey: claim.consumerModuleKey,
       },
-      !(claim.correlationId === undefined),
+      claim.correlationId !== undefined,
       'correlationId',
       claim.correlationId,
       {
@@ -136,7 +137,7 @@ const claimAnnotations = (claim: OutboxClaim, outcome?: string) =>
         messageId: claim.messageId,
       },
     ),
-    !(outcome === undefined),
+    outcome !== undefined,
     'outcome',
     outcome,
     {

@@ -1,5 +1,5 @@
 // @effect-diagnostics asyncFunction:off nodeBuiltinImport:off
-/* eslint-disable no-await-in-loop, sort-keys, unicorn/no-await-expression-member -- Mounted HTTP lifecycle scenarios are intentionally sequential and assert decoded responses directly. */
+/* eslint-disable no-await-in-loop, unicorn/no-await-expression-member -- Mounted HTTP lifecycle scenarios are intentionally sequential and assert decoded responses directly. */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';

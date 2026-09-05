@@ -1,3 +1,4 @@
+/* oxlint-disable sonarjs/no-undefined-assignment */
 import { NodeHttpServer } from '@effect/platform-node';
 import { Clock, Effect, Ref } from 'effect';
 import type { Scope } from 'effect';

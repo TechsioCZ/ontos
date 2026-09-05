@@ -24,9 +24,9 @@ interface InfrastructureCatalogRow extends Readonly<Record<string, boolean | num
   readonly organization_owner: string;
   readonly person_owner: string;
   readonly policy_count: number;
+  readonly rls_count: number;
   readonly role_bypass_rls: boolean;
   readonly role_super: boolean;
-  readonly rls_count: number;
   readonly runtime_create: boolean;
   readonly runtime_delete: boolean;
   readonly runtime_insert: boolean;

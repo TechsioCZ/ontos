@@ -14,6 +14,7 @@ import {
 import { findPartyCorrection } from '../services/party-correction.service.ts';
 
 export const partyCorrectionEntrypoint = defineTenantModuleEntrypoint({
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   access: 'historical_read',
   entrypointKey: 'party.registry.api.party-correction',
   moduleKey: 'party.registry',

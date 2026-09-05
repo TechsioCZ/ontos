@@ -207,13 +207,30 @@ export const shellGatewayContextContract = {
   ownerId: 'shell-super-app',
 } as const;
 
+export const gatewayContextAuthorizationEntrypoints = [
+  {
+    authorization: { credential: 'session', kind: 'capability_issuance' },
+    deployment: shellGatewayContextContract.ownerId,
+    entrypointKey: 'shell.gateway-context.issue.session',
+    owner: shellGatewayContextContract.ownerId,
+    path: shellGatewayContextContract.issueGatewayContextPath,
+    surface: 'capability_issuance',
+  },
+  {
+    authorization: { credential: 'api_key', kind: 'capability_issuance' },
+    deployment: shellGatewayContextContract.ownerId,
+    entrypointKey: 'shell.gateway-context.issue.api-key',
+    owner: shellGatewayContextContract.ownerId,
+    path: shellGatewayContextContract.issueApiKeyGatewayContextPath,
+    surface: 'capability_issuance',
+  },
+] as const;
+
 type GatewayContextApiGroups =
   typeof GatewayContextApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;
 
 export type GatewayContextClient = HttpApiClient.Client<
-  Extract<GatewayContextApiGroups, HttpApiGroup.Constraint>,
-  never,
-  never
+  Extract<GatewayContextApiGroups, HttpApiGroup.Constraint>
 >;
 
 export interface GatewayContextClientOptions {

@@ -104,8 +104,8 @@ export const systemPrincipalContextResolverFromRepository = (
             code: 'system_principal_context_unavailable',
             reason: 'The system principal could not be revalidated',
           }),
-        try: () =>
-          repository.load({
+        try: async () =>
+          await repository.load({
             principalId: input.principalId,
             tenantId: input.tenantId,
           }),

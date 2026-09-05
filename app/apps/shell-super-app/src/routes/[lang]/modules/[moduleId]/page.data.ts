@@ -56,9 +56,9 @@ export type ModuleTargetPageModel =
       readonly state: 'forbidden' | 'not_found' | 'selection_required' | 'unavailable';
     }
   | {
+      readonly routeParams: ModulePageRouteParams;
       readonly shell: HomePageModel;
       readonly state: 'resolved';
-      readonly routeParams: ModulePageRouteParams;
       readonly target: ResolvedModuleTarget;
     };
 
@@ -78,37 +78,40 @@ const safeState = (
       return { shell, state: 'not_found' };
     }
     case 'ShellCapabilityUnavailableProblem':
+    case 'ConfigError':
+    case 'HttpClientError':
+    case 'SchemaError':
     case 'ShellInternalProblem':
-    case 'ConfigError': {
+    case 'ShellInvalidRequestProblem':
+    case 'ShellPolicyConflictProblem':
+    case 'ShellPolicyUnprocessableProblem':
+    case 'ShellPreconditionRequiredProblem':
+    case 'ShellRateLimitedProblem': {
       return { shell, state: 'unavailable' };
     }
     default: {
-      return { shell, state: 'unavailable' };
+      const exhaustive: never = error;
+      return exhaustive;
     }
   }
 };
 
-export const loader = ({
-  params,
-  request,
-  routeParams = {},
-}: ModuleTargetLoaderArguments): Promise<ModuleTargetPageModel> =>
-  runEffectRequest(
-    Effect.gen(function* loadModuleTargetPage() {
-      const shell = yield* Effect.promise(() => loadHomePageModel(request));
-      if (shell.state !== 'authenticated') {
-        return {
-          shell,
-          state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
-        } as const;
-      }
-      const boundedRouteParams = selectRouteParams(routeParams, Object.keys(routeParams));
-      return yield* shellAuthenticationClientOptionsFromRequest(request).pipe(
+export const loader = ({ params, request, routeParams = {} }: ModuleTargetLoaderArguments) =>
+  loadHomePageModel(request).then((shell) => {
+    if (shell.state !== 'authenticated') {
+      return {
+        shell,
+        state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
+      } as const;
+    }
+    const boundedRouteParams = selectRouteParams(routeParams, Object.keys(routeParams));
+    return runEffectRequest(
+      shellAuthenticationClientOptionsFromRequest(request).pipe(
         Effect.flatMap((options) =>
           resolveModuleTarget(
             withOptionalProperty(
               {},
-              !(params.entrypointKey === undefined),
+              params.entrypointKey !== undefined,
               'entrypointKey',
               params.entrypointKey,
               {
@@ -124,7 +127,13 @@ export const loader = ({
           state: 'resolved',
           target,
         })),
-        Effect.catch((error) => Effect.succeed(safeState(error, shell))),
-      );
-    }),
-  );
+        Effect.catch((error) =>
+          Effect.succeed(
+            error._tag === 'ConfigError'
+              ? { shell, state: 'unavailable' }
+              : safeState(error, shell),
+          ),
+        ),
+      ),
+    );
+  });

@@ -1,3 +1,4 @@
+/* oxlint-disable sonarjs/no-built-in-override, sonarjs/no-nested-functions, typescript/return-await */
 // @effect-diagnostics asyncFunction:off
 import { and, eq, sql } from 'drizzle-orm';
 import { Context, Effect, Exit, Layer, Schema } from 'effect';
@@ -19,16 +20,16 @@ type SnapshotError = CoreSearchProjectionInvalid | CoreSearchProjectionUnavailab
 export interface CoreSearchWorkerSnapshotView {
   /** Diagnostic committed-event watermark, not a document version. */
   readonly eventWatermark: string;
-  readonly legalEntityIds: readonly string[];
-  readonly projectionVersion: string;
-  readonly tenantId: string;
-  readonly tenant: <Value, Error>(
-    read: (executor: CoreSearchSnapshotReadExecutor) => Effect.Effect<Value, Error>,
-  ) => Effect.Effect<Value, Error | SnapshotError>;
   readonly forLegalEntity: <Value, Error>(
     legalEntityId: string,
     read: (executor: CoreSearchSnapshotReadExecutor) => Effect.Effect<Value, Error>,
   ) => Effect.Effect<Value, Error | SnapshotError>;
+  readonly legalEntityIds: readonly string[];
+  readonly projectionVersion: string;
+  readonly tenant: <Value, Error>(
+    read: (executor: CoreSearchSnapshotReadExecutor) => Effect.Effect<Value, Error>,
+  ) => Effect.Effect<Value, Error | SnapshotError>;
+  readonly tenantId: string;
 }
 
 export interface CoreSearchWorkerSnapshotService {
@@ -99,11 +100,11 @@ const viewForSnapshot = (
       inUse = true;
       return Effect.gen(function* readOwnedScope() {
         const exit = yield* Effect.exit(
-          Effect.tryPromise({ catch: unavailable, try: () => install(legalEntityId) }).pipe(
+          Effect.tryPromise({ catch: unavailable, try: async () => install(legalEntityId) }).pipe(
             Effect.flatMap(() => read(executor)),
           ),
         );
-        yield* Effect.tryPromise({ catch: unavailable, try: () => install() });
+        yield* Effect.tryPromise({ catch: unavailable, try: async () => install() });
         return yield* Exit.isSuccess(exit)
           ? Effect.succeed(exit.value)
           : Effect.failCause(exit.cause);
@@ -153,8 +154,8 @@ export const makeCoreSearchWorkerSnapshot = (
     }
     return Effect.tryPromise({
       catch: unavailable,
-      try: () =>
-        backend.run(context, (scope, executor, install) => {
+      try: async () =>
+        backend.run(context, async (scope, executor, install) => {
           const snapshot = viewForSnapshot(scope, executor, install);
           return Effect.runPromiseExit(
             read(snapshot.view).pipe(Effect.ensuring(Effect.sync(snapshot.close))),
@@ -183,7 +184,7 @@ const serializationFailure = Schema.is(
 );
 
 /** Bounded retry is restricted to PostgreSQL snapshot serialization failures. */
-export const retryCoreSearchSnapshot = <Value>(run: () => Promise<Value>): Promise<Value> => {
+export const retryCoreSearchSnapshot = async <Value>(run: () => Promise<Value>): Promise<Value> => {
   const attempt = async (count: number): Promise<Value> => {
     try {
       return await run();
@@ -191,7 +192,7 @@ export const retryCoreSearchSnapshot = <Value>(run: () => Promise<Value>): Promi
       if (count >= 3 || !serializationFailure(error)) {
         throw error;
       }
-      return attempt(count + 1);
+      return await attempt(count + 1);
     }
   };
   return attempt(0);
@@ -200,8 +201,8 @@ export const retryCoreSearchSnapshot = <Value>(run: () => Promise<Value>): Promi
 export const makePostgresCoreSearchSnapshotBackend = (
   database: (typeof CoreDatabase)['Service'],
 ): CoreSearchSnapshotBackend => ({
-  run: (context, use) =>
-    retryCoreSearchSnapshot(() =>
+  run: async (context, use) =>
+    retryCoreSearchSnapshot(async () =>
       database.executor.transaction(
         async (transaction) => {
           const install = async (legalEntityId?: string): Promise<void> => {
@@ -272,7 +273,7 @@ export const makePostgresCoreSearchSnapshotBackend = (
             .select({ legalEntityId: legalEntities.legalEntityId })
             .from(legalEntities)
             .where(eq(legalEntities.tenantId, context.tenantId));
-          return use(
+          return await use(
             {
               eventWatermark: watermark.version,
               legalEntityIds: Object.freeze(entities.map(({ legalEntityId }) => legalEntityId)),

@@ -1,4 +1,3 @@
-/* eslint-disable sort-keys -- Typed columns follow the authoritative physical schema order. */
 import { enableGovernedRls, tenantRlsPolicies } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import {
@@ -105,6 +104,25 @@ export const personEngagementProfiles = enableGovernedRls(
       ...tenantRlsPolicies('contacts_person_engagement_profiles_tenant', table.tenantId),
     ],
   ),
+);
+
+export const gatewayAssertionRedemptions = contactsSchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: uuid('jti').notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('contacts_gateway_assertion_redemptions_identity_uk').on(
+      table.issuer,
+      table.audience,
+      table.jti,
+    ),
+    index('contacts_gateway_assertion_redemptions_expiry_idx').on(table.expiresAt),
+  ],
 );
 
 export const contactsDatabaseSchema = {

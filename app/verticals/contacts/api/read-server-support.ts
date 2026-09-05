@@ -1,4 +1,5 @@
 /* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then, unicorn/switch-case-braces -- Effect owns typed callback composition for the closed Read runtime error union. */
+import { GatewayAssertionRedemptionService } from '@app/core-runtime';
 import type { ReadCoreError } from '@app/core-runtime';
 import { Effect, HttpEffect, HttpServerResponse } from '@modern-js/plugin-bff/effect-edge';
 import { Config } from 'effect';
@@ -52,7 +53,16 @@ export const verifyReadPrincipal = <
     ONTOS_GATEWAY_PUBLIC_JWKS: Config.string('ONTOS_GATEWAY_PUBLIC_JWKS'),
   }).pipe(
     Effect.mapError(problems.unavailable),
-    Effect.flatMap((environment) => verifyOperationPrincipal(authorization, { environment })),
+    Effect.flatMap((environment) =>
+      GatewayAssertionRedemptionService.pipe(
+        Effect.flatMap((redemption) =>
+          verifyOperationPrincipal(authorization, {
+            environment,
+            redemption,
+          }),
+        ),
+      ),
+    ),
     Effect.catch((error: ActionPrincipalError | Unavailable) => {
       if ('status' in error) {
         return Effect.fail(error);

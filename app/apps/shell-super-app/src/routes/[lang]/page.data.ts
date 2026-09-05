@@ -16,6 +16,7 @@ import type {
   LegalEntityChoice,
   SafeTenantIdentity,
   ShellNavigationItem,
+  ShellUnavailableDeployment,
 } from '../../../shared/api.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../shell-authentication-client-options.ts';
 
@@ -38,8 +39,16 @@ export interface AuthenticatedHomePageModel {
     | { readonly items: readonly LegalEntityChoice[]; readonly state: 'available' }
     | { readonly items: readonly []; readonly state: 'unavailable' };
   readonly navigation:
-    | { readonly items: readonly ShellNavigationItem[]; readonly state: 'available' }
-    | { readonly items: readonly []; readonly state: 'unavailable' };
+    | {
+        readonly items: readonly ShellNavigationItem[];
+        readonly state: 'available';
+        readonly unavailableDeployments: readonly ShellUnavailableDeployment[];
+      }
+    | {
+        readonly items: readonly [];
+        readonly state: 'unavailable';
+        readonly unavailableDeployments: readonly [];
+      };
   readonly selectedLegalEntityId?: string;
   readonly state: 'authenticated';
   readonly tenants:
@@ -58,6 +67,7 @@ const unavailableModel: UnavailableHomePageModel = { state: 'unavailable' };
 const unavailableNavigation = (_error: ShellCompositionClientError) => ({
   items: [] as const,
   state: 'unavailable' as const,
+  unavailableDeployments: [] as const,
 });
 
 const unavailableTenants = (tenantId: string) => ({
@@ -105,10 +115,18 @@ export const loadHomePageModel = (request: Request): Promise<HomePageModel> =>
                       items:
                         composition.state === 'available' ? composition.navigation : ([] as const),
                       state: 'available' as const,
+                      unavailableDeployments:
+                        composition.state === 'available'
+                          ? composition.unavailableDeployments
+                          : ([] as const),
                     })),
                     Effect.catch((error) => Effect.succeed(unavailableNavigation(error))),
                   )
-                : Effect.succeed({ items: [] as const, state: 'available' as const });
+                : Effect.succeed({
+                    items: [] as const,
+                    state: 'available' as const,
+                    unavailableDeployments: [] as const,
+                  });
             return Effect.all({
               legalEntities,
               navigation,
@@ -124,12 +142,12 @@ export const loadHomePageModel = (request: Request): Promise<HomePageModel> =>
                   if (tenants.state === 'stale') {
                     return anonymousModel;
                   }
-                  const model: AuthenticatedHomePageModel = {
+                  const model = {
                     contextState: session.state,
                     identity: session.identity,
                     legalEntities: choices,
                     navigation: items,
-                    state: 'authenticated',
+                    state: 'authenticated' as const,
                     tenants,
                   };
                   return session.state === 'authenticated'

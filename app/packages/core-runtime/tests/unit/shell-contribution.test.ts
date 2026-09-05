@@ -1,11 +1,12 @@
-/* eslint-disable typescript/no-non-null-assertion, unicorn/prefer-structured-clone -- Mutation fixtures intentionally target known tuple members and verify JSON round trips. */
+/* eslint-disable typescript/no-non-null-assertion -- Mutation fixtures intentionally target known tuple members and verify JSON round trips. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { validateShellContributions } from '../../src/modules/shell-contribution.ts';
 
 const moduleId = 'property.registry';
 const entrypoint = (role: 'api' | 'page' | 'public_component' | 'report' | 'search') => ({
-  access: role === 'api' ? ('read' as const) : ('read' as const),
+  access: 'read' as const,
+  authorization: { kind: 'context_permission' as const, permission: 'module.access' },
   entrypointKey: `${moduleId}.${role.replace('_', '-')}.primary`,
   moduleKey: moduleId,
   role,
@@ -100,7 +101,7 @@ test('accepts exact empty and full Shell contribution contracts with determinist
   };
   assert.deepEqual(validateShellContributions(empty, references), empty);
   const decoded = validateShellContributions(full(), references);
-  assert.deepEqual(JSON.parse(JSON.stringify(decoded)), decoded);
+  assert.deepEqual(structuredClone(decoded), decoded);
   assert.doesNotMatch(JSON.stringify(decoded), /handler|sourcePath|remote|import/iu);
 });
 
@@ -112,7 +113,7 @@ test('accepts safe dynamic page templates as plain serialized data', () => {
   };
   const decoded = validateShellContributions(dynamic, references);
   assert.equal(decoded.pages[0]?.routePath, '/contacts/customers/:id/edit');
-  assert.deepEqual(JSON.parse(JSON.stringify(decoded)), decoded);
+  assert.deepEqual(structuredClone(decoded), decoded);
   assert.doesNotMatch(JSON.stringify(decoded), /handler|loader|sourcePath|remote|import/iu);
 });
 

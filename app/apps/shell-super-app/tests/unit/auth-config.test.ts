@@ -10,8 +10,8 @@ const validEnvironment = {
   DATABASE_URL: 'postgresql://ontos:ontos@localhost:5433/ontos',
 };
 
-test('parses trusted origins and derives local cookie security', () =>
-  Effect.runPromise(parseAuthConfig(validEnvironment)).then((configuration) => {
+test('parses trusted origins and derives local cookie security', async () =>
+  await Effect.runPromise(parseAuthConfig(validEnvironment)).then((configuration) => {
     expect(configuration.secureCookies).toBe(false);
     expect(configuration.trustedOrigins).toEqual([
       'http://localhost:3020',
@@ -19,8 +19,8 @@ test('parses trusted origins and derives local cookie security', () =>
     ]);
   }));
 
-test('requires a strong secret and PostgreSQL URL in the typed error channel', () =>
-  Promise.all([
+test('requires a strong secret and PostgreSQL URL in the typed error channel', async () =>
+  await Promise.all([
     Effect.runPromise(
       Effect.flip(
         parseAuthConfig({

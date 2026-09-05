@@ -48,10 +48,9 @@ export const tenantStatesAllowingAccess = (
   access: ModuleEntrypointAccess,
 ): readonly TenantModuleState[] =>
   Object.freeze(
-    TENANT_MODULE_STATES.map((state) => [state, allowedAccessByState[state]] as const)
-      .filter(([, accesses]) => accesses.has(access))
-      .map(([state]) => state)
-      .toSorted(),
+    TENANT_MODULE_STATES.flatMap((state) =>
+      allowedAccessByState[state].has(access) ? [state] : [],
+    ).toSorted(),
   );
 
 export interface ModuleStateSnapshot {
@@ -98,9 +97,9 @@ export const makeModuleStateSnapshot = (
     [...new Set(entrypoints.map((entrypoint) => entrypoint.entrypointKey))].toSorted(),
   );
   const declaredEntrypoints = new Set(entrypoints.map(entrypointFingerprint));
-  const moduleKeys = entrypoints
-    .filter((entrypoint) => entrypoint.scope === 'tenant')
-    .map((entrypoint) => entrypoint.moduleKey);
+  const moduleKeys = entrypoints.flatMap((entrypoint) =>
+    entrypoint.scope === 'tenant' ? [entrypoint.moduleKey] : [],
+  );
   const declaredKeys = Object.freeze([...new Set(moduleKeys)].toSorted());
   const declaredSet = new Set(declaredKeys);
   const states = new Map<string, TenantModuleState>();
@@ -154,9 +153,9 @@ export const prepareModuleStateSnapshot = (
   tenantId: string,
   entrypoints: readonly ModuleEntrypointDescriptor[],
 ): Effect.Effect<ModuleStateSnapshot, ModuleStateCheckUnavailableError> => {
-  const moduleKeys = entrypoints
-    .filter((entrypoint) => entrypoint.scope === 'tenant')
-    .map((entrypoint) => entrypoint.moduleKey);
+  const moduleKeys = entrypoints.flatMap((entrypoint) =>
+    entrypoint.scope === 'tenant' ? [entrypoint.moduleKey] : [],
+  );
   const distinctKeys = [...new Set(moduleKeys)].toSorted();
   return Effect.gen(function* prepareSnapshotEffect() {
     const startedAt = yield* Clock.currentTimeMillis;

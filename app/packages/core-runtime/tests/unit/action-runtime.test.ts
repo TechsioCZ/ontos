@@ -1,5 +1,6 @@
+/* oxlint-disable sonarjs/use-type-alias */
 // @effect-diagnostics asyncFunction:off globalDate:off globalDateInEffect:off missingEffectError:off unsafeEffectTypeAssertion:off
-/* eslint-disable max-classes-per-file, no-await-in-loop, no-throw-literal, node/callback-return, promise/prefer-await-to-callbacks -- Test-local typed errors, sequential lifecycle assertions, and the controlled Drizzle transaction fake are deliberate. */
+/* eslint-disable max-classes-per-file, no-await-in-loop, no-throw-literal -- Test-local typed errors, sequential lifecycle assertions, and the controlled Drizzle transaction fake are deliberate. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -76,17 +77,17 @@ const QueryConfigSchema = Schema.Struct({ text: Schema.String });
 interface HarnessOptions {
   readonly commitFailureCode?: string;
   readonly createRecord?: ActionInvocationRecord;
+  readonly legalEntityPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
+  readonly lockedModuleState?: 'active' | 'denied' | 'unavailable';
+  readonly moduleState?: TenantModuleState | 'missing' | 'unavailable';
   readonly permissionDecision?: ActionPermissionDecision;
   readonly permissionFailure?: boolean;
-  readonly moduleState?: TenantModuleState | 'missing' | 'unavailable';
-  readonly lockedModuleState?: 'active' | 'denied' | 'unavailable';
-  readonly legalEntityPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
   readonly policyFinalizationFailure?: boolean;
   readonly rejectionFailure?: boolean;
   readonly resolutionUnavailable?: boolean;
   readonly resourcePermissionDecision?: 'allowed' | 'denied' | 'unavailable';
-  readonly transactionMode?: 'commit-definite' | 'definite-failure' | 'normal' | 'uncertain';
   readonly tenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
+  readonly transactionMode?: 'commit-definite' | 'definite-failure' | 'normal' | 'uncertain';
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -201,8 +202,8 @@ const makeHarness = (options: HarnessOptions = {}) => {
 
   let installedTenantId: string = principal.tenantId;
   let installedLegalEntityId: string = principal.legalEntityId;
-  const query = <Query, Values>(queryInput: Query, values?: Values) =>
-    Promise.resolve().then(() => {
+  const query = async <Query, Values>(queryInput: Query, values?: Values) =>
+    await Promise.resolve().then(() => {
       const { text } = Schema.decodeUnknownSync(QueryConfigSchema)(queryInput);
       if (text.includes('set_config') && Array.isArray(values)) {
         const [tenantId, legalEntityId] = values;
@@ -247,7 +248,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     });
   const pool = new Pool();
   Object.defineProperty(pool, 'connect', {
-    value: () => Promise.resolve({ query, release: () => {} }),
+    value: async () => ({ query, release: () => {} }),
   });
   Object.defineProperty(pool, 'query', { value: query });
   const database = {
@@ -265,7 +266,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
               reason: 'test authorization service unavailable',
             }),
           )
-        : Effect.succeed(options.permissionDecision ?? 'unconfigured');
+        : Effect.succeed(options.permissionDecision ?? 'allowed');
     },
   };
 
@@ -401,6 +402,7 @@ const registration = () =>
       },
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.change',
         moduleKey: 'core.shell',
         role: 'action',
@@ -483,14 +485,13 @@ test('executes the complete stage order with transaction ownership and success e
 test('uses a resolver-branded recovery only for the exact support-stop Action and still checks permission', async () => {
   const recoveryPrincipal = await Effect.runPromise(
     supportRecoveryPrincipalContextResolverFromRepository({
-      load: () =>
-        Promise.resolve({
-          bindingPrincipalId: principal.principalId,
-          bindingTenantId: principal.tenantId,
-          principalKind: 'human',
-          principalTenantId: principal.tenantId,
-          tenantId: principal.tenantId,
-        }),
+      load: async () => ({
+        bindingPrincipalId: principal.principalId,
+        bindingTenantId: principal.tenantId,
+        principalKind: 'human',
+        principalTenantId: principal.tenantId,
+        tenantId: principal.tenantId,
+      }),
     }).resolveStoppedImpersonation({
       originalAuthBindingId: principal.authBindingId,
       originalPrincipalId: principal.principalId,
@@ -598,6 +599,7 @@ test('fails business Actions closed before invocation, permission, Policy, or ha
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
           access: 'write',
+          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
           entrypointKey: `inventory.stock.reserve-state-${index}`,
           moduleKey: 'inventory.stock',
           role: 'action',
@@ -661,6 +663,7 @@ test('distinguishes unavailable early checks and rolls back a denied locked rech
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'inventory.stock.reserve-locked',
         moduleKey: 'inventory.stock',
         role: 'action',
@@ -715,25 +718,23 @@ test('distinguishes unavailable early checks and rolls back a denied locked rech
   });
 });
 
-test('allows configured and unconfigured Actions before Policy evaluation', async () => {
-  for (const decision of ['allowed', 'unconfigured'] as const) {
-    const harness = makeHarness({ permissionDecision: decision });
-    const result = await Effect.runPromise(
-      harness.runtime.runAction({
-        payload: { amount: 2 },
-        principal,
-        registration: registration(),
-        transport: transport(decision),
-      }),
-    );
+test('allows an explicitly authorized Action before Policy evaluation', async () => {
+  const harness = makeHarness({ permissionDecision: 'allowed' });
+  const result = await Effect.runPromise(
+    harness.runtime.runAction({
+      payload: { amount: 2 },
+      principal,
+      registration: registration(),
+      transport: transport('allowed'),
+    }),
+  );
 
-    assert.deepEqual(result, { total: 2 });
-    assert.ok(
-      harness.stages.indexOf('permission_checked') < harness.stages.indexOf('policy_boundary'),
-    );
-    assert.equal(harness.counts().transitionCount, 1);
-    assert.equal(harness.counts().transactionCount, 1);
-  }
+  assert.deepEqual(result, { total: 2 });
+  assert.ok(
+    harness.stages.indexOf('permission_checked') < harness.stages.indexOf('policy_boundary'),
+  );
+  assert.equal(harness.counts().transitionCount, 1);
+  assert.equal(harness.counts().transactionCount, 1);
 });
 
 test('requires a declared tenant role independently from the Action executor relation', async () => {
@@ -746,6 +747,7 @@ test('requires a declared tenant role independently from the Action executor rel
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'core.identity.tenant-authorized',
         moduleKey: 'core.identity',
         role: 'action',
@@ -817,6 +819,7 @@ test('accepts every Party write authority as an explicit tenant permission', asy
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
           access: 'write',
+          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
           entrypointKey: actionKey,
           moduleKey: 'party.registry',
           role: 'action',
@@ -865,6 +868,7 @@ test('canonicalizes every resolved tenant permission target for hash and evidenc
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'core.identity.rotate-managed-key',
         moduleKey: 'core.identity',
         role: 'action',
@@ -929,6 +933,7 @@ test('authorizes Counterparty creation against the trusted Legal Entity before P
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'party.registry.create-counterparty',
         moduleKey: 'party.registry',
         role: 'action',
@@ -1043,6 +1048,7 @@ test('authorizes the resolved Resource target before Policy, transaction, and ha
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'party.registry.end-counterparty-role',
         moduleKey: 'party.registry',
         role: 'action',
@@ -1150,6 +1156,7 @@ test('authorizes the resolved Resource target before Policy, transaction, and ha
 test('persists a definite permission denial before returning it and never evaluates Policies', async () => {
   let handlerCount = 0;
   let policyCount = 0;
+  let serviceFactoryCount = 0;
   const harness = makeHarness({ permissionDecision: 'denied' });
   const deniedRegistration = defineAction(
     {
@@ -1160,6 +1167,7 @@ test('persists a definite permission denial before returning it and never evalua
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.denied',
         moduleKey: 'core.shell',
         role: 'action',
@@ -1184,6 +1192,10 @@ test('persists a definite permission denial before returning it and never evalua
       handlerCount += 1;
       return Effect.void;
     },
+    () => {
+      serviceFactoryCount += 1;
+      return Effect.succeed({});
+    },
   );
 
   const failure = await Effect.runPromise(
@@ -1201,6 +1213,7 @@ test('persists a definite permission denial before returning it and never evalua
   assert.equal(failure.code, 'action_permission_denied');
   assert.equal(handlerCount, 0);
   assert.equal(policyCount, 0);
+  assert.equal(serviceFactoryCount, 0);
   assert.deepEqual(harness.stages, [
     'payload_decoded',
     'trusted_context_validated',
@@ -1315,6 +1328,7 @@ test('evaluates Policies in order before running and hands allowed checkpoints t
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'inventory.stock.policy-allowed',
         moduleKey: 'inventory.stock',
         role: 'action',
@@ -1390,6 +1404,7 @@ test('short-circuits the first Policy denial, finalizes it, and never starts exe
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.policy-denied',
         moduleKey: 'core.shell',
         role: 'action',
@@ -1470,6 +1485,7 @@ test('sanitizes Policy defects and interrupts without finalizing', async () => {
         domainEvents: {},
         entrypoint: defineSystemModuleEntrypoint({
           access: 'write',
+          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
           entrypointKey: `shell.counter.policy-failure-${index}`,
           moduleKey: 'core.shell',
           role: 'action',
@@ -1527,6 +1543,7 @@ test('returns persistence failure when denial evidence cannot be finalized', asy
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.policy-persistence-failure',
         moduleKey: 'core.shell',
         role: 'action',
@@ -1605,6 +1622,7 @@ test('evaluates Policies afresh for separate invocations', async () => {
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.fresh-policy',
         moduleKey: 'core.shell',
         role: 'action',
@@ -1720,6 +1738,7 @@ test('preserves declared domain rejections and rolls back collected evidence', a
       },
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.reject',
         moduleKey: 'core.shell',
         role: 'action',
@@ -1774,6 +1793,7 @@ test('sanitizes unexpected defects and rejects invalid typed results', async () 
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.defect',
         moduleKey: 'core.shell',
         role: 'action',
@@ -1809,6 +1829,7 @@ test('sanitizes unexpected defects and rejects invalid typed results', async () 
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.invalid-result',
         moduleKey: 'core.shell',
         role: 'action',
@@ -1866,6 +1887,7 @@ test('sanitizes undeclared handler failures instead of widening the domain error
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.undeclared-error',
         moduleKey: 'core.shell',
         role: 'action',
@@ -1973,9 +1995,9 @@ test('handles committed, conflict, definite rollback, and indeterminate commit b
 
   const acknowledgementFailureCodes = ['ETIMEDOUT', 'ECONNABORTED', 'ENETRESET', '08007'];
   const acknowledgementErrors = await Promise.all(
-    acknowledgementFailureCodes.map((code) => {
+    acknowledgementFailureCodes.map(async (code) => {
       const harness = makeHarness({ commitFailureCode: code });
-      return Effect.runPromise(
+      return await Effect.runPromise(
         Effect.flip(
           harness.runtime.runAction({
             payload: { amount: 1 },
@@ -2089,6 +2111,7 @@ test('uses one runtime contract for Shell/Core and MicroVertical-shaped registra
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'inventory.stock.reserve',
         moduleKey: 'inventory.stock',
         role: 'action',

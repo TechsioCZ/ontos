@@ -1,4 +1,4 @@
-/* eslint-disable oxc/no-barrel-file -- This is the published contract-derived client aggregate for governed Contacts operations. */
+/* eslint-disable oxc/no-barrel-file, sonarjs/no-wildcard-import -- This is the published contract-derived client aggregate for governed Contacts operations. */
 import type { GatewayContextClientOptions } from '@app/shared-contracts';
 import { Effect, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
 import type {
@@ -28,12 +28,10 @@ type ContactsApiGroups =
   typeof contactsApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;
 
 export type ContactsClient = HttpApiClient.Client<
-  Extract<ContactsApiGroups, HttpApiGroup.Constraint>,
-  never,
-  never
+  Extract<ContactsApiGroups, HttpApiGroup.Constraint>
 >;
 export type ContactsClientError = HttpClientError.HttpClientError | Schema.SchemaError;
-export type ContactsClientEffect<Success> = Effect.Effect<Success, ContactsClientError, never>;
+export type ContactsClientEffect<Success> = Effect.Effect<Success, ContactsClientError>;
 
 export interface ContactsClientOptions {
   readonly baseUrl?: string | URL;

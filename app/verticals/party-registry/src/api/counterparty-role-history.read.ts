@@ -21,6 +21,7 @@ import type { LookupResult } from '../services/counterparty-persistence.service.
 
 export const counterpartyRoleHistoryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'party.registry.api.counterparty-role-history',
   moduleKey: 'party.registry',
   role: 'api',

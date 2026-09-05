@@ -345,8 +345,12 @@ const gatewayAuthenticationProblem = (
         type: 'https://ontos.dev/problems/gateway-unavailable',
       };
     }
-    default: {
+    case 'AuthenticationInternalError': {
       return gatewayInternalProblem();
+    }
+    default: {
+      const exhaustive: never = error;
+      return exhaustive;
     }
   }
 };
@@ -602,6 +606,7 @@ const shellReadProblem = (
       return shellAuthenticationRequiredProblem();
     }
     case 'OperationContextDenied':
+    case 'ModuleStateDeniedError':
     case 'ReadPermissionDenied': {
       return shellTargetForbiddenProblem();
     }
@@ -621,8 +626,16 @@ const shellReadProblem = (
     case 'ReadPolicyEvaluationError': {
       return shellCapabilityUnavailableProblem();
     }
-    default: {
+    case 'OperationContextInvalid':
+    case 'ReadEvidenceValidationError':
+    case 'ReadHandlerExecutionError':
+    case 'ReadInputValidationError':
+    case 'ReadResultValidationError': {
       return shellInternalProblem();
+    }
+    default: {
+      const exhaustive: never = error;
+      return exhaustive;
     }
   }
 };
@@ -925,7 +938,7 @@ const compositionGroupLive = HttpApiBuilder.group(
                 {
                   correlationId,
                 },
-                !(payload.entrypointKey === undefined),
+                payload.entrypointKey !== undefined,
                 'entrypointKey',
                 payload.entrypointKey,
                 {
@@ -1195,7 +1208,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
                   correlationId: correlation(request),
                   idempotencyKey,
                 },
-                !(payload.name === undefined),
+                payload.name !== undefined,
                 'name',
                 payload.name,
                 {
@@ -1267,7 +1280,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
                   idempotencyKey,
                   managedPrincipalId: payload.principalId,
                 },
-                !(payload.name === undefined),
+                payload.name !== undefined,
                 'name',
                 payload.name,
                 {
@@ -1396,7 +1409,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
                   correlationId: correlation(request),
                   idempotencyKey,
                 },
-                !(payload.name === undefined),
+                payload.name !== undefined,
                 'name',
                 payload.name,
                 {
@@ -1426,7 +1439,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
                   idempotencyKey,
                   managedPrincipalId: payload.principalId,
                 },
-                !(payload.name === undefined),
+                payload.name !== undefined,
                 'name',
                 payload.name,
                 {
@@ -1476,7 +1489,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
             })
             .pipe(Effect.catch((error) => failIdentityProblem(identityProblem(error))));
           yield* forwardSetCookieHeaders(result.setCookieHeaders);
-          if (result.checkpointPending === true) {
+          if (result.checkpointPending) {
             return yield* failIdentityProblem(shellCapabilityUnavailableProblem());
           }
           return { active: result.active };
@@ -1617,7 +1630,7 @@ const makeGatewayContextGroupLive = (issuerDependencies: GatewayIssuerDependenci
                   authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
                   authMethod: 'api_key',
                 },
-                !(legalEntityId === undefined),
+                legalEntityId !== undefined,
                 'legalEntityId',
                 legalEntityId,
                 {
@@ -1678,16 +1691,14 @@ export const makeShellAuthenticationApiRuntime = (
   authenticationLayer: Layer.Layer<AuthenticationService>,
   issuerDependencies: GatewayIssuerDependencies,
   moduleStateLayer: Layer.Layer<TenantModuleStateService> = tenantModuleStateServiceLive,
-  loadInstalledModuleCatalog:
-    | Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError>
-    | undefined = undefined,
+  loadInstalledModuleCatalog?: Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError>,
   enableInstalledOutboxMatcher = false,
   contextAccessLayer: Layer.Layer<ContextAccess> = ContextAccessLive,
   resourceGateways: ShellResourceGateways = unavailableResourceGateways,
   scopedModuleStateFactory: ShellScopedModuleStateFactory = (transaction) =>
     makeTenantModuleStateService({ executor: transaction }),
-): EffectBffDefinition<typeof ShellAuthenticationApi, EffectRuntimeLayer> &
-  EffectBffRuntime<typeof ShellAuthenticationApi, EffectRuntimeLayer> => {
+): EffectBffDefinition<typeof ShellAuthenticationApi> &
+  EffectBffRuntime<typeof ShellAuthenticationApi> => {
   const moduleCatalogLayer =
     loadInstalledModuleCatalog === undefined
       ? ShellInstalledModuleCatalogLive
@@ -1721,17 +1732,17 @@ export const makeShellAuthenticationApiRuntime = (
                   context.legalEntityId,
                   {},
                 ),
-                !(context.authBindingId === undefined),
+                context.authBindingId !== undefined,
                 'authBindingId',
                 context.authBindingId,
                 {},
               ),
-              !(context.authContextRef === undefined),
+              context.authContextRef !== undefined,
               'authContextRef',
               context.authContextRef,
               {},
             ),
-            !(context.impersonatedByPrincipalId === undefined),
+            context.impersonatedByPrincipalId !== undefined,
             'impersonatedByPrincipalId',
             context.impersonatedByPrincipalId,
             {},

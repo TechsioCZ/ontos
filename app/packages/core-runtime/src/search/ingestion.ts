@@ -1,3 +1,4 @@
+/* oxlint-disable sonarjs/no-duplicate-string */
 /* eslint-disable anti-slop/no-unknown-parameters -- Public gateway input is decoded immediately by CoreSearchIngestionObservationSchema. */
 import { Context, Effect, Layer, Schema } from 'effect';
 import {

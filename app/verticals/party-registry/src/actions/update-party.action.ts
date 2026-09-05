@@ -114,6 +114,7 @@ export const updatePartyAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'party.registry.update-party',
       moduleKey: 'party.registry',
       role: 'action',
