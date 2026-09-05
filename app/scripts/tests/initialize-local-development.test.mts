@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import type { deriveOntosModuleDeploymentContract } from '../generate-ontos-module-contract.mts';
 import {
   LOCAL_DEVELOPMENT_CONTEXT,
@@ -32,7 +32,8 @@ test('accepts only a development configuration with local service endpoints', as
     parseLocalDevelopmentConfiguration(localEnvironment),
   );
   assert.equal(configuration.email, LOCAL_DEVELOPMENT_CONTEXT.email);
-  assert.equal(configuration.databaseAdminUrl, localEnvironment.DATABASE_ADMIN_URL);
+  assert.ok(Redacted.isRedacted(configuration.databaseAdminUrl));
+  assert.equal(Redacted.value(configuration.databaseAdminUrl), localEnvironment.DATABASE_ADMIN_URL);
 
   for (const environment of [
     { ...localEnvironment, ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage' },

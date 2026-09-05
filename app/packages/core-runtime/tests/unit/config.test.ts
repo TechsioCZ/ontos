@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 // @effect-diagnostics asyncFunction:off
 import test from 'node:test';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import { acquirePoolResource } from '../../src/db/client.ts';
 import {
   ROOT_ENV_PATH,
@@ -24,8 +24,9 @@ void test('loads the root environment independently of the invocation directory'
     );
 
     assert.equal(ROOT_ENV_PATH.endsWith('/app/.env'), true);
+    assert.ok(Redacted.isRedacted(configuration.connectionString));
     assert.equal(
-      configuration.connectionString,
+      Redacted.value(configuration.connectionString),
       'postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos',
     );
   } finally {
@@ -40,13 +41,20 @@ void test('parses valid local PostgreSQL connection settings', async () => {
     }),
   );
 
-  assert.deepEqual(configuration, {
-    connectionString: 'postgresql://ontos:ontos@localhost:5433/ontos',
-    database: 'ontos',
-    host: 'localhost',
-    port: 5433,
-    user: 'ontos',
-  });
+  assert.ok(Redacted.isRedacted(configuration.connectionString));
+  assert.deepEqual(
+    {
+      ...configuration,
+      connectionString: Redacted.value(configuration.connectionString),
+    },
+    {
+      connectionString: 'postgresql://ontos:ontos@localhost:5433/ontos',
+      database: 'ontos',
+      host: 'localhost',
+      port: 5433,
+      user: 'ontos',
+    },
+  );
 });
 
 void test('keeps missing and malformed configuration in the typed error channel', async () => {
