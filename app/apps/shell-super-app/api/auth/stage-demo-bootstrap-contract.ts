@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 
 export const STAGE_DEMO_ACCOUNTS = Object.freeze([
   Object.freeze({
@@ -20,13 +20,13 @@ type ExactRecord = Readonly<Record<string, Comparable>>;
 export interface StageDemoBootstrapConfig {
   readonly accounts: readonly [StageDemoAccountConfig, StageDemoAccountConfig];
   readonly authBaseUrl: string;
-  readonly authSecret: string;
+  readonly authSecret: Redacted.Redacted<string>;
   readonly databaseAdminUrl: string;
 }
 
 export interface StageDemoAccountConfig {
   readonly email: string;
-  readonly password: string;
+  readonly password: Redacted.Redacted<string>;
   readonly principalDisplayName: string;
 }
 
@@ -106,7 +106,7 @@ export const parseStageDemoBootstrapConfig = (
         }
         return {
           email: account.email,
-          password,
+          password: Redacted.make(password),
           principalDisplayName: account.principalDisplayName,
         };
       };
@@ -117,7 +117,7 @@ export const parseStageDemoBootstrapConfig = (
       return {
         accounts,
         authBaseUrl: parseHttpOrigin(required(environment, 'BETTER_AUTH_URL')),
-        authSecret,
+        authSecret: Redacted.make(authSecret),
         databaseAdminUrl: parsePostgresUrl(required(environment, 'DATABASE_ADMIN_URL')),
       };
     },

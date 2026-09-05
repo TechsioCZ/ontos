@@ -61,10 +61,10 @@ export const LOCAL_DEVELOPMENT_VERTICALS = Object.freeze(['contacts'] as const);
 
 export interface LocalDevelopmentConfiguration {
   readonly authBaseUrl: string;
-  readonly authSecret: string;
+  readonly authSecret: Redacted.Redacted<string>;
   readonly databaseAdminUrl: Redacted.Redacted<string>;
   readonly email: string;
-  readonly password: string;
+  readonly password: Redacted.Redacted<string>;
   readonly principalDisplayName: string;
   readonly spiceDbEndpoint: string;
   readonly spiceDbInsecureLocal: boolean;
@@ -177,10 +177,10 @@ export const parseLocalDevelopmentConfiguration = (
     }
     return {
       authBaseUrl: assertLoopbackHttpOrigin(required(environment, 'BETTER_AUTH_URL')),
-      authSecret,
+      authSecret: Redacted.make(authSecret),
       databaseAdminUrl: databasePair.admin.connectionString,
       email: LOCAL_DEVELOPMENT_CONTEXT.email,
-      password: LOCAL_DEVELOPMENT_CONTEXT.password,
+      password: Redacted.make(LOCAL_DEVELOPMENT_CONTEXT.password),
       principalDisplayName: LOCAL_DEVELOPMENT_CONTEXT.principalDisplayName,
       spiceDbEndpoint: spiceDb.endpoint,
       spiceDbInsecureLocal: spiceDb.insecureLocal,
@@ -368,7 +368,10 @@ const ensureAuthUser = async (
     if (
       credential?.password === null ||
       credential?.password === undefined ||
-      !(await verifyPassword({ hash: credential.password, password: configuration.password }))
+      !(await verifyPassword({
+        hash: credential.password,
+        password: Redacted.value(configuration.password),
+      }))
     ) {
       throw failure('local_conflict', 'The existing local user has conflicting credentials');
     }
@@ -384,13 +387,13 @@ const ensureAuthUser = async (
     emailAndPassword: { autoSignIn: false, disableSignUp: true, enabled: true },
     logger: { disabled: true },
     plugins: [admin()],
-    secret: configuration.authSecret,
+    secret: Redacted.value(configuration.authSecret),
   });
   const created = await authentication.api.createUser({
     body: {
       email: configuration.email,
       name: configuration.principalDisplayName,
-      password: configuration.password,
+      password: Redacted.value(configuration.password),
     },
   });
   return { status: 'created', userId: created.user.id };
