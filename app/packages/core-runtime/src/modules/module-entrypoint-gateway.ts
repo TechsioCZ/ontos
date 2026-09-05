@@ -3,7 +3,7 @@ import { Context, Effect, Layer } from 'effect';
 import type { TrustedPrincipalContext } from '../actions/context.ts';
 import { decodeTrustedPrincipalContext } from '../auth/system-principal-context-provenance.ts';
 import type { ModuleEntrypointDescriptor } from './module-entrypoint.ts';
-import { ModuleStateGate, ModuleStateGateLive } from './module-state-gate.ts';
+import { ModuleStateGate } from './module-state-gate.ts';
 import type { ModuleStateGateService, ModuleStateSnapshot } from './module-state-gate.ts';
 import { ModuleStateCheckUnavailableError } from './module-state-gate-errors.ts';
 import type { ModuleStateGateError } from './module-state-gate-errors.ts';
@@ -65,7 +65,8 @@ export class ModuleEntrypointGateway extends Context.Service<
   ModuleEntrypointGatewayService
 >()('@app/core-runtime/modules/module-entrypoint-gateway/ModuleEntrypointGateway') {}
 
+/** Dependency-transparent gateway layer; the host supplies ModuleStateGate. */
 export const ModuleEntrypointGatewayLive = Layer.effect(
   ModuleEntrypointGateway,
   ModuleStateGate.pipe(Effect.map(makeModuleEntrypointGateway)),
-).pipe(Layer.provide(ModuleStateGateLive));
+);

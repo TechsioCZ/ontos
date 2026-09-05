@@ -120,6 +120,7 @@ export { CorePersistenceLive } from './runtime-infrastructure.ts';
 export {
   DatabaseConfig,
   DatabaseConfigError,
+  DatabaseConfigLive,
   ROOT_ENV_PATH,
   loadDatabaseConnectionPair,
   loadDatabaseConfig,
@@ -200,6 +201,8 @@ export type {
   GlobalActionPolicy,
   MicroverticalActionPolicy,
 } from './actions/policy.ts';
+export { ActionRepositoryLive } from './actions/repository.ts';
+export { ActionPermissionLive } from './permissions/service.ts';
 export {
   ActionRuntime,
   ActionRuntimeLive,
@@ -222,6 +225,7 @@ export type {
 export {
   LEGAL_ENTITY_SCOPES,
   OperationalScopeResolver,
+  OperationalScopeResolverLive,
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
 } from './operations/context.ts';
@@ -267,12 +271,7 @@ export type {
   ReadHandlerContext,
   ReadHandlerResult,
 } from './reads/context.ts';
-export {
-  READ_RUNTIME_STAGES,
-  ReadRuntime,
-  ReadRuntimeLive,
-  makeReadRuntimeLive,
-} from './reads/runtime.ts';
+export { READ_RUNTIME_STAGES, ReadRuntime, ReadRuntimeLive } from './reads/runtime.ts';
 export type { ReadRuntimeOptions, ReadRuntimeService, ReadRuntimeStage } from './reads/runtime.ts';
 export {
   ReadEvidencePersistenceError,
@@ -581,6 +580,8 @@ export { setSelfApiKeyBindingStatusAction } from './modules/actions/set-self-api
 // </generated-core-action-exports>
 
 export { defineOutboxWorker, extractOutboxWorkerSubscriptions } from './outbox/definition.ts';
+export { OutboxRepository, OutboxRepositoryLive } from './outbox/repository.ts';
+export type { OutboxRepositoryService } from './outbox/repository.ts';
 export type {
   AnyOutboxWorkerRegistration,
   OutboxWorkerDescriptor,

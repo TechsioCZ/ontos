@@ -17,10 +17,17 @@ import type {
 import {
   CorePersistenceLive,
   ActionRuntimeLive,
+  ActionRepositoryLive,
+  ActionPermissionLive,
+  ModuleEntrypointGatewayLive,
+  OperationalScopeResolverLive,
   ReadRuntime,
+  ReadRuntimeLive,
   ContextAccessLive,
   LegalEntityContextLive,
   OutboxRuntimeLive,
+  OutboxRepositoryLive,
+  ModuleStateGateLive,
   PrincipalResolverLive,
   SupportRecoveryPrincipalContextResolverLive,
   PrincipalResolver,
@@ -28,7 +35,6 @@ import {
   ContextAccess,
   TenantModuleStateServiceLive,
   makeTenantModuleStateService,
-  makeReadRuntimeLive,
   managedPrincipalsRead,
   selfApiKeyBindingsRead,
 } from '@app/core-runtime';
@@ -98,7 +104,12 @@ import {
   createShellGovernedReadsLayer,
 } from './modules/shell-governed-reads.ts';
 import type { ShellScopedModuleStateFactory } from './modules/shell-governed-reads.ts';
-import { attachShellMedia, ShellProviderUnavailableError } from './modules/shell-resources.ts';
+import { ShellCompositionFactoryLive } from './modules/shell-composition.ts';
+import {
+  attachShellMedia,
+  ShellProviderUnavailableError,
+  ShellResourceServicesFactoryLive,
+} from './modules/shell-resources.ts';
 import type { ShellResourceContext, ShellResourceGateways } from './modules/shell-resources.ts';
 
 const withOptionalProperty = <
@@ -1693,10 +1704,6 @@ const authenticationServiceLive = AuthenticationServiceLive.pipe(
   Layer.orDie,
 );
 const apiKeyServiceLive = ApiKeyServiceLive.pipe(Layer.provide(AuthPersistenceLive), Layer.orDie);
-const actionRuntimeLive = ActionRuntimeLive.pipe(Layer.provide(CorePersistenceLive), Layer.orDie);
-const identityLifecycleLive = IdentityLifecycleLive.pipe(
-  Layer.provide(Layer.mergeAll(actionRuntimeLive, apiKeyServiceLive, principalResolverLive)),
-);
 const supportRecoveryPrincipalLive = SupportRecoveryPrincipalContextResolverLive.pipe(
   Layer.provide(CorePersistenceLive),
   Layer.orDie,
@@ -1715,13 +1722,36 @@ export const makeShellAuthenticationApiRuntime = (
 ): EffectBffDefinition<typeof ShellAuthenticationApi> &
   EffectBffRuntime<typeof ShellAuthenticationApi> => {
   const issueGatewayContextAssertion = makeGatewayIssuer(issuerDependencies);
+  const runtimeResourcesLayer = Layer.mergeAll(ModuleStateGateLive, OutboxRepositoryLive).pipe(
+    Layer.provideMerge(moduleStateLayer),
+    Layer.provide(CorePersistenceLive),
+    Layer.orDie,
+  );
   const moduleCatalogLayer =
     loadInstalledModuleCatalog === undefined
       ? ShellInstalledModuleCatalogLive
       : Layer.succeed(ShellInstalledModuleCatalog, { load: loadInstalledModuleCatalog });
-  const readRuntimeLayer = makeReadRuntimeLive(contextAccessLayer).pipe(
-    Layer.provide(CorePersistenceLive),
+  const runtimeDependenciesLayer = Layer.mergeAll(
+    ModuleEntrypointGatewayLive.pipe(Layer.provide(runtimeResourcesLayer)),
+    OperationalScopeResolverLive.pipe(
+      Layer.provide(Layer.mergeAll(CorePersistenceLive, contextAccessLayer)),
+    ),
+    CorePersistenceLive,
+    contextAccessLayer,
+  );
+  const readRuntimeLayer = ReadRuntimeLive.pipe(
+    Layer.provide(runtimeDependenciesLayer),
     Layer.orDie,
+  );
+  const actionRuntimeLive = ActionRuntimeLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(ActionRepositoryLive, ActionPermissionLive, runtimeDependenciesLayer),
+    ),
+    Layer.provide(runtimeResourcesLayer),
+    Layer.orDie,
+  );
+  const identityLifecycleLive = IdentityLifecycleLive.pipe(
+    Layer.provide(Layer.mergeAll(actionRuntimeLive, apiKeyServiceLive, principalResolverLive)),
   );
   const providerAssertionIssuer = {
     issueAssertion: ({
@@ -1773,7 +1803,14 @@ export const makeShellAuthenticationApiRuntime = (
     scopedModuleStateFactory,
   ).pipe(
     Layer.provide(
-      Layer.mergeAll(readRuntimeLayer, moduleStateLayer, moduleCatalogLayer, contextAccessLayer),
+      Layer.mergeAll(
+        readRuntimeLayer,
+        moduleStateLayer,
+        moduleCatalogLayer,
+        contextAccessLayer,
+        ShellCompositionFactoryLive,
+        ShellResourceServicesFactoryLive,
+      ),
     ),
   );
   const supportImpersonationServiceLive = SupportImpersonationServiceLive.pipe(
@@ -1817,12 +1854,11 @@ export const makeShellAuthenticationApiRuntime = (
         supportImpersonationServiceLive,
         principalResolverLive,
         legalEntityContextLive,
-        moduleStateLayer,
         moduleCatalogLayer,
         contextAccessLayer,
         shellGovernedReadsLayer,
         readRuntimeLayer,
-      ),
+      ).pipe(Layer.provideMerge(runtimeResourcesLayer)),
     ),
     Layer.orDie,
   ) satisfies EffectRuntimeLayer;

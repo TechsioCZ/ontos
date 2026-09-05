@@ -16,7 +16,23 @@ export class OutboxPayloadDecodeError extends Schema.TaggedError<OutboxPayloadDe
 export class OutboxPersistenceError extends Schema.TaggedError<OutboxPersistenceError>()(
   'OutboxPersistenceError',
   { code: Schema.Literal('outbox_persistence_failed'), ...reason },
-) {}
+) {
+  #persistenceCause: unknown = undefined;
+
+  static withCause<FailureCause>(cause: FailureCause): OutboxPersistenceError {
+    const failure = new OutboxPersistenceError({
+      code: 'outbox_persistence_failed',
+      reason: 'The Outbox Worker persistence operation failed',
+    });
+    failure.#persistenceCause = cause;
+    return failure;
+  }
+
+  static getCause(failure: OutboxPersistenceError): Cause.Cause<never> | undefined {
+    const cause = failure.#persistenceCause;
+    return cause === undefined ? undefined : Cause.die(cause);
+  }
+}
 
 export class OutboxClaimLostError extends Schema.TaggedError<OutboxClaimLostError>()(
   'OutboxClaimLostError',
@@ -47,25 +63,12 @@ export type OutboxWorkerError =
   | OutboxPersistenceError
   | OutboxWorkerDescriptorError;
 
-const persistenceCauses = new WeakMap<OutboxPersistenceError, unknown>();
-
-export const outboxPersistenceError = <FailureCause>(
-  cause: FailureCause,
-): OutboxPersistenceError => {
-  const failure = new OutboxPersistenceError({
-    code: 'outbox_persistence_failed',
-    reason: 'The Outbox Worker persistence operation failed',
-  });
-  persistenceCauses.set(failure, cause);
-  return failure;
-};
+export const outboxPersistenceError = <FailureCause>(cause: FailureCause): OutboxPersistenceError =>
+  OutboxPersistenceError.withCause(cause);
 
 export const getOutboxPersistenceCause = (
   failure: OutboxPersistenceError,
-): Cause.Cause<never> | undefined => {
-  const cause = persistenceCauses.get(failure);
-  return cause === undefined ? undefined : Cause.die(cause);
-};
+): Cause.Cause<never> | undefined => OutboxPersistenceError.getCause(failure);
 
 export const sanitizeOutboxErrorMessage = (message: string): string =>
   message

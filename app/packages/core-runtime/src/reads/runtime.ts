@@ -8,17 +8,10 @@ import {
 } from '../auth/system-principal-context-provenance.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import { runCoreTransaction, CoreTransactionBridgeFailure } from '../db/transaction-bridge.ts';
-import {
-  ModuleEntrypointGateway,
-  ModuleEntrypointGatewayLive,
-} from '../modules/module-entrypoint-gateway.ts';
+import { ModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import type { ModuleEntrypointGatewayService } from '../modules/module-entrypoint-gateway.ts';
-import {
-  ContextAccess,
-  ContextAccessLive,
-  LEGAL_ENTITY_PERMISSION_KEYS,
-} from '../permissions/context-access.ts';
-import { OperationalScopeResolver, OperationalScopeResolverLive } from '../operations/context.ts';
+import { ContextAccess, LEGAL_ENTITY_PERMISSION_KEYS } from '../permissions/context-access.ts';
+import { OperationalScopeResolver } from '../operations/context.ts';
 import type { OperationalScope, OperationalScopeResolverService } from '../operations/context.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
 import { PolicyDenied } from '../actions/policy.ts';
@@ -872,7 +865,7 @@ export class ReadRuntime extends Context.Service<ReadRuntime, ReadRuntimeService
   '@app/core-runtime/reads/runtime/ReadRuntime',
 ) {}
 
-const readRuntimeLayer = Layer.effect(
+export const ReadRuntimeLive = Layer.effect(
   ReadRuntime,
   Effect.gen(function* makeReadRuntimeService() {
     const database = yield* CoreDatabase;
@@ -882,17 +875,3 @@ const readRuntimeLayer = Layer.effect(
     return makeReadRuntime(database, gateway, scopeResolver, contextAccess);
   }),
 );
-
-export const makeReadRuntimeLive = (contextAccessLayer: Layer.Layer<ContextAccess>) => {
-  const operationalScopeResolverLayer = OperationalScopeResolverLive.pipe(
-    Layer.provide(contextAccessLayer),
-    Layer.fresh,
-  );
-  return readRuntimeLayer.pipe(
-    Layer.provide(ModuleEntrypointGatewayLive),
-    Layer.provide(operationalScopeResolverLayer),
-    Layer.provide(contextAccessLayer),
-  );
-};
-
-export const ReadRuntimeLive = makeReadRuntimeLive(ContextAccessLive);

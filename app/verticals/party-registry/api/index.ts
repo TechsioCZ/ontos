@@ -1,9 +1,16 @@
 import {
+  ActionPermissionLive,
+  ActionRepositoryLive,
   ActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
+  CoreSearchProjectionStoreLive,
   CoreSearchQueryRuntimeLive,
-  makeReadRuntimeLive,
+  ModuleEntrypointGatewayLive,
+  ModuleStateGateLive,
+  OperationalScopeResolverLive,
+  ReadRuntimeLive,
+  TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import type { ActionRuntime, ReadRuntime } from '@app/core-runtime';
 import {
@@ -91,6 +98,15 @@ const readShellOrigin = () => {
 };
 const shellOrigin = readShellOrigin();
 
+const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(
+  Layer.provide(CorePersistenceLive),
+  Layer.orDie,
+);
+const moduleStateLive = ModuleStateGateLive.pipe(
+  Layer.provideMerge(tenantModuleStateServiceLive),
+  Layer.orDie,
+);
+
 export const makePartyRegistryApiRuntime = (
   readRuntime: Layer.Layer<ReadRuntime>,
   aresSubjectService: Layer.Layer<AresSubjectService>,
@@ -136,14 +152,28 @@ export const makePartyRegistryApiRuntime = (
   return defineEffectBff({ api: partyRegistryApi, layer });
 };
 
-const readRuntimeLive = makeReadRuntimeLive(ContextAccessLive).pipe(
+const runtimeDependenciesLive = Layer.mergeAll(
+  OperationalScopeResolverLive,
+  ModuleEntrypointGatewayLive,
+).pipe(
+  Layer.provideMerge(ContextAccessLive),
+  Layer.provideMerge(moduleStateLive),
+  Layer.provideMerge(CorePersistenceLive),
+  Layer.orDie,
+);
+const readRuntimeLive = ReadRuntimeLive.pipe(Layer.provide(runtimeDependenciesLive));
+const actionRuntimeLive = ActionRuntimeLive.pipe(
+  Layer.provide(ActionRepositoryLive),
+  Layer.provide(ActionPermissionLive),
+  Layer.provide(runtimeDependenciesLive),
+);
+const aresSubjectServiceLive = AresSubjectServiceLive.pipe(Layer.provide(FetchHttpClient.layer));
+const coreSearchProjectionStoreLive = CoreSearchProjectionStoreLive.pipe(
   Layer.provide(CorePersistenceLive),
   Layer.orDie,
 );
-const actionRuntimeLive = ActionRuntimeLive.pipe(Layer.provide(CorePersistenceLive), Layer.orDie);
-const aresSubjectServiceLive = AresSubjectServiceLive.pipe(Layer.provide(FetchHttpClient.layer));
 const coreSearchQueryRuntimeLive = CoreSearchQueryRuntimeLive.pipe(
-  Layer.provide(CorePersistenceLive),
+  Layer.provide(coreSearchProjectionStoreLive),
   Layer.orDie,
 );
 const searchProjectionGatewayLive = PartySearchProjectionGatewayLive.pipe(

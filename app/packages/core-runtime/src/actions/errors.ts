@@ -81,7 +81,25 @@ export class ActionInvocationPersistenceError extends Schema.TaggedError<ActionI
     code: Schema.Literal('action_invocation_persistence_failed'),
     ...safeReason,
   },
-) {}
+) {
+  #persistenceCause: unknown = undefined;
+
+  static withCause<FailureCause>(
+    reason: string,
+    cause?: FailureCause,
+  ): ActionInvocationPersistenceError {
+    const failure = new ActionInvocationPersistenceError({
+      code: 'action_invocation_persistence_failed',
+      reason,
+    });
+    failure.#persistenceCause = cause;
+    return failure;
+  }
+
+  static getOriginalCause(failure: ActionInvocationPersistenceError): unknown {
+    return failure.#persistenceCause;
+  }
+}
 
 export class ActionInvocationNotFound extends Schema.TaggedError<ActionInvocationNotFound>()(
   'ActionInvocationNotFound',
@@ -153,7 +171,22 @@ export class ActionTransactionError extends Schema.TaggedError<ActionTransaction
     code: Schema.Literal('action_transaction_failed'),
     ...safeReason,
   },
-) {}
+) {
+  #transactionCause: unknown = undefined;
+
+  static withCause<FailureCause>(reason: string, cause?: FailureCause): ActionTransactionError {
+    const failure = new ActionTransactionError({
+      code: 'action_transaction_failed',
+      reason,
+    });
+    failure.#transactionCause = cause;
+    return failure;
+  }
+
+  static getOriginalCause(failure: ActionTransactionError): unknown {
+    return failure.#transactionCause;
+  }
+}
 
 export class ActionCommitIndeterminate extends Schema.TaggedError<ActionCommitIndeterminate>()(
   'ActionCommitIndeterminate',

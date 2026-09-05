@@ -6,7 +6,6 @@ import type { CoreTransaction } from '../db/types.ts';
 import { CoreDatabase } from '../db/client.ts';
 import { CoreTransactionBridgeFailure, runCoreTransaction } from '../db/transaction-bridge.ts';
 import { domainEvents, legalEntities, searchProjectionGenerations } from '../db/schema.ts';
-import { CorePersistenceLive } from '../runtime-infrastructure.ts';
 import { isVerifiedOutboxWorkerHandlerContext } from '../outbox/definition.ts';
 import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
 import { CORE_SEARCH_INGESTION_REGISTRATIONS } from './ingestion.ts';
@@ -385,10 +384,11 @@ export const makePostgresCoreSearchSnapshotBackend = (
   return { run };
 };
 
+/** Dependency-transparent worker snapshot; the host supplies CoreDatabase. */
 export const CoreSearchWorkerSnapshotLive = Layer.effect(
   CoreSearchWorkerSnapshot,
   Effect.gen(function* makeCoreSearchWorkerSnapshotLive() {
     const database = yield* CoreDatabase;
     return makeCoreSearchWorkerSnapshot(makePostgresCoreSearchSnapshotBackend(database));
   }),
-).pipe(Layer.provide(CorePersistenceLive));
+);

@@ -2,12 +2,20 @@
 // @ontos-outbox-worker-host-owner party.registry
 import { Layer } from 'effect';
 import {
+  CorePersistenceLive,
   CoreSearchIngestionLive,
   CoreSearchProjectionStoreLive,
   CoreSearchWorkerSnapshotLive,
+  OutboxRepositoryLive,
   OutboxWorkerInfrastructureLive,
 } from '@app/core-runtime';
+import type {
+  DatabaseConfigError,
+  DatabaseConnectionError,
+  OutboxRuntime,
+} from '@app/core-runtime';
 import { PartySearchProjectorLive } from '../services/party-search-projection.service.ts';
+import type { PartySearchProjector } from '../services/party-search-projection.service.ts';
 import { PartySearchProjectionSourceLive } from '../services/party-search-projection-source.service.ts';
 
 /** Private canonical reads run post-commit; only sanitized projections cross into Core Search. */
@@ -17,7 +25,10 @@ const outboxWorkerHandlerLayer = PartySearchProjectorLive.pipe(
   Layer.provide(CoreSearchProjectionStoreLive),
 );
 
-export const outboxWorkerLayer = Layer.merge(
-  OutboxWorkerInfrastructureLive,
-  outboxWorkerHandlerLayer,
+export const outboxWorkerLayer: Layer.Layer<
+  OutboxRuntime | PartySearchProjector,
+  DatabaseConfigError | DatabaseConnectionError
+> = Layer.merge(OutboxWorkerInfrastructureLive, outboxWorkerHandlerLayer).pipe(
+  Layer.provide(OutboxRepositoryLive),
+  Layer.provide(CorePersistenceLive),
 );

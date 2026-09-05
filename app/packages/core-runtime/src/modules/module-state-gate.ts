@@ -17,7 +17,6 @@ import {
   TENANT_MODULE_STATES,
   TenantModuleStateSchema,
   TenantModuleStateService,
-  TenantModuleStateServiceLive,
 } from './tenant-module-state-service.ts';
 import type {
   TenantModuleState,
@@ -328,4 +327,4 @@ export class ModuleStateGate extends Context.Service<ModuleStateGate, ModuleStat
 export const ModuleStateGateLive = Layer.effect(
   ModuleStateGate,
   TenantModuleStateService.pipe(Effect.map(makeModuleStateGate)),
-).pipe(Layer.provide(TenantModuleStateServiceLive));
+);

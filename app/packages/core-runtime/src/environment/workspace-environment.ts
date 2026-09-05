@@ -1,6 +1,5 @@
 /* oxlint-disable sonarjs/no-built-in-override, typescript/consistent-return */
-import { NodeFileSystem, NodePath } from '@effect/platform-node';
-import { Effect, FileSystem, Layer, Path } from 'effect';
+import { Effect, FileSystem, Path } from 'effect';
 import bootstrapEnvironment from './workspace-environment-bootstrap.cjs';
 
 const isAppWorkspace = (candidate: string) =>
@@ -43,17 +42,14 @@ const resolveAppWorkspaceRootWithServices = (startDirectory: string) =>
     }
   });
 
-const withNodeServices = <Value, Error>(
-  effect: Effect.Effect<Value, Error, FileSystem.FileSystem | Path.Path>,
-) =>
-  Effect.scoped(
-    Layer.build(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)).pipe(
-      Effect.flatMap((services) => Effect.provide(effect, services)),
-    ),
-  );
-
+/**
+ * Dependency-transparent workspace lookup.
+ *
+ * Node hosts provide FileSystem and Path at their composition root; this helper does not allocate a
+ * second platform layer or scope a hidden runtime for each lookup.
+ */
 export const resolveAppWorkspaceRootEffect = (startDirectory: string) =>
-  withNodeServices(resolveAppWorkspaceRootWithServices(startDirectory));
+  resolveAppWorkspaceRootWithServices(startDirectory);
 
 export const resolveAppWorkspaceRoot: (startDirectory: string) => string | undefined =
   bootstrapEnvironment.resolveAppWorkspaceRootSync;

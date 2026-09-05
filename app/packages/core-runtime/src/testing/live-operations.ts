@@ -7,7 +7,13 @@ import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Effect, Layer, Redacted } from 'effect';
 import { Pool } from 'pg';
+import { ActionRepositoryLive } from '../actions/repository.ts';
 import { ActionRuntimeLive } from '../actions/runtime.ts';
+import { ModuleEntrypointGatewayLive } from '../modules/module-entrypoint-gateway.ts';
+import { ModuleStateGateLive } from '../modules/module-state-gate.ts';
+import { TenantModuleStateServiceLive } from '../modules/tenant-module-state-service.ts';
+import { OperationalScopeResolverLive } from '../operations/context.ts';
+import { ActionPermissionLive } from '../permissions/service.ts';
 import { CoreDatabase } from '../db/client.ts';
 import {
   actionInvocations,
@@ -23,6 +29,7 @@ import {
   tenantModuleStates,
 } from '../db/schema.ts';
 import {
+  ContextAccessLive,
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
   toResourceAccessObjectId,
@@ -178,9 +185,21 @@ export const makeLiveOperationFixture = async (configuration: {
     },
   };
   const faultExecutor: typeof executor = Object.assign(Object.create(executor), transactionFault);
+  const databaseLive = Layer.succeed(CoreDatabase, { executor });
+  const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(TenantModuleStateServiceLive));
+  // Shared authorization and scope reads use the fixture database; only Action commits inject faults.
+  const runtimeDependenciesLive = Layer.mergeAll(
+    ActionRepositoryLive,
+    ActionPermissionLive,
+    ModuleEntrypointGatewayLive.pipe(Layer.provideMerge(moduleStateGateLive)),
+    OperationalScopeResolverLive,
+  ).pipe(Layer.provideMerge(ContextAccessLive), Layer.provide(databaseLive));
   const layer = Layer.mergeAll(
-    ActionRuntimeLive.pipe(Layer.provide(Layer.succeed(CoreDatabase, { executor: faultExecutor }))),
-    ReadRuntimeLive.pipe(Layer.provide(Layer.succeed(CoreDatabase, { executor }))),
+    ActionRuntimeLive.pipe(
+      Layer.provide(runtimeDependenciesLive),
+      Layer.provide(Layer.succeed(CoreDatabase, { executor: faultExecutor })),
+    ),
+    ReadRuntimeLive.pipe(Layer.provide(runtimeDependenciesLive), Layer.provide(databaseLive)),
   );
   return {
     denied,

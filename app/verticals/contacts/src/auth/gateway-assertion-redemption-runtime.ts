@@ -1,9 +1,7 @@
 import {
-  DatabaseConfig,
   GatewayAssertionRedemptionService,
   GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
-  loadDatabaseConfig,
 } from '@app/core-runtime';
 import type {
   GatewayAssertionRedemption,
@@ -12,7 +10,7 @@ import type {
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
 import { lt } from 'drizzle-orm';
 import { Clock, DateTime, Effect, Layer, Schema } from 'effect';
-import { ContactsDatabase, ContactsDatabaseLive } from '../db/client.ts';
+import { ContactsDatabase } from '../db/client.ts';
 import { gatewayAssertionRedemptions } from '../db/schema.ts';
 import type { ContactsDatabaseExecutor } from '../db/types.ts';
 
@@ -63,12 +61,7 @@ export const makeGatewayAssertionRedemption = (
     }),
 });
 
-const contactsDatabaseLive = ContactsDatabaseLive.pipe(
-  Layer.provide(Layer.effect(DatabaseConfig, loadDatabaseConfig())),
-  Layer.orDie,
-);
-
 export const GatewayAssertionRedemptionLive = Layer.effect(
   GatewayAssertionRedemptionService,
   ContactsDatabase.pipe(Effect.map(({ executor }) => makeGatewayAssertionRedemption(executor))),
-).pipe(Layer.provide(contactsDatabaseLive));
+);

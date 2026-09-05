@@ -21,7 +21,7 @@ import {
   OutboxWorkerDescriptorError,
 } from './errors.ts';
 import type { OutboxClaimLostError } from './errors.ts';
-import { OutboxRepository, OutboxRepositoryLive } from './repository.ts';
+import { OutboxRepository } from './repository.ts';
 import type { OutboxClaim, OutboxRepositoryService } from './repository.ts';
 
 const withOptionalProperty = <
@@ -390,7 +390,7 @@ export const OutboxRuntimeLive = Layer.effect(
     const repository = yield* OutboxRepository;
     return makeOutboxRuntime(repository);
   }),
-).pipe(Layer.provide(OutboxRepositoryLive));
+);
 
 export const runOutboxCycle = <Registration extends AnyOutboxWorkerRegistration>(
   input: RunOutboxCycleInput<Registration>,

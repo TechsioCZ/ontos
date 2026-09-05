@@ -45,13 +45,12 @@ import {
 } from './errors.ts';
 import type { ActionCoreError, ActionInvocationNotFound } from './errors.ts';
 import type { DomainEventContractMap } from './events.ts';
-import { ActionPermission, ActionPermissionLive } from '../permissions/service.ts';
+import { ActionPermission } from '../permissions/service.ts';
 import type { ActionPermissionService } from '../permissions/service.ts';
 import { PolicyDenied } from './policy.ts';
 import type { ActionPolicy, ActionPolicyEvaluatorInput } from './policy.ts';
 import {
   ActionRepository,
-  ActionRepositoryLive,
   computeActionRequestHash,
   computeCanonicalValueHash,
   getActionInvocationPersistenceFailureCause,
@@ -64,22 +63,19 @@ import type {
   ActionPolicyEvidence,
   ActionRepositoryService,
 } from './repository.ts';
-import {
-  ModuleEntrypointGateway,
-  ModuleEntrypointGatewayLive,
-} from '../modules/module-entrypoint-gateway.ts';
+import { ModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import type { ModuleEntrypointGatewayService } from '../modules/module-entrypoint-gateway.ts';
 import type {
   ModuleEntrypointDescriptor,
   TenantModuleEntrypoint,
 } from '../modules/module-entrypoint.ts';
-import { ModuleStateGate, ModuleStateGateLive } from '../modules/module-state-gate.ts';
+import { ModuleStateGate } from '../modules/module-state-gate.ts';
 import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import { runCoreTransaction, CoreTransactionBridgeFailure } from '../db/transaction-bridge.ts';
-import { OperationalScopeResolver, OperationalScopeResolverLive } from '../operations/context.ts';
+import { OperationalScopeResolver } from '../operations/context.ts';
 import type { OperationalScope, OperationalScopeResolverService } from '../operations/context.ts';
-import { ContextAccess, ContextAccessLive } from '../permissions/context-access.ts';
+import { ContextAccess } from '../permissions/context-access.ts';
 
 const withOptionalProperty = <
   Base extends object,
@@ -1179,13 +1175,6 @@ export const ActionRuntimeLive = Layer.effect(
       moduleStateGate,
     });
   }),
-).pipe(
-  Layer.provide(ActionRepositoryLive),
-  Layer.provide(ActionPermissionLive),
-  Layer.provide(ModuleEntrypointGatewayLive),
-  Layer.provide(ModuleStateGateLive),
-  Layer.provide(OperationalScopeResolverLive),
-  Layer.provide(ContextAccessLive),
 );
 
 export const runAction = <

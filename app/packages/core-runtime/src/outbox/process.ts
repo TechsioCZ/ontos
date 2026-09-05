@@ -2,8 +2,6 @@
 // @effect-diagnostics asyncFunction:off
 /* eslint-disable promise/prefer-await-to-then -- Promises are used only at the Node process edge. */
 import { Config, Effect, Layer, ManagedRuntime, Option, Random } from 'effect';
-import { DatabaseConfigLive } from '../db/config.ts';
-import { CoreDatabaseLive } from '../db/client.ts';
 import type {
   AnyOutboxWorkerRegistration,
   OutboxWorkerRequirements,
@@ -48,10 +46,12 @@ const waitForShutdownSignal = Effect.callback<ShutdownSignal>((resume) => {
 
 const healthPortConfig = Config.option(Config.port('OUTBOX_WORKER_HEALTH_PORT'));
 
-export const OutboxWorkerInfrastructureLive = OutboxRuntimeLive.pipe(
-  Layer.provide(CoreDatabaseLive),
-  Layer.provide(DatabaseConfigLive),
-);
+/**
+ * Dependency-transparent Outbox Worker runtime layer.
+ *
+ * The worker host composes OutboxRepository and CoreDatabase at its process root.
+ */
+export const OutboxWorkerInfrastructureLive = OutboxRuntimeLive;
 
 export const runOutboxWorkerProcess = <Registration extends AnyOutboxWorkerRegistration>(
   input: RunOutboxWorkerProcessInput<Registration>,

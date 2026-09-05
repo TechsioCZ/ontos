@@ -67,8 +67,10 @@ import {
   createShellGovernedReadsLayer,
 } from '../../api/modules/shell-governed-reads.ts';
 import { ShellInstalledModuleCatalog } from '../../api/modules/installed-module-catalog.ts';
+import { ShellCompositionFactoryLive } from '../../api/modules/shell-composition.ts';
 import {
   ShellProviderUnavailableError,
+  ShellResourceServicesFactoryLive,
   makeShellSearch,
 } from '../../api/modules/shell-resources.ts';
 import type { ShellResourceGateways } from '../../api/modules/shell-resources.ts';
@@ -827,6 +829,8 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
     ).pipe(
       Layer.provide(
         Layer.mergeAll(
+          ShellCompositionFactoryLive,
+          ShellResourceServicesFactoryLive,
           Layer.succeed(ReadRuntime, readRuntime),
           Layer.succeed(ContextAccess, contextAccess),
           Layer.succeed(TenantModuleStateService, moduleStates),

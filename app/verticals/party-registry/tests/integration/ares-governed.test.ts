@@ -7,7 +7,12 @@ import { once } from 'node:events';
 import { promisify } from 'node:util';
 import { text as readText } from 'node:stream/consumers';
 import test from 'node:test';
-import { loadDatabaseConnectionPair } from '@app/core-runtime';
+import {
+  CorePersistenceLive,
+  loadDatabaseConnectionPair,
+  ModuleStateGateLive,
+  TenantModuleStateServiceLive,
+} from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { ConfigProvider, Effect, Layer, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
@@ -93,6 +98,13 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
     ].map(({ descriptor }) => descriptor.actionKey),
     runtimeConnectionString: Redacted.value(connections.runtime.connectionString),
   });
+  const moduleStateLayer = ModuleStateGateLive.pipe(
+    Layer.provideMerge(
+      TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive), Layer.orDie),
+    ),
+    Layer.orDie,
+  );
+  const fixtureLayer = fixture.layer.pipe(Layer.provide(moduleStateLayer));
   const pool = new Pool({ connectionString: Redacted.value(connections.admin.connectionString) });
   const admin = drizzle({ client: pool, relations: partyRelations });
   const { privateKey, publicKey } = await generateKeyPair('Ed25519');
@@ -139,7 +151,7 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
     partyContactPointsReadApiLive,
     aresLookupReadApiLive.pipe(Layer.provide(upstream)),
   ).pipe(
-    Layer.provide(fixture.layer),
+    Layer.provide(fixtureLayer),
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
@@ -153,7 +165,7 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
   const app = HttpRouter.toWebHandler(
     HttpApiBuilder.layer(api).pipe(
       Layer.provide(handlers),
-      Layer.provideMerge(fixture.layer),
+      Layer.provideMerge(fixtureLayer),
       Layer.provideMerge(upstream),
       Layer.provide(HttpServer.layerServices),
     ),
