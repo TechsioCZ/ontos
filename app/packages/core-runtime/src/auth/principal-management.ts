@@ -5,17 +5,14 @@ import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import { principalAuthBindings, principals } from '../db/schema.ts';
 import type { BindingStatus, PrincipalKind, PrincipalStatus } from '../db/schema.ts';
 import {
+  identityPersistenceUnavailableError,
   IdentityLifecycleConflictError,
-  IdentityPersistenceUnavailableError,
   IdentityTargetInvalidError,
 } from './principal-management-errors.ts';
 import type { PrincipalManagementError } from './principal-management-errors.ts';
 
-const persistenceFailure = () =>
-  new IdentityPersistenceUnavailableError({
-    code: 'identity_persistence_unavailable',
-    reason: 'Identity state could not be persisted',
-  });
+const persistenceFailure = (originalFailure?: unknown) =>
+  identityPersistenceUnavailableError(originalFailure);
 const conflict = (reason: string) =>
   new IdentityLifecycleConflictError({ code: 'identity_lifecycle_conflict', reason });
 const invalid = (reason: string) =>
@@ -35,7 +32,7 @@ const hasDatabaseErrorCode = <Failure>(error: Failure, expectedCode: string): bo
 const bindingInsertFailure = <Failure>(error: Failure): PrincipalManagementError =>
   hasDatabaseErrorCode(error, '23505')
     ? conflict('The API key is already bound')
-    : persistenceFailure();
+    : persistenceFailure(error);
 
 type PrincipalRecord = Readonly<{ readonly kind: PrincipalKind; readonly status: PrincipalStatus }>;
 type ApiKeyBindingRecord = Readonly<{
@@ -227,15 +224,15 @@ export const createNonHumanPrincipal = (
   { readonly principalId: string; readonly status: 'active' },
   PrincipalManagementError
 > =>
-  Effect.tryPromise({
-    catch: persistenceFailure,
-    try: async () => {
-      const created = await repository.createPrincipal(input);
-      if (created === undefined) {
-        throw new Error('principal insert returned no row');
-      }
-      return { principalId: created.principalId, status: 'active' as const };
-    },
+  Effect.gen(function* createPrincipal() {
+    const created = yield* Effect.tryPromise({
+      catch: persistenceFailure,
+      try: () => repository.createPrincipal(input),
+    });
+    if (created === undefined) {
+      return yield* persistenceFailure();
+    }
+    return { principalId: created.principalId, status: 'active' as const };
   });
 
 export interface ChangePrincipalStatusInput {
@@ -308,16 +305,14 @@ export const bindApiKey = (
     if (target === undefined || target.status !== 'active' || !allowedKinds.includes(target.kind)) {
       return yield* invalid('The API key target is not eligible');
     }
-    return yield* Effect.tryPromise({
+    const created = yield* Effect.tryPromise({
       catch: bindingInsertFailure,
-      try: async () => {
-        const created = await repository.insertApiKeyBinding(input);
-        if (created === undefined) {
-          throw new Error('binding insert returned no row');
-        }
-        return { authBindingId: created.authBindingId, status: 'active' as const };
-      },
+      try: () => repository.insertApiKeyBinding(input),
     });
+    if (created === undefined) {
+      return yield* persistenceFailure();
+    }
+    return { authBindingId: created.authBindingId, status: 'active' as const };
   });
 
 export interface SetApiKeyBindingStatusInput {

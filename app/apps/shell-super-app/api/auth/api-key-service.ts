@@ -333,8 +333,8 @@ export const makeApiKeyService = (
     setEnabled: (keyId, enabled) =>
       Effect.tryPromise({
         catch: unavailable,
-        try: async () => {
-          const [updated] = await database
+        try: () =>
+          database
             .update(apikey)
             .set({ enabled, updatedAt: new Date() })
             .where(eq(apikey.id, keyId))
@@ -345,13 +345,12 @@ export const makeApiKeyService = (
               id: apikey.id,
               name: apikey.name,
               start: apikey.start,
-            });
-          if (updated === undefined) {
-            throw new Error('missing key');
-          }
-          return toSafe(updated);
-        },
-      }),
+            }),
+      }).pipe(
+        Effect.flatMap(([updated]) =>
+          updated === undefined ? Effect.fail(unavailable()) : Effect.succeed(toSafe(updated)),
+        ),
+      ),
     verify: (rawKey) =>
       Effect.tryPromise({
         catch: mapProviderError,

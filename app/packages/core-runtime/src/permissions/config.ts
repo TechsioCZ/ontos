@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off processEnv:off
 import { config as loadDotenv } from 'dotenv';
-import { Context, Effect, Layer, Redacted } from 'effect';
+import { Context, Effect, Layer, Redacted, Schema } from 'effect';
 import { APP_ENV_PATH } from '../environment/workspace-environment.ts';
 import { SpiceDbConfigError } from './config-error.ts';
 
@@ -31,7 +31,10 @@ const loadEnvironment = (
   envPath: string,
 ): Effect.Effect<Environment, SpiceDbConfigError> =>
   Effect.try({
-    catch: () => configFailure(`Unable to load the root environment from ${envPath}`),
+    catch: (error) =>
+      Schema.is(SpiceDbConfigError)(error)
+        ? error
+        : configFailure('Unable to load the root environment'),
     try: () => {
       const fileEnvironment: Record<string, string> = {};
       const result = loadDotenv({
@@ -41,20 +44,24 @@ const loadEnvironment = (
       });
       const dotenvErrorCode: string | undefined = result.error?.code;
 
-      if (
-        result.error !== undefined &&
-        dotenvErrorCode !== 'ENOENT' &&
-        dotenvErrorCode !== 'NOT_FOUND_DOTENV_ENVIRONMENT'
-      ) {
-        throw result.error;
-      }
-
       return {
-        ...fileEnvironment,
-        ...environment,
+        dotenvErrorCode,
+        fileEnvironment,
+        hasDotenvError: result.error !== undefined,
       };
     },
-  });
+  }).pipe(
+    Effect.flatMap(({ dotenvErrorCode, fileEnvironment, hasDotenvError }) =>
+      !hasDotenvError ||
+      dotenvErrorCode === 'ENOENT' ||
+      dotenvErrorCode === 'NOT_FOUND_DOTENV_ENVIRONMENT'
+        ? Effect.succeed({
+            ...fileEnvironment,
+            ...environment,
+          })
+        : Effect.fail(configFailure('Unable to load the root environment')),
+    ),
+  );
 
 const isLocalhostEndpoint = (endpoint: string): boolean => {
   try {

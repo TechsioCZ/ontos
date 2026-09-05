@@ -23,6 +23,7 @@ export interface DeploymentAllowlist {
 
 type JsonValue = Schema.Schema.Type<typeof Schema.Json>;
 const JsonObjectSchema = Schema.Record(Schema.String, Schema.Json);
+type JsonObject = Schema.Schema.Type<typeof JsonObjectSchema>;
 
 export interface DeploymentAllowlistInput {
   readonly environment: JsonValue;
@@ -30,30 +31,33 @@ export interface DeploymentAllowlistInput {
   readonly topology: JsonValue;
 }
 
+const invalid = (reason: string): DeploymentAllowlistConfigurationError =>
+  new DeploymentAllowlistConfigurationError({
+    code: 'deployment_allowlist_invalid',
+    reason,
+  });
+
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Build-time globals and JSON files enter here and are decoded immediately by the Json object schema.
-const object = (value: unknown) => {
+const object = (
+  value: unknown,
+): Effect.Effect<JsonObject, DeploymentAllowlistConfigurationError> => {
   if (!Predicate.isObjectKeyword(value) || value === null || Array.isArray(value)) {
-    throw new TypeError('expected object');
+    return Effect.fail(invalid('expected object'));
   }
-  return Schema.decodeUnknownSync(JsonObjectSchema)(value);
+  return Schema.decodeUnknownEffect(JsonObjectSchema)(value).pipe(
+    Effect.mapError((error) => invalid(error.message)),
+  );
 };
 
 const member = (
   record: Readonly<Record<string, JsonValue | undefined>>,
   key: string,
-): JsonValue => {
+): Effect.Effect<JsonValue, DeploymentAllowlistConfigurationError> => {
   const value = record[key];
-  if (value === undefined) {
-    throw new TypeError(`missing JSON member ${key}`);
-  }
-  return value;
+  return value === undefined
+    ? Effect.fail(invalid(`missing JSON member ${key}`))
+    : Effect.succeed(value);
 };
-
-const invalid = () =>
-  new DeploymentAllowlistConfigurationError({
-    code: 'deployment_allowlist_invalid',
-    reason: 'The generated module deployment allowlist is invalid',
-  });
 
 const isLoopback = (hostname: string): boolean =>
   hostname === 'localhost' ||
@@ -61,85 +65,109 @@ const isLoopback = (hostname: string): boolean =>
   hostname === '[::1]' ||
   hostname.endsWith('.localhost');
 
-const normalizeContractUrl = <Value>(value: Value, environment: string): string => {
+const normalizeContractUrl = <Value>(
+  value: Value,
+  environment: string,
+): Effect.Effect<string, DeploymentAllowlistConfigurationError> => {
   if (!Predicate.isString(value)) {
-    throw new TypeError('contract URL must be a string');
+    return Effect.fail(invalid('contract URL must be a string'));
   }
-  const url = new URL(value);
-  if (
-    url.username !== '' ||
-    url.password !== '' ||
-    url.hash !== '' ||
-    url.search !== '' ||
-    url.pathname !== ONTOS_MODULE_CONTRACT_PATH
-  ) {
-    throw new TypeError('contract URL contains unsupported authority or path data');
-  }
-  const developmentLoopback =
-    environment === 'development' && url.protocol === 'http:' && isLoopback(url.hostname);
-  if (url.protocol !== 'https:' && !developmentLoopback) {
-    throw new TypeError('contract URL must use HTTPS outside loopback development');
-  }
-  return url.href;
+
+  return Effect.sync(() => URL.parse(value)).pipe(
+    Effect.flatMap((url) => {
+      if (url === null) {
+        return Effect.fail(invalid('Invalid URL'));
+      }
+      if (
+        url.username !== '' ||
+        url.password !== '' ||
+        url.hash !== '' ||
+        url.search !== '' ||
+        url.pathname !== ONTOS_MODULE_CONTRACT_PATH
+      ) {
+        return Effect.fail(invalid('contract URL contains unsupported authority or path data'));
+      }
+      const developmentLoopback =
+        environment === 'development' && url.protocol === 'http:' && isLoopback(url.hostname);
+      if (url.protocol !== 'https:' && !developmentLoopback) {
+        return Effect.fail(invalid('contract URL must use HTTPS outside loopback development'));
+      }
+      return Effect.succeed(url.href);
+    }),
+  );
 };
+
+const decodeAppId = (
+  value: unknown,
+): Effect.Effect<OntosDeploymentAppId, DeploymentAllowlistConfigurationError> =>
+  Schema.decodeUnknownEffect(OntosDeploymentAppIdSchema)(value).pipe(
+    Effect.mapError((error) => invalid(error.message)),
+  );
 
 /** Decodes the generated topology/overlay pairing. Reachability never adds an entry. */
 export const deriveDeploymentAllowlist = (
   input: DeploymentAllowlistInput,
 ): Effect.Effect<DeploymentAllowlist, DeploymentAllowlistConfigurationError> =>
-  Effect.try({
-    catch: invalid,
-    try: () => {
-      const { environment } = input;
-      if (!Predicate.isString(environment) || environment.length === 0) {
-        throw new TypeError('environment is missing');
+  Effect.gen(function* () {
+    const { environment } = input;
+    if (!Predicate.isString(environment) || environment.length === 0) {
+      return yield* invalid('environment is missing');
+    }
+
+    const topology = yield* object(input.topology);
+    const overlay = yield* object(input.overlay);
+    const verticals = topology['verticals'];
+    if (overlay['environment'] !== environment || !Array.isArray(verticals)) {
+      return yield* invalid('topology and environment disagree');
+    }
+
+    const appIds: OntosDeploymentAppId[] = [];
+    for (const entry of verticals) {
+      const vertical = yield* object(entry);
+      if (vertical['kind'] !== 'vertical') {
+        return yield* invalid('topology contains an invalid vertical');
       }
-      const topology = object(input.topology);
-      const overlay = object(input.overlay);
-      if (overlay['environment'] !== environment || !Array.isArray(topology['verticals'])) {
-        throw new TypeError('topology and environment disagree');
+      appIds.push(yield* decodeAppId(vertical['id']));
+    }
+    if (new Set(appIds).size !== appIds.length) {
+      return yield* invalid('topology contains duplicate app IDs');
+    }
+
+    const configured = yield* object(yield* member(overlay, 'ontosModuleManifests'));
+    const configuredIds = Object.keys(configured).toSorted();
+    const expectedIds = [...appIds].toSorted();
+    if (JSON.stringify(configuredIds) !== JSON.stringify(expectedIds)) {
+      return yield* invalid('allowlist keys do not exactly match topology verticals');
+    }
+
+    const normalizedUrls = new Set<string>();
+    const entries: DeploymentAllowlistEntry[] = [];
+    for (const appId of expectedIds) {
+      const contractUrl = yield* normalizeContractUrl(configured[appId], environment);
+      if (normalizedUrls.has(contractUrl)) {
+        return yield* invalid('allowlist contains duplicate normalized URLs');
       }
-      const appIds = topology['verticals'].map((entry): OntosDeploymentAppId => {
-        const vertical = object(entry);
-        if (vertical['kind'] !== 'vertical') {
-          throw new TypeError('topology contains an invalid vertical');
-        }
-        return Schema.decodeUnknownSync(OntosDeploymentAppIdSchema)(vertical['id']);
-      });
-      if (new Set(appIds).size !== appIds.length) {
-        throw new TypeError('topology contains duplicate app IDs');
-      }
-      const configured = object(member(overlay, 'ontosModuleManifests'));
-      const configuredIds = Object.keys(configured).toSorted();
-      const expectedIds = [...appIds].toSorted();
-      if (JSON.stringify(configuredIds) !== JSON.stringify(expectedIds)) {
-        throw new TypeError('allowlist keys do not exactly match topology verticals');
-      }
-      const normalizedUrls = new Set<string>();
-      const entries = expectedIds.map((appId) => {
-        const contractUrl = normalizeContractUrl(configured[appId], environment);
-        if (normalizedUrls.has(contractUrl)) {
-          throw new TypeError('allowlist contains duplicate normalized URLs');
-        }
-        normalizedUrls.add(contractUrl);
-        return Object.freeze({ appId, contractUrl });
-      });
-      const revision = JSON.stringify({
-        entries,
-        environment,
-        schemaVersion: overlay['schemaVersion'],
-      });
-      return Object.freeze({ entries: Object.freeze(entries), revision });
-    },
+      normalizedUrls.add(contractUrl);
+      entries.push(Object.freeze({ appId, contractUrl }));
+    }
+
+    const revision = JSON.stringify({
+      entries,
+      environment,
+      schemaVersion: overlay['schemaVersion'],
+    });
+    return Object.freeze({ entries: Object.freeze(entries), revision });
   });
 
 declare const ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: unknown;
 
-export const deploymentAllowlist = Effect.suspend(() => {
-  const injected = object(ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST);
-  return deriveDeploymentAllowlist({
-    environment: member(injected, 'environment'),
-    overlay: member(injected, 'overlay'),
-    topology: member(injected, 'topology'),
-  });
-});
+export const deploymentAllowlist = Effect.suspend(() =>
+  Effect.gen(function* () {
+    const injected = yield* object(ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST);
+    return yield* deriveDeploymentAllowlist({
+      environment: yield* member(injected, 'environment'),
+      overlay: yield* member(injected, 'overlay'),
+      topology: yield* member(injected, 'topology'),
+    });
+  }),
+);

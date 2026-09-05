@@ -3,7 +3,7 @@
 /* eslint-disable no-await-in-loop, unicorn/no-await-expression-member, anti-slop/no-conditional-empty-object-spread, anti-slop/no-unsafe-dictionary-type -- Sequential state assertions and deliberately malformed unknown overrides make the projection boundary contract explicit. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect } from 'effect';
+import { Effect, Exit } from 'effect';
 import {
   makeCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
@@ -423,6 +423,88 @@ test('Core Search rejects malformed or cross-owner rebuild documents without par
     }),
   );
   assert.equal(result.length, 1);
+});
+
+test('projection validation separates malformed input from unexpected defects', (t) => {
+  const store = makeInMemoryCoreSearchProjectionStore();
+  const rebuild = {
+    documents: [party()],
+    moduleId: partyRef.moduleId,
+    rebuildVersion: '2',
+    resourceType: partyRef.resourceType,
+    tenantId,
+  };
+  for (const operation of [store.apply, store.replace]) {
+    const failure = Effect.runSync(Effect.flip(operation({ unexpected: true })));
+    assert.equal(failure._tag, 'CoreSearchProjectionInvalid');
+  }
+  const defect = new Error('unexpected input accessor failure');
+  const brokenDocument = {
+    ...party(),
+    get title(): string {
+      throw defect;
+    },
+  };
+  t.mock.method(Date, 'parse', () => {
+    throw defect;
+  });
+  const temporal = party({
+    temporalSearchableText: [{ validFrom: '2026-01-01', value: 'Evidence' }],
+  });
+  for (const operation of [
+    store.apply({ document: brokenDocument, kind: 'upsert' }),
+    store.replace({ ...rebuild, documents: [brokenDocument] }),
+    store.apply({ document: temporal, kind: 'upsert' }),
+    store.replace({ ...rebuild, documents: [temporal] }),
+  ]) {
+    const exit = Effect.runSyncExit(operation);
+    assert.ok(Exit.isFailure(exit));
+    assert.equal(exit.cause.reasons.length, 1);
+    const reason = exit.cause.reasons[0];
+    assert.equal(reason?._tag, 'Die');
+    assert.ok(reason?._tag === 'Die');
+    assert.equal(reason.defect, defect);
+  }
+});
+
+test('late rebuild conflicts publish neither staged documents nor a rebuild floor', () => {
+  const store = makeInMemoryCoreSearchProjectionStore();
+  const original = party({ projectionVersion: '2' });
+  const staged = party({ projectionVersion: '3', ref: aliasRef, title: 'Staged' });
+  const rebuild = {
+    documents: [staged, party({ projectionVersion: '2', title: 'Conflict' })],
+    moduleId: partyRef.moduleId,
+    rebuildVersion: '4',
+    resourceType: partyRef.resourceType,
+    tenantId,
+  };
+  const candidates = () =>
+    Effect.runSync(
+      store.queryCandidates({
+        includeArchived: true,
+        moduleId: partyRef.moduleId,
+        query: 'acme',
+        resourceType: partyRef.resourceType,
+        tenantId,
+      }),
+    );
+  Effect.runSync(store.apply({ document: original, kind: 'upsert' }));
+  for (const operation of [
+    store.apply({ document: party({ projectionVersion: '2', title: 'Conflict' }), kind: 'upsert' }),
+    store.apply({ kind: 'delete', projectionVersion: '2', ref: partyRef }),
+    store.replace(rebuild),
+    store.replace({ ...rebuild, documents: [staged, staged] }),
+    store.replace({ ...rebuild, documents: [party({ projectionVersion: '5' })] }),
+  ]) {
+    assert.equal(Effect.runSync(Effect.flip(operation))._tag, 'CoreSearchProjectionInvalid');
+    assert.deepEqual(candidates(), [original]);
+  }
+  Effect.runSync(store.apply({ document: staged, kind: 'upsert' }));
+  assert.deepEqual(candidates(), [original, staged]);
+  const valid = { ...rebuild, documents: [original, staged] };
+  Effect.runSync(store.replace(valid));
+  Effect.runSync(store.replace({ ...valid, documents: [staged, original] }));
+  assert.deepEqual(candidates(), [original, staged]);
 });
 
 test('Core Search makes duplicate and out-of-order lifecycle observations harmless', async () => {

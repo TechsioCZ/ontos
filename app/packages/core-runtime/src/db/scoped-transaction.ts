@@ -1,6 +1,6 @@
 // @effect-diagnostics asyncFunction:off
 import { sql } from 'drizzle-orm';
-import { Effect } from 'effect';
+import { Cause, Effect } from 'effect';
 import { pgPolicy } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { OperationalScope } from '../operations/context.ts';
@@ -32,6 +32,11 @@ export interface OperationalScopeTransactionService {
   readonly verify: () => Promise<SettingRow | undefined>;
 }
 
+/** Internal diagnostics bridge; the original failure never enters the wire contract. */
+export const getOperationContextUnavailableCause = (
+  failure: OperationContextUnavailable,
+): Cause.Cause<never> | undefined => failure.diagnosticCause;
+
 const operationalScopeTransactionFromCoreTransaction = (
   transaction: CoreTransaction,
 ): OperationalScopeTransactionService => ({
@@ -54,33 +59,59 @@ const operationalScopeTransactionFromCoreTransaction = (
   },
 });
 
+const installOperationalScopeStep = (
+  transaction: OperationalScopeTransactionService,
+  scope: OperationalScope,
+): Effect.Effect<void, OperationContextUnavailable> =>
+  Effect.tryPromise({
+    catch: (cause) =>
+      OperationContextUnavailable.fromCause(
+        'The database operation scope could not be installed',
+        cause,
+      ),
+    try: () => transaction.install(scope),
+  });
+
+const verifyOperationalScopeStep = (
+  transaction: OperationalScopeTransactionService,
+): Effect.Effect<SettingRow | undefined, OperationContextUnavailable> =>
+  Effect.tryPromise({
+    catch: (cause) =>
+      OperationContextUnavailable.fromCause(
+        'The database operation scope could not be verified',
+        cause,
+      ),
+    try: () => transaction.verify(),
+  });
+
+const validateOperationalScopeStep = (
+  setting: SettingRow | undefined,
+  scope: OperationalScope,
+): Effect.Effect<void, OperationContextUnavailable> =>
+  setting?.tenant_id === scope.tenantId && setting.legal_entity_id === (scope.legalEntityId ?? '')
+    ? Effect.void
+    : Effect.fail(
+        new OperationContextUnavailable({
+          code: 'operation_context_unavailable',
+          reason: 'The database operation scope does not match the requested scope',
+        }),
+      );
+
 export const installOperationalScopeFromTransactionService = (
   transaction: OperationalScopeTransactionService,
   scope: OperationalScope,
 ): Effect.Effect<ScopedTransactionExecutor, OperationContextUnavailable> =>
-  Effect.tryPromise({
-    catch: () =>
-      new OperationContextUnavailable({
-        code: 'operation_context_unavailable',
-        reason: 'The database operation scope could not be installed',
-      }),
-    try: async () => {
-      await transaction.install(scope);
-      const setting = await transaction.verify();
-      if (
-        setting?.tenant_id !== scope.tenantId ||
-        setting.legal_entity_id !== (scope.legalEntityId ?? '')
-      ) {
-        throw new Error('Transaction-local operation scope verification failed');
-      }
-      return Object.freeze({
-        delete: transaction.delete.bind(transaction),
-        insert: transaction.insert.bind(transaction),
-        [scopedTransaction]: true as const,
-        select: transaction.select.bind(transaction),
-        update: transaction.update.bind(transaction),
-      });
-    },
+  Effect.gen(function* installOperationalScopeEffect() {
+    yield* installOperationalScopeStep(transaction, scope);
+    const setting = yield* verifyOperationalScopeStep(transaction);
+    yield* validateOperationalScopeStep(setting, scope);
+    return Object.freeze({
+      delete: transaction.delete.bind(transaction),
+      insert: transaction.insert.bind(transaction),
+      [scopedTransaction]: true as const,
+      select: transaction.select.bind(transaction),
+      update: transaction.update.bind(transaction),
+    });
   });
 
 export const installOperationalScope = (

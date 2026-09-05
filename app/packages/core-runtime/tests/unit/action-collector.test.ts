@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 // @effect-diagnostics asyncFunction:off
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
-import { createActionCollector } from '../../src/actions/collector.ts';
+import {
+  createActionCollector,
+  getActionCollectorFailureCause,
+} from '../../src/actions/collector.ts';
+import { ActionCollectorError } from '../../src/actions/errors.ts';
 
 const event = (id: string) =>
   ({
@@ -151,6 +155,29 @@ void test('captures one immutable JSON audit-evidence object and rejects invalid
   assert.equal(invalid._tag, 'ActionCollectorError');
   assert.equal(undeclared._tag, 'ActionCollectorError');
   assert.equal(missingSchema._tag, 'ActionCollectorError');
+});
+
+void test('preserves decoder failures privately without expanding the Action error JSON', async () => {
+  const error = await Effect.runPromise(
+    Effect.flip(makeCollector().recordAuditEvidenceInput({ checkpoint: 1 })),
+  );
+  const originalFailure = getActionCollectorFailureCause(error);
+
+  if (originalFailure === null || typeof originalFailure !== 'object') {
+    assert.fail('Expected the decoder failure to be preserved');
+  }
+  Object.assign(originalFailure, {
+    credential: 'private-credential-value',
+    provider: 'private-provider-value',
+  });
+
+  assert.strictEqual(getActionCollectorFailureCause(error), originalFailure);
+  assert.deepEqual(Schema.encodeSync(ActionCollectorError)(error), {
+    _tag: 'ActionCollectorError',
+    code: 'action_collector_invalid',
+    reason: 'The Action audit evidence does not match its declared schema',
+  });
+  assert.doesNotMatch(JSON.stringify(error), /private-credential-value|private-provider-value/u);
 });
 
 void test('applies descriptor evidence policy and rejects incompatible evidence', async () => {

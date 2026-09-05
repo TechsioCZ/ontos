@@ -1,6 +1,6 @@
 import { expect, test } from '@rstest/core';
-import { Effect } from 'effect';
-import { parseAuthConfig } from '../../api/auth/config.ts';
+import { Cause, Effect, Exit } from 'effect';
+import { loadAuthConfig, parseAuthConfig } from '../../api/auth/config.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 
 const validEnvironment = {
@@ -41,6 +41,42 @@ test('requires a strong secret and PostgreSQL URL in the typed error channel', a
     expect(secretError._tag).toBe('AuthConfigError');
     expect(databaseError._tag).toBe('AuthConfigError');
   }));
+
+test('keeps malformed configuration typed and unexpected loader failures as defects', async () => {
+  const [baseUrlError, trustedOriginError] = await Promise.all([
+    Effect.runPromise(
+      Effect.flip(
+        parseAuthConfig({
+          ...validEnvironment,
+          BETTER_AUTH_URL: 'ftp://shell.example.test',
+        }),
+      ),
+    ),
+    Effect.runPromise(
+      Effect.flip(
+        parseAuthConfig({
+          ...validEnvironment,
+          BETTER_AUTH_TRUSTED_ORIGINS: 'not a URL',
+        }),
+      ),
+    ),
+  ]);
+
+  expect(baseUrlError._tag).toBe('AuthConfigError');
+  expect(trustedOriginError._tag).toBe('AuthConfigError');
+
+  const loaderExit = Effect.runSyncExit(
+    loadAuthConfig({
+      environment: validEnvironment,
+      envPath: String.fromCodePoint(0),
+    }),
+  );
+
+  expect(Exit.isFailure(loaderExit)).toBe(true);
+  if (Exit.isFailure(loaderExit)) {
+    expect(Cause.hasDies(loaderExit.cause)).toBe(true);
+  }
+});
 
 test('keeps gateway signing configuration independent from Better Auth configuration', async () => {
   const authentication = await Effect.runPromise(parseAuthConfig(validEnvironment));

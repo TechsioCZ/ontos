@@ -2,7 +2,8 @@
 /* eslint-disable no-await-in-loop -- The table-driven assertions intentionally preserve failure locality. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect } from 'effect';
+import { inspect } from 'node:util';
+import { Effect, Schema } from 'effect';
 import type { PrincipalManagementRepositoryService } from '../../src/auth/principal-management.ts';
 import {
   bindApiKey,
@@ -10,6 +11,7 @@ import {
   setApiKeyBindingStatus,
   validateSupportImpersonation,
 } from '../../src/auth/principal-management.ts';
+import { IdentityPersistenceUnavailableError } from '../../src/auth/principal-management-errors.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
@@ -216,6 +218,46 @@ void test('maps wrapped PostgreSQL uniqueness failures to a lifecycle conflict',
   );
 
   assert.equal(error._tag, 'IdentityLifecycleConflictError');
+});
+
+void test('preserves persistence causes outside the public error contract', async () => {
+  const originalFailure = Object.assign(new Error('private driver detail'), {
+    code: 'XX999',
+    credential: 'private credential',
+  });
+  const transaction = repository({
+    insertApiKeyBinding: async () => {
+      throw originalFailure;
+    },
+    loadPrincipal: async () => ({ kind: 'service', status: 'active' }),
+  });
+
+  const error = await Effect.runPromise(
+    Effect.flip(
+      bindApiKey(transaction, {
+        managed: true,
+        principalId,
+        providerSubjectId: 'provider-key-id',
+        tenantId,
+      }),
+    ),
+  );
+
+  assert.equal(error._tag, 'IdentityPersistenceUnavailableError');
+  if (!Schema.is(IdentityPersistenceUnavailableError)(error)) {
+    assert.fail('Expected a persistence-unavailable error');
+  }
+  assert.strictEqual(error.getOriginalFailure(), originalFailure);
+  const encoded = {
+    _tag: 'IdentityPersistenceUnavailableError',
+    code: 'identity_persistence_unavailable',
+    reason: 'Identity state could not be persisted',
+  } as const;
+  assert.deepEqual(Schema.encodeSync(IdentityPersistenceUnavailableError)(error), encoded);
+  const decoded = Schema.decodeUnknownSync(IdentityPersistenceUnavailableError)(encoded);
+  assert.equal(decoded.getOriginalFailure(), undefined);
+  assert.doesNotMatch(JSON.stringify(error), /private driver detail|private credential|XX999/u);
+  assert.doesNotMatch(inspect(error), /private driver detail|private credential|XX999/u);
 });
 
 void test('requires exactly one active tenant-local user binding for both impersonation participants', async () => {

@@ -1,6 +1,6 @@
 // @effect-diagnostics processEnv:off
 import { config as loadDotenv } from 'dotenv';
-import { Effect, Schema, Predicate } from 'effect';
+import { Effect, Predicate, Result, Schema } from 'effect';
 import { ROOT_ENV_PATH } from './config.ts';
 
 const withOptionalProperty = <
@@ -53,58 +53,75 @@ const PrivateJwkInputSchema = Schema.Struct({
 const isBase64Url = <Value>(value: Value): value is Value & string =>
   Predicate.isString(value) && value.length > 0 && /^[A-Za-z0-9_-]+$/u.test(value);
 
-const parsePrivateJwk = (encoded: string): Ed25519PrivateJwk => {
-  const parsed = Schema.decodeUnknownSync(PrivateJwkInputSchema)(JSON.parse(encoded));
-  if (!isBase64Url(parsed.kid) || !isBase64Url(parsed.x) || !isBase64Url(parsed.d)) {
-    throw new Error('Private JWK is not a signing Ed25519 key');
-  }
-  const keyOperations = parsed.key_ops;
-  if (
-    keyOperations !== undefined &&
-    (!Array.isArray(keyOperations) || keyOperations.length !== 1 || keyOperations[0] !== 'sign')
-  ) {
-    throw new Error('Private JWK key_ops must contain only sign');
-  }
+const malformedGatewayIssuerConfig = () =>
+  new GatewayIssuerConfigError({
+    reason: 'Gateway signing configuration is missing or malformed',
+  });
 
-  const privateJwk: Ed25519PrivateJwk = withOptionalProperty(
-    {
-      alg: 'EdDSA' as const,
-      crv: 'Ed25519' as const,
-      d: parsed.d,
-    },
-    keyOperations !== undefined,
-    'key_ops',
-    ['sign'],
-    {
-      kid: parsed.kid,
-      kty: 'OKP' as const,
-      use: 'sig' as const,
-      x: parsed.x,
-    },
-  );
-  return privateJwk;
-};
+const parsePrivateJwk = (
+  encoded: string,
+): Effect.Effect<Ed25519PrivateJwk, GatewayIssuerConfigError> =>
+  Effect.gen(function* parsePrivateJwkEffect() {
+    const decoded = Schema.decodeUnknownResult(Schema.fromJsonString(PrivateJwkInputSchema))(
+      encoded,
+    );
+    if (Result.isFailure(decoded)) {
+      return yield* malformedGatewayIssuerConfig();
+    }
+
+    const parsed = decoded.success;
+    if (!isBase64Url(parsed.kid) || !isBase64Url(parsed.x) || !isBase64Url(parsed.d)) {
+      return yield* malformedGatewayIssuerConfig();
+    }
+    const keyOperations = parsed.key_ops;
+    if (
+      keyOperations !== undefined &&
+      (!Array.isArray(keyOperations) || keyOperations.length !== 1 || keyOperations[0] !== 'sign')
+    ) {
+      return yield* malformedGatewayIssuerConfig();
+    }
+
+    const privateJwk: Ed25519PrivateJwk = withOptionalProperty(
+      {
+        alg: 'EdDSA' as const,
+        crv: 'Ed25519' as const,
+        d: parsed.d,
+      },
+      keyOperations !== undefined,
+      'key_ops',
+      ['sign'],
+      {
+        kid: parsed.kid,
+        kty: 'OKP' as const,
+        use: 'sig' as const,
+        x: parsed.x,
+      },
+    );
+    return privateJwk;
+  });
 
 export const parseGatewayIssuerConfig = (
   environment: Environment,
 ): Effect.Effect<GatewayIssuerConfigValue, GatewayIssuerConfigError> =>
-  Effect.try({
-    catch: () =>
-      new GatewayIssuerConfigError({
-        reason: 'Gateway signing configuration is missing or malformed',
-      }),
-    try: () => {
-      const issuer = environment['ONTOS_GATEWAY_ISSUER']?.trim();
-      const encodedJwk = environment['ONTOS_GATEWAY_PRIVATE_JWK']?.trim();
-      if (issuer === undefined || issuer.length === 0 || encodedJwk === undefined) {
-        throw new Error('Gateway issuer and private JWK are required');
-      }
-      const issuerUrl = new URL(issuer);
-      if (issuerUrl.protocol !== 'http:' && issuerUrl.protocol !== 'https:') {
-        throw new Error('Gateway issuer must use HTTP or HTTPS');
-      }
-      return { issuer, privateJwk: parsePrivateJwk(encodedJwk) };
-    },
+  Effect.gen(function* parseGatewayIssuerConfigEffect() {
+    const issuer = environment['ONTOS_GATEWAY_ISSUER']?.trim();
+    const encodedJwk = environment['ONTOS_GATEWAY_PRIVATE_JWK']?.trim();
+    if (issuer === undefined || issuer.length === 0 || encodedJwk === undefined) {
+      return yield* malformedGatewayIssuerConfig();
+    }
+
+    if (!URL.canParse(issuer)) {
+      return yield* malformedGatewayIssuerConfig();
+    }
+    const issuerUrl = new URL(issuer);
+    if (issuerUrl.protocol !== 'http:' && issuerUrl.protocol !== 'https:') {
+      return yield* malformedGatewayIssuerConfig();
+    }
+
+    return {
+      issuer,
+      privateJwk: yield* parsePrivateJwk(encodedJwk),
+    };
   });
 
 export interface LoadGatewayIssuerConfigOptions {
@@ -115,26 +132,25 @@ export interface LoadGatewayIssuerConfigOptions {
 export const loadGatewayIssuerConfig = (
   options: LoadGatewayIssuerConfigOptions = {},
 ): Effect.Effect<GatewayIssuerConfigValue, GatewayIssuerConfigError> =>
-  Effect.try({
-    catch: () =>
-      new GatewayIssuerConfigError({
-        reason: 'Unable to load the Shell gateway signing environment',
-      }),
-    try: () => {
-      const fileEnvironment: Record<string, string> = {};
-      const result = loadDotenv({
-        path: options.envPath ?? ROOT_ENV_PATH,
-        processEnv: fileEnvironment,
-        quiet: true,
-      });
-      const dotenvErrorCode: string | undefined = result.error?.code;
-      if (
-        result.error !== undefined &&
+  Effect.sync(() => {
+    const fileEnvironment: Record<string, string> = {};
+    const result = loadDotenv({
+      path: options.envPath ?? ROOT_ENV_PATH,
+      processEnv: fileEnvironment,
+      quiet: true,
+    });
+    return {
+      dotenvError: result.error,
+      environment: { ...fileEnvironment, ...(options.environment ?? process.env) },
+    };
+  }).pipe(
+    Effect.flatMap(({ dotenvError, environment }) => {
+      const dotenvErrorCode: string | undefined = dotenvError?.code;
+      return dotenvError !== undefined &&
         dotenvErrorCode !== 'ENOENT' &&
         dotenvErrorCode !== 'NOT_FOUND_DOTENV_ENVIRONMENT'
-      ) {
-        throw result.error;
-      }
-      return { ...fileEnvironment, ...(options.environment ?? process.env) };
-    },
-  }).pipe(Effect.flatMap(parseGatewayIssuerConfig));
+        ? Effect.die(dotenvError)
+        : Effect.succeed(environment);
+    }),
+    Effect.flatMap(parseGatewayIssuerConfig),
+  );

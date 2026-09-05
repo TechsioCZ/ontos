@@ -57,50 +57,57 @@ export class StageDemoBootstrapError extends Schema.TaggedError<StageDemoBootstr
 const configurationFailure = (reason: string): StageDemoBootstrapError =>
   new StageDemoBootstrapError({ code: 'stage_demo_configuration_invalid', reason });
 
-const required = (environment: StageDemoEnvironment, key: string): string => {
-  const value = environment[key]?.trim();
-  if (value === undefined || value.length === 0) {
-    throw configurationFailure(`${key} is required`);
-  }
-  return value;
-};
+const required = (environment: StageDemoEnvironment, key: string) =>
+  Effect.gen(function* () {
+    const value = environment[key]?.trim();
+    if (value === undefined || value.length === 0) {
+      return yield* configurationFailure(`${key} is required`);
+    }
+    return value;
+  });
 
-const parsePostgresUrl = (value: string): string => {
-  const url = new URL(value);
-  if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') {
-    throw configurationFailure('DATABASE_ADMIN_URL must use PostgreSQL');
-  }
-  return value;
-};
+const parsePostgresUrl = (value: string) =>
+  Effect.gen(function* () {
+    const url = URL.parse(value);
+    if (url === null) {
+      return yield* configurationFailure('The stage demo configuration is invalid');
+    }
+    if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') {
+      return yield* configurationFailure('DATABASE_ADMIN_URL must use PostgreSQL');
+    }
+    return value;
+  });
 
-const parseHttpOrigin = (value: string): string => {
-  const url = new URL(value);
-  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.origin !== value) {
-    throw configurationFailure('BETTER_AUTH_URL must be an HTTP origin');
-  }
-  return value;
-};
+const parseHttpOrigin = (value: string) =>
+  Effect.gen(function* () {
+    const url = URL.parse(value);
+    if (url === null) {
+      return yield* configurationFailure('The stage demo configuration is invalid');
+    }
+    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.origin !== value) {
+      return yield* configurationFailure('BETTER_AUTH_URL must be an HTTP origin');
+    }
+    return value;
+  });
 
 export const parseStageDemoBootstrapConfig = (
   environment: StageDemoEnvironment,
 ): Effect.Effect<StageDemoBootstrapConfig, StageDemoBootstrapError> =>
-  Effect.try({
-    catch: (cause) =>
-      Schema.is(StageDemoBootstrapError)(cause)
-        ? cause
-        : configurationFailure('The stage demo configuration is invalid'),
-    try: () => {
-      if (environment['ULTRAMODERN_DEPLOYMENT_ENVIRONMENT']?.trim() !== 'stage') {
-        throw configurationFailure('The demo bootstrap can run only in the stage environment');
-      }
-      const authSecret = required(environment, 'BETTER_AUTH_SECRET');
-      if (authSecret.length < 32) {
-        throw configurationFailure('BETTER_AUTH_SECRET must contain at least 32 characters');
-      }
-      const accountConfiguration = (account: (typeof STAGE_DEMO_ACCOUNTS)[number]) => {
-        const password = required(environment, account.passwordEnvironmentKey);
+  Effect.gen(function* () {
+    if (environment['ULTRAMODERN_DEPLOYMENT_ENVIRONMENT']?.trim() !== 'stage') {
+      return yield* configurationFailure(
+        'The demo bootstrap can run only in the stage environment',
+      );
+    }
+    const authSecret = yield* required(environment, 'BETTER_AUTH_SECRET');
+    if (authSecret.length < 32) {
+      return yield* configurationFailure('BETTER_AUTH_SECRET must contain at least 32 characters');
+    }
+    const accountConfiguration = (account: (typeof STAGE_DEMO_ACCOUNTS)[number]) =>
+      Effect.gen(function* () {
+        const password = yield* required(environment, account.passwordEnvironmentKey);
         if (password.length < 8) {
-          throw configurationFailure(
+          return yield* configurationFailure(
             `${account.passwordEnvironmentKey} must contain at least 8 characters`,
           );
         }
@@ -109,20 +116,19 @@ export const parseStageDemoBootstrapConfig = (
           password: Redacted.make(password),
           principalDisplayName: account.principalDisplayName,
         };
-      };
-      const accounts = [
-        accountConfiguration(STAGE_DEMO_ACCOUNTS[0]),
-        accountConfiguration(STAGE_DEMO_ACCOUNTS[1]),
-      ] as const;
-      return {
-        accounts,
-        authBaseUrl: parseHttpOrigin(required(environment, 'BETTER_AUTH_URL')),
-        authSecret: Redacted.make(authSecret),
-        databaseAdminUrl: Redacted.make(
-          parsePostgresUrl(required(environment, 'DATABASE_ADMIN_URL')),
-        ),
-      };
-    },
+      });
+    const accounts = [
+      yield* accountConfiguration(STAGE_DEMO_ACCOUNTS[0]),
+      yield* accountConfiguration(STAGE_DEMO_ACCOUNTS[1]),
+    ] as const;
+    return {
+      accounts,
+      authBaseUrl: yield* parseHttpOrigin(yield* required(environment, 'BETTER_AUTH_URL')),
+      authSecret: Redacted.make(authSecret),
+      databaseAdminUrl: Redacted.make(
+        yield* parsePostgresUrl(yield* required(environment, 'DATABASE_ADMIN_URL')),
+      ),
+    };
   });
 
 export const classifyExactStageDemoRecord = <Expected extends ExactRecord>(

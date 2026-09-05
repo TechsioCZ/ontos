@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off processEnv:off
 import { config as loadDotenv } from 'dotenv';
-import { Context, Effect, Layer, Redacted } from 'effect';
+import { Context, Effect, Layer, Redacted, Schema } from 'effect';
 import { APP_ENV_PATH } from '../environment/workspace-environment.ts';
 import { DatabaseConfigError } from './config-error.ts';
 
@@ -37,10 +37,12 @@ const loadEnvironment = (
   envPath: string,
 ): Effect.Effect<Environment, DatabaseConfigError> =>
   Effect.try({
-    catch: () =>
-      new DatabaseConfigError({
-        reason: `Unable to load the root environment from ${envPath}`,
-      }),
+    catch: (error) =>
+      Schema.is(DatabaseConfigError)(error)
+        ? error
+        : new DatabaseConfigError({
+            reason: 'Unable to load the root environment',
+          }),
     try: () => {
       const fileEnvironment: Record<string, string> = {};
       const result = loadDotenv({
@@ -50,20 +52,70 @@ const loadEnvironment = (
       });
       const dotenvErrorCode: string | undefined = result.error?.code;
 
-      if (
-        result.error !== undefined &&
-        dotenvErrorCode !== 'ENOENT' &&
-        dotenvErrorCode !== 'NOT_FOUND_DOTENV_ENVIRONMENT'
-      ) {
-        throw result.error;
-      }
-
       return {
-        ...fileEnvironment,
-        ...environment,
+        dotenvErrorCode,
+        fileEnvironment,
+        hasDotenvError: result.error !== undefined,
       };
     },
-  });
+  }).pipe(
+    Effect.flatMap(({ dotenvErrorCode, fileEnvironment, hasDotenvError }) =>
+      !hasDotenvError ||
+      dotenvErrorCode === 'ENOENT' ||
+      dotenvErrorCode === 'NOT_FOUND_DOTENV_ENVIRONMENT'
+        ? Effect.succeed({
+            ...fileEnvironment,
+            ...environment,
+          })
+        : Effect.fail(
+            new DatabaseConfigError({
+              reason: 'Unable to load the root environment',
+            }),
+          ),
+    ),
+  );
+
+const parseDatabaseUrl = (candidate: string): DatabaseConfigValue | undefined => {
+  try {
+    const parsed = new URL(candidate);
+
+    if (parsed.protocol !== 'postgres:' && parsed.protocol !== 'postgresql:') {
+      return undefined;
+    }
+
+    let databasePath = parsed.pathname;
+    while (databasePath.startsWith('/')) {
+      databasePath = databasePath.slice(1);
+    }
+    const database = decodeURIComponent(databasePath);
+    const host = parsed.hostname;
+    const port = parsed.port.length > 0 ? Math.trunc(Number(parsed.port)) : 5432;
+    const authorityUser = decodeURIComponent(parsed.username);
+    const queryUser = parsed.searchParams.getAll('user').at(-1);
+    const user = queryUser === undefined || queryUser.length === 0 ? authorityUser : queryUser;
+
+    if (
+      database.length === 0 ||
+      host.length === 0 ||
+      !Number.isSafeInteger(port) ||
+      port < 1 ||
+      port > 65_535 ||
+      user.length === 0
+    ) {
+      return undefined;
+    }
+
+    return {
+      connectionString: Redacted.make(candidate),
+      database,
+      host,
+      port,
+      user,
+    };
+  } catch {
+    return undefined;
+  }
+};
 
 export const parseDatabaseConfig = (
   environment: Environment,
@@ -78,45 +130,14 @@ export const parseDatabaseConfig = (
     );
   }
 
-  return Effect.try({
-    catch: () =>
-      new DatabaseConfigError({
-        reason: 'DATABASE_URL must be a valid PostgreSQL connection URL',
-      }),
-    try: () => {
-      const parsed = new URL(databaseUrl);
-
-      if (parsed.protocol !== 'postgres:' && parsed.protocol !== 'postgresql:') {
-        throw new Error('Unsupported database protocol');
-      }
-
-      const database = decodeURIComponent(parsed.pathname.replace(/^\/+/u, ''));
-      const host = parsed.hostname;
-      const port = parsed.port.length > 0 ? Math.trunc(Number(parsed.port)) : 5432;
-      const authorityUser = decodeURIComponent(parsed.username);
-      const queryUser = parsed.searchParams.getAll('user').at(-1);
-      const user = queryUser === undefined || queryUser.length === 0 ? authorityUser : queryUser;
-
-      if (
-        database.length === 0 ||
-        host.length === 0 ||
-        !Number.isSafeInteger(port) ||
-        port < 1 ||
-        port > 65_535 ||
-        user.length === 0
-      ) {
-        throw new Error('Incomplete PostgreSQL URL');
-      }
-
-      return {
-        connectionString: Redacted.make(databaseUrl),
-        database,
-        host,
-        port,
-        user,
-      };
-    },
-  });
+  const configuration = parseDatabaseUrl(databaseUrl);
+  return configuration === undefined
+    ? Effect.fail(
+        new DatabaseConfigError({
+          reason: 'DATABASE_URL must be a valid PostgreSQL connection URL',
+        }),
+      )
+    : Effect.succeed(configuration);
 };
 
 export const parseDatabaseConnectionPair = (
