@@ -923,6 +923,7 @@ export const makeActionRuntime = (
       notifyStage('invocation_running');
 
       let transactionBodyCompleted = false;
+      let handlerDefectCause: Cause.Cause<unknown> | undefined;
       const transactionExit = yield* Effect.exit(
         runCoreTransaction(database.executor, (drizzleTransaction: CoreTransaction) =>
           Effect.gen(function* actionTransactionBody() {
@@ -974,12 +975,14 @@ export const makeActionRuntime = (
 
             if (Exit.isFailure(handlerExit)) {
               if (Cause.hasDies(handlerExit.cause) || Cause.hasInterrupts(handlerExit.cause)) {
+                handlerDefectCause = handlerExit.cause;
                 return yield* Effect.failCause(
                   Cause.combine(Cause.fail(makeHandlerExecutionError()), handlerExit.cause),
                 );
               }
               const domainError = Cause.findErrorOption(handlerExit.cause);
               if (domainError._tag === 'None') {
+                handlerDefectCause = handlerExit.cause;
                 return yield* Effect.failCause(
                   Cause.combine(Cause.fail(makeHandlerExecutionError()), handlerExit.cause),
                 );
@@ -993,6 +996,7 @@ export const makeActionRuntime = (
                 ),
               );
               if (Exit.isFailure(decodedDomainError)) {
+                handlerDefectCause = handlerExit.cause;
                 return yield* Effect.failCause(
                   Cause.combine(Cause.fail(makeHandlerExecutionError()), handlerExit.cause),
                 );
@@ -1038,7 +1042,20 @@ export const makeActionRuntime = (
             invocationId: invocation.actionInvocationId,
           },
         );
-      } else if (failure._tag === 'Some' && Schema.is(ActionTransactionError)(failure.value)) {
+      }
+
+      if (handlerDefectCause !== undefined) {
+        // The bridge surfaces handler defects as a typed transaction failure; log the original Cause here.
+        yield* Effect.annotateLogs(
+          Effect.logError('Unexpected Action execution defect', handlerDefectCause),
+          {
+            actionKey: input.registration.descriptor.actionKey,
+            correlationId: transport.correlationId,
+            invocationId: invocation.actionInvocationId,
+          },
+        );
+      }
+      if (failure._tag === 'Some' && Schema.is(ActionTransactionError)(failure.value)) {
         const defectCause = getActionTransactionFailureCause(failure.value);
         if (defectCause !== undefined) {
           yield* Effect.annotateLogs(
