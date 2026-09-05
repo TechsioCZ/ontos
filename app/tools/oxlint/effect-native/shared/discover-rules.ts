@@ -1,6 +1,6 @@
 import { readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import type { Rule } from '@oxlint/plugins';
 
@@ -23,7 +23,7 @@ export async function discoverRules(
   for (const name of names) {
     if (!available.has(name)) throw new Error(`Unknown fixture rule: ${name}`);
     const module: { rule?: Rule; default?: Rule } = await import(
-      join(rulesDirectory, `${name}.ts`)
+      pathToFileURL(join(rulesDirectory, `${name}.ts`)).href
     );
     const rule = module.rule ?? module.default;
     if (rule === undefined) {

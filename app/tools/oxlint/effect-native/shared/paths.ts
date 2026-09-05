@@ -58,5 +58,5 @@ export function isTestFile(filename: string): boolean {
 }
 
 export function isScriptFile(filename: string): boolean {
-  return normalisePath(filename).startsWith('scripts/');
+  return /(?:^|\/)scripts\//u.test(normalisePath(filename));
 }

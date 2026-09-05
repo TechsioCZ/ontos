@@ -84,6 +84,12 @@ those guarantees. The audit's 145 clusters are not 145 syntactically decidable c
   tooling/test ancestry and requires positive evidence for every rule using production settings.
   Default-config negatives are checked too; explicitly overridden option fixtures stay in their
   own suite. Set `EFFECT_NATIVE_TEST_TMPDIR` to choose a temporary root.
+- `tests/paths.test.mts` and `tests/script-scope.test.mts`: verify nested script classification for
+  relative, POSIX, Windows drive-letter and UNC paths, plus real Oxlint default/opt-in behavior for
+  timer, dependency-parameter and factory-signature rules in app, vertical and package scripts.
+- `tests/discover-rules.test.mts`: verifies isolated discovery and file-URL imports, including a
+  real ESM load from a path containing spaces, URL delimiters and Unicode. Path-string coverage
+  does not substitute for a native Windows run of the full harness.
 - `tests/temporary-workspace.test.mts`: verifies cleanup after success and early/partial failures,
   preserving the original error and caller-owned files.
 - `tests/registration.test.mts`: imports the actual plugin/config and checks exports, error severity,
