@@ -30,5 +30,21 @@ BEGIN
     RAISE EXCEPTION 'auth.account has duplicate (issuer, account_id) identities; resolve them before rerunning this migration';
   END IF;
 END $$;--> statement-breakpoint
+-- Expand/contract compatibility: Better Auth 1.6 writers do not supply "issuer". Derive it with the
+-- same rule on insert so the previous Shell release keeps working against the expanded schema.
+-- Contraction (a later release, once no 1.6 writer remains): DROP TRIGGER + DROP FUNCTION.
+CREATE FUNCTION "auth"."account_issuer_compat"() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW."issuer" IS NULL THEN
+    NEW."issuer" := CASE
+      WHEN NEW."provider_id" = 'credential' THEN 'local:credential'
+      ELSE 'local:oauth:' || NEW."provider_id"
+    END;
+  END IF;
+  RETURN NEW;
+END $$;--> statement-breakpoint
+CREATE TRIGGER "account_issuer_compat"
+BEFORE INSERT ON "auth"."account"
+FOR EACH ROW EXECUTE FUNCTION "auth"."account_issuer_compat"();--> statement-breakpoint
 ALTER TABLE "auth"."account" ALTER COLUMN "issuer" SET NOT NULL;--> statement-breakpoint
 CREATE UNIQUE INDEX "auth_account_issuer_account_id_uk" ON "auth"."account" ("issuer","account_id");
