@@ -1,4 +1,4 @@
-// @effect-diagnostics asyncFunction:off globalTimers:off newPromise:off processEnv:off
+// @effect-diagnostics asyncFunction:off newPromise:off processEnv:off
 /* eslint-disable promise/avoid-new -- Controlled promises coordinate and bound the long-running test fiber. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -126,13 +126,13 @@ void test('runs immediately, survives a typed cycle failure, and continues polli
     { signal: controller.signal },
   );
 
-  await Promise.race([
-    observedThreeCalls,
-    new Promise<never>((_resolve, reject) => {
-      setTimeout(() => reject(new Error('polling loop did not continue')), 1000);
-    }),
-  ]);
-  controller.abort();
+  try {
+    await Effect.runPromise(
+      Effect.promise(() => observedThreeCalls).pipe(Effect.timeout('1 second')),
+    );
+  } finally {
+    controller.abort();
+  }
   await assert.rejects(running);
   assert.ok(calls >= 3);
   assert.deepEqual(healthTransitions.slice(0, 3), ['failed', 'ready', 'ready']);

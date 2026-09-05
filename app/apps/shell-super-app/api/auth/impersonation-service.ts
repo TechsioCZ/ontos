@@ -651,7 +651,7 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
                   try: async () => await store.deleteRecovery(created.response.session.id),
                 }),
               ],
-              { discard: true },
+              { concurrency: 1, discard: true },
             ).pipe(Effect.ignore, Effect.andThen(Effect.fail(error))),
           ),
         );
@@ -696,14 +696,17 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
           }
           if (recovered.state === 'restored' || recovered.state === 'expired') {
             const recoveries = yield* loadRecoveries(recovered.originalSessionId);
-            const outcomes = yield* Effect.forEach(recoveries, (recovery) =>
-              completeRecovery({
-                correlationId: input.correlationId,
-                recovery,
-                restoredSessionId: recovered.originalSessionId,
-                sessionTerminated: false,
-                setCookieHeaders: recovered.setCookieHeaders,
-              }),
+            const outcomes = yield* Effect.forEach(
+              recoveries,
+              (recovery) =>
+                completeRecovery({
+                  correlationId: input.correlationId,
+                  recovery,
+                  restoredSessionId: recovered.originalSessionId,
+                  sessionTerminated: false,
+                  setCookieHeaders: recovered.setCookieHeaders,
+                }),
+              { concurrency: 1 },
             );
             return {
               active: false as const,
@@ -730,14 +733,17 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
               setCookieHeaders: cookieHeaders(current.headers),
             };
           }
-          const outcomes = yield* Effect.forEach(recoveries, (recovery) =>
-            completeRecovery({
-              correlationId: input.correlationId,
-              recovery,
-              restoredSessionId: currentSessionId,
-              sessionTerminated: false,
-              setCookieHeaders: cookieHeaders(current.headers),
-            }),
+          const outcomes = yield* Effect.forEach(
+            recoveries,
+            (recovery) =>
+              completeRecovery({
+                correlationId: input.correlationId,
+                recovery,
+                restoredSessionId: currentSessionId,
+                sessionTerminated: false,
+                setCookieHeaders: cookieHeaders(current.headers),
+              }),
+            { concurrency: 1 },
           );
           return {
             active: false as const,

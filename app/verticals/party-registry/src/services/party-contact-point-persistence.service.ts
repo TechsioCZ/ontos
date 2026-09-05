@@ -1427,7 +1427,9 @@ export const listPartyContactPointRecords = (
         .orderBy(asc(partyContactPoints.recordedAt)),
     );
     const now = yield* DateTime.nowAsDate;
-    const dtos = yield* Effect.forEach(rows, (row) => loadDto(transaction, row, now, aliases));
+    const dtos = yield* Effect.forEach(rows, (row) => loadDto(transaction, row, now, aliases), {
+      concurrency: 1,
+    });
     return input.includeHistorical ? dtos : dtos.filter(({ current }) => current);
   });
 

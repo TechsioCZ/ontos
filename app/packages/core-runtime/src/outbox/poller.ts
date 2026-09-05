@@ -155,12 +155,15 @@ export function runOutboxPollingLoop<
         : Effect.void,
     ),
     Effect.catch((error) =>
-      Effect.all([
-        input.health?.cycleFailed ?? Effect.void,
-        Effect.annotateLogs(Effect.logError('Outbox polling cycle failed'), {
-          errorTag: error._tag,
-        }),
-      ]),
+      Effect.all(
+        [
+          input.health?.cycleFailed ?? Effect.void,
+          Effect.annotateLogs(Effect.logError('Outbox polling cycle failed'), {
+            errorTag: error._tag,
+          }),
+        ],
+        { concurrency: 1 },
+      ),
     ),
   );
 

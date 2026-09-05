@@ -1,5 +1,5 @@
 /* eslint-disable max-classes-per-file, no-await-in-loop -- Distinct typed failures and sequential bounded stream reads are deliberate. */
-// @effect-diagnostics asyncFunction:off globalTimers:off instanceOfSchema:off preferSchemaOverJson:off
+// @effect-diagnostics asyncFunction:off instanceOfSchema:off preferSchemaOverJson:off
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
   ONTOS_MODULE_CONTRACT_TIMEOUT_MS,
@@ -10,7 +10,7 @@ import type {
   InstalledDeploymentResolutionInput,
   InstalledModuleCatalog,
 } from '@app/core-runtime';
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, Duration, Effect, Exit, Layer, Schema } from 'effect';
 import type { DeploymentAllowlist } from './deployment-allowlist.ts';
 import { deploymentAllowlist } from './deployment-allowlist.ts';
 
@@ -67,7 +67,11 @@ const invalid = () =>
 
 type JsonValue = Schema.Schema.Type<typeof Schema.Json>;
 
-const readBoundedJson = async (response: Response, maxBytes: number): Promise<JsonValue> => {
+const readBoundedJson = async (
+  response: Response,
+  maxBytes: number,
+  signal: AbortSignal,
+): Promise<JsonValue> => {
   if (response.status < 200 || response.status >= 300 || response.redirected) {
     throw unavailable();
   }
@@ -83,64 +87,97 @@ const readBoundedJson = async (response: Response, maxBytes: number): Promise<Js
   if (reader === undefined) {
     throw unavailable();
   }
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const next = await reader.read();
-    if (next.done) {
-      break;
-    }
-    size += next.value.byteLength;
-    if (size > maxBytes) {
-      await reader.cancel();
+  let aborted = false;
+  const cancelOnAbort = () => {
+    aborted = true;
+    void reader.cancel().catch(() => undefined);
+  };
+  signal.addEventListener('abort', cancelOnAbort, { once: true });
+  try {
+    if (signal.aborted) {
+      cancelOnAbort();
       throw unavailable();
     }
-    chunks.push(next.value);
-  }
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  try {
-    return Schema.decodeUnknownSync(Schema.Json)(JSON.parse(new TextDecoder().decode(bytes)));
-  } catch {
-    throw invalid();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const next = await reader.read();
+      if (aborted || signal.aborted) {
+        throw unavailable();
+      }
+      if (next.done) {
+        break;
+      }
+      size += next.value.byteLength;
+      if (size > maxBytes) {
+        await reader.cancel();
+        throw unavailable();
+      }
+      chunks.push(next.value);
+    }
+    if (aborted || signal.aborted) {
+      throw unavailable();
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    try {
+      return Schema.decodeUnknownSync(Schema.Json)(JSON.parse(new TextDecoder().decode(bytes)));
+    } catch {
+      throw invalid();
+    }
+  } finally {
+    signal.removeEventListener('abort', cancelOnAbort);
   }
 };
 
-const fetchContract = async (
+const failedContract = (
+  expectedAppId: string,
+  reason: InstalledDeploymentFailureReason,
+): InstalledDeploymentResolutionInput => ({
+  expectedAppId,
+  outcome: 'failed',
+  reason,
+});
+
+const fetchContract = (
   appId: string,
   contractUrl: string,
   fetchContractDocument: ModuleContractFetch,
   options: Required<InstalledModuleCatalogLoaderOptions>,
-): Promise<InstalledDeploymentResolutionInput> => {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
-  try {
-    const response = await fetchContractDocument(contractUrl, {
-      headers: { accept: 'application/json' },
-      redirect: 'manual',
-      signal: controller.signal,
-    });
-    return {
-      contract: await readBoundedJson(response, options.maxBytes),
-      expectedAppId: appId,
-      outcome: 'fetched',
-    };
-  } catch (error) {
-    let reason: InstalledDeploymentFailureReason = 'unavailable';
-    if (controller.signal.aborted) {
-      reason = 'timeout';
-    } else if (error instanceof InstalledModuleCatalogInvalidError) {
-      reason = 'incompatible';
-    }
-    return { expectedAppId: appId, outcome: 'failed', reason };
-  } finally {
-    clearTimeout(timeout);
-  }
-};
+): Effect.Effect<InstalledDeploymentResolutionInput> =>
+  Effect.tryPromise({
+    catch: (error) => (error instanceof InstalledModuleCatalogInvalidError ? error : unavailable()),
+    // Effect owns the signal; a fetcher that cannot cancel its Promise may settle later,
+    // but tryPromise discards that settlement after this fiber has been interrupted.
+    try: async (signal) => {
+      const response = await fetchContractDocument(contractUrl, {
+        headers: { accept: 'application/json' },
+        redirect: 'manual',
+        signal,
+      });
+      return {
+        contract: await readBoundedJson(response, options.maxBytes, signal),
+        expectedAppId: appId,
+        outcome: 'fetched',
+      } as const;
+    },
+  }).pipe(
+    Effect.timeout(options.timeoutMs),
+    Effect.catchTags({
+      TimeoutError: () => Effect.succeed(failedContract(appId, 'timeout')),
+      InstalledModuleCatalogInvalidError: () =>
+        Effect.succeed(failedContract(appId, 'incompatible')),
+      InstalledModuleCatalogUnavailableError: () =>
+        Effect.succeed(failedContract(appId, 'unavailable')),
+    }),
+  );
+
+const isHealthy = (catalog: InstalledModuleCatalog): boolean =>
+  catalog.deploymentStatuses.every(({ status }) => status === 'available');
 
 /** Creates one lazy cache for a fully healthy allowlist revision; degraded reads retry. */
 export const makeInstalledModuleCatalogLoader = (
@@ -152,33 +189,32 @@ export const makeInstalledModuleCatalogLoader = (
     maxBytes: inputOptions.maxBytes ?? ONTOS_MODULE_CONTRACT_MAX_BYTES,
     timeoutMs: inputOptions.timeoutMs ?? ONTOS_MODULE_CONTRACT_TIMEOUT_MS,
   };
-  let cached: InstalledModuleCatalog | undefined;
-  let loading: Promise<InstalledModuleCatalog> | undefined;
-  return Effect.tryPromise({
-    catch: (error) => (error instanceof InstalledModuleCatalogUnavailableError ? error : invalid()),
-    try: async () => {
-      if (cached !== undefined) {
-        return cached;
-      }
-      loading ??= (async () => {
-        try {
-          const contracts = await Promise.all(
-            allowlist.entries.map(
-              async ({ appId, contractUrl }) =>
-                await fetchContract(appId, contractUrl, fetchContractDocument, options),
-            ),
-          );
-          const catalog = resolveInstalledModuleCatalog(contracts);
-          if (catalog.deploymentStatuses.every(({ status }) => status === 'available')) {
-            cached = catalog;
-          }
-          return catalog;
-        } finally {
-          loading = undefined;
-        }
-      })();
-      return await loading;
-    },
+  const loadCatalog = Effect.gen(function* () {
+    const contracts = yield* Effect.forEach(
+      allowlist.entries,
+      ({ appId, contractUrl }) => fetchContract(appId, contractUrl, fetchContractDocument, options),
+      { concurrency: 4 },
+    );
+    return yield* Effect.try({
+      catch: (error) =>
+        error instanceof InstalledModuleCatalogUnavailableError ? error : invalid(),
+      try: () => resolveInstalledModuleCatalog(contracts),
+    });
+  });
+  let loading: Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError> | undefined;
+  let invalidate: Effect.Effect<void> | undefined;
+  return Effect.gen(function* () {
+    if (loading === undefined || invalidate === undefined) {
+      [loading, invalidate] = yield* Effect.cachedInvalidateWithTTL(loadCatalog, Duration.infinity);
+    }
+    if (loading === undefined || invalidate === undefined) {
+      return yield* Effect.die('Installed module catalog cache was not initialized');
+    }
+    const currentLoading = loading;
+    const currentInvalidate = invalidate;
+    return yield* Effect.onExit(currentLoading, (exit) =>
+      Exit.isSuccess(exit) && isHealthy(exit.value) ? Effect.void : currentInvalidate,
+    );
   });
 };
 

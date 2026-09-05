@@ -37,7 +37,7 @@ export const createOutboxWorkerHealth = ({
           Ref.update(state, (current) => ({ ...current, lastSuccessfulCycleAt })),
         ),
       ),
-      isReady: Effect.all([Ref.get(state), now]).pipe(
+      isReady: Effect.all([Ref.get(state), now], { concurrency: 2 }).pipe(
         Effect.map(
           ([current, currentTime]) =>
             current.running &&

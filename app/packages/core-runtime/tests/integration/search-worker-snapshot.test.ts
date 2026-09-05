@@ -4,7 +4,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { setTimeout } from 'node:timers/promises';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Effect, Redacted } from 'effect';
@@ -160,7 +159,7 @@ test('worker projection uses independent generations and one repeatable snapshot
           waiting = true;
           break;
         }
-        await setTimeout(10);
+        await Effect.runPromise(Effect.sleep('10 millis'));
       }
       assert.equal(waiting, true, 'second snapshot must wait on first generation before retrying');
     } catch (error) {

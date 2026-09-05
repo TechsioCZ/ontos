@@ -15,6 +15,7 @@ import type {
   TrustedPrincipalContext,
 } from '@app/core-runtime';
 import {
+  MODULE_LOAD_CONCURRENCY,
   loadModuleEntrypointComposition,
   resolveThenLoadModuleTarget,
   settleModuleEntrypointLoad,
@@ -296,6 +297,41 @@ test('settles several browser entrypoints without one failure hiding healthy loa
       state: 'unavailable',
     },
   ]);
+});
+
+test('bounds independent browser entrypoint loads and still returns them in request order', async () => {
+  let inFlight = 0;
+  let peakInFlight = 0;
+  const identities = Array.from({ length: 9 }, (_, index) => `module-${index}/page`);
+  // Every load parks until the window is provably full, so the overlap is decided by the
+  // loader's bound rather than by elapsed time. An unbounded loader fills the window and then
+  // keeps starting loads, driving the peak past the bound; a loader that never reaches the
+  // bound leaves the gate shut and surfaces as timeouts rather than as a hang.
+  const windowFilled = Promise.withResolvers<void>();
+
+  const results = await Effect.runPromise(
+    settleModuleEntrypointLoads(
+      identities.map((identity) => ({
+        identity,
+        isCompatible: compatibleRemoteModule,
+        load: async () => {
+          inFlight += 1;
+          peakInFlight = Math.max(peakInFlight, inFlight);
+          if (inFlight === MODULE_LOAD_CONCURRENCY) {
+            windowFilled.resolve();
+          }
+          await windowFilled.promise;
+          inFlight -= 1;
+          return { default: () => null };
+        },
+        timeoutMs: 1000,
+      })),
+    ),
+  );
+
+  expect(peakInFlight).toBe(MODULE_LOAD_CONCURRENCY);
+  expect(results.map(({ identity }) => identity)).toEqual(identities);
+  expect(results.every(({ state }) => state === 'ready')).toBe(true);
 });
 
 test.each(['selection_required', 'not_found', 'forbidden', 'unavailable'] as const)(

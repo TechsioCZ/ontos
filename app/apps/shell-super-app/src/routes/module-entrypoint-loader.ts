@@ -23,6 +23,9 @@ export interface ModuleEntrypointLoadRequest<Identity, Value> {
 export type IdentifiedSettledModuleEntrypointLoad<Identity, Value> =
   SettledModuleEntrypointLoad<Value> & { readonly identity: Identity };
 
+/** Bound for independent external module loads so one navigation cannot fan out without limit. */
+export const MODULE_LOAD_CONCURRENCY = 4;
+
 const safelyCheckCompatibility = <Value>(
   value: Value,
   isCompatible: (value: Value) => boolean,
@@ -55,7 +58,13 @@ export const settleModuleEntrypointLoad = <Value>(
     ),
   );
 
-/** Settles a set of browser entrypoints concurrently without widening one failure to the set. */
+/**
+ * Settles a set of browser entrypoints concurrently without widening one failure to the set.
+ *
+ * These loads are independent external module fetches, so they run concurrently, but the bound is
+ * explicit: an unbounded fan-out lets one navigation open as many remote requests as the tenant has
+ * entrypoints. Results stay in request order and each entry still settles on its own.
+ */
 export const settleModuleEntrypointLoads = <Identity, Value>(
   loads: readonly ModuleEntrypointLoadRequest<Identity, Value>[],
 ): Effect.Effect<readonly IdentifiedSettledModuleEntrypointLoad<Identity, Value>[]> =>
@@ -65,7 +74,7 @@ export const settleModuleEntrypointLoads = <Identity, Value>(
         Effect.map((result) => ({ identity, ...result })),
       ),
     ),
-    { concurrency: 'unbounded' },
+    { concurrency: MODULE_LOAD_CONCURRENCY },
   );
 
 export type LazyModuleEntrypointLoad<Value, AuthorizationError, LoadError, Requirements> = Omit<
@@ -90,11 +99,17 @@ export const loadModuleEntrypointComposition = <Value, AuthorizationError, LoadE
       context,
       loads.map((load) => load.entrypoint),
     );
-    yield* Effect.forEach((load: (typeof loads)[number]) =>
-      gateway.check(snapshot, load.entrypoint),
+    // Sequential by intent, now stated: the gate must fail closed on the first denied entrypoint
+    // before any authorize or load side effect runs for a later one.
+    yield* Effect.forEach(
+      (load: (typeof loads)[number]) => gateway.check(snapshot, load.entrypoint),
+      { concurrency: 1 },
     )(loads);
-    return yield* Effect.forEach((load: (typeof loads)[number]) =>
-      gateway.run({ ...load, snapshot }),
+    // Also sequential by intent: each run re-checks, authorizes, then loads, so concurrency here
+    // would let a later entrypoint authorize and load past an earlier failure.
+    return yield* Effect.forEach(
+      (load: (typeof loads)[number]) => gateway.run({ ...load, snapshot }),
+      { concurrency: 1 },
     )(loads);
   });
 

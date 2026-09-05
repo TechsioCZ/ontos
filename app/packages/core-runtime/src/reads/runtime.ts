@@ -238,6 +238,7 @@ const checkPermissionTarget = (
     targets.map((candidate) =>
       checkAtomicPermissionTarget(contextAccess, scope, candidate, mayAuthorizeWithoutLegalEntity),
     ),
+    { concurrency: 2 },
   ).pipe(
     Effect.map((decisions) => {
       if (decisions.includes('allowed')) {

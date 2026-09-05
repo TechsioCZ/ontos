@@ -279,9 +279,11 @@ export const ${toCamelCase(name)}Read = defineRead(
 const renderApiClient = (vertical: OntosVerticalMetadata, name: string): string => {
   const type = toPascalCase(name);
   const value = `${toPascalCase(name)}Api`;
+  const camel = toCamelCase(name);
   return `${generatedHeader('module-api')}
-import { Effect, Redacted } from 'effect';
+import { Context, Effect, Redacted } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import type { Headers } from 'effect/unstable/http';
 import { makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
 import { ${value} } from '../../shared/apis/${name}.ts';
 import type { ${type}Request } from '../../shared/apis/${name}.ts';
@@ -289,7 +291,45 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ${type}ClientOptions {
   readonly baseUrl?: string | URL;
+  readonly timeoutMs?: number;
 }
+
+const DEFAULT_BASE_URL = '/${vertical.appId}-api';
+
+/** Whole-operation budget, response decode included. Overridable per call so tests stay bounded. */
+const DEFAULT_TIMEOUT_MS = 10_000;
+
+/** What one in-flight call contributes to its request; never held by the client. */
+interface ${type}CallTransport {
+  readonly baseUrl: string;
+  readonly headers: Headers.Input;
+}
+
+// Request-local transport; the default fails closed without introducing a service requirement.
+const Current${type}Call = Context.Reference<${type}CallTransport | null>(
+  '${vertical.appId}/Current${type}Call',
+  { defaultValue: () => null },
+);
+
+// Resolve transport in the requesting fiber, not the client's construction context.
+const applyCallTransport = (client: HttpClient.HttpClient): HttpClient.HttpClient =>
+  HttpClient.mapRequestEffect(client, (request) =>
+    Effect.flatMap(Effect.service(Current${type}Call), (transport) =>
+      transport === null
+        ? Effect.die('The ${type} client was used outside a prepared call')
+        : Effect.succeed(
+            request.pipe(
+              HttpClientRequest.setHeaders(transport.headers),
+              HttpClientRequest.prependUrl(transport.baseUrl),
+            ),
+          ),
+    ),
+  );
+
+// Construct once outside callers so no request's Fetch, credentials, or context can be retained.
+const ${camel}Client = Effect.runSync(
+  makeEffectHttpApiClient(${value}, { transformClient: applyCallTransport }),
+);
 
 export const execute${type}WithAuthorization = (
   payload: ${type}Request,
@@ -297,19 +337,18 @@ export const execute${type}WithAuthorization = (
   correlationId: string,
   options: ${type}ClientOptions = {},
 ) =>
-  makeEffectHttpApiClient(${value}, {
-      baseUrl: options.baseUrl ?? '/${vertical.appId}-api',
-      transformClient: HttpClient.mapRequest(
-        // Unwrapped only here, at the outbound HTTP header boundary.
-        HttpClientRequest.setHeaders({
+  ${camel}Client.${camel}
+    .execute({ headers: {}, params: {}, payload, query: {} })
+    .pipe(
+      Effect.provideService(Current${type}Call, {
+        baseUrl: (options.baseUrl ?? DEFAULT_BASE_URL).toString(),
+        // Unwrapped only here, where this call's outbound headers are built.
+        headers: {
           authorization: Redacted.value(authorization),
           'x-correlation-id': correlationId,
-        }),
-      ),
-    }).pipe(
-      Effect.flatMap((client) =>
-        client.${toCamelCase(name)}.execute({ headers: {}, params: {}, payload, query: {} }),
-      ),
+        },
+      }),
+      Effect.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     );
 
 export const execute${type} = (
@@ -393,17 +432,57 @@ const renderProviderClient = (
   const type = toPascalCase(name);
   const apiValue = `${type}${kind === 'report' ? 'Report' : 'Search'}Api`;
   const group = kind === 'report' ? 'reports' : 'search';
+  const camel = toCamelCase(name);
   return `${generatedHeader(kind)}
-import { Effect, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
-import { Redacted } from 'effect';
+import { Context, Effect, Redacted } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import type { Headers } from 'effect/unstable/http';
+import { makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
 import { ${apiValue} } from '../../shared/apis/${name}-${kind === 'report' ? 'report' : 'search'}.ts';
 import type { ${type}ProviderRequest } from '../../shared/apis/${name}-${kind === 'report' ? 'report' : 'search'}.ts';
 import { operationGateway } from './action-gateway.ts';
 
 export interface ${type}ClientOptions {
   readonly baseUrl?: string | URL;
+  readonly timeoutMs?: number;
 }
+
+const DEFAULT_BASE_URL = '/${vertical.appId}-api';
+
+/** Whole-operation budget, response decode included. Overridable per call so tests stay bounded. */
+const DEFAULT_TIMEOUT_MS = 10_000;
+
+/** What one in-flight call contributes to its request; never held by the client. */
+interface ${type}CallTransport {
+  readonly baseUrl: string;
+  readonly headers: Headers.Input;
+}
+
+// Request-local transport; the default fails closed without introducing a service requirement.
+const Current${type}Call = Context.Reference<${type}CallTransport | null>(
+  '${vertical.appId}/Current${type}Call',
+  { defaultValue: () => null },
+);
+
+// Resolve transport in the requesting fiber, not the client's construction context.
+const applyCallTransport = (client: HttpClient.HttpClient): HttpClient.HttpClient =>
+  HttpClient.mapRequestEffect(client, (request) =>
+    Effect.flatMap(Effect.service(Current${type}Call), (transport) =>
+      transport === null
+        ? Effect.die('The ${type} client was used outside a prepared call')
+        : Effect.succeed(
+            request.pipe(
+              HttpClientRequest.setHeaders(transport.headers),
+              HttpClientRequest.prependUrl(transport.baseUrl),
+            ),
+          ),
+    ),
+  );
+
+// Construct once outside callers so no request's Fetch, credentials, or context can be retained.
+const ${camel}Client = Effect.runSync(
+  makeEffectHttpApiClient(${apiValue}, { transformClient: applyCallTransport }),
+);
 
 export const load${type}ClientWithAuthorization = (
   payload: ${type}ProviderRequest,
@@ -411,16 +490,17 @@ export const load${type}ClientWithAuthorization = (
   correlationId: string,
   options: ${type}ClientOptions = {},
 ) =>
-  makeEffectHttpApiClient(${apiValue}, {
-      baseUrl: options.baseUrl ?? '/${vertical.appId}-api',
-      transformClient: HttpClient.mapRequest(
-        // Unwrapped only here, at the outbound HTTP header boundary.
-        HttpClientRequest.setHeaders({
-          authorization: Redacted.value(authorization),
-          'x-correlation-id': correlationId,
-        }),
-      ),
-    }).pipe(Effect.flatMap((client) => client.${group}.execute({ payload })));
+  ${camel}Client.${group}.execute({ payload }).pipe(
+    Effect.provideService(Current${type}Call, {
+      baseUrl: (options.baseUrl ?? DEFAULT_BASE_URL).toString(),
+      // Unwrapped only here, where this call's outbound headers are built.
+      headers: {
+        authorization: Redacted.value(authorization),
+        'x-correlation-id': correlationId,
+      },
+    }),
+    Effect.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+  );
 
 export const load${type}Client = (
   payload: ${type}ProviderRequest,

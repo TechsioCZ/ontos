@@ -742,6 +742,138 @@ test('generated read clients fetch mounted owner URLs and support separately dep
   });
 });
 
+test('generated read clients isolate every call and bound the whole operation including decode', async () => {
+  await withFixture(async (fixture) => {
+    await addInventoryItemResourceType(fixture);
+    await run(fixture, 'module-api', [
+      '--vertical',
+      'inventory-stock',
+      '--name',
+      'resource-detail',
+    ]);
+    await mkdir(path.join(fixture.root, 'node_modules/@app'), { recursive: true });
+    await mkdir(path.join(fixture.root, 'node_modules/@modern-js'), { recursive: true });
+    await symlink(
+      path.join(appRoot, 'packages/shared-contracts'),
+      path.join(fixture.root, 'node_modules/@app/shared-contracts'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'node_modules/effect'),
+      path.join(fixture.root, 'node_modules/effect'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'node_modules/@modern-js/plugin-bff'),
+      path.join(fixture.root, 'node_modules/@modern-js/plugin-bff'),
+      'dir',
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '--eval',
+        `
+      import { Effect, Redacted } from 'effect';
+      import { FetchHttpClient } from 'effect/unstable/http';
+      import { executeResourceDetailWithAuthorization } from './verticals/inventory-stock/src/api/resource-detail-client.ts';
+
+      const record = (into) => async (url, init) => {
+        into.push({ authorization: new Headers(init.headers).get('authorization'), url: String(url) });
+        return Response.json({ ok: true });
+      };
+      const ambient = [];
+      const injected = [];
+      const concurrent = [];
+      globalThis.location = { origin: 'https://shell.example.test', pathname: '/en/inventory' };
+      globalThis.fetch = record(ambient);
+
+      // The client is shared, so a call that injects a transport must not lend it to the next call.
+      await Effect.runPromise(
+        executeResourceDetailWithAuthorization({}, Redacted.make('Bearer injected'), 'correlation-injected').pipe(
+          Effect.provideService(FetchHttpClient.Fetch, record(injected)),
+          Effect.andThen(
+            executeResourceDetailWithAuthorization({}, Redacted.make('Bearer ambient'), 'correlation-ambient'),
+          ),
+        ),
+      );
+
+      // Interleaved calls on that one client each keep their own base URL and their own credential.
+      await Effect.runPromise(
+        Effect.all(
+          [
+            executeResourceDetailWithAuthorization({}, Redacted.make('Bearer a'), 'ca', { baseUrl: 'https://a.example.test/inventory-stock-api' }),
+            executeResourceDetailWithAuthorization({}, Redacted.make('Bearer b'), 'cb', { baseUrl: new URL('https://b.example.test/inventory-stock-api') }),
+          ],
+          { concurrency: 'unbounded' },
+        ).pipe(Effect.provideService(FetchHttpClient.Fetch, record(concurrent))),
+      );
+
+      // A request that never answers: the budget must end it and abort the in-flight fetch.
+      let connectSignal;
+      const connect = await Effect.runPromise(
+        Effect.flip(
+          executeResourceDetailWithAuthorization({}, Redacted.make('Bearer slow'), 'c-slow', { timeoutMs: 25 }).pipe(
+            Effect.provideService(FetchHttpClient.Fetch, (_url, init) => {
+              connectSignal = init.signal;
+              return new Promise(() => {});
+            }),
+          ),
+        ),
+      );
+
+      // Headers arrive, the body never does: the budget must cover the decode, not just the fetch.
+      let decodeSignal;
+      const decode = await Effect.runPromise(
+        Effect.flip(
+          executeResourceDetailWithAuthorization({}, Redacted.make('Bearer stall'), 'c-stall', { timeoutMs: 25 }).pipe(
+            Effect.provideService(FetchHttpClient.Fetch, (_url, init) => {
+              decodeSignal = init.signal;
+              return Promise.resolve(
+                new Response(new ReadableStream({ start() {} }), {
+                  headers: { 'content-type': 'application/json' },
+                }),
+              );
+            }),
+          ),
+        ),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      console.log(JSON.stringify({
+        ambient,
+        concurrent: concurrent.toSorted((left, right) => left.url.localeCompare(right.url)),
+        connect: connect._tag,
+        connectAborted: connectSignal.aborted,
+        decode: decode._tag,
+        decodeAborted: decodeSignal.aborted,
+        injected,
+      }));
+    `,
+      ],
+      { cwd: fixture.root, encoding: 'utf-8' },
+    );
+    assert.equal(result.status, 0, result.stderr || result.error?.message);
+    const detailUrl = (origin: string) => `${origin}/inventory-stock-api/reads/resource-detail`;
+    assert.deepEqual(JSON.parse(result.stdout), {
+      // The injecting call's transport stayed with that call; the next one fell through to default.
+      ambient: [{ authorization: 'Bearer ambient', url: detailUrl('https://shell.example.test') }],
+      concurrent: [
+        { authorization: 'Bearer a', url: detailUrl('https://a.example.test') },
+        { authorization: 'Bearer b', url: detailUrl('https://b.example.test') },
+      ],
+      // TimeoutError stays a typed failure, and interruption reaches the transport in both phases.
+      connect: 'TimeoutError',
+      connectAborted: true,
+      decode: 'TimeoutError',
+      decodeAborted: true,
+      injected: [
+        { authorization: 'Bearer injected', url: detailUrl('https://shell.example.test') },
+      ],
+    });
+  });
+});
+
 test('governed contribution generators patch owner contracts and lazy adapters atomically', async () => {
   await withFixture(async (fixture) => {
     const manifestPath = path.join(fixture.root, 'verticals/inventory-stock/vertical.manifest.ts');
@@ -862,22 +994,51 @@ test('governed contribution generators patch owner contracts and lazy adapters a
     );
     assert.match(
       moduleApiClient,
-      /client\.resourceDetail\.execute\(\{ headers: \{\}, params: \{\}, payload, query: \{\} \}\)/u,
+      /resourceDetailClient\.resourceDetail\s*\.execute\(\{ headers: \{\}, params: \{\}, payload, query: \{\} \}\)/u,
     );
     assert.match(moduleApiContract, /HttpApiGroup\.make\('resourceDetail'\)/u);
     assert.match(secondModuleApiContract, /HttpApiGroup\.make\('resourceHistory'\)/u);
-    assert.match(secondModuleApiClient, /client\.resourceHistory\.execute\(/u);
+    assert.match(secondModuleApiClient, /resourceHistoryClient\.resourceHistory\s*\.execute\(/u);
     for (const client of [moduleApiClient, searchClient, reportClient]) {
       assert.match(client, /operationGateway\.invoke\(\(authorization\) =>/u);
       assert.match(client, /WithAuthorization/u);
       assert.match(client, /authorization: Redacted\.Redacted<string>,/u);
+      // The credential travels wrapped and is unwrapped once, where this call's headers are built.
       assert.match(
         client,
-        /setHeaders\(\{\s+authorization: Redacted\.value\(authorization\),\s+'x-correlation-id': correlationId,\s+\}\)/u,
+        /headers: \{\s+authorization: Redacted\.value\(authorization\),\s+'x-correlation-id': correlationId,\s+\}/u,
       );
-      // The credential is unwrapped only at the outbound header boundary.
       assert.equal(client.match(/Redacted\.value\(/gu)?.length, 1);
+      // One eager module-load client: `makeEffectHttpApiClient` is a module-scope constant, never
+      // reached from inside an exported operation, and never given a construction-time `baseUrl`.
+      assert.match(
+        client,
+        /^const \w+Client = Effect\.runSync\(\n {2}makeEffectHttpApiClient\(\w+, \{ transformClient: applyCallTransport \}\),\n\);$/mu,
+      );
+      assert.doesNotMatch(client, /baseUrl: options\.baseUrl/u);
+      assert.doesNotMatch(client, /Effect\.flatMap\(\(client\)/u);
+      // Request-time transport: a `Context.Reference` with a fail-closed default, applied through
+      // `mapRequestEffect` so each in-flight call reads its own prefix and credential.
+      assert.match(
+        client,
+        /const Current\w+Call = Context\.Reference<\w+CallTransport \| null>\(\n {2}'inventory-stock\/Current\w+Call',\n {2}\{ defaultValue: \(\) => null \},\n\);/u,
+      );
+      assert.match(client, /HttpClient\.mapRequestEffect\(client, \(request\) =>/u);
+      assert.match(client, /\? Effect\.die\('The \w+ client was used outside a prepared call'\)/u);
+      assert.match(client, /HttpClientRequest\.setHeaders\(transport\.headers\)/u);
+      assert.match(client, /HttpClientRequest\.prependUrl\(transport\.baseUrl\)/u);
+      assert.doesNotMatch(client, /Context\.Service|Layer\.|ManagedRuntime/u);
+      // A finite whole-operation budget, overridable per call, kept as a typed failure.
+      assert.match(client, /const DEFAULT_TIMEOUT_MS = 10_000;/u);
+      assert.match(client, /readonly timeoutMs\?: number;/u);
+      assert.match(client, /Effect\.timeout\(options\.timeoutMs \?\? DEFAULT_TIMEOUT_MS\),/u);
+      assert.doesNotMatch(client, /Effect\.retry|Effect\.catch|orElse/u);
     }
+    // The budget wraps the prepared call, so it covers the response decode and not just the fetch.
+    assert.match(
+      moduleApiClient,
+      /Effect\.provideService\(CurrentResourceDetailCall, \{[\s\S]*?\}\),\n\s+Effect\.timeout\(/u,
+    );
     assert.doesNotMatch(searchClient, /\.provider\.ts|import\(/u);
     assert.doesNotMatch(reportClient, /\.provider\.ts|import\(/u);
     for (const provider of [searchProvider, reportProvider]) {

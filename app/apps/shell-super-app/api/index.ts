@@ -1257,29 +1257,32 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
               transport: { correlationId: correlation(request) },
             })
             .pipe(Effect.catch((error) => failIdentityProblem(identityProblem(error))));
-          const items = yield* Effect.forEach(result.items, (binding) =>
-            resolver
-              .loadApiKeyBindingForAdministration({
-                authBindingId: binding.authBindingId,
-                principalId: resolved.principal.principalId,
-                tenantId: resolved.principal.tenantId,
-              })
-              .pipe(
-                Effect.flatMap((bindingState) =>
-                  keys
-                    .metadata(bindingState.providerSubjectId)
-                    .pipe(Effect.map((metadata) => ({ bindingState, metadata }))),
+          const items = yield* Effect.forEach(
+            result.items,
+            (binding) =>
+              resolver
+                .loadApiKeyBindingForAdministration({
+                  authBindingId: binding.authBindingId,
+                  principalId: resolved.principal.principalId,
+                  tenantId: resolved.principal.tenantId,
+                })
+                .pipe(
+                  Effect.flatMap((bindingState) =>
+                    keys
+                      .metadata(bindingState.providerSubjectId)
+                      .pipe(Effect.map((metadata) => ({ bindingState, metadata }))),
+                  ),
+                  Effect.map(({ bindingState, metadata }) => {
+                    const { providerKeyId: _providerKeyId, ...publicKeyMetadata } = metadata;
+                    return {
+                      ...publicKeyMetadata,
+                      authBindingId: binding.authBindingId,
+                      cleanupPending: metadata.enabled !== (bindingState.status === 'active'),
+                    };
+                  }),
+                  Effect.catch((error) => failIdentityProblem(identityProblem(error))),
                 ),
-                Effect.map(({ bindingState, metadata }) => {
-                  const { providerKeyId: _providerKeyId, ...publicKeyMetadata } = metadata;
-                  return {
-                    ...publicKeyMetadata,
-                    authBindingId: binding.authBindingId,
-                    cleanupPending: metadata.enabled !== (bindingState.status === 'active'),
-                  };
-                }),
-                Effect.catch((error) => failIdentityProblem(identityProblem(error))),
-              ),
+            { concurrency: 4 },
           );
           return { items, nextOffset: result.nextOffset };
         }),
@@ -1333,50 +1336,54 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
               transport: { correlationId: correlation(request) },
             })
             .pipe(Effect.catch((error) => failIdentityProblem(identityProblem(error))));
-          const items = yield* Effect.forEach(result.items, (item) => {
-            const { authBindingId } = item;
-            if (authBindingId === null) {
-              const withoutKey: ManagedApiKeyListResponse['items'][number] = {
-                displayName: item.displayName,
-                key: null,
-                kind: item.kind,
-                principalId: item.principalId,
-                principalStatus: item.principalStatus,
-              };
-              return Effect.succeed(withoutKey);
-            }
-            return resolver
-              .loadApiKeyBindingForAdministration({
-                authBindingId,
-                principalId: item.principalId,
-                tenantId: resolved.principal.tenantId,
-              })
-              .pipe(
-                Effect.flatMap((bindingState) =>
-                  keys
-                    .metadata(bindingState.providerSubjectId)
-                    .pipe(Effect.map((metadata) => ({ bindingState, metadata }))),
-                ),
-                Effect.map(
-                  ({ bindingState, metadata }): ManagedApiKeyListResponse['items'][number] => ({
-                    displayName: item.displayName,
-                    key: {
-                      authBindingId,
-                      cleanupPending: metadata.enabled !== (bindingState.status === 'active'),
-                      createdAt: metadata.createdAt,
-                      enabled: metadata.enabled,
-                      expiresAt: metadata.expiresAt,
-                      name: metadata.name,
-                      start: metadata.start,
-                    },
-                    kind: item.kind,
-                    principalId: item.principalId,
-                    principalStatus: item.principalStatus,
-                  }),
-                ),
-                Effect.catch((error) => failIdentityProblem(identityProblem(error))),
-              );
-          });
+          const items = yield* Effect.forEach(
+            result.items,
+            (item) => {
+              const { authBindingId } = item;
+              if (authBindingId === null) {
+                const withoutKey: ManagedApiKeyListResponse['items'][number] = {
+                  displayName: item.displayName,
+                  key: null,
+                  kind: item.kind,
+                  principalId: item.principalId,
+                  principalStatus: item.principalStatus,
+                };
+                return Effect.succeed(withoutKey);
+              }
+              return resolver
+                .loadApiKeyBindingForAdministration({
+                  authBindingId,
+                  principalId: item.principalId,
+                  tenantId: resolved.principal.tenantId,
+                })
+                .pipe(
+                  Effect.flatMap((bindingState) =>
+                    keys
+                      .metadata(bindingState.providerSubjectId)
+                      .pipe(Effect.map((metadata) => ({ bindingState, metadata }))),
+                  ),
+                  Effect.map(
+                    ({ bindingState, metadata }): ManagedApiKeyListResponse['items'][number] => ({
+                      displayName: item.displayName,
+                      key: {
+                        authBindingId,
+                        cleanupPending: metadata.enabled !== (bindingState.status === 'active'),
+                        createdAt: metadata.createdAt,
+                        enabled: metadata.enabled,
+                        expiresAt: metadata.expiresAt,
+                        name: metadata.name,
+                        start: metadata.start,
+                      },
+                      kind: item.kind,
+                      principalId: item.principalId,
+                      principalStatus: item.principalStatus,
+                    }),
+                  ),
+                  Effect.catch((error) => failIdentityProblem(identityProblem(error))),
+                );
+            },
+            { concurrency: 4 },
+          );
           return { items, nextOffset: result.nextOffset };
         }),
       ),

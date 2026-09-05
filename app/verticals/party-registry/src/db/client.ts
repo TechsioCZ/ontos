@@ -1,4 +1,5 @@
-import { DatabaseConfig } from '@app/core-runtime';
+import { DatabaseConfig, makeDatabasePoolConfiguration } from '@app/core-runtime';
+import type { DatabasePoolDeadlines } from '@app/core-runtime';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Context, Effect, Layer, Redacted } from 'effect';
 import type { Scope } from 'effect';
@@ -41,25 +42,28 @@ type ContextServiceContract<Service> =
   Service extends Context.Key<infer _Identifier, infer Contract> ? Contract : never;
 
 export const makePartyDatabase = (
-  configuration: ContextServiceContract<typeof DatabaseConfig>,
+  configuration: ContextServiceContract<typeof DatabaseConfig> & {
+    readonly poolDeadlines?: Partial<DatabasePoolDeadlines>;
+  },
   poolFactory: PoolFactory = defaultPoolFactory,
 ): Effect.Effect<
   ContextServiceContract<typeof PartyDatabase>,
   PartyDatabaseConnectionError,
   Scope.Scope
 > =>
-  acquirePoolResource(() =>
-    poolFactory({
-      connectionString: Redacted.value(configuration.connectionString),
-    }),
-  ).pipe(
-    Effect.map((pool) => ({
+  Effect.gen(function* makePartyDatabase() {
+    const poolConfiguration = yield* makeDatabasePoolConfiguration(
+      Redacted.value(configuration.connectionString),
+      configuration.poolDeadlines,
+    ).pipe(Effect.mapError((error) => new PartyDatabaseConnectionError({ reason: error.reason })));
+    const pool = yield* acquirePoolResource(() => poolFactory(poolConfiguration));
+    return {
       executor: drizzle({
         client: pool,
         relations: partyRelations,
       }),
-    })),
-  );
+    };
+  });
 
 export const PartyDatabaseLive = Layer.effect(
   PartyDatabase,
