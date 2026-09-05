@@ -58,11 +58,15 @@ void test('keeps SpiceDB loader failures typed and secret-safe', async () => {
     ),
   );
 
-  assert.deepEqual(configuration, {
-    endpoint: 'spicedb.internal.example:443',
-    insecureLocal: false,
-    preSharedKey: secret,
-  });
+  assert.deepEqual(
+    { ...configuration, preSharedKey: Redacted.value(configuration.preSharedKey) },
+    {
+      endpoint: 'spicedb.internal.example:443',
+      insecureLocal: false,
+      preSharedKey: secret,
+    },
+  );
+  assert.doesNotMatch(JSON.stringify(configuration), /spicedb-secret/u);
   assert.equal(failure._tag, 'SpiceDbConfigError');
   assert.equal(failure.reason, 'Unable to load the root environment');
   assert.doesNotMatch(failure.reason, /spicedb-secret/u);

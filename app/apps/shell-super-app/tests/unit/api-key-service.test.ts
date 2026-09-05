@@ -1,7 +1,8 @@
 import { expect, test } from '@rstest/core';
 import { APIError } from 'better-auth';
 import { eq } from 'drizzle-orm';
-import { Effect, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
+import type { AuthConfigValue } from '../../api/auth/config.ts';
 import {
   ApiKeyProviderUnavailableError,
   makeApiKeyService,
@@ -9,10 +10,10 @@ import {
 import { apikey } from '../../api/auth/db/schema.ts';
 import type { AuthDatabaseExecutor } from '../../api/auth/db/types.ts';
 
-const configuration = {
+const configuration: AuthConfigValue = {
   baseUrl: 'http://localhost:3020',
-  connectionString: 'postgres://unused:unused@localhost/unused',
-  secret: 'unit-test-secret-not-used-for-real-authentication',
+  connectionString: Redacted.make('postgres://unused:unused@localhost/unused'),
+  secret: Redacted.make('unit-test-secret-not-used-for-real-authentication'),
   secureCookies: false,
   supportUserIds: [],
   trustedOrigins: ['http://localhost:3020'],
