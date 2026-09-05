@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
-import type { ApplicationCompositionValidationError } from '../../src/modules/application-composition.ts';
 import {
   canonicalizeApplicationComposition,
   ApplicationCompositionSchema,
+  ApplicationCompositionValidationError,
   validateApplicationCompositionCandidate,
 } from '../../src/modules/application-composition.ts';
 
@@ -105,6 +105,15 @@ const onlyModule = (input: Candidate) => required(input.modules[0]);
 
 const federationManifest = (observations: Evidence) =>
   required(observations.federationManifests['https://contacts.example/mf-manifest.json']);
+
+test('defaults the validation error code without changing its encoded contract', () => {
+  const error = new ApplicationCompositionValidationError({ reason: 'Invalid candidate' });
+  assert.deepEqual(Schema.encodeSync(ApplicationCompositionValidationError)(error), {
+    _tag: 'ApplicationCompositionValidationError',
+    code: 'application_composition_invalid',
+    reason: 'Invalid candidate',
+  });
+});
 
 const addModuleCopy = (
   input: Candidate,

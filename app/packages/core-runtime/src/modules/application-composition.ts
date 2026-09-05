@@ -113,13 +113,10 @@ export type ApplicationCompositionCandidateEvidence = typeof candidateEvidenceSc
 export class ApplicationCompositionValidationError extends Schema.TaggedError<ApplicationCompositionValidationError>()(
   'ApplicationCompositionValidationError',
   {
-    code: Schema.Literal('application_composition_invalid'),
+    code: Schema.tag('application_composition_invalid'),
     reason: Schema.String,
   },
 ) {}
-
-const invalid = (reason: string): ApplicationCompositionValidationError =>
-  new ApplicationCompositionValidationError({ code: 'application_composition_invalid', reason });
 
 const identityKey = (identity: ApplicationCompositionVersionedIdentity): string =>
   `${identity.id}@${identity.version}`;
@@ -170,7 +167,9 @@ const claim = Effect.fnUntraced(function* claimUnique(
   label: string,
 ) {
   if (claims.has(value)) {
-    return yield* invalid(`duplicate ${label} ${value}`);
+    return yield* new ApplicationCompositionValidationError({
+      reason: `duplicate ${label} ${value}`,
+    });
   }
   claims.add(value);
   return yield* Effect.void;
@@ -185,7 +184,9 @@ const assertAcyclicDependencies = Effect.fnUntraced(function* checkCycles(
   const visit = (moduleId: string): Effect.Effect<void, ApplicationCompositionValidationError> =>
     Effect.gen(function* visitDependency() {
       if (visiting.has(moduleId)) {
-        return yield* invalid(`dependency cycle includes module ${moduleId}`);
+        return yield* new ApplicationCompositionValidationError({
+          reason: `dependency cycle includes module ${moduleId}`,
+        });
       }
       if (visited.has(moduleId)) {
         return yield* Effect.void;
@@ -222,7 +223,9 @@ const assertDependenciesPresent = Effect.fnUntraced(function* checkDependencies(
   for (const dependency of module.dependencies) {
     yield* claim(dependencies, dependency, `dependency in module ${module.moduleId}`);
     if (!moduleIds.has(dependency)) {
-      return yield* invalid(`module ${module.moduleId} requires missing dependency ${dependency}`);
+      return yield* new ApplicationCompositionValidationError({
+        reason: `module ${module.moduleId} requires missing dependency ${dependency}`,
+      });
     }
   }
   return yield* Effect.void;
@@ -235,26 +238,26 @@ const assertShellCompatibility = Effect.fnUntraced(function* checkCompatibility(
   availableSingletons: ReadonlyMap<string, string>,
 ) {
   if (identityKey(module.requiredShellAbi) !== identityKey(shell.contributionAbi)) {
-    return yield* invalid(
-      `module ${module.moduleId} requires an incompatible Shell contribution ABI`,
-    );
+    return yield* new ApplicationCompositionValidationError({
+      reason: `module ${module.moduleId} requires an incompatible Shell contribution ABI`,
+    });
   }
   const capabilityIds = new Set<string>();
   for (const capability of module.requiredCoreCapabilities) {
     yield* claim(capabilityIds, capability.id, 'required Core capability');
     if (!availableCapabilities.has(identityKey(capability))) {
-      return yield* invalid(
-        `module ${module.moduleId} requires unavailable Core capability ${capability.id}`,
-      );
+      return yield* new ApplicationCompositionValidationError({
+        reason: `module ${module.moduleId} requires unavailable Core capability ${capability.id}`,
+      });
     }
   }
   const singletonPackages = new Set<string>();
   for (const singleton of module.sharedSingletons) {
     yield* claim(singletonPackages, singleton.packageName, 'required shared singleton');
     if (availableSingletons.get(singleton.packageName) !== singleton.version) {
-      return yield* invalid(
-        `module ${module.moduleId} requires incompatible shared singleton ${singleton.packageName}`,
-      );
+      return yield* new ApplicationCompositionValidationError({
+        reason: `module ${module.moduleId} requires incompatible shared singleton ${singleton.packageName}`,
+      });
     }
   }
   return yield* Effect.void;
@@ -276,9 +279,9 @@ const assertObservedDeployment = Effect.fnUntraced(function* checkDeployment(
     !sameUniqueStrings(module.allowedContributions, contract.contributionKeys) ||
     !sameUniqueStrings(module.federation.exposes, contract.federationExposes)
   ) {
-    return yield* invalid(
-      `module ${module.moduleId} does not match its observed deployment contract`,
-    );
+    return yield* new ApplicationCompositionValidationError({
+      reason: `module ${module.moduleId} does not match its observed deployment contract`,
+    });
   }
   return yield* Effect.void;
 });
@@ -298,9 +301,9 @@ const assertObservedFederationManifest = Effect.fnUntraced(function* checkFedera
       ({ packageName }) => packageName,
     )
   ) {
-    return yield* invalid(
-      `module ${module.moduleId} does not match its observed Module Federation manifest`,
-    );
+    return yield* new ApplicationCompositionValidationError({
+      reason: `module ${module.moduleId} does not match its observed Module Federation manifest`,
+    });
   }
   return yield* Effect.void;
 });
@@ -318,7 +321,9 @@ const assertObservedRuntime = Effect.fnUntraced(function* checkRuntime(
       ({ packageName }) => packageName,
     )
   ) {
-    return yield* invalid('Shell and Core claims do not match the observed runtime contract');
+    return yield* new ApplicationCompositionValidationError({
+      reason: 'Shell and Core claims do not match the observed runtime contract',
+    });
   }
   return yield* Effect.void;
 });
@@ -357,13 +362,19 @@ export const validateApplicationCompositionCandidate = Effect.fnUntraced(functio
   const composition = yield* Schema.decodeUnknownEffect(ApplicationCompositionSchema, {
     onExcessProperty: 'error',
   })(input).pipe(
-    Effect.mapError(() =>
-      invalid('candidate does not match the supported Application Composition schema'),
+    Effect.mapError(
+      () =>
+        new ApplicationCompositionValidationError({
+          reason: 'candidate does not match the supported Application Composition schema',
+        }),
     ),
   );
   const observed = yield* Schema.decodeUnknownEffect(candidateEvidenceSchema)(evidence).pipe(
-    Effect.mapError(() =>
-      invalid('candidate evidence does not match the supported observation schema'),
+    Effect.mapError(
+      () =>
+        new ApplicationCompositionValidationError({
+          reason: 'candidate evidence does not match the supported observation schema',
+        }),
     ),
   );
   const moduleIds = new Set(composition.modules.map(({ moduleId }) => moduleId));
@@ -395,7 +406,9 @@ export const validateApplicationCompositionCandidate = Effect.fnUntraced(functio
       observed.environment !== 'development' &&
       [module.contract.url, manifestUrl].some((url) => new URL(url).protocol !== 'https:')
     ) {
-      return yield* invalid('artifact URLs must use HTTPS outside development');
+      return yield* new ApplicationCompositionValidationError({
+        reason: 'artifact URLs must use HTTPS outside development',
+      });
     }
     yield* claim(appIds, module.deployment.appId, 'deployment app ID');
     yield* claim(artifactUrls, new URL(module.contract.url).href, 'artifact URL');
