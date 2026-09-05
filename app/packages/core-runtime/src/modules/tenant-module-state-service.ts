@@ -148,11 +148,8 @@ export class TenantModuleStateService extends Context.Service<
   TenantModuleStateServiceContract
 >()('@app/core-runtime/modules/tenant-module-state-service/TenantModuleStateService') {}
 
-const tenantModuleStateReadUnavailable = () =>
-  new TenantModuleStateReadUnavailableError({
-    code: 'tenant_module_state_read_unavailable',
-    reason: 'Tenant module state is temporarily unavailable',
-  });
+const tenantModuleStateReadUnavailable = (originalFailure?: unknown) =>
+  TenantModuleStateReadUnavailableError.withOriginalFailure(originalFailure);
 
 export const makeTenantModuleStateService = (database: {
   readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
@@ -161,13 +158,7 @@ export const makeTenantModuleStateService = (database: {
     Effect.forEach((row: (typeof rows)[number]) =>
       Schema.decodeUnknownEffect(TenantModuleStateSchema)(row.state).pipe(
         Effect.map((state) => Object.freeze({ moduleKey: row.moduleKey, state })),
-        Effect.mapError(
-          () =>
-            new TenantModuleStateReadUnavailableError({
-              code: 'tenant_module_state_read_unavailable',
-              reason: 'Tenant module state is temporarily unavailable',
-            }),
-        ),
+        Effect.mapError(tenantModuleStateReadUnavailable),
       ),
     )(rows).pipe(Effect.map((records) => Object.freeze(records)));
 
@@ -189,11 +180,7 @@ export const makeTenantModuleStateService = (database: {
         return Effect.succeed(Object.freeze([]));
       }
       return Effect.tryPromise({
-        catch: () =>
-          new TenantModuleStateReadUnavailableError({
-            code: 'tenant_module_state_read_unavailable',
-            reason: 'Tenant module state is temporarily unavailable',
-          }),
+        catch: tenantModuleStateReadUnavailable,
         try: () =>
           database.executor
             .select({ moduleKey: tenantModuleStates.moduleKey, state: tenantModuleStates.state })
@@ -241,11 +228,8 @@ export interface PersistTenantModuleStateChangeResult {
   readonly previousState: TenantModuleState | null;
 }
 
-const persistenceUnavailable = () =>
-  new TenantModuleStatePersistenceUnavailableError({
-    code: 'tenant_module_state_persistence_unavailable',
-    reason: 'Tenant module state could not be persisted',
-  });
+const persistenceUnavailable = (originalFailure?: unknown) =>
+  TenantModuleStatePersistenceUnavailableError.withOriginalFailure(originalFailure);
 
 export const persistTenantModuleStateChange = (
   transaction: ScopedTransactionExecutor,

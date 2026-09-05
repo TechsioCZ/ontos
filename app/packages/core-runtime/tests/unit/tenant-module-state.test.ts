@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 // @effect-diagnostics asyncFunction:off
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
+import type { ScopedTransactionExecutor } from '../../src/db/scoped-transaction.ts';
+import type { CoreDatabaseExecutor } from '../../src/db/types.ts';
 import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
 import type { InstalledModuleCatalog, OntosModuleDeploymentContract } from '../../src/index.ts';
 import {
@@ -18,6 +20,8 @@ import {
 import {
   TENANT_MODULE_STATES,
   TenantModuleStateSchema,
+  makeTenantModuleStateService,
+  persistTenantModuleStateChange,
   rejectUnchangedTenantModuleState,
   resolveTenantModuleStateChangeSource,
   validateTenantModuleStateTransition,
@@ -87,6 +91,177 @@ const catalog = (
     outboxSubscriptions: Object.freeze([]),
   });
 };
+
+const persistenceInput = {
+  actionInvocationId: 'invocation-unit',
+  authMethod: 'session' as const,
+  moduleKey: 'testing.module',
+  newState: 'active' as const,
+  principalId: 'principal-unit',
+  tenantId: 'tenant-unit',
+};
+
+// Only the query endpoints exercised by these unit tests; no database connection.
+const persistenceTransaction = (
+  failAt: string | undefined,
+  originalFailure: unknown,
+  currentRows: readonly object[] = [],
+  historyRows: readonly object[] = [{ moduleStateChangeId: 'change-unit' }],
+): ScopedTransactionExecutor => {
+  let selects = 0;
+  let inserts = 0;
+  const result = (stage: string, rows: readonly object[]) =>
+    stage === failAt ? Promise.reject(originalFailure) : Promise.resolve(rows);
+  return {
+    select: () => {
+      selects += 1;
+      return {
+        from: () => ({
+          where: () =>
+            selects === 1
+              ? { for: () => result('tenant', [{ tenantId: 'tenant-unit' }]) }
+              : result('current', currentRows),
+        }),
+      };
+    },
+    insert: () => {
+      inserts += 1;
+      return {
+        values: () => ({
+          returning: () =>
+            inserts === 1
+              ? result('history', historyRows)
+              : result('insert', [{ tenantModuleStateId: 'state-unit' }]),
+        }),
+      };
+    },
+    update: () => ({
+      set: () => ({
+        where: () => ({
+          returning: () => result('update', [{ tenantModuleStateId: 'state-unit' }]),
+        }),
+      }),
+    }),
+  } as unknown as ScopedTransactionExecutor;
+};
+
+void test('retains diagnostics privately without changing JSON or Schema encoding', async () => {
+  const original = new Error('postgres select tenant-123 private diagnostics');
+  const read = TenantModuleStateReadUnavailableError.withOriginalFailure(original);
+  const persistence = TenantModuleStatePersistenceUnavailableError.withOriginalFailure(original);
+  const readWire = {
+    _tag: 'TenantModuleStateReadUnavailableError',
+    code: 'tenant_module_state_read_unavailable',
+    reason: 'Tenant module state is temporarily unavailable',
+  };
+  const persistenceWire = {
+    _tag: 'TenantModuleStatePersistenceUnavailableError',
+    code: 'tenant_module_state_persistence_unavailable',
+    reason: 'Tenant module state could not be persisted',
+  };
+  assert.equal(read.getOriginalFailure(), original);
+  assert.equal(persistence.getOriginalFailure(), original);
+  assert.deepEqual(JSON.parse(JSON.stringify(read)), readWire);
+  assert.deepEqual(JSON.parse(JSON.stringify(persistence)), persistenceWire);
+  assert.deepEqual(
+    await Effect.runPromise(Schema.encodeEffect(TenantModuleStateReadUnavailableError)(read)),
+    readWire,
+  );
+  assert.deepEqual(
+    await Effect.runPromise(
+      Schema.encodeEffect(TenantModuleStatePersistenceUnavailableError)(persistence),
+    ),
+    persistenceWire,
+  );
+  assert.equal(
+    TenantModuleStateReadUnavailableError.withOriginalFailure().getOriginalFailure(),
+    undefined,
+  );
+  assert.equal(
+    TenantModuleStatePersistenceUnavailableError.withOriginalFailure().getOriginalFailure(),
+    undefined,
+  );
+});
+
+void test('preserves caught read SQL and schema failures across all read methods', async (context) => {
+  const factory = context.mock.method(TenantModuleStateReadUnavailableError, 'withOriginalFailure');
+  const sqlFailure = new Error('postgres select private diagnostics');
+  for (const invalidState of [false, true]) {
+    const executor = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            orderBy: () =>
+              invalidState
+                ? Promise.resolve([{ moduleKey: 'testing.module', state: 'enabled' }])
+                : Promise.reject(sqlFailure),
+          }),
+        }),
+      }),
+    } as unknown as Pick<CoreDatabaseExecutor, 'select'>;
+    const service = makeTenantModuleStateService({ executor });
+    for (const read of [
+      service.getTenantModuleStates('tenant-unit', ['testing.module']),
+      service.listTenantModuleStates('tenant-unit'),
+      service.listActiveTenantModules('tenant-unit'),
+    ]) {
+      const failure = await Effect.runPromise(Effect.flip(read));
+      assert.equal(failure._tag, 'TenantModuleStateReadUnavailableError');
+      const caught = factory.mock.calls.at(-1)?.arguments[0];
+      assert.equal(failure.getOriginalFailure(), caught);
+      if (invalidState) {
+        assert.ok(caught instanceof Schema.SchemaError);
+      } else {
+        assert.equal(caught, sqlFailure);
+      }
+    }
+  }
+});
+
+void test('preserves caught SQL failures at every persistence boundary', async () => {
+  for (const stage of ['tenant', 'current', 'history', 'insert', 'update']) {
+    const original = new Error(`postgres ${stage} private diagnostics`);
+    const transaction = persistenceTransaction(
+      stage,
+      original,
+      stage === 'update' ? [{ state: 'inactive', tenantModuleStateId: 'state-unit' }] : [],
+    );
+    const failure = await Effect.runPromise(
+      Effect.flip(persistTenantModuleStateChange(transaction, persistenceInput)),
+    );
+    assert.ok(Schema.is(TenantModuleStatePersistenceUnavailableError)(failure));
+    assert.equal(failure.getOriginalFailure(), original);
+  }
+});
+
+void test('preserves caught persistence schema failure and cause-free missing history', async (context) => {
+  const factory = context.mock.method(
+    TenantModuleStatePersistenceUnavailableError,
+    'withOriginalFailure',
+  );
+  const failure = await Effect.runPromise(
+    Effect.flip(
+      persistTenantModuleStateChange(
+        persistenceTransaction(undefined, undefined, [{ state: 'enabled' }]),
+        persistenceInput,
+      ),
+    ),
+  );
+  assert.ok(Schema.is(TenantModuleStatePersistenceUnavailableError)(failure));
+  const caught = factory.mock.calls.at(-1)?.arguments[0];
+  assert.ok(caught instanceof Schema.SchemaError);
+  assert.equal(failure.getOriginalFailure(), caught);
+  const missingHistory = await Effect.runPromise(
+    Effect.flip(
+      persistTenantModuleStateChange(
+        persistenceTransaction(undefined, undefined, [], []),
+        persistenceInput,
+      ),
+    ),
+  );
+  assert.ok(Schema.is(TenantModuleStatePersistenceUnavailableError)(missingHistory));
+  assert.equal(missingHistory.getOriginalFailure(), undefined);
+});
 
 void test('uses one canonical tenant module state schema', async () => {
   const decodedStates = await Promise.all(
