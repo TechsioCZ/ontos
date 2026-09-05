@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect, Schema, Predicate } from 'effect';
+import { Cause, Effect, Exit, Schema, Predicate } from 'effect';
 import { Pool } from 'pg';
 import { CoreDatabase } from '../../src/db/client.ts';
 import type {
@@ -1808,15 +1808,24 @@ test('sanitizes unexpected defects and rejects invalid typed results', async () 
     },
     () => Effect.die('secret database detail'),
   );
-  const defect = await Effect.runPromise(
-    Effect.flip(
-      defectHarness.runtime.runAction({
-        payload: undefined,
-        principal,
-        registration: defective,
-        transport: transport(),
-      }),
+  const defectExit = await Effect.runPromiseExit(
+    defectHarness.runtime.runAction({
+      payload: undefined,
+      principal,
+      registration: defective,
+      transport: transport(),
+    }),
+  );
+  assert.ok(Exit.isFailure(defectExit));
+  const defectFailure = Cause.findErrorOption(defectExit.cause);
+  assert.equal(defectFailure._tag, 'Some');
+  assert.ok(defectFailure._tag === 'Some');
+  const defect = defectFailure.value;
+  assert.ok(
+    defectExit.cause.reasons.some(
+      (reason) => Cause.isDieReason(reason) && reason.defect === 'secret database detail',
     ),
+    'the transaction bridge must retain the original defect alongside its safe public failure',
   );
 
   const resultHarness = makeHarness();

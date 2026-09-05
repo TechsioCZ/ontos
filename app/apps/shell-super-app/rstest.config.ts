@@ -43,4 +43,10 @@ export default defineConfig({
     },
   },
   testEnvironment: 'happy-dom',
+  tools: {
+    rspack: {
+      // Load the provider natively; Rstest's CJS wrapper corrupts its async dependency graph.
+      externals: { 'better-auth': 'commonjs better-auth' },
+    },
+  },
 });

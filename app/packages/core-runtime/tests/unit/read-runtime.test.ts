@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect, Predicate, Schema } from 'effect';
+import { Context, Effect, Predicate, Schema } from 'effect';
 import { Pool } from 'pg';
 import { defineRead } from '../../src/reads/definition.ts';
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
@@ -34,8 +34,10 @@ type EvidenceRow = Schema.Schema.Type<typeof EvidenceRowSchema>;
 
 const makeHarness = (
   options: {
+    readonly failCommit?: boolean;
     readonly failEvidence?: boolean;
     readonly onLegalEntityPermission?: (permission: string | undefined) => void;
+    readonly onQuery?: (text: string) => void;
     readonly onResourceTarget?: (target: {
       readonly moduleId: string;
       readonly resourceId: string;
@@ -55,6 +57,13 @@ const makeHarness = (
   const QueryConfigSchema = Schema.Struct({ text: Schema.String });
   const query = async <Query, Values>(queryInput: Query, values?: Values) => {
     const { text } = Schema.decodeUnknownSync(QueryConfigSchema)(queryInput);
+    options.onQuery?.(text);
+    if (options.failCommit === true && text.toLowerCase() === 'commit') {
+      throw new ReadPermissionDenied({
+        code: 'read_permission_denied',
+        reason: 'private commit detail',
+      });
+    }
     if (text.includes('data_access_events')) {
       if (options.failEvidence === true) {
         throw new Error('private persistence detail');
@@ -174,6 +183,88 @@ const registration = (items: readonly string[] = []) =>
     () => Effect.succeed({ items }),
     () => ({ kind: 'module', moduleId: 'core.shell' }),
   );
+
+class ReadTestDependency extends Context.Service<
+  ReadTestDependency,
+  { readonly items: readonly string[] }
+>()('@app/core-runtime/tests/unit/read-runtime.test/ReadTestDependency') {}
+
+void test('provides caller services to the factory and handler in one transaction', async () => {
+  const queries: string[] = [];
+  const harness = makeHarness({ onQuery: (text) => queries.push(text) });
+  const dependency = { items: ['visible'] };
+  const governed = defineRead(
+    registration().descriptor,
+    (_input, context) =>
+      Effect.gen(function* handler() {
+        assert.equal(yield* ReadTestDependency, dependency);
+        assert.equal(context.services, dependency);
+        return { evidence: { resultCount: 1 }, result: context.services.items };
+      }),
+    () =>
+      Effect.gen(function* services() {
+        const service = yield* ReadTestDependency;
+        assert.equal(service, dependency);
+        return service;
+      }),
+    () => ({ kind: 'module', moduleId: 'core.shell' }),
+  );
+  const result = await Effect.runPromise(
+    harness.runtime
+      .runRead({
+        input: {},
+        principal: scope,
+        registration: governed,
+        transport: { correlationId: scope.correlationId },
+      })
+      .pipe(Effect.provideService(ReadTestDependency, dependency)),
+  );
+  assert.deepEqual(result, ['visible']);
+  assert.equal(queries.filter((text) => text === 'begin').length, 1);
+  assert.equal(queries.filter((text) => text === 'commit').length, 1);
+});
+
+void test('sanitizes a foreign commit failure even when it resembles a typed denial', async () => {
+  const harness = makeHarness({ failCommit: true });
+  const error = await Effect.runPromise(
+    Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: registration(),
+        transport: { correlationId: scope.correlationId },
+      }),
+    ),
+  );
+  assert.equal(error._tag, 'ReadHandlerExecutionError');
+  assert.equal(error.reason, 'The governed read transaction failed');
+  assert.equal(harness.evidence(), 1, 'must not persist an additional denial for commit rejection');
+});
+
+void test('rolls back a handler defect before releasing its sanitized failure', async () => {
+  const queries: string[] = [];
+  const harness = makeHarness({ onQuery: (text) => queries.push(text) });
+  const governed = defineRead(
+    registration().descriptor,
+    () => Effect.die(new Error('private handler defect')),
+    () => Effect.succeed({}),
+    () => ({ kind: 'module', moduleId: 'core.shell' }),
+  );
+  const error = await Effect.runPromise(
+    Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: governed,
+        transport: { correlationId: scope.correlationId },
+      }),
+    ),
+  );
+  assert.equal(error._tag, 'ReadHandlerExecutionError');
+  assert.equal(error.reason, 'The read handler failed unexpectedly');
+  assert.equal(queries.at(-1), 'rollback');
+  assert.equal(harness.evidence(), 0);
+});
 
 void test('runs every gate before the handler and persists evidence before releasing zero results', async () => {
   const harness = makeHarness();
