@@ -74,7 +74,10 @@ void test('declares the composite same-tenant parent keys used by isolation fore
 void test('runtime RLS isolates tenant and legal-entity rows and never leaks transaction scope', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
   const admin = new Pool({ connectionString: Redacted.value(connections.admin.connectionString) });
-  const runtime = new Pool({ connectionString: Redacted.value(connections.runtime.connectionString), max: 1 });
+  const runtime = new Pool({
+    connectionString: Redacted.value(connections.runtime.connectionString),
+    max: 1,
+  });
   const schema = `isolation_${randomUUID().replaceAll('-', '')}`;
   const tenantA = randomUUID();
   const tenantB = randomUUID();
@@ -202,7 +205,9 @@ void test('runtime RLS isolates tenant and legal-entity rows and never leaks tra
 void test('an unscoped owner repository remains isolated inside a governed read transaction', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
   const admin = new Pool({ connectionString: Redacted.value(connections.admin.connectionString) });
-  const runtimePool = new Pool({ connectionString: Redacted.value(connections.runtime.connectionString) });
+  const runtimePool = new Pool({
+    connectionString: Redacted.value(connections.runtime.connectionString),
+  });
   const runtimeDatabase = drizzle({ client: runtimePool, relations: coreRelations });
   const schemaName = `governed_isolation_${randomUUID().replaceAll('-', '')}`;
   const ownerSchema = pgSchema(schemaName);

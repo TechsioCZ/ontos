@@ -287,7 +287,9 @@ export const makeApiKeyService = (
             ),
             headers: requestHeaders,
           }),
-      }).pipe(Effect.map((created) => ({ ...toSafe(created), secret: Redacted.make(created.key) }))),
+      }).pipe(
+        Effect.map((created) => ({ ...toSafe(created), secret: Redacted.make(created.key) })),
+      ),
     metadata,
     pendingCleanup: (input) =>
       Effect.gen(function* pendingApiKeyCleanup() {

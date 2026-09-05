@@ -684,7 +684,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
     const catalog = makeCatalog(contract);
     const gateway = {
       resource: {
-        detail: ({ authorization, correlationId, ref }: any) =>
+        detail: ({ authorization, correlationId, ref }) =>
           Effect.tryPromise({
             catch: () => new ShellProviderUnavailableError(),
             try: async () => {
@@ -692,7 +692,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
                 generated.detail,
                 '/reads/resource-detail',
                 { resourceId: ref.resourceId },
-                authorization,
+                Redacted.value(authorization),
                 correlationId,
               );
               if (!response.ok) {
@@ -701,7 +701,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
               return await decodeResponse(response, OwnerDetailSchema);
             },
           }),
-        timeline: ({ authorization, correlationId, ref }: any) =>
+        timeline: ({ authorization, correlationId, ref }) =>
           Effect.tryPromise({
             catch: () => new ShellProviderUnavailableError(),
             try: async () => {
@@ -709,7 +709,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
                 generated.list,
                 '/reads/resource-list',
                 { resourceId: ref.resourceId },
-                authorization,
+                Redacted.value(authorization),
                 correlationId,
               );
               if (!response.ok) {
@@ -720,7 +720,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
           }),
       },
       search: {
-        search: ({ authorization, correlationId, query }: any) =>
+        search: ({ authorization, correlationId, query }) =>
           Effect.tryPromise({
             catch: () => new ShellProviderUnavailableError(),
             try: async () => {
@@ -728,7 +728,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
                 generated.search,
                 `/${GENERATED_OWNER.moduleId}/search/records`,
                 { query },
-                authorization,
+                Redacted.value(authorization),
                 correlationId,
               );
               if (!response.ok) {
@@ -776,7 +776,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
       await Effect.runPromise(
         gateway.search.search({
           appId: GENERATED_OWNER.appId,
-          authorization: await issueAuthorization(principalA1),
+          authorization: Redacted.make(await issueAuthorization(principalA1)),
           correlationId: randomUUID(),
           query: 'searchable',
           searchKey: `${GENERATED_OWNER.moduleId}.records`,

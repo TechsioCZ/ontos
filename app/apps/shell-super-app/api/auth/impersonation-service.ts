@@ -286,7 +286,10 @@ const decodeSignedCookie = async (
   const expected = await makeSignature(value, Redacted.value(secret));
   return constantTimeEqual(signature, expected) ? value : undefined;
 };
-const encodeSignedCookie = async (value: string, secret: Redacted.Redacted<string>): Promise<string> =>
+const encodeSignedCookie = async (
+  value: string,
+  secret: Redacted.Redacted<string>,
+): Promise<string> =>
   encodeURIComponent(`${value}.${await makeSignature(value, Redacted.value(secret))}`);
 
 export interface SupportImpersonationDependencies {
