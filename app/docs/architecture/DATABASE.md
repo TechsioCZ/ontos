@@ -34,9 +34,10 @@ governed by [Action Execution](./ACTIONS.md).
 
 ## Drizzle Cohort
 
-OntOS runs the Drizzle v1 release candidate (`drizzle-orm` and `drizzle-kit`
-`1.0.0-rc.4`) pinned identically in every owner, together with Better Auth
-`1.7.2` and its `@better-auth/drizzle-adapter/relations-v2` entrypoint. Bump the
+OntOS runs the Drizzle v1 line (`drizzle-orm` and `drizzle-kit` at the same
+version) pinned identically in every owner, together with the matching Better
+Auth line and its `@better-auth/drizzle-adapter/relations-v2` entrypoint. The
+package manifests are the source of truth for the exact versions. Bump the
 pair only as one cohort and only through the proofs in
 [Drizzle v1 Upgrade](./DRIZZLE_V1_UPGRADE.md).
 
