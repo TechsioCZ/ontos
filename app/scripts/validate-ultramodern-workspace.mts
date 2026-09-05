@@ -8063,7 +8063,10 @@ for (const vertical of fullStackVerticals) {
   assert(
     verticalAssetPrefixExpression.includes(
       'configuredModernAssetPrefix || configuredUltramodernAssetPrefix || defaultAssetPrefix',
-    ),
+    ) ||
+      verticalAssetPrefixExpression.includes(
+        'configuredModernAssetPrefix ?? configuredUltramodernAssetPrefix ?? defaultAssetPrefix',
+      ),
     `${vertical.id} asset prefix fallback order is incorrect`,
   );
   assert(

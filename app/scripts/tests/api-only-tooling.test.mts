@@ -125,6 +125,35 @@ test('empty MF producers retain complete build and Node staged release evidence 
   );
 });
 
+test('empty MF producers bind root-relative route assets when publicPath is auto', async (context) => {
+  await Promise.all(
+    ['cjs', 'esm', 'esm-node'].map(async (format) => {
+      const fixture = await releaseFixture(context);
+      fixture.manifest.metaData.publicPath = 'auto';
+      await fixture.put('mf-manifest.json', fixture.manifest);
+      await fixture.put('routes-manifest.json', {
+        routeAssets: { index: { assets: ['/static/js/index.js'] } },
+      });
+      const extension = format === 'cjs' ? 'js' : 'mjs';
+      const framework = await import(
+        pathToFileURL(
+          path.join(
+            releaseFrameworkRoot,
+            format,
+            `ultramodern-release-envelope/framework-output.${extension}`,
+          ),
+        ).href
+      );
+      const envelope = await framework.emitFrameworkMicroVerticalReleaseEnvelope({
+        apiOnly: false,
+        distDirectory: fixture.root,
+        target: 'node',
+      });
+      assert.ok(envelope.surfaces.uiClient.includes('static/js/index.js'));
+    }),
+  );
+});
+
 test('empty-producer fallback rejects undeclared, foreign, traversing, missing, and nonbrowser assets', async (context) => {
   const fixture = await releaseFixture(context);
   for (const reference of [

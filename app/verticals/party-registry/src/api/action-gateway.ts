@@ -40,6 +40,11 @@ import type {
 import type { CorrectPartyFactPayload } from '../../shared/actions/correct-party-fact.ts';
 import type { UpdatePartyPayload, UpdatePartyResult } from '../../shared/actions/update-party.ts';
 
+export type {
+  AresCanonicalFactEvidence,
+  AresCorrectionReviewHandoff,
+} from '../../shared/domain/ares-application.ts';
+
 export const ACTION_GATEWAY_AUDIENCE = 'party-registry' as const;
 
 export type ActionGatewayIssuer = (
@@ -64,6 +69,9 @@ export const makeActionGateway = (acquire: ActionGatewayIssuer = issueGatewayCon
 export const actionGateway = makeActionGateway();
 export const makeOperationGateway = makeActionGateway;
 export const operationGateway = actionGateway;
+
+export const { deriveAresCorrectionReviewHandoffs, prefillPartyCandidateFromAres } =
+  AresApplication;
 
 export class AresApplySelectionInvalid extends Schema.TaggedError<AresApplySelectionInvalid>()(
   'AresApplySelectionInvalid',

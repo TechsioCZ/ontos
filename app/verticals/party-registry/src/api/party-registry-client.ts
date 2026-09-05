@@ -42,8 +42,15 @@ export * from './party-official-identifier-detail-client.ts';
 export * from './party-official-identifier-history-client.ts';
 export * from './party-relationship-detail-client.ts';
 export * from './party-command-client.ts';
-export { AresApplySelectionInvalid, applyAresObservation } from './action-gateway.ts';
+export {
+  AresApplySelectionInvalid,
+  applyAresObservation,
+  deriveAresCorrectionReviewHandoffs,
+  prefillPartyCandidateFromAres,
+} from './action-gateway.ts';
 export type {
+  AresCanonicalFactEvidence,
+  AresCorrectionReviewHandoff,
   AresAppliedAction,
   AresApplyOptions,
   AresApplyOutcome,
@@ -133,12 +140,3 @@ export const partyRegistryClient = {
 } satisfies PartyRegistryClient;
 
 export { recoverPartyCreate } from './party-command-client.ts';
-
-export {
-  prefillPartyCandidateFromAres,
-  deriveAresCorrectionReviewHandoffs,
-} from '../../shared/domain/ares-application.ts';
-export type {
-  AresCorrectionReviewHandoff,
-  AresCanonicalFactEvidence,
-} from '../../shared/domain/ares-application.ts';

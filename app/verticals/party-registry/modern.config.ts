@@ -1,4 +1,6 @@
-import { createRequire } from 'node:module';
+import { builtinModules, createRequire } from 'node:module';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { appTools, defineConfig, presetUltramodern } from '@modern-js/app-tools';
 import type { AppTools, AppToolsUserConfig, CliPlugin } from '@modern-js/app-tools';
 import { getBuildConfigEnvironment, withBuildConfigEnvironment } from '@modern-js/app-tools/config';
@@ -16,6 +18,36 @@ const localisedUrls = ultramodernLocalisedUrls;
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
 
 const cloudflareDeployEnabled = getBuildConfigEnvironment('MODERNJS_DEPLOY') === 'cloudflare';
+const resolvePostgresProtocolCommonJsEntry = () =>
+  fileURLToPath(new URL('../pg-protocol/dist/index.js', import.meta.resolve('pg/package.json')));
+const resolvePostgresPoolCommonJsEntry = () =>
+  createRequire(import.meta.resolve('pg/package.json')).resolve('pg-pool');
+const resolveEffectApiSourceDirectory = () => fileURLToPath(new URL('api/', import.meta.url));
+const nodeBuiltinRequests = new Set(
+  cloudflareDeployEnabled ? builtinModules.flatMap((name) => [name, `node:${name}`]) : [],
+);
+/* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. */
+const cloudflareRuntimeExternal = (
+  { dependencyType, request }: { dependencyType?: string; request?: string },
+  callback: (error?: Error, result?: string | string[], type?: 'module-import') => void,
+) => {
+  const nativeModuleImport = (specifier: string) =>
+    dependencyType?.startsWith('commonjs') === true ? [specifier, 'default'] : specifier;
+  if (request === 'cloudflare:sockets') {
+    callback(undefined, nativeModuleImport(request), 'module-import');
+    return;
+  }
+  if (request !== undefined && nodeBuiltinRequests.has(request)) {
+    callback(
+      undefined,
+      nativeModuleImport(request.startsWith('node:') ? request : `node:${request}`),
+      'module-import',
+    );
+    return;
+  }
+  callback();
+};
+/* oxlint-enable promise/prefer-await-to-callbacks */
 
 const zephyrRspackPlugin = (): CliPlugin<AppTools> => ({
   name: 'ultramodern-zephyr-rspack-plugin',
@@ -101,7 +133,7 @@ if (
 const whenEnabled = <Configuration>(enabled: boolean, configuration: Configuration) =>
   enabled ? configuration : undefined;
 
-const partyRegistryDevServerHeaders: NonNullable<
+const appDevServerHeaders: NonNullable<
   NonNullable<NonNullable<AppToolsUserConfig['dev']>['server']>['headers']
 > = {
   'Access-Control-Allow-Headers': 'Accept, Authorization, Content-Type, X-Requested-With',
@@ -180,7 +212,7 @@ export default defineConfig(
         // shells load remoteEntry.js and exposed chunks from this dev server.
         assetPrefix,
         server: {
-          headers: partyRegistryDevServerHeaders,
+          headers: appDevServerHeaders,
         },
       },
       html: {
@@ -266,8 +298,60 @@ export default defineConfig(
             .uniqueName('verticalPartyRegistry')
             .chunkLoadingGlobal('__ULTRAMODERN_VERTICAL_PARTY_REGISTRY_LOADED_CHUNKS__');
         },
+        rspack: (config, { environment, rspack }) => {
+          if (!cloudflareDeployEnabled) {
+            return;
+          }
+          const configuredAliases = config.resolve.alias;
+          config.resolve.alias =
+            configuredAliases === false || configuredAliases === undefined ? {} : configuredAliases;
+          Object.assign(config.resolve.alias, {
+            'pg-pool$': resolvePostgresPoolCommonJsEntry(),
+            'pg-protocol$': resolvePostgresProtocolCommonJsEntry(),
+          });
+          const configuredExternals = config.externals;
+          config.externals = [cloudflareRuntimeExternal];
+          if (configuredExternals !== undefined) {
+            config.externals.push(
+              ...(Array.isArray(configuredExternals) ? configuredExternals : [configuredExternals]),
+            );
+          }
+          if (environment.name === 'workerSSR') {
+            const effectApiSourceDirectory = resolveEffectApiSourceDirectory();
+            const configuredNode = config.node;
+            config.node =
+              configuredNode === false || configuredNode === undefined ? {} : configuredNode;
+            Object.assign(config.node, {
+              __dirname: false,
+              __filename: false,
+            });
+            config.plugins.push(
+              new rspack.DefinePlugin({
+                'globalThis.FinalizationRegistry': 'undefined',
+              }),
+              new rspack.NormalModuleReplacementPlugin(/[?&]loaderId=/u, (resource) => {
+                resource.request = resource.request.replace(
+                  /(?<separator>[?&])retain=[^&]*/u,
+                  '$<separator>retain=true',
+                );
+              }),
+              new rspack.NormalModuleReplacementPlugin(/^\.\.?[/\\]/u, (resource) => {
+                const [requestPath] = resource.request.split('?', 1);
+                if (
+                  requestPath !== undefined &&
+                  path
+                    .resolve(resource.context, requestPath)
+                    .startsWith(effectApiSourceDirectory) &&
+                  !resource.request.includes('modern-bff-runtime-source')
+                ) {
+                  resource.request = `${resource.request}?modern-bff-runtime-source`;
+                }
+              }),
+            );
+          }
+        },
       },
-    },
+    } satisfies AppToolsUserConfig,
     {
       appId,
       deliveryUnit: {

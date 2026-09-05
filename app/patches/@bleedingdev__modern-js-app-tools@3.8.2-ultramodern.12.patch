@@ -148,7 +148,7 @@ diff --git a/dist/cjs/ultramodern-release-envelope/framework-output.js b/dist/cj
 +    if (!explicitlyEmptyProducer || typeof metadata.publicPath !== 'string') return [];
 +    // An empty federation producer still has a compiled application bootstrap.
 +    // Bind only its declared route assets, never arbitrary API/SSR or foreign chunks.
-+    const publicBase = new URL(metadata.publicPath, 'https://ultramodern.invalid/');
++    const publicBase = new URL(metadata.publicPath === 'auto' ? '/' : metadata.publicPath, 'https://ultramodern.invalid/');
 +    if (!['http:', 'https:'].includes(publicBase.protocol) || !publicBase.pathname.endsWith('/')) return [];
 +    const manifestDirectory = external_node_path_default().posix.dirname(manifestLogicalPath);
 +    const routeManifest = await readJson(external_node_path_default().join(distDirectory, manifestDirectory, 'routes-manifest.json'));
@@ -195,7 +195,7 @@ diff --git a/dist/esm/ultramodern-release-envelope/framework-output.mjs b/dist/e
 +    if (!explicitlyEmptyProducer || typeof metadata.publicPath !== 'string') return [];
 +    // An empty federation producer still has a compiled application bootstrap.
 +    // Bind only its declared route assets, never arbitrary API/SSR or foreign chunks.
-+    const publicBase = new URL(metadata.publicPath, 'https://ultramodern.invalid/');
++    const publicBase = new URL(metadata.publicPath === 'auto' ? '/' : metadata.publicPath, 'https://ultramodern.invalid/');
 +    if (!['http:', 'https:'].includes(publicBase.protocol) || !publicBase.pathname.endsWith('/')) return [];
 +    const manifestDirectory = node_path.posix.dirname(manifestLogicalPath);
 +    const routeManifest = await readJson(node_path.join(distDirectory, manifestDirectory, 'routes-manifest.json'));
@@ -242,7 +242,7 @@ diff --git a/dist/esm-node/ultramodern-release-envelope/framework-output.mjs b/d
 +    if (!explicitlyEmptyProducer || typeof metadata.publicPath !== 'string') return [];
 +    // An empty federation producer still has a compiled application bootstrap.
 +    // Bind only its declared route assets, never arbitrary API/SSR or foreign chunks.
-+    const publicBase = new URL(metadata.publicPath, 'https://ultramodern.invalid/');
++    const publicBase = new URL(metadata.publicPath === 'auto' ? '/' : metadata.publicPath, 'https://ultramodern.invalid/');
 +    if (!['http:', 'https:'].includes(publicBase.protocol) || !publicBase.pathname.endsWith('/')) return [];
 +    const manifestDirectory = node_path.posix.dirname(manifestLogicalPath);
 +    const routeManifest = await readJson(node_path.join(distDirectory, manifestDirectory, 'routes-manifest.json'));

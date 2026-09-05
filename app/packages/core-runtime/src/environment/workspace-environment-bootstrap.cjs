@@ -1,6 +1,6 @@
-/* oxlint-disable typescript/consistent-return, typescript/no-require-imports, typescript/no-unsafe-argument */
-const { existsSync } = require('node:fs');
-const path = require('node:path');
+/* oxlint-disable typescript/consistent-return, typescript/no-unsafe-argument */
+const { existsSync } = process.getBuiltinModule('node:fs');
+const path = process.getBuiltinModule('node:path');
 
 const isAppWorkspace = (candidate) =>
   existsSync(path.join(candidate, 'pnpm-workspace.yaml')) &&

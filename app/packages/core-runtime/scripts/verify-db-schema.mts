@@ -94,7 +94,7 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
         select
           relation.relrowsecurity,
           relation.relforcerowsecurity,
-          coalesce(array_agg(policy.policyname order by policy.policyname)
+          coalesce(array_agg(policy.policyname::text order by policy.policyname)
             filter (where policy.policyname is not null), array[]::text[]) as policy_names
         from pg_catalog.pg_class as relation
         inner join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
