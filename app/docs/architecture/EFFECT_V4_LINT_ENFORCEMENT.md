@@ -6,19 +6,28 @@ No application violations are repaired, no new dependencies are installed, and n
 
 ## Verified snapshot
 
-- Source snapshot: audit commit `e38c97c`, with the new lint tooling; application sources unchanged.
-- Oxlint 1.79.0; Effect 4.0.0-beta.107; Node 26.8.1.
-- Scope: `apps verticals packages scripts`; 465 files linted.
-- Effect policy report: **3,862 diagnostics in 321 files**; **70 rules report**, one has zero hits.
-- Disjoint groups: **2,028 source**, **946 tests**, **888 scripts**. Test paths take precedence.
-- Full production lint: **9,395 errors**, comprising the same **3,862 Effect** diagnostics and
-  **5,533 other-policy** diagnostics (including five unused-disable directives). No plugin crash.
-- Lint exits 1 intentionally: this is newly enforced debt, not an application migration.
-- Dedicated strict tooling typecheck passes. Fixture/production/registration/harness tests pass;
-  run the commands below for the current test count and results.
+- Source snapshot: main commit `ea18e4a6`, plus the lint tooling. No application-source changes
+  are included in this PR; upstream application changes were retained during rebase.
+- Existing lint toolchain: Oxlint 1.79.0, `@oxlint/plugins` 1.79.0, Node 26.8.1.
+- Scope: `apps verticals packages scripts`; **471 files linted**.
+- Effect policy report: **3,909 diagnostics in 326 files**; **70 rules report**, one has zero hits.
+- Disjoint groups: **2,043 source**, **961 tests**, **905 scripts**. Test paths take precedence.
+- Dedicated strict tooling typecheck and **155 tests pass**, covering **2,248 fixture source
+  files**, production defaults, registration, reporting failures and temporary cleanup.
+- The Effect-only scan completes without a plugin crash and exits 1 intentionally because
+  application debt is reported, not repaired.
 
-Counts are diagnostic occurrences, **not unique audit clusters** or proof of 3,862 independent
-bugs. Several rules can report at one source location. Zero hits does not mean a rule is disabled:
+Before rebase, the package-script gates and scoped formatting passed. Full lint on the original
+`e38c97c` source snapshot produced 9,395 errors: 3,862 Effect and 5,533 other-policy diagnostics,
+including five unused-disable directives. Those are **historical**, not the rebased totals above.
+
+**Environment limitation after rebase:** pnpm reports `ERR_PNPM_VERIFY_DEPS_BEFORE_RUN` because
+existing installed application dependencies lag main's updated lockfile. No dependency install
+was performed. The unchanged installed lint compiler/plugin were tested directly; the current
+Effect-only AST scan does not typecheck application dependencies. Do not treat this as a clean,
+lockfile-synchronized application lint/typecheck/build or a successful full `pnpm check`.
+
+Counts are diagnostic occurrences, **not unique audit clusters** or proof of independent bugs. Several rules can report at one source location. Zero hits does not mean a rule is disabled:
 `no-runtime-construction-outside-root` has verified positive fixture coverage.
 
 ## Reproduce
@@ -49,31 +58,31 @@ Follow each rule link for its exact detection policy, defaults, exemptions, and 
 | -------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ----: | -----: | ----: | ------: |
 | [`no-ad-hoc-argv-in-scripts`](../../tools/oxlint/effect-native/rules/no-ad-hoc-argv-in-scripts.ts)                                           | B3    |    23 |      0 |     0 |      23 |
 | [`no-ambient-date`](../../tools/oxlint/effect-native/rules/no-ambient-date.ts)                                                               | B5    |    56 |     19 |    19 |      18 |
-| [`no-ambient-process-env`](../../tools/oxlint/effect-native/rules/no-ambient-process-env.ts)                                                 | A3    |   140 |     18 |    46 |      76 |
-| [`no-async-script-program`](../../tools/oxlint/effect-native/rules/no-async-script-program.ts)                                               | B3    |   165 |      0 |     0 |     165 |
+| [`no-ambient-process-env`](../../tools/oxlint/effect-native/rules/no-ambient-process-env.ts)                                                 | A3    |   141 |     18 |    46 |      77 |
+| [`no-async-script-program`](../../tools/oxlint/effect-native/rules/no-async-script-program.ts)                                               | B3    |   169 |      0 |     0 |     169 |
 | [`no-bare-effect-run`](../../tools/oxlint/effect-native/rules/no-bare-effect-run.ts)                                                         | A1    |     1 |      1 |     0 |       0 |
-| [`no-console-in-scripts`](../../tools/oxlint/effect-native/rules/no-console-in-scripts.ts)                                                   | B3    |    24 |      0 |     0 |      24 |
+| [`no-console-in-scripts`](../../tools/oxlint/effect-native/rules/no-console-in-scripts.ts)                                                   | B3    |    26 |      0 |     0 |      26 |
 | [`no-dependency-parameters`](../../tools/oxlint/effect-native/rules/no-dependency-parameters.ts)                                             | B4    |    68 |     68 |     0 |       0 |
-| [`no-direct-node-io-in-scripts`](../../tools/oxlint/effect-native/rules/no-direct-node-io-in-scripts.ts)                                     | B3    |    48 |      0 |     0 |      48 |
+| [`no-direct-node-io-in-scripts`](../../tools/oxlint/effect-native/rules/no-direct-node-io-in-scripts.ts)                                     | B3    |    49 |      0 |     0 |      49 |
 | [`no-dotenv-loading`](../../tools/oxlint/effect-native/rules/no-dotenv-loading.ts)                                                           | A3    |    26 |     18 |     2 |       6 |
 | [`no-driver-failure-inspection`](../../tools/oxlint/effect-native/rules/no-driver-failure-inspection.ts)                                     | A5    |    33 |     33 |     0 |       0 |
 | [`no-duplicate-literal-vocabulary`](../../tools/oxlint/effect-native/rules/no-duplicate-literal-vocabulary.ts)                               | B5    |     5 |      5 |     0 |       0 |
 | [`no-effect-provide-in-library`](../../tools/oxlint/effect-native/rules/no-effect-provide-in-library.ts)                                     | A1    |     4 |      4 |     0 |       0 |
 | [`no-effect-run-in-scripts`](../../tools/oxlint/effect-native/rules/no-effect-run-in-scripts.ts)                                             | B3    |     2 |      0 |     0 |       2 |
-| [`no-effect-run-in-tests`](../../tools/oxlint/effect-native/rules/no-effect-run-in-tests.ts)                                                 | B2    |   683 |      0 |   683 |       0 |
+| [`no-effect-run-in-tests`](../../tools/oxlint/effect-native/rules/no-effect-run-in-tests.ts)                                                 | B2    |   698 |      0 |   698 |       0 |
 | [`no-environment-record-type`](../../tools/oxlint/effect-native/rules/no-environment-record-type.ts)                                         | A3    |    26 |     23 |     0 |       3 |
-| [`no-failure-discarding-error-callback`](../../tools/oxlint/effect-native/rules/no-failure-discarding-error-callback.ts)                     | A4    |   134 |    134 |     0 |       0 |
+| [`no-failure-discarding-error-callback`](../../tools/oxlint/effect-native/rules/no-failure-discarding-error-callback.ts)                     | A4    |   136 |    136 |     0 |       0 |
 | [`no-hand-built-http-server-in-tests`](../../tools/oxlint/effect-native/rules/no-hand-built-http-server-in-tests.ts)                         | B2    |     9 |      0 |     9 |       0 |
 | [`no-hand-built-problem-details`](../../tools/oxlint/effect-native/rules/no-hand-built-problem-details.ts)                                   | A4    |    68 |     68 |     0 |       0 |
 | [`no-hand-parsed-environment-value`](../../tools/oxlint/effect-native/rules/no-hand-parsed-environment-value.ts)                             | A3    |   104 |     83 |     1 |      20 |
 | [`no-hand-rolled-tagged-union`](../../tools/oxlint/effect-native/rules/no-hand-rolled-tagged-union.ts)                                       | B5    |    32 |     31 |     1 |       0 |
-| [`no-imperative-loop-in-effect-gen`](../../tools/oxlint/effect-native/rules/no-imperative-loop-in-effect-gen.ts)                             | B1    |    14 |     14 |     0 |       0 |
+| [`no-imperative-loop-in-effect-gen`](../../tools/oxlint/effect-native/rules/no-imperative-loop-in-effect-gen.ts)                             | B1    |    23 |     23 |     0 |       0 |
 | [`no-interface-first-codec`](../../tools/oxlint/effect-native/rules/no-interface-first-codec.ts)                                             | A2    |    34 |     34 |     0 |       0 |
 | [`no-json-schema-as-document-contract`](../../tools/oxlint/effect-native/rules/no-json-schema-as-document-contract.ts)                       | A7    |    15 |     15 |     0 |       0 |
 | [`no-layer-fresh`](../../tools/oxlint/effect-native/rules/no-layer-fresh.ts)                                                                 | A1    |     1 |      1 |     0 |       0 |
 | [`no-layer-or-die-outside-root`](../../tools/oxlint/effect-native/rules/no-layer-or-die-outside-root.ts)                                     | A1    |    10 |     10 |     0 |       0 |
 | [`no-layer-provide-in-library`](../../tools/oxlint/effect-native/rules/no-layer-provide-in-library.ts)                                       | A1    |    21 |     21 |     0 |       0 |
-| [`no-literal-union-type-alias`](../../tools/oxlint/effect-native/rules/no-literal-union-type-alias.ts)                                       | B5    |    41 |     26 |     4 |      11 |
+| [`no-literal-union-type-alias`](../../tools/oxlint/effect-native/rules/no-literal-union-type-alias.ts)                                       | B5    |    42 |     27 |     4 |      11 |
 | [`no-local-defect-seam`](../../tools/oxlint/effect-native/rules/no-local-defect-seam.ts)                                                     | A4    |    53 |     53 |     0 |       0 |
 | [`no-manual-config-in-scaffold-templates`](../../tools/oxlint/effect-native/rules/no-manual-config-in-scaffold-templates.ts)                 | A8    |    36 |      0 |     0 |      36 |
 | [`no-manual-cookie-serialization`](../../tools/oxlint/effect-native/rules/no-manual-cookie-serialization.ts)                                 | C1    |     7 |      7 |     0 |       0 |
@@ -83,16 +92,16 @@ Follow each rule link for its exact detection policy, defaults, exemptions, and 
 | [`no-manual-tag-comparison`](../../tools/oxlint/effect-native/rules/no-manual-tag-comparison.ts)                                             | C2    |   166 |    130 |    36 |       0 |
 | [`no-native-error-construction`](../../tools/oxlint/effect-native/rules/no-native-error-construction.ts)                                     | A4    |   115 |    115 |     0 |       0 |
 | [`no-native-json-parse`](../../tools/oxlint/effect-native/rules/no-native-json-parse.ts)                                                     | C1    |    38 |      8 |     0 |      30 |
-| [`no-native-json-stringify`](../../tools/oxlint/effect-native/rules/no-native-json-stringify.ts)                                             | C1    |    77 |     15 |     0 |      62 |
+| [`no-native-json-stringify`](../../tools/oxlint/effect-native/rules/no-native-json-stringify.ts)                                             | C1    |    78 |     15 |     0 |      63 |
 | [`no-native-timers`](../../tools/oxlint/effect-native/rules/no-native-timers.ts)                                                             | B1    |     8 |      2 |     6 |       0 |
 | [`no-nested-effect-run`](../../tools/oxlint/effect-native/rules/no-nested-effect-run.ts)                                                     | S1    |    17 |     17 |     0 |       0 |
 | [`no-nullable-schema-field`](../../tools/oxlint/effect-native/rules/no-nullable-schema-field.ts)                                             | B5    |    40 |     40 |     0 |       0 |
 | [`no-nullable-service-outcome`](../../tools/oxlint/effect-native/rules/no-nullable-service-outcome.ts)                                       | B5    |    17 |     16 |     0 |       1 |
 | [`no-per-operation-http-api-client`](../../tools/oxlint/effect-native/rules/no-per-operation-http-api-client.ts)                             | B1    |    43 |     43 |     0 |       0 |
 | [`no-per-request-key-material`](../../tools/oxlint/effect-native/rules/no-per-request-key-material.ts)                                       | B1    |     3 |      2 |     0 |       1 |
-| [`no-process-exit-outside-script-entry`](../../tools/oxlint/effect-native/rules/no-process-exit-outside-script-entry.ts)                     | B3    |    14 |      0 |     0 |      14 |
+| [`no-process-exit-outside-script-entry`](../../tools/oxlint/effect-native/rules/no-process-exit-outside-script-entry.ts)                     | B3    |    15 |      0 |     0 |      15 |
 | [`no-promise-first-scaffold-templates`](../../tools/oxlint/effect-native/rules/no-promise-first-scaffold-templates.ts)                       | A8    |     4 |      0 |     0 |       4 |
-| [`no-promise-shaped-port`](../../tools/oxlint/effect-native/rules/no-promise-shaped-port.ts)                                                 | A5    |    47 |     47 |     0 |       0 |
+| [`no-promise-shaped-port`](../../tools/oxlint/effect-native/rules/no-promise-shaped-port.ts)                                                 | A5    |    48 |     48 |     0 |       0 |
 | [`no-raw-effect-adt-tag-check`](../../tools/oxlint/effect-native/rules/no-raw-effect-adt-tag-check.ts)                                       | C2    |    19 |     16 |     3 |       0 |
 | [`no-refinement-outside-schema`](../../tools/oxlint/effect-native/rules/no-refinement-outside-schema.ts)                                     | A2    |    43 |     29 |     4 |      10 |
 | [`no-route-local-error-classifier`](../../tools/oxlint/effect-native/rules/no-route-local-error-classifier.ts)                               | A4    |    26 |     26 |     0 |       0 |
@@ -102,22 +111,22 @@ Follow each rule link for its exact detection policy, defaults, exemptions, and 
 | [`no-string-timestamp-schema`](../../tools/oxlint/effect-native/rules/no-string-timestamp-schema.ts)                                         | B5    |    32 |     23 |     1 |       8 |
 | [`no-structural-document-walking`](../../tools/oxlint/effect-native/rules/no-structural-document-walking.ts)                                 | A7    |    57 |     29 |     0 |      28 |
 | [`no-symbol-slotted-operation-record`](../../tools/oxlint/effect-native/rules/no-symbol-slotted-operation-record.ts)                         | B4    |    18 |     18 |     0 |       0 |
-| [`no-sync-schema-codec`](../../tools/oxlint/effect-native/rules/no-sync-schema-codec.ts)                                                     | C1    |    21 |     17 |     0 |       4 |
+| [`no-sync-schema-codec`](../../tools/oxlint/effect-native/rules/no-sync-schema-codec.ts)                                                     | C1    |    22 |     18 |     0 |       4 |
 | [`no-threaded-correlation-parameter`](../../tools/oxlint/effect-native/rules/no-threaded-correlation-parameter.ts)                           | A6    |    46 |     46 |     0 |       0 |
 | [`no-throw-in-configuration-parser`](../../tools/oxlint/effect-native/rules/no-throw-in-configuration-parser.ts)                             | A3    |    26 |     26 |     0 |       0 |
 | [`no-throw-in-effect-callback`](../../tools/oxlint/effect-native/rules/no-throw-in-effect-callback.ts)                                       | A4    |    61 |     61 |     0 |       0 |
-| [`no-throw-in-scripts`](../../tools/oxlint/effect-native/rules/no-throw-in-scripts.ts)                                                       | B3    |   269 |      0 |     0 |     269 |
-| [`no-unbranded-identifier-schema`](../../tools/oxlint/effect-native/rules/no-unbranded-identifier-schema.ts)                                 | A2    |   154 |    126 |    28 |       0 |
-| [`no-unjustified-file-wide-lint-suppression`](../../tools/oxlint/effect-native/rules/no-unjustified-file-wide-lint-suppression.ts)           | A8    |   209 |     99 |   101 |       9 |
+| [`no-throw-in-scripts`](../../tools/oxlint/effect-native/rules/no-throw-in-scripts.ts)                                                       | B3    |   275 |      0 |     0 |     275 |
+| [`no-unbranded-identifier-schema`](../../tools/oxlint/effect-native/rules/no-unbranded-identifier-schema.ts)                                 | A2    |   153 |    125 |    28 |       0 |
+| [`no-unjustified-file-wide-lint-suppression`](../../tools/oxlint/effect-native/rules/no-unjustified-file-wide-lint-suppression.ts)           | A8    |   211 |    100 |   101 |      10 |
 | [`no-unmanaged-mutable-state`](../../tools/oxlint/effect-native/rules/no-unmanaged-mutable-state.ts)                                         | C3    |    11 |     11 |     0 |       0 |
 | [`no-unredacted-secret-field`](../../tools/oxlint/effect-native/rules/no-unredacted-secret-field.ts)                                         | A3    |    41 |     35 |     0 |       6 |
 | [`no-wide-factory-signature`](../../tools/oxlint/effect-native/rules/no-wide-factory-signature.ts)                                           | B4    |    23 |     23 |     0 |       0 |
-| [`prefer-effect-fn-for-operations`](../../tools/oxlint/effect-native/rules/prefer-effect-fn-for-operations.ts)                               | B4    |    75 |     75 |     0 |       0 |
+| [`prefer-effect-fn-for-operations`](../../tools/oxlint/effect-native/rules/prefer-effect-fn-for-operations.ts)                               | B4    |    76 |     76 |     0 |       0 |
 | [`prefer-match-over-tag-switch`](../../tools/oxlint/effect-native/rules/prefer-match-over-tag-switch.ts)                                     | C2    |    34 |     32 |     2 |       0 |
-| [`require-concurrency-option`](../../tools/oxlint/effect-native/rules/require-concurrency-option.ts)                                         | B1    |    11 |     11 |     0 |       0 |
+| [`require-concurrency-option`](../../tools/oxlint/effect-native/rules/require-concurrency-option.ts)                                         | B1    |    12 |     12 |     0 |       0 |
 | [`require-context-service-for-service-interface`](../../tools/oxlint/effect-native/rules/require-context-service-for-service-interface.ts)   | B4    |    11 |     11 |     0 |       0 |
 | [`require-observability-layers-at-runtime-root`](../../tools/oxlint/effect-native/rules/require-observability-layers-at-runtime-root.ts)     | A6    |     9 |      9 |     0 |       0 |
-| [`require-timeout-on-external-effect`](../../tools/oxlint/effect-native/rules/require-timeout-on-external-effect.ts)                         | B1    |    84 |     84 |     0 |       0 |
+| [`require-timeout-on-external-effect`](../../tools/oxlint/effect-native/rules/require-timeout-on-external-effect.ts)                         | B1    |    83 |     83 |     0 |       0 |
 
 ## Boundaries that remain review work
 
