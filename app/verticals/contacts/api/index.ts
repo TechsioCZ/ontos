@@ -6,8 +6,6 @@ import {
   ActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
-  DatabaseConfig,
-  loadDatabaseConfig,
   GatewayAssertionRedemptionService,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
@@ -64,8 +62,7 @@ import type { PartyRegistryReferenceRequestOptions } from '../src/integrations/p
 import { organizationEngagementProfileReadApiLive } from './organization-engagement-profile-read-server.ts';
 import { personEngagementProfileReadApiLive } from './person-engagement-profile-read-server.ts';
 import { verifyOperationPrincipal } from './auth/action-principal.ts';
-import { GatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
-import { ContactsDatabaseLive } from '../src/db/client.ts';
+import { ContactsGatewayAssertionRedemptionLive } from '../src/runtime-infrastructure.ts';
 
 interface OperationSpanAttributes extends Readonly<Record<string, string | undefined>> {
   'modernjs.operation.id': string;
@@ -389,13 +386,7 @@ const personEngagementMutationsLive = HttpApiBuilder.group(
       ),
 );
 
-const contactsDatabaseLive = ContactsDatabaseLive.pipe(
-  Layer.provide(Layer.effect(DatabaseConfig, loadDatabaseConfig())),
-);
-const gatewayAssertionRedemptionLive = GatewayAssertionRedemptionLive.pipe(
-  Layer.provide(contactsDatabaseLive),
-  Layer.orDie,
-);
+const gatewayAssertionRedemptionLive = ContactsGatewayAssertionRedemptionLive.pipe(Layer.orDie);
 
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(
   Layer.provide(CorePersistenceLive),

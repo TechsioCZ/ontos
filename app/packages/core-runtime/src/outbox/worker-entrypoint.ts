@@ -1,5 +1,5 @@
 /** Focused server-only entrypoint used to bundle independently deployed Outbox Worker hosts. */
-export { CorePersistenceLive } from '../db/client.ts';
+export { CorePersistenceLive } from '../runtime-infrastructure.ts';
 export { OutboxRepositoryLive } from './repository.ts';
 export { defineTenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
 export { tenantLegalEntityRlsPolicies, tenantRlsPolicies } from '../db/scoped-transaction.ts';
