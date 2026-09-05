@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { Cause, Effect, Result } from 'effect';
+import { Cause, Effect, Redacted, Result } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 import { AresLookupApi } from '../../shared/apis/ares-lookup.ts';
@@ -124,7 +124,7 @@ test('builds each read client once while retaining nothing from any caller', asy
         ares
           .executeAresLookupWithAuthorization(
             { ico: '27074358' },
-            'Bearer first',
+            Redacted.make('Bearer first'),
             'correlation-first',
           )
           .pipe(
@@ -135,7 +135,7 @@ test('builds each read client once while retaining nothing from any caller', asy
               detail
                 .executePartyOfficialIdentifierDetailWithAuthorization(
                   { officialIdentifierRef: identifierRef },
-                  'Bearer second',
+                  Redacted.make('Bearer second'),
                   'correlation-second',
                 )
                 .pipe(Effect.result),
@@ -146,14 +146,14 @@ test('builds each read client once while retaining nothing from any caller', asy
                   ares
                     .executeAresLookupWithAuthorization(
                       { ico: '27074358' },
-                      'Bearer a',
+                      Redacted.make('Bearer a'),
                       'correlation-a',
                     )
                     .pipe(Effect.result),
                   detail
                     .executePartyOfficialIdentifierDetailWithAuthorization(
                       { officialIdentifierRef: identifierRef },
-                      'Bearer b',
+                      Redacted.make('Bearer b'),
                       'correlation-b',
                       { baseUrl: 'https://party.example/party-registry-api' },
                     )
@@ -161,7 +161,7 @@ test('builds each read client once while retaining nothing from any caller', asy
                   history
                     .executePartyOfficialIdentifierHistoryWithAuthorization(
                       { partyRef },
-                      'Bearer c',
+                      Redacted.make('Bearer c'),
                       'correlation-c',
                       { baseUrl: 'https://other.example/party-registry-api' },
                     )
@@ -245,9 +245,14 @@ test('bounds a stalled read with a typed TimeoutError and aborts the request', a
     const [ares, , history] = await loadClients();
     const stalled = await Effect.runPromise(
       history
-        .executePartyOfficialIdentifierHistoryWithAuthorization({ partyRef }, 'Bearer x', 'c-1', {
-          timeoutMs: 25,
-        })
+        .executePartyOfficialIdentifierHistoryWithAuthorization(
+          { partyRef },
+          Redacted.make('Bearer x'),
+          'c-1',
+          {
+            timeoutMs: 25,
+          },
+        )
         .pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, stalledBody)),
     );
     assert.ok(Result.isFailure(stalled));
@@ -259,7 +264,7 @@ test('bounds a stalled read with a typed TimeoutError and aborts the request', a
     const unconnected = Promise.withResolvers<Response>();
     const unreachable = await Effect.runPromise(
       ares
-        .executeAresLookupWithAuthorization({ ico: '27074358' }, 'Bearer x', 'c-2', {
+        .executeAresLookupWithAuthorization({ ico: '27074358' }, Redacted.make('Bearer x'), 'c-2', {
           timeoutMs: 25,
         })
         .pipe(

@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { Effect, Result } from 'effect';
+import { Effect, Redacted, Result } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 import { PartyDetailApi } from '../../shared/apis/party-detail.ts';
@@ -101,7 +101,7 @@ test('builds the Party detail client once while retaining nothing from any calle
       // Injects a transport of its own. Under the bug, this is the call whose context gets captured.
       executePartyDetailWithAuthorization(
         { partyRef: partyRef('1') },
-        'Bearer first',
+        Redacted.make('Bearer first'),
         'correlation-first',
         {},
       ).pipe(
@@ -111,7 +111,7 @@ test('builds the Party detail client once while retaining nothing from any calle
         Effect.andThen(
           executePartyDetailWithAuthorization(
             { partyRef: partyRef('2') },
-            'Bearer second',
+            Redacted.make('Bearer second'),
             'correlation-second',
             {},
           ).pipe(Effect.result),
@@ -121,7 +121,7 @@ test('builds the Party detail client once while retaining nothing from any calle
             interleaved.map((call, index) =>
               executePartyDetailWithAuthorization(
                 { partyRef: partyRef(String(index + 3)) },
-                call.authorization,
+                Redacted.make(call.authorization),
                 call.correlationId,
                 call.baseUrl === undefined ? {} : { baseUrl: call.baseUrl },
               ).pipe(Effect.result),
@@ -194,7 +194,7 @@ const stalledDetail = async (transport: typeof globalThis.fetch) => {
   return await Effect.runPromise(
     executePartyDetailWithAuthorization(
       { partyRef: partyRef('9') },
-      'Bearer slow',
+      Redacted.make('Bearer slow'),
       'correlation-slow',
       { baseUrl: 'https://slow.example/party-registry-api', timeoutMs: 25 },
     ).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, transport)),

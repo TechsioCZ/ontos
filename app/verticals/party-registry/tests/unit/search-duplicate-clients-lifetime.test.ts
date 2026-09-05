@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 import { CounterpartiesSearchApi } from '../../shared/apis/counterparties-search.ts';
@@ -119,7 +119,7 @@ test('builds each search and duplicate client once while retaining nothing from 
         // Injects a transport of its own. Under the bug, this is the call whose context gets captured.
         loadCounterpartiesClientWithAuthorization(
           { query: 'Example' },
-          'Bearer first',
+          Redacted.make('Bearer first'),
           'correlation-first',
           {},
         ).pipe(
@@ -129,7 +129,7 @@ test('builds each search and duplicate client once while retaining nothing from 
           Effect.andThen(
             loadPartiesClientWithAuthorization(
               { query: 'Example' },
-              'Bearer second',
+              Redacted.make('Bearer second'),
               'correlation-second',
               {},
             ).pipe(Effect.result),
@@ -137,7 +137,7 @@ test('builds each search and duplicate client once while retaining nothing from 
           Effect.andThen(
             executeDuplicateCandidateDetailWithAuthorization(
               { caseRef: caseRef('1') },
-              'Bearer third',
+              Redacted.make('Bearer third'),
               'correlation-third',
               {},
             ).pipe(Effect.result),
@@ -149,19 +149,19 @@ test('builds each search and duplicate client once while retaining nothing from 
               [
                 loadCounterpartiesClientWithAuthorization(
                   { query: 'Example' },
-                  'Bearer a',
+                  Redacted.make('Bearer a'),
                   'correlation-a',
                   {},
                 ).pipe(Effect.result),
                 loadCounterpartiesClientWithAuthorization(
                   { query: 'Example' },
-                  'Bearer b',
+                  Redacted.make('Bearer b'),
                   'correlation-b',
                   { baseUrl: 'https://party.example/party-registry-api' },
                 ).pipe(Effect.result),
                 executeDuplicateCandidateDetailWithAuthorization(
                   { caseRef: caseRef('4') },
-                  'Bearer c',
+                  Redacted.make('Bearer c'),
                   'correlation-c',
                   { baseUrl: 'https://other.example/party-registry-api' },
                 ).pipe(Effect.result),
@@ -255,7 +255,7 @@ test('fails a stalled read with a typed TimeoutError and never resends it', asyn
       const failure = await Effect.runPromise(
         loadPartiesClientWithAuthorization(
           { query: 'Example' },
-          'Bearer test',
+          Redacted.make('Bearer test'),
           'correlation-timeout',
           { timeoutMs: 10 },
         ).pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, stalled)),

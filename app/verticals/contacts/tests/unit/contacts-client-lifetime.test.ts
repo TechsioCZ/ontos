@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 import { contactsApi } from '../../shared/api.ts';
@@ -123,7 +123,7 @@ test('builds one Contacts client per API while retaining nothing from any caller
       // Injects a transport of its own. Under the bug, this is the call whose context gets captured.
       executePersonEngagementProfileWithAuthorization(
         { profileRef: personRef },
-        'Bearer first',
+        Redacted.make('Bearer first'),
         'correlation-first',
         {},
       ).pipe(
@@ -133,7 +133,7 @@ test('builds one Contacts client per API while retaining nothing from any caller
         Effect.andThen(
           executePersonEngagementProfileWithAuthorization(
             { profileRef: personRef },
-            'Bearer second',
+            Redacted.make('Bearer second'),
             'correlation-second',
             {},
           ).pipe(Effect.result),
@@ -143,13 +143,13 @@ test('builds one Contacts client per API while retaining nothing from any caller
             [
               executePersonEngagementProfileWithAuthorization(
                 { profileRef: personRef },
-                'Bearer a',
+                Redacted.make('Bearer a'),
                 'correlation-a',
                 {},
               ).pipe(Effect.result),
               executeOrganizationEngagementProfileWithAuthorization(
                 { profileRef: organizationRef },
-                'Bearer b',
+                Redacted.make('Bearer b'),
                 'correlation-b',
                 { baseUrl: 'https://profiles.example/contacts-api' },
               ).pipe(Effect.result),
@@ -252,7 +252,7 @@ test('expires the whole-operation deadline on a stalled body without a second at
     return await Effect.runPromise(
       executePersonEngagementProfileWithAuthorization(
         { profileRef: personRef },
-        'Bearer stalled',
+        Redacted.make('Bearer stalled'),
         'correlation-stalled',
         { timeoutMs: 25 },
       ).pipe(
@@ -293,7 +293,7 @@ test('expires the whole-operation deadline on a stalled fetch without a second a
     return await Effect.runPromise(
       executeOrganizationEngagementProfileWithAuthorization(
         { profileRef: organizationRef },
-        'Bearer stalled',
+        Redacted.make('Bearer stalled'),
         'correlation-stalled',
         { timeoutMs: 25 },
       ).pipe(

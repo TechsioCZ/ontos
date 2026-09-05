@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 import { executePartyContactPointDetailWithAuthorization } from '../../src/api/party-contact-point-detail-client.ts';
@@ -84,18 +84,18 @@ test('the three shared read clients keep each concurrent call on its own base UR
         [
           executePartyContactPointsWithAuthorization(
             { partyRef },
-            'Bearer points',
+            Redacted.make('Bearer points'),
             'correlation-a',
           ).pipe(Effect.result),
           executePartyContactPointDetailWithAuthorization(
             { contactPointRef },
-            'Bearer point-detail',
+            Redacted.make('Bearer point-detail'),
             'correlation-b',
             { baseUrl: 'https://party.example/party-registry-api' },
           ).pipe(Effect.result),
           executePartyRelationshipDetailWithAuthorization(
             { relationshipRef },
-            'Bearer relationship',
+            Redacted.make('Bearer relationship'),
             'correlation-c',
             { baseUrl: new URL('https://other.example/party-registry-api') },
           ).pipe(Effect.result),
@@ -139,9 +139,14 @@ test('an exhausted budget fails with a typed TimeoutError and never reissues the
 
   await withLocation(async () => {
     const outcome = await Effect.runPromise(
-      executePartyContactPointsWithAuthorization({ partyRef }, 'Bearer stalled', 'correlation-d', {
-        timeoutMs: 20,
-      }).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, stalledFetch)),
+      executePartyContactPointsWithAuthorization(
+        { partyRef },
+        Redacted.make('Bearer stalled'),
+        'correlation-d',
+        {
+          timeoutMs: 20,
+        },
+      ).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, stalledFetch)),
     );
 
     assert.equal(outcome._tag, 'Failure');

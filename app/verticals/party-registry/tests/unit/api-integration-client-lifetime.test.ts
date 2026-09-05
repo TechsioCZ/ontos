@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { Effect, Result } from 'effect';
+import { Effect, Redacted, Result } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 import { partyRegistryFoundationApi } from '../../shared/api.ts';
@@ -76,7 +76,7 @@ test('builds each Party command client once while retaining nothing from any cal
 
     await Effect.runPromise(
       // Injects a transport of its own. Under the bug, this is the call whose context gets captured.
-      requestSearchRebuildWithAuthorization({}, 'Bearer first', {
+      requestSearchRebuildWithAuthorization({}, Redacted.make('Bearer first'), {
         correlationId: 'correlation-first',
         idempotencyKey: 'rebuild-first',
       }).pipe(
@@ -84,7 +84,7 @@ test('builds each Party command client once while retaining nothing from any cal
         Effect.provideService(FetchHttpClient.Fetch, recorder(injectedFirst)),
         // Injects nothing: it must reach the ambient default, never the first call's recorder.
         Effect.andThen(
-          requestSearchRebuildWithAuthorization({}, 'Bearer second', {
+          requestSearchRebuildWithAuthorization({}, Redacted.make('Bearer second'), {
             correlationId: 'correlation-second',
             idempotencyKey: 'rebuild-second',
           }).pipe(Effect.result),
@@ -92,18 +92,18 @@ test('builds each Party command client once while retaining nothing from any cal
         Effect.andThen(
           Effect.all(
             [
-              requestSearchRebuildWithAuthorization({}, 'Bearer a', {
+              requestSearchRebuildWithAuthorization({}, Redacted.make('Bearer a'), {
                 correlationId: 'correlation-a',
                 idempotencyKey: 'rebuild-a',
               }).pipe(Effect.result),
-              requestSearchRebuildWithAuthorization({}, 'Bearer b', {
+              requestSearchRebuildWithAuthorization({}, Redacted.make('Bearer b'), {
                 baseUrl: 'https://party.example/party-registry-api',
                 correlationId: 'correlation-b',
                 idempotencyKey: 'rebuild-b',
               }).pipe(Effect.result),
               resolvePartyCommandCommitWithAuthorization(
                 { invocationId: '10000000-0000-4000-8000-000000000001' },
-                'Bearer c',
+                Redacted.make('Bearer c'),
                 {
                   baseUrl: 'https://other.example/party-registry-api',
                   correlationId: 'correlation-c',
@@ -190,7 +190,7 @@ test('a stalled command fails with a typed timeout and never resubmits the write
   const stalled = { aborted: false, attempts: 0 };
 
   const outcome = await Effect.runPromise(
-    requestSearchRebuildWithAuthorization({}, 'Bearer stalled', {
+    requestSearchRebuildWithAuthorization({}, Redacted.make('Bearer stalled'), {
       baseUrl: 'https://party.example/party-registry-api',
       correlationId: 'stalled',
       idempotencyKey: 'rebuild-stalled',

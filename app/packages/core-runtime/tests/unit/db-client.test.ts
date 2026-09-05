@@ -1,7 +1,7 @@
 // @effect-diagnostics asyncFunction:off -- Node test exercises the pg Promise boundary; remove-when: pg has an Effect-native lifecycle.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 import { Client, Pool } from 'pg';
 import type { PoolConfig } from 'pg';
 import {
@@ -13,8 +13,10 @@ import {
 import { makeDatabasePoolConfiguration } from '../../src/index.ts';
 import type { DatabaseConnectionError, DatabasePoolDeadlines } from '../../src/index.ts';
 
+const rawConnectionString = 'postgresql://synthetic:synthetic@localhost:1/synthetic';
+
 const configuration = {
-  connectionString: 'postgresql://synthetic:synthetic@localhost:1/synthetic',
+  connectionString: Redacted.make(rawConnectionString),
   database: 'synthetic',
   host: 'localhost',
   port: 1,
@@ -23,12 +25,12 @@ const configuration = {
 
 void test('public pool configuration needs no scope and preserves defaults, overrides, and SSL', async () => {
   const defaults: Effect.Effect<PoolConfig, DatabaseConnectionError> =
-    makeDatabasePoolConfiguration(configuration.connectionString);
+    makeDatabasePoolConfiguration(rawConnectionString);
   assert.deepEqual(await Effect.runPromise(defaults), {
-    connectionString: configuration.connectionString,
+    connectionString: rawConnectionString,
     ...DEFAULT_DATABASE_POOL_DEADLINES,
   });
-  const connectionString = `${configuration.connectionString}?sslmode=require&application_name=synthetic-app`;
+  const connectionString = `${rawConnectionString}?sslmode=require&application_name=synthetic-app`;
   const poolDeadlines: Partial<DatabasePoolDeadlines> = {
     connectionTimeoutMillis: 1,
     lock_timeout: 2_147_483_647,
@@ -61,7 +63,7 @@ void test('passes bounded pg options through the existing factory and closes its
     statement_timeout: 30_000,
   });
   assert.deepEqual(received, {
-    connectionString: configuration.connectionString,
+    connectionString: rawConnectionString,
     ...DEFAULT_DATABASE_POOL_DEADLINES,
   });
   assert.equal(end.mock.callCount(), 1);
@@ -81,7 +83,7 @@ void test('allows narrow deadline overrides without changing the factory positio
     ),
   );
   assert.deepEqual(received, {
-    connectionString: configuration.connectionString,
+    connectionString: rawConnectionString,
     connectionTimeoutMillis: 5000,
     lock_timeout: 100,
     statement_timeout: 250,
@@ -111,7 +113,7 @@ for (const key of ['connectionTimeoutMillis', 'statement_timeout', 'lock_timeout
 void test('pg URI deadlines override explicit client options without opening a connection', () => {
   const client = new Client({
     ...DEFAULT_DATABASE_POOL_DEADLINES,
-    connectionString: `${configuration.connectionString}?statement_timeout=0&lock_timeout=0&connectionTimeoutMillis=0&options=-c%20statement_timeout%3D0`,
+    connectionString: `${rawConnectionString}?statement_timeout=0&lock_timeout=0&connectionTimeoutMillis=0&options=-c%20statement_timeout%3D0`,
   });
   assert.ok('connectionParameters' in client);
   const parameters = client.connectionParameters;
@@ -153,7 +155,9 @@ for (const query of [
           makeCoreDatabase(
             {
               ...configuration,
-              connectionString: `${configuration.connectionString}?${query}&application_name=private-marker`,
+              connectionString: Redacted.make(
+                `${rawConnectionString}?${query}&application_name=private-marker`,
+              ),
             },
             (options) => {
               acquired = true;
@@ -171,12 +175,16 @@ for (const query of [
 }
 
 void test('preserves SSL and ordinary URI settings verbatim with supported deadline overrides', async () => {
-  const connectionString = `${configuration.connectionString}?sslmode=require&application_name=synthetic-app`;
+  const connectionString = `${rawConnectionString}?sslmode=require&application_name=synthetic-app`;
   let received: PoolConfig | undefined;
   await Effect.runPromise(
     Effect.scoped(
       makeCoreDatabase(
-        { ...configuration, connectionString, poolDeadlines: { statement_timeout: 250 } },
+        {
+          ...configuration,
+          connectionString: Redacted.make(connectionString),
+          poolDeadlines: { statement_timeout: 250 },
+        },
         (options) => {
           received = options;
           const client = new Client(options);
@@ -204,7 +212,12 @@ void test('preserves SSL and ordinary URI settings verbatim with supported deadl
 void test('malformed URI validation fails in the typed channel before pool acquisition', async () => {
   const error = await Effect.runPromise(
     Effect.scoped(
-      Effect.flip(makeCoreDatabase({ ...configuration, connectionString: 'private-invalid-uri' })),
+      Effect.flip(
+        makeCoreDatabase({
+          ...configuration,
+          connectionString: Redacted.make('private-invalid-uri'),
+        }),
+      ),
     ),
   );
   assert.equal(error._tag, 'DatabaseConnectionError');

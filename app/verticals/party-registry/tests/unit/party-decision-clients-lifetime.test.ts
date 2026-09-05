@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { Effect, Result } from 'effect';
+import { Effect, Redacted, Result } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 import { PartyCorrectionApi } from '../../shared/apis/party-correction.ts';
@@ -125,7 +125,7 @@ test('builds each decision-read client once while retaining nothing from any cal
         // Injects a transport of its own. Under the bug, this is the captured caller.
         executePartyMatchDecisionWithAuthorization(
           { decisionRef },
-          'Bearer first',
+          Redacted.make('Bearer first'),
           'first',
           {},
         ).pipe(
@@ -135,7 +135,7 @@ test('builds each decision-read client once while retaining nothing from any cal
           Effect.andThen(
             executePartyCorrectionWithAuthorization(
               { correctionRef },
-              'Bearer second',
+              Redacted.make('Bearer second'),
               'second',
               {},
             ).pipe(Effect.result),
@@ -145,16 +145,26 @@ test('builds each decision-read client once while retaining nothing from any cal
               [
                 executePartyMatchDecisionWithAuthorization(
                   { decisionRef },
-                  'Bearer a',
+                  Redacted.make('Bearer a'),
                   'a',
                   {},
                 ).pipe(Effect.result),
-                executePartyCorrectionWithAuthorization({ correctionRef }, 'Bearer b', 'b', {
-                  baseUrl: 'https://party.example/party-registry-api',
-                }).pipe(Effect.result),
-                executePartyMergeReadinessWithAuthorization(mergeReadiness, 'Bearer c', 'c', {
-                  baseUrl: 'https://other.example/party-registry-api',
-                }).pipe(Effect.result),
+                executePartyCorrectionWithAuthorization(
+                  { correctionRef },
+                  Redacted.make('Bearer b'),
+                  'b',
+                  {
+                    baseUrl: 'https://party.example/party-registry-api',
+                  },
+                ).pipe(Effect.result),
+                executePartyMergeReadinessWithAuthorization(
+                  mergeReadiness,
+                  Redacted.make('Bearer c'),
+                  'c',
+                  {
+                    baseUrl: 'https://other.example/party-registry-api',
+                  },
+                ).pipe(Effect.result),
               ],
               { concurrency: 'unbounded' },
             ).pipe(Effect.provideService(FetchHttpClient.Fetch, recorder(injectedLater))),
@@ -238,10 +248,15 @@ test('bounds a stalled read with a typed TimeoutError, aborting it and never ret
   const { executePartyMergeReadinessWithAuthorization } =
     await import('../../src/api/party-merge-readiness-client.ts');
   const result = await Effect.runPromise(
-    executePartyMergeReadinessWithAuthorization(mergeReadiness, 'Bearer stalled', 'stalled', {
-      baseUrl: 'https://slow.example/party-registry-api',
-      timeoutMs: 25,
-    }).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, stalled)),
+    executePartyMergeReadinessWithAuthorization(
+      mergeReadiness,
+      Redacted.make('Bearer stalled'),
+      'stalled',
+      {
+        baseUrl: 'https://slow.example/party-registry-api',
+        timeoutMs: 25,
+      },
+    ).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, stalled)),
   );
 
   // The deadline is a typed failure, not a defect, and it fired once: expiry interrupts this read

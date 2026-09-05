@@ -1,13 +1,15 @@
 import { expect, test } from '@rstest/core';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import type { Pool, PoolConfig } from 'pg';
 import type { AuthConfigValue } from '../../api/auth/config.ts';
 import { acquirePoolResource, makeAuthDatabase } from '../../api/auth/db/client.ts';
 
+const rawConnectionString = 'postgresql://auth_user:synthetic_password@localhost:5433/ontos';
+
 const authConfiguration: AuthConfigValue = {
   baseUrl: 'http://localhost:3020',
-  connectionString: 'postgresql://auth_user:synthetic_password@localhost:5433/ontos',
-  secret: 'a-secure-test-secret-with-more-than-32-characters',
+  connectionString: Redacted.make(rawConnectionString),
+  secret: Redacted.make('a-secure-test-secret-with-more-than-32-characters'),
   secureCookies: false,
   supportUserIds: [],
   trustedOrigins: ['http://localhost:3020'],
@@ -28,7 +30,7 @@ test('forwards the core PostgreSQL pool defaults to the auth pool factory', asyn
   );
 
   expect(received).toEqual({
-    connectionString: authConfiguration.connectionString,
+    connectionString: rawConnectionString,
     connectionTimeoutMillis: 5000,
     lock_timeout: 5000,
     statement_timeout: 30_000,
@@ -36,16 +38,19 @@ test('forwards the core PostgreSQL pool defaults to the auth pool factory', asyn
 });
 
 test('rejects unsafe URI options before acquiring the auth pool', async () => {
-  const connectionString = `${authConfiguration.connectionString}?statement_timeout=1&options=-c%20lock_timeout%3D1s`;
+  const connectionString = `${rawConnectionString}?statement_timeout=1&options=-c%20lock_timeout%3D1s`;
   let acquired = false;
 
   const error = await Effect.runPromise(
     Effect.flip(
       Effect.scoped(
-        makeAuthDatabase({ ...authConfiguration, connectionString }, () => {
-          acquired = true;
-          return makePool(async () => {});
-        }),
+        makeAuthDatabase(
+          { ...authConfiguration, connectionString: Redacted.make(connectionString) },
+          () => {
+            acquired = true;
+            return makePool(async () => {});
+          },
+        ),
       ),
     ),
   );
