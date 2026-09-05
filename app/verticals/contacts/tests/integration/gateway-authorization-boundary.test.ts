@@ -12,7 +12,7 @@ import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { Pool } from 'pg';
 import { verifyActionPrincipal } from '../../api/auth/action-principal.ts';
 import { makeGatewayAssertionRedemption } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
-import { contactsDatabaseSchema, gatewayAssertionRedemptions } from '../../src/db/schema.ts';
+import { contactsRelations, gatewayAssertionRedemptions } from '../../src/db/schema.ts';
 
 const now = 1_800_000_000;
 const issuer = 'https://shell.authorization-matrix.test';
@@ -137,7 +137,7 @@ for (const credential of ['session', 'api_key'] as const) {
 test('owner-local redemption atomically rejects replay and prunes expired rows', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
   const pool = new Pool({ connectionString: connections.admin.connectionString });
-  const database = drizzle({ client: pool, schema: contactsDatabaseSchema });
+  const database = drizzle({ client: pool, relations: contactsRelations });
   const redemption = makeGatewayAssertionRedemption(database);
   const databaseIssuer = 'https://shell.redemption-cleanup.test';
   const futureExpiry = Math.floor(Date.now() / 1000) + 300;

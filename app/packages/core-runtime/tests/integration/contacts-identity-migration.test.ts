@@ -115,7 +115,10 @@ test('Contacts Core identity migration is preserving, scoped, rerunnable, and co
     }
 
     const migrationSource = await readFile(
-      new URL('../../drizzle/0008_rename-crm-module-identity.sql', import.meta.url),
+      new URL(
+        '../../drizzle/20260901102632_rename-crm-module-identity/migration.sql',
+        import.meta.url,
+      ),
       'utf-8',
     );
     const migrationTables = ['tenant_module_states', ...Object.keys(tableColumns)];

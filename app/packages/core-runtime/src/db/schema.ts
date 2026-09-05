@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm';
+import { defineRelations, sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
@@ -913,3 +913,9 @@ export const CORE_TABLES = [
 
 export type TenantRow = typeof tenants.$inferSelect;
 export type TenantInsert = typeof tenants.$inferInsert;
+
+/**
+ * Relational Queries v2 entry point for the Core owner. Core currently declares no navigational
+ * relations; the empty graph still exposes typed `db.query.<table>` access for every Core table.
+ */
+export const coreRelations = defineRelations(coreDatabaseSchema);

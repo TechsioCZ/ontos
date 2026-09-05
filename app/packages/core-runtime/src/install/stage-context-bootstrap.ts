@@ -2,11 +2,12 @@
 import { v1 } from '@authzed/authzed-node';
 import { and, eq, or } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Effect, Schema } from 'effect';
 import { Pool } from 'pg';
 import { parseDatabaseConfig } from '../db/config.ts';
 import {
-  coreDatabaseSchema,
+  coreRelations,
   legalEntities,
   principalAuthBindings,
   principals,
@@ -147,7 +148,7 @@ const classifyExactRecord = <Expected extends ExactRecord>(
 };
 
 const reconcilePostgresContext = async (
-  database: ReturnType<typeof drizzle<typeof coreDatabaseSchema>>,
+  database: NodePgDatabase<typeof coreRelations>,
   context: StageContext,
   authUserId: string,
 ): Promise<void> => {
@@ -434,7 +435,7 @@ export const reconcileStageContextBootstraps = (
       try: async () => {
         const pool = new Pool({ connectionString: configuration.databaseAdminUrl });
         try {
-          const database = drizzle({ client: pool, schema: coreDatabaseSchema });
+          const database = drizzle({ client: pool, relations: coreRelations });
           for (const { context, providerUserId } of contexts) {
             // The fixed installation set is intentionally reconciled in order to avoid racing
             // cross-store bootstrap writes and to make a retry's stopping point deterministic.

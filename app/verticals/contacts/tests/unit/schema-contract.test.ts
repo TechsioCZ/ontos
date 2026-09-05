@@ -282,11 +282,16 @@ test('enables forced tenant RLS with complete CRUD policies on both tables', () 
 
 test('keeps immutable CRM provenance and the data-preserving Contacts rename migration', async () => {
   const migrationDirectory = new URL('../../drizzle/', import.meta.url);
-  const directoryEntries = await readdir(migrationDirectory);
-  const migrationFiles = directoryEntries.filter((name) => name.endsWith('.sql')).toSorted();
-  assert.equal(migrationFiles.length, 4);
+  const directoryEntries = await readdir(migrationDirectory, { withFileTypes: true });
+  const migrationFolders = directoryEntries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .toSorted();
+  assert.equal(migrationFolders.length, 4);
   const migrations = await Promise.all(
-    migrationFiles.map(async (name) => await readFile(new URL(name, migrationDirectory), 'utf-8')),
+    migrationFolders.map(
+      async (name) => await readFile(new URL(`${name}/migration.sql`, migrationDirectory), 'utf-8'),
+    ),
   );
   const migration = migrations.join('\n');
 

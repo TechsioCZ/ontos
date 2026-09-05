@@ -12,7 +12,7 @@ import { Schema } from 'effect';
 import { isObject } from 'effect/Predicate';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
-import { coreDatabaseSchema } from '../../../../packages/core-runtime/src/db/schema.ts';
+import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
 import { makeContactsApiRuntime } from '../../api/index.ts';
 import { createCustomer, lookupCustomerAres } from '../../src/api/contacts-client.ts';
@@ -148,7 +148,7 @@ test('runs ARES lookup through the generated client, real BFF, and governed Read
     select: () => {},
     update: () => {},
   };
-  const executor = drizzle.mock({ schema: coreDatabaseSchema });
+  const executor = drizzle.mock({ relations: coreRelations });
   const database = {
     executor: new Proxy(executor, {
       get: (target, property, receiver) => {

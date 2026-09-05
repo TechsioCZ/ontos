@@ -120,7 +120,7 @@ void test('allocates Domain Event order through a database-owned monotonic seque
   assert.ok(sequenceColumn);
   assert.equal(sequenceColumn.notNull, true);
   assert.equal(sequenceColumn.hasDefault, true);
-  assert.equal(sequenceColumn.dataType, 'bigint');
+  assert.equal(sequenceColumn.getSQLType(), 'bigint');
 
   const sequenceIndex = domainEventConfig.indexes.find(
     (candidate) => candidate.config.name === 'core_domain_events_tenant_sequence_uk',

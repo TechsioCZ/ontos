@@ -12,7 +12,7 @@ import type {
 import { ContextAccess, LegalEntityContext, PrincipalResolver } from '@app/core-runtime';
 import { apiKey } from '@better-auth/api-key';
 import { APIError, betterAuth } from 'better-auth';
-import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { admin } from 'better-auth/plugins';
 import { Context, Effect, Layer, Schema, Predicate } from 'effect';
 import { AuthConfig } from './config.ts';

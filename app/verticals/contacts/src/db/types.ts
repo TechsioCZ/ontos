@@ -1,7 +1,7 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import type { contactsDatabaseSchema } from './schema.ts';
+import type { contactsRelations } from './schema.ts';
 
-export type ContactsDatabaseExecutor = NodePgDatabase<typeof contactsDatabaseSchema>;
+export type ContactsDatabaseExecutor = NodePgDatabase<typeof contactsRelations>;
 
 type ContactsTransactionCallback = Parameters<ContactsDatabaseExecutor['transaction']>[0];
 

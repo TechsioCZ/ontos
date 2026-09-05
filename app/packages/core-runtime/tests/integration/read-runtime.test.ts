@@ -7,7 +7,7 @@ import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Effect, Schema } from 'effect';
 import { Pool } from 'pg';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
-import { coreDatabaseSchema, dataAccessEvents } from '../../src/db/schema.ts';
+import { coreRelations, dataAccessEvents } from '../../src/db/schema.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import {
   makeOperationalScopeRepository,
@@ -34,7 +34,7 @@ void test('commits live allowed evidence before releasing a governed read result
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
   const admin = new Pool({ connectionString: connections.admin.connectionString });
   const runtimePool = new Pool({ connectionString: connections.runtime.connectionString });
-  const runtimeDatabase = drizzle({ client: runtimePool, schema: coreDatabaseSchema });
+  const runtimeDatabase = drizzle({ client: runtimePool, relations: coreRelations });
   const tenantId = randomUUID();
   const principalId = randomUUID();
   const readKey = `core.shell.integration.${randomUUID()}`;

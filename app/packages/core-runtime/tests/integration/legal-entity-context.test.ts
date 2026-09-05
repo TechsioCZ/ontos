@@ -8,7 +8,7 @@ import { Effect } from 'effect';
 import { Pool } from 'pg';
 import { makeLegalEntityContext } from '../../src/auth/legal-entity-context.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
-import { coreDatabaseSchema, legalEntities, tenants } from '../../src/db/schema.ts';
+import { coreRelations, legalEntities, tenants } from '../../src/db/schema.ts';
 
 const tenantOne = '11000000-0000-4000-8000-000000000001';
 const tenantTwo = '11000000-0000-4000-8000-000000000002';
@@ -20,7 +20,7 @@ const foreign = '21000000-0000-4000-8000-000000000004';
 void test('lists and validates only active legal entities inside the exact tenant', async () => {
   const configuration = await Effect.runPromise(loadDatabaseConfig());
   const pool = new Pool({ connectionString: configuration.connectionString });
-  const database = drizzle({ client: pool, schema: coreDatabaseSchema });
+  const database = drizzle({ client: pool, relations: coreRelations });
   const context = makeLegalEntityContext({ executor: database });
 
   const cleanup = async () => {
