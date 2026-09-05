@@ -1,4 +1,4 @@
-/* oxlint-disable sonarjs/no-built-in-override, typescript/consistent-return */
+/* oxlint-disable typescript/consistent-return */
 import { Effect, FileSystem, Path } from 'effect';
 import bootstrapEnvironment from './workspace-environment-bootstrap.cjs';
 
