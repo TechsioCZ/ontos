@@ -188,6 +188,8 @@ const access = (decision: 'allowed' | 'denied'): ContextAccessService => ({
 
 const moduleStates = (): (typeof TenantModuleStateService)['Service'] => ({
   getTenantModuleStates: () => Effect.succeed([]),
+  listActiveTenantModules: () => Effect.succeed([]),
+  listTenantModuleStates: () => Effect.succeed([]),
 });
 
 test('independent concurrent Shell roots preserve ContextAccess, Core persistence and module-state identity', async () => {
