@@ -4,7 +4,7 @@
 // keep the exported repository operations in typed Effect error channels.
 import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
-import { Cause, Context, Effect, Layer, Predicate } from 'effect';
+import { Cause, Context, Effect, Exit, Layer, Predicate, Result } from 'effect';
 import {
   actionInvocations,
   auditEvents,
@@ -292,16 +292,24 @@ const transactionFailure = <FailureCause>(reason: string, cause?: FailureCause) 
   return failure;
 };
 
-class DenialRollbackSignal {
-  readonly error:
-    | ActionInvocationPersistenceError
-    | ActionInvocationStateError
-    | ActionTransactionError;
+type DenialError =
+  | ActionInvocationPersistenceError
+  | ActionInvocationStateError
+  | ActionTransactionError;
 
-  constructor(
-    error: ActionInvocationPersistenceError | ActionInvocationStateError | ActionTransactionError,
-  ) {
+class DenialRollbackSignal {
+  readonly error: DenialError;
+
+  constructor(error: DenialError) {
     this.error = error;
+  }
+}
+
+class DenialRollbackCauseSignal {
+  readonly cause: Cause.Cause<never>;
+
+  constructor(cause: Cause.Cause<never>) {
+    this.cause = cause;
   }
 }
 
@@ -333,19 +341,33 @@ const queryEffect = <Value, Failure>(
 // Drizzle must see a rejected Promise to roll back. Run only inside its foreign
 // transaction callback; this bridge does not claim to cancel in-flight queries.
 const runDenialTransaction = async (
-  program: Effect.Effect<
-    void,
-    ActionInvocationPersistenceError | ActionInvocationStateError | ActionTransactionError
-  >,
+  program: Effect.Effect<void, DenialError>,
   context: Context.Context<never>,
 ): Promise<void> => {
-  const failure = await Effect.runPromiseWith(context)(
-    Effect.match(program, { onFailure: (error) => error, onSuccess: () => undefined }),
-  );
-  if (failure !== undefined) {
-    throw new DenialRollbackSignal(failure);
+  // Typed failures land in the Result, so any remaining Cause is a defect or interruption.
+  const exit = await Effect.runPromiseWith(context)(Effect.exit(Effect.result(program)));
+  if (Exit.isFailure(exit)) {
+    throw new DenialRollbackCauseSignal(exit.cause);
+  }
+  if (Result.isFailure(exit.value)) {
+    throw new DenialRollbackSignal(exit.value.failure);
   }
 };
+
+// Typed rejections stay in the error channel; a rolled-back defect or interruption resurfaces as its Cause.
+const denialTransaction = <Failure>(
+  onRejection: (cause: unknown) => Failure,
+  run: () => Promise<void>,
+): Effect.Effect<void, Failure> =>
+  Effect.tryPromise({
+    catch: (cause) => (cause instanceof DenialRollbackCauseSignal ? cause : onRejection(cause)),
+    try: run,
+  }).pipe(
+    Effect.catchIf(
+      (error): error is DenialRollbackCauseSignal => error instanceof DenialRollbackCauseSignal,
+      (signal) => Effect.failCause(signal.cause),
+    ),
+  );
 
 export const makeActionRepository = (): ActionRepositoryService => {
   const createOrResolveInvocation: ActionRepositoryService['createOrResolveInvocation'] = (
@@ -521,9 +543,9 @@ export const makeActionRepository = (): ActionRepositoryService => {
       const context = yield* Effect.context<never>();
       const onFailure = (cause: unknown) =>
         transactionFailure('Unable to persist Action permission denial evidence', cause);
-      return yield* Effect.tryPromise({
-        catch: (cause) => (cause instanceof DenialRollbackSignal ? cause.error : onFailure(cause)),
-        try: () =>
+      return yield* denialTransaction(
+        (cause) => (cause instanceof DenialRollbackSignal ? cause.error : onFailure(cause)),
+        () =>
           executor.transaction((transaction) =>
             runDenialTransaction(
               Effect.gen(function* () {
@@ -607,7 +629,7 @@ export const makeActionRepository = (): ActionRepositoryService => {
               context,
             ),
           ),
-      });
+      );
     });
 
   const finalizePolicyDenial: ActionRepositoryService['finalizePolicyDenial'] = (executor, input) =>
@@ -615,13 +637,13 @@ export const makeActionRepository = (): ActionRepositoryService => {
       const context = yield* Effect.context<never>();
       const onFailure = (cause: unknown) =>
         persistenceFailure('Unable to persist the rejected Action invocation', cause);
-      return yield* Effect.tryPromise({
-        catch: (cause) =>
+      return yield* denialTransaction(
+        (cause) =>
           cause instanceof DenialRollbackSignal &&
           cause.error._tag === 'ActionInvocationPersistenceError'
             ? cause.error
             : onFailure(cause),
-        try: () =>
+        () =>
           executor.transaction((transaction) =>
             runDenialTransaction(
               Effect.gen(function* () {
@@ -729,7 +751,7 @@ export const makeActionRepository = (): ActionRepositoryService => {
               context,
             ),
           ),
-      });
+      );
     });
 
   const flushSuccess: ActionRepositoryService['flushSuccess'] = (transaction, input) =>

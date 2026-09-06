@@ -2,7 +2,7 @@
 /* eslint-disable no-await-in-loop, unicorn/no-thenable -- Sequential assertions use a controlled thenable matching Drizzle's query contract. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Cause, Effect, Option, Result } from 'effect';
+import { Cause, Effect, Exit, Option, Result } from 'effect';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../../src/db/types.ts';
 import {
   getActionInvocationPersistenceFailureCause,
@@ -275,6 +275,27 @@ void test('permission denial rolls back missing rows and state mismatches withou
     }
     assert.deepEqual(db.calls, ['begin', 'lock', 'select', 'rollback']);
     assert.deepEqual(db.values, []);
+  }
+});
+
+void test('permission and policy denial preserve in-transaction defects through rollback', async () => {
+  const persistenceDefect = new Error('denial persistence defect');
+  const defectiveInvocation = Object.defineProperty({ ...received }, 'status', {
+    get: () => {
+      throw persistenceDefect;
+    },
+  });
+
+  for (const operation of [
+    (db: CoreDatabaseExecutor) => repository.rejectPermissionDenied(db, input),
+    (db: CoreDatabaseExecutor) => repository.finalizePolicyDenial(db, policyInput),
+  ]) {
+    const db = makeExecutor([{ kind: 'select', rows: [defectiveInvocation] }]);
+    const exit = await Effect.runPromise(Effect.exit(operation(db.executor)));
+    assert.ok(Exit.isFailure(exit));
+    assert.equal(Cause.hasDies(exit.cause), true);
+    assert.ok(Option.isNone(Cause.findErrorOption(exit.cause)));
+    assert.deepEqual(db.calls, ['begin', 'lock', 'select', 'rollback']);
   }
 });
 
