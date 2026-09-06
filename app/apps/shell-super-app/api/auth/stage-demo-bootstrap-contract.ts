@@ -21,7 +21,7 @@ export interface StageDemoBootstrapConfig {
   readonly accounts: readonly [StageDemoAccountConfig, StageDemoAccountConfig];
   readonly authBaseUrl: string;
   readonly authSecret: Redacted.Redacted<string>;
-  readonly databaseAdminUrl: string;
+  readonly databaseAdminUrl: Redacted.Redacted<string>;
 }
 
 export interface StageDemoAccountConfig {
@@ -118,7 +118,9 @@ export const parseStageDemoBootstrapConfig = (
         accounts,
         authBaseUrl: parseHttpOrigin(required(environment, 'BETTER_AUTH_URL')),
         authSecret: Redacted.make(authSecret),
-        databaseAdminUrl: parsePostgresUrl(required(environment, 'DATABASE_ADMIN_URL')),
+        databaseAdminUrl: Redacted.make(
+          parsePostgresUrl(required(environment, 'DATABASE_ADMIN_URL')),
+        ),
       };
     },
   });

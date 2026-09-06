@@ -38,7 +38,9 @@ test('accepts the complete stage-only demo bootstrap configuration', () => {
     },
   ]);
   expect(configuration.authBaseUrl).toBe('https://shell.stage.example.test');
-  expect(configuration.databaseAdminUrl).toBe('postgresql://db:password@db:5432/db');
+  expect(Redacted.value(configuration.databaseAdminUrl)).toBe(
+    'postgresql://db:password@db:5432/db',
+  );
   expect(Redacted.isRedacted(configuration.authSecret)).toBe(true);
   expect(Redacted.value(configuration.authSecret)).toBe(
     'stage-auth-secret-with-at-least-32-characters',

@@ -106,7 +106,7 @@ const reconcileAuthUser = (
             reason: 'The stage demo Better Auth user could not be reconciled',
           }),
     try: async () => {
-      const pool = new Pool({ connectionString: configuration.databaseAdminUrl });
+      const pool = new Pool({ connectionString: Redacted.value(configuration.databaseAdminUrl) });
       try {
         const authDatabase = drizzle({ client: pool, relations: authRelations });
         return await ensureAuthUser(configuration, accountConfiguration, authDatabase);
