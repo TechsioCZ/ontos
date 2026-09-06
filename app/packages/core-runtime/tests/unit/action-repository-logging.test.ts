@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { inspect } from 'node:util';
-import { Cause, Effect, Logger, Redacted } from 'effect';
+import { Cause, Effect, Logger } from 'effect';
 import {
   getActionInvocationPersistenceFailureCause,
   getActionTransactionFailureCause,
@@ -12,7 +12,7 @@ import {
 } from '../../src/actions/repository.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../../src/db/types.ts';
 
-void test('repository log sinks redact provider diagnostics while retaining internal causes and safe metadata', async () => {
+void test('repository log sinks retain provider diagnostics and safe metadata', async () => {
   const credential = 'synthetic-repository-password-do-not-log';
   const providerError = new Error(`postgresql://test:${credential}@localhost/test`);
   // Only the methods that fail are needed; no database connection is created.
@@ -67,9 +67,10 @@ void test('repository log sinks redact provider diagnostics while retaining inte
 
   assert.equal(messages.length, 2);
   for (const [index, message] of messages.entries()) {
-    assert.ok(Redacted.isRedacted(message[1]));
-    assert.equal(inspect(message).includes(credential), false);
-    assert.equal(JSON.stringify(message).includes(credential), false);
+    assert.ok(message[1] instanceof Error);
+    assert.equal(message[1], providerError);
+    assert.equal(message[1].message, providerError.message);
+    assert.equal(inspect(message).includes(credential), true);
     assert.equal(rendered[index]?.includes(credential), false);
     assert.ok(rendered[index]?.includes('core.test'));
     assert.ok(rendered[index]?.includes('invocation-test'));

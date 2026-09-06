@@ -3,7 +3,7 @@
 // @effect-diagnostics asyncFunction:off
 // Drizzle owns the Promise transaction callback; Effect exits are carried
 // through a private rollback signal so typed handler failures remain typed.
-import { Cause, Context, Effect, Exit, Layer, Redacted, Schema, Predicate } from 'effect';
+import { Cause, Context, Effect, Exit, Layer, Schema, Predicate } from 'effect';
 import { CoreDatabase as CoreDatabaseService } from '../db/client.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import { createActionCollector } from './collector.ts';
@@ -793,15 +793,12 @@ export const makeActionRuntime = (
         })
         .pipe(
           Effect.tapError((error) =>
-            Effect.annotateLogs(
-              Effect.logError('Action permission check failed', Redacted.make(error)),
-              {
-                errorTag: 'ActionPermissionCheckError',
-                actionKey: input.registration.descriptor.actionKey,
-                correlationId: transport.correlationId,
-                invocationId: invocation.actionInvocationId,
-              },
-            ),
+            Effect.annotateLogs(Effect.logError('Action permission check failed', error), {
+              errorTag: 'ActionPermissionCheckError',
+              actionKey: input.registration.descriptor.actionKey,
+              correlationId: transport.correlationId,
+              invocationId: invocation.actionInvocationId,
+            }),
           ),
         );
       const tenantPermissionDecision = yield* checkTenantActionPermission(
@@ -898,10 +895,7 @@ export const makeActionRuntime = (
         }
 
         yield* Effect.annotateLogs(
-          Effect.logError(
-            'Unexpected Action Policy evaluation failure',
-            Redacted.make(policyExit.cause),
-          ),
+          Effect.logError('Unexpected Action Policy evaluation failure', policyExit.cause),
           {
             errorTag: 'ActionPolicyEvaluationError',
             actionKey: input.registration.descriptor.actionKey,
@@ -1043,10 +1037,7 @@ export const makeActionRuntime = (
       const failure = Cause.findErrorOption(transactionExit.cause);
       if (failure._tag === 'Some' && failure.value instanceof CoreTransactionBridgeFailure) {
         yield* Effect.annotateLogs(
-          Effect.logError(
-            'Unexpected Action transaction failure',
-            Redacted.make(failure.value.original),
-          ),
+          Effect.logError('Unexpected Action transaction failure', failure.value.original),
           {
             errorTag: 'ActionTransactionError',
             actionKey: input.registration.descriptor.actionKey,
@@ -1058,7 +1049,7 @@ export const makeActionRuntime = (
 
       if (handlerDefectCause !== undefined) {
         yield* Effect.annotateLogs(
-          Effect.logError('Unexpected Action execution defect', Redacted.make(handlerDefectCause)),
+          Effect.logError('Unexpected Action execution defect', handlerDefectCause),
           {
             failureKind: 'execution_defect',
             actionKey: input.registration.descriptor.actionKey,
@@ -1071,7 +1062,7 @@ export const makeActionRuntime = (
         const defectCause = getActionTransactionFailureCause(failure.value);
         if (defectCause !== undefined) {
           yield* Effect.annotateLogs(
-            Effect.logError('Unexpected Action execution defect', Redacted.make(defectCause)),
+            Effect.logError('Unexpected Action execution defect', defectCause),
             {
               failureKind: 'execution_defect',
               actionKey: input.registration.descriptor.actionKey,
@@ -1087,7 +1078,7 @@ export const makeActionRuntime = (
         const defectCause = getActionInvocationPersistenceFailureCause(failure.value);
         if (defectCause !== undefined) {
           yield* Effect.annotateLogs(
-            Effect.logError('Unexpected Action execution defect', Redacted.make(defectCause)),
+            Effect.logError('Unexpected Action execution defect', defectCause),
             {
               failureKind: 'execution_defect',
               actionKey: input.registration.descriptor.actionKey,

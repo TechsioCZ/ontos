@@ -4,7 +4,7 @@
 // keep the exported repository operations in typed Effect error channels.
 import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
-import { Cause, Context, Effect, Layer, Predicate, Redacted } from 'effect';
+import { Cause, Context, Effect, Layer, Predicate } from 'effect';
 import {
   actionInvocations,
   auditEvents,
@@ -274,7 +274,7 @@ export const logActionInvocationPersistenceFailureCause = (
   return cause === undefined
     ? Effect.void
     : Effect.annotateLogs(
-        Effect.logError('Unexpected Action invocation persistence failure', Redacted.make(cause)),
+        Effect.logError('Unexpected Action invocation persistence failure', cause),
         annotations,
       );
 };
@@ -316,7 +316,7 @@ export const logActionTransactionFailureCause = (
   const cause = transactionFailureCauses.get(failure);
   return cause === undefined
     ? Effect.void
-    : Effect.annotateLogs(Effect.logError(message, Redacted.make(cause)), annotations);
+    : Effect.annotateLogs(Effect.logError(message, cause), annotations);
 };
 
 export const makeActionRepository = (): ActionRepositoryService => {
