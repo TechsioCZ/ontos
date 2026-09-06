@@ -1,5 +1,6 @@
 // @effect-diagnostics asyncFunction:off
 /* eslint-disable no-await-in-loop -- Each typed checkpoint failure is asserted in isolation. */
+import { inspect } from 'node:util';
 import { expect, test } from '@rstest/core';
 import type { SupportRecoveryPrincipalContextResolverService } from '@app/core-runtime';
 import {
@@ -9,13 +10,16 @@ import {
   IdentityTargetInvalidError,
 } from '@app/core-runtime';
 import { makeSignature } from 'better-auth/crypto';
-import { Effect, Redacted } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 import type { AuthConfigValue } from '../../api/auth/config.ts';
 import type {
   SupportAuthProvider,
   SupportRecoveryRecord,
 } from '../../api/auth/impersonation-service.ts';
-import { makeSupportImpersonationService } from '../../api/auth/impersonation-service.ts';
+import {
+  makeSupportImpersonationService,
+  SupportImpersonationUnavailableError,
+} from '../../api/auth/impersonation-service.ts';
 import {
   actionCoreFailure,
   actionDomainFailure,
@@ -93,6 +97,52 @@ const provider = (impersonated: boolean): SupportAuthProvider => ({
       };
     },
   },
+});
+
+test('retains database failures privately without exposing their details', async () => {
+  const secretMarker = 'synthetic database secret';
+  const originalFailure = Object.assign(new Error(secretMarker), {
+    code: 'SYNTHETIC_DB_SECRET',
+  });
+  const service = makeSupportImpersonationService({
+    actionRuntime: makeActionRuntimeDouble([]).runtime,
+    authentication: makeAuthenticationServiceDouble(),
+    configuration,
+    provider: provider(false),
+    resolver: makePrincipalResolverDouble(),
+    store: makeSupportImpersonationStoreDouble({
+      loadRecoveries: async () => {
+        throw originalFailure;
+      },
+    }),
+    supportRecoveryPrincipal,
+  });
+
+  const failure = await Effect.runPromise(
+    Effect.flip(
+      service.stop({
+        correlationId: 'correlation-database-failure',
+        idempotencyKey: 'database-failure',
+        requestHeaders: new Headers(),
+      }),
+    ),
+  );
+
+  if (!Schema.is(SupportImpersonationUnavailableError)(failure)) {
+    throw new Error('Expected a support-impersonation-unavailable error');
+  }
+  expect(failure.getOriginalFailure()).toBe(originalFailure);
+  const wire = Schema.encodeSync(SupportImpersonationUnavailableError)(failure);
+  expect(wire).toEqual({
+    _tag: 'SupportImpersonationUnavailableError',
+    code: 'support_impersonation_unavailable',
+    reason: 'Support impersonation is temporarily unavailable',
+  });
+  expect(JSON.stringify(failure)).not.toMatch(/synthetic database secret|SYNTHETIC_DB_SECRET/u);
+  expect(JSON.stringify(wire)).not.toMatch(/synthetic database secret|SYNTHETIC_DB_SECRET/u);
+  expect(inspect(failure, { showHidden: true })).not.toMatch(
+    /synthetic database secret|SYNTHETIC_DB_SECRET/u,
+  );
 });
 
 test('preserves definite requested-checkpoint errors for their declared HTTP mapping', async () => {

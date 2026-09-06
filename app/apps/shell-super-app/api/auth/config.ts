@@ -25,74 +25,83 @@ export class AuthConfig extends Context.Service<AuthConfig, AuthConfigValue>()(
   '@app/shell-super-app/api/auth/config/AuthConfig',
 ) {}
 
-const parseHttpOrigin = (value: string, field: string): string => {
-  const url = new URL(value);
+const malformedAuthConfig = () =>
+  new AuthConfigError({
+    reason: 'Better Auth configuration is missing or malformed',
+  });
 
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error(`${field} must use http or https`);
-  }
+const parseHttpOrigin = (value: string): Effect.Effect<string, AuthConfigError> =>
+  Effect.gen(function* parseHttpOriginEffect() {
+    if (!URL.canParse(value)) {
+      return yield* malformedAuthConfig();
+    }
 
-  return url.origin;
-};
+    const url = new URL(value);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return yield* malformedAuthConfig();
+    }
+
+    return url.origin;
+  });
 
 export const parseAuthConfig = (
   environment: Environment,
 ): Effect.Effect<AuthConfigValue, AuthConfigError> =>
-  Effect.try({
-    catch: () =>
-      new AuthConfigError({
-        reason: 'Better Auth configuration is missing or malformed',
-      }),
-    try: () => {
-      const connectionString = environment['DATABASE_URL']?.trim();
-      const secret = environment['BETTER_AUTH_SECRET']?.trim();
-      const configuredBaseUrl = environment['BETTER_AUTH_URL']?.trim();
+  Effect.gen(function* parseAuthConfigEffect() {
+    const connectionString = environment['DATABASE_URL']?.trim();
+    const secret = environment['BETTER_AUTH_SECRET']?.trim();
+    const configuredBaseUrl = environment['BETTER_AUTH_URL']?.trim();
 
-      if (connectionString === undefined || connectionString.length === 0) {
-        throw new Error('DATABASE_URL is required');
-      }
+    if (connectionString === undefined || connectionString.length === 0) {
+      return yield* malformedAuthConfig();
+    }
 
-      const databaseUrl = new URL(connectionString);
-      if (databaseUrl.protocol !== 'postgres:' && databaseUrl.protocol !== 'postgresql:') {
-        throw new Error('DATABASE_URL must use PostgreSQL');
-      }
+    if (!URL.canParse(connectionString)) {
+      return yield* malformedAuthConfig();
+    }
 
-      if (secret === undefined || secret.length < 32) {
-        throw new Error('BETTER_AUTH_SECRET must contain at least 32 characters');
-      }
+    const databaseUrl = new URL(connectionString);
+    if (databaseUrl.protocol !== 'postgres:' && databaseUrl.protocol !== 'postgresql:') {
+      return yield* malformedAuthConfig();
+    }
 
-      if (configuredBaseUrl === undefined || configuredBaseUrl.length === 0) {
-        throw new Error('BETTER_AUTH_URL is required');
-      }
+    if (secret === undefined || secret.length < 32) {
+      return yield* malformedAuthConfig();
+    }
 
-      const baseUrl = parseHttpOrigin(configuredBaseUrl, 'BETTER_AUTH_URL');
-      const trustedOriginValues = environment['BETTER_AUTH_TRUSTED_ORIGINS']
-        ?.split(',')
-        .map((origin) => origin.trim())
-        .filter((origin) => origin.length > 0);
-      const trustedOrigins = [...new Set([baseUrl, ...(trustedOriginValues ?? [])])].map((origin) =>
-        parseHttpOrigin(origin, 'BETTER_AUTH_TRUSTED_ORIGINS'),
-      );
-      const secureCookies =
-        new URL(baseUrl).protocol === 'https:' || environment['NODE_ENV'] === 'production';
-      const supportUserIds = [
-        ...new Set(
-          (environment['BETTER_AUTH_SUPPORT_USER_IDS'] ?? '')
-            .split(',')
-            .map((userId) => userId.trim())
-            .filter((userId) => userId.length > 0),
-        ),
-      ];
+    if (configuredBaseUrl === undefined || configuredBaseUrl.length === 0) {
+      return yield* malformedAuthConfig();
+    }
 
-      return {
-        baseUrl,
-        connectionString: Redacted.make(connectionString),
-        secret: Redacted.make(secret),
-        secureCookies,
-        supportUserIds,
-        trustedOrigins,
-      };
-    },
+    const baseUrl = yield* parseHttpOrigin(configuredBaseUrl);
+    const trustedOriginValues = environment['BETTER_AUTH_TRUSTED_ORIGINS']
+      ?.split(',')
+      .map((origin) => origin.trim())
+      .filter((origin) => origin.length > 0);
+    const trustedOrigins = yield* Effect.forEach(
+      [...new Set([baseUrl, ...(trustedOriginValues ?? [])])],
+      parseHttpOrigin,
+      { concurrency: 1 },
+    );
+    const secureCookies =
+      new URL(baseUrl).protocol === 'https:' || environment['NODE_ENV'] === 'production';
+    const supportUserIds = [
+      ...new Set(
+        (environment['BETTER_AUTH_SUPPORT_USER_IDS'] ?? '')
+          .split(',')
+          .map((userId) => userId.trim())
+          .filter((userId) => userId.length > 0),
+      ),
+    ];
+
+    return {
+      baseUrl,
+      connectionString: Redacted.make(connectionString),
+      secret: Redacted.make(secret),
+      secureCookies,
+      supportUserIds,
+      trustedOrigins,
+    };
   });
 
 export interface LoadAuthConfigOptions {
@@ -103,33 +112,31 @@ export interface LoadAuthConfigOptions {
 export const loadAuthConfig = (
   options: LoadAuthConfigOptions = {},
 ): Effect.Effect<AuthConfigValue, AuthConfigError> =>
-  Effect.try({
-    catch: () =>
-      new AuthConfigError({
-        reason: 'Unable to load the root authentication environment',
-      }),
-    try: () => {
-      const fileEnvironment: Record<string, string> = {};
-      const result = loadDotenv({
-        path: options.envPath ?? ROOT_ENV_PATH,
-        processEnv: fileEnvironment,
-        quiet: true,
-      });
-      const dotenvErrorCode: string | undefined = result.error?.code;
-
-      if (
-        result.error !== undefined &&
+  Effect.sync(() => {
+    const fileEnvironment: Record<string, string> = {};
+    const result = loadDotenv({
+      path: options.envPath ?? ROOT_ENV_PATH,
+      processEnv: fileEnvironment,
+      quiet: true,
+    });
+    return {
+      dotenvError: result.error,
+      environment: { ...fileEnvironment, ...(options.environment ?? process.env) },
+    };
+  }).pipe(
+    Effect.flatMap(({ dotenvError, environment }) => {
+      const dotenvErrorCode: string | undefined = dotenvError?.code;
+      return dotenvError !== undefined &&
         dotenvErrorCode !== 'ENOENT' &&
         dotenvErrorCode !== 'NOT_FOUND_DOTENV_ENVIRONMENT'
-      ) {
-        throw result.error;
-      }
-
-      return {
-        ...fileEnvironment,
-        ...(options.environment ?? process.env),
-      };
-    },
-  }).pipe(Effect.flatMap(parseAuthConfig));
+        ? Effect.fail(
+            new AuthConfigError({
+              reason: 'configuration file could not be read',
+            }),
+          )
+        : Effect.succeed(environment);
+    }),
+    Effect.flatMap(parseAuthConfig),
+  );
 
 export const AuthConfigLive = Layer.effect(AuthConfig, loadAuthConfig());

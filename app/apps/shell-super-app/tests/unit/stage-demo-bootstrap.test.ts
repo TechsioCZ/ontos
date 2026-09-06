@@ -104,6 +104,91 @@ test('refuses to provision outside stage or without an operator-supplied passwor
   ).toMatchObject({ reason: expect.stringMatching(/STAGE_SIAMPARK_PASSWORD/u) });
 });
 
+test('returns typed safe failures for malformed and disallowed configuration values', () => {
+  const cases = [
+    ['BETTER_AUTH_SECRET', 'short', 'BETTER_AUTH_SECRET must contain at least 32 characters'],
+    ['STAGE_DEMO_PASSWORD', 'short', 'STAGE_DEMO_PASSWORD must contain at least 8 characters'],
+    [
+      'STAGE_SIAMPARK_PASSWORD',
+      'short',
+      'STAGE_SIAMPARK_PASSWORD must contain at least 8 characters',
+    ],
+    ['BETTER_AUTH_URL', ' ', 'BETTER_AUTH_URL is required'],
+    ['DATABASE_ADMIN_URL', undefined, 'DATABASE_ADMIN_URL is required'],
+    ['BETTER_AUTH_URL', 'secret-invalid-url', 'The stage demo configuration is invalid'],
+    ['DATABASE_ADMIN_URL', 'secret-invalid-url', 'The stage demo configuration is invalid'],
+    ['BETTER_AUTH_URL', 'ftp://example.test', 'BETTER_AUTH_URL must be an HTTP origin'],
+    ['BETTER_AUTH_URL', 'https://example.test/', 'BETTER_AUTH_URL must be an HTTP origin'],
+    [
+      'BETTER_AUTH_URL',
+      'https://user:secret@example.test',
+      'BETTER_AUTH_URL must be an HTTP origin',
+    ],
+    [
+      'BETTER_AUTH_URL',
+      'https://example.test?secret=value',
+      'BETTER_AUTH_URL must be an HTTP origin',
+    ],
+    ['BETTER_AUTH_URL', 'https://example.test#secret', 'BETTER_AUTH_URL must be an HTTP origin'],
+    [
+      'DATABASE_ADMIN_URL',
+      'https://user:secret@example.test',
+      'DATABASE_ADMIN_URL must use PostgreSQL',
+    ],
+  ] as const;
+  for (const [key, value, reason] of cases) {
+    expect(
+      Effect.runSync(
+        Effect.flip(parseStageDemoBootstrapConfig({ ...validEnvironment, [key]: value })),
+      ),
+    ).toMatchObject({
+      _tag: 'StageDemoBootstrapError',
+      code: 'stage_demo_configuration_invalid',
+      reason,
+    });
+  }
+});
+
+test('validates lazily, trims values and accepts both PostgreSQL schemes', () => {
+  const environment = { ...validEnvironment, BETTER_AUTH_URL: 'not a URL' };
+  const configuration = parseStageDemoBootstrapConfig(environment);
+  environment.BETTER_AUTH_URL = ' http://localhost:3000 ';
+  expect(Effect.runSync(configuration).authBaseUrl).toBe('http://localhost:3000');
+  const trimmed = Effect.runSync(
+    parseStageDemoBootstrapConfig({
+      ...validEnvironment,
+      DATABASE_ADMIN_URL: ' postgres://db:password@db:5432/db ',
+      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: ' stage ',
+      STAGE_DEMO_PASSWORD: ' password ',
+    }),
+  );
+  expect(Redacted.value(trimmed.databaseAdminUrl)).toBe('postgres://db:password@db:5432/db');
+  expect(trimmed.accounts.map(({ email }) => email)).toEqual([
+    'demo@test.com',
+    'siampark01@test.com',
+  ]);
+  expect(trimmed.accounts.map(({ password }) => Redacted.value(password))).toEqual([
+    'password',
+    validEnvironment.STAGE_SIAMPARK_PASSWORD,
+  ]);
+});
+
+test('preserves unexpected environment access defects instead of reporting invalid configuration', () => {
+  const defect = new Error('unexpected environment accessor failure');
+  const environment = {
+    ...validEnvironment,
+    get BETTER_AUTH_SECRET(): string {
+      throw defect;
+    },
+  };
+  const configuration = parseStageDemoBootstrapConfig(environment);
+  expect(
+    Effect.runSync(
+      Effect.catchDefect(Effect.flip(configuration), (cause) => Effect.succeed(cause)),
+    ),
+  ).toBe(defect);
+});
+
 test('treats an exact record as idempotent and rejects conflicting state', () => {
   const expected = { name: 'Techsio', slug: 'techsio', status: 'active' } as const;
   expect(classifyExactStageDemoRecord('tenant', undefined, expected)).toBe('create');

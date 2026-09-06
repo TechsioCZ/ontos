@@ -32,11 +32,18 @@ const withOptionalProperty = <
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
-const invalidCollectorInput = (reason: string) =>
-  new ActionCollectorError({
-    code: 'action_collector_invalid',
-    reason,
-  });
+const invalidCollectorInput = (reason: string, cause?: unknown): ActionCollectorError =>
+  cause === undefined
+    ? new ActionCollectorError({
+        code: 'action_collector_invalid',
+        reason,
+      })
+    : ActionCollectorError.withCause(reason, cause);
+
+/** Internal bridge that keeps decoder failures out of the public Action error contract. */
+export const getActionCollectorFailureCause = (
+  failure: ActionCollectorError,
+): unknown | undefined => ActionCollectorError.getCause(failure);
 
 const freezeJson = <Value>(value: Value): Value => {
   if (value !== null && Predicate.isObjectKeyword(value)) {
@@ -187,11 +194,19 @@ export const createActionCollector = <DomainEvents extends DomainEventContractMa
       );
     }
     return Schema.decodeUnknownEffect(auditEvidenceSchema)(evidence).pipe(
-      Effect.mapError(() =>
-        invalidCollectorInput('The Action audit evidence does not match its declared schema'),
+      Effect.mapError((error) =>
+        invalidCollectorInput(
+          'The Action audit evidence does not match its declared schema',
+          error,
+        ),
       ),
-      Effect.flatMap((declared) => Schema.decodeUnknownEffect(Schema.Json)(declared)),
-      Effect.mapError(() => invalidCollectorInput('The Action audit evidence is not valid JSON')),
+      Effect.flatMap((declared) =>
+        Schema.decodeUnknownEffect(Schema.Json)(declared).pipe(
+          Effect.mapError((error) =>
+            invalidCollectorInput('The Action audit evidence is not valid JSON', error),
+          ),
+        ),
+      ),
       Effect.flatMap((decoded) => {
         if (!isJsonObject(decoded)) {
           return Effect.fail(invalidCollectorInput('Action audit evidence must be a JSON object'));
@@ -261,7 +276,9 @@ export const createActionCollector = <DomainEvents extends DomainEventContractMa
       eventRecord === undefined ? event : { ...eventRecord, ...policyFields };
 
     return Schema.decodeUnknownEffect(DataAccessEventSchema)(materializedEvent).pipe(
-      Effect.mapError(() => invalidCollectorInput('The Data Access Event is structurally invalid')),
+      Effect.mapError((error) =>
+        invalidCollectorInput('The Data Access Event is structurally invalid', error),
+      ),
       Effect.flatMap(validateDataAccessInvariant),
       Effect.tap((decoded) =>
         Effect.sync(() => {
@@ -277,7 +294,9 @@ export const createActionCollector = <DomainEvents extends DomainEventContractMa
     event: Input,
   ): Effect.Effect<DomainEventReference, ActionCollectorError> =>
     Schema.decodeUnknownEffect(DomainEventSchema)(event).pipe(
-      Effect.mapError(() => invalidCollectorInput('The Domain Event is structurally invalid')),
+      Effect.mapError((error) =>
+        invalidCollectorInput('The Domain Event is structurally invalid', error),
+      ),
       Effect.flatMap((decoded) => {
         if (decoded.producerModuleKey !== owningModuleKey) {
           return Effect.fail(
@@ -296,13 +315,13 @@ export const createActionCollector = <DomainEvents extends DomainEventContractMa
           );
         }
         return Schema.decodeUnknownEffect(payloadSchema)(decoded.payloadJson).pipe(
-          Effect.mapError(() =>
-            invalidCollectorInput('The Domain Event payload violates its declared contract'),
+          Effect.mapError((error) =>
+            invalidCollectorInput('The Domain Event payload violates its declared contract', error),
           ),
           Effect.flatMap((payload) =>
             Schema.decodeUnknownEffect(Schema.Json)(payload).pipe(
-              Effect.mapError(() =>
-                invalidCollectorInput('The decoded Domain Event payload is not JSON'),
+              Effect.mapError((error) =>
+                invalidCollectorInput('The decoded Domain Event payload is not JSON', error),
               ),
             ),
           ),
@@ -342,7 +361,9 @@ export const createActionCollector = <DomainEvents extends DomainEventContractMa
     }
 
     return Schema.decodeUnknownEffect(OutboxMessageSchema)(message).pipe(
-      Effect.mapError(() => invalidCollectorInput('The Outbox Message is structurally invalid')),
+      Effect.mapError((error) =>
+        invalidCollectorInput('The Outbox Message is structurally invalid', error),
+      ),
       Effect.flatMap((decoded) => {
         const registeredDomainEvent = domainEvents[domainEventIndex];
         if (

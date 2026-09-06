@@ -1,3 +1,4 @@
+import { inspect } from 'node:util';
 import { expect, test } from '@rstest/core';
 import { Effect } from 'effect';
 import {
@@ -8,7 +9,10 @@ import {
   importJWK,
   jwtVerify,
 } from 'jose';
-import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
+import {
+  loadGatewayIssuerConfig,
+  parseGatewayIssuerConfig,
+} from '../../api/auth/gateway-issuer-config.ts';
 import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';
 import { issueGatewayContextAssertion, makeGatewayIssuer } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerDependencies } from '../../api/auth/gateway-issuer.ts';
@@ -310,6 +314,77 @@ test('identifies configuration and signing failures without exposing key materia
   expect(signingError.stage).toBe('signing');
   expect(configurationError.reason).not.toContain('ONTOS_GATEWAY_PRIVATE_JWK');
   expect(signingError.reason).not.toContain(configuration.privateJwk.d);
+});
+
+test('sanitizes malformed configuration and preserves typed loader failures', async () => {
+  const { configuration } = await makeConfiguration();
+  const parsed = await Effect.runPromise(
+    parseGatewayIssuerConfig({
+      ONTOS_GATEWAY_ISSUER: issuer,
+      ONTOS_GATEWAY_PRIVATE_JWK: JSON.stringify(configuration.privateJwk),
+    }),
+  );
+  expect(parsed.privateJwk).toEqual(configuration.privateJwk);
+
+  const invalidIssuerError = await Effect.runPromise(
+    Effect.flip(
+      parseGatewayIssuerConfig({
+        ONTOS_GATEWAY_ISSUER: 'ftp://shell.example.test',
+        ONTOS_GATEWAY_PRIVATE_JWK: JSON.stringify(configuration.privateJwk),
+      }),
+    ),
+  );
+  expect(invalidIssuerError.reason).toBe('Gateway signing configuration is missing or malformed');
+
+  const secret = 'synthetic-private-secret!';
+  const malformedError = await Effect.runPromise(
+    Effect.flip(
+      parseGatewayIssuerConfig({
+        ONTOS_GATEWAY_ISSUER: issuer,
+        ONTOS_GATEWAY_PRIVATE_JWK: JSON.stringify({
+          ...configuration.privateJwk,
+          d: secret,
+        }),
+      }),
+    ),
+  );
+  const malformedErrorText = `${JSON.stringify(malformedError)} ${inspect(malformedError)}`;
+
+  expect(malformedError._tag).toBe('GatewayIssuerConfigError');
+  expect(malformedErrorText).not.toContain(secret);
+
+  const loaderError = await Effect.runPromise(
+    Effect.flip(
+      loadGatewayIssuerConfig({
+        environment: {
+          ONTOS_GATEWAY_ISSUER: issuer,
+          ONTOS_GATEWAY_PRIVATE_JWK: JSON.stringify(configuration.privateJwk),
+        },
+        envPath: String.fromCodePoint(0),
+      }),
+    ),
+  );
+
+  expect(loaderError._tag).toBe('GatewayIssuerConfigError');
+  expect(loaderError.reason).toBe('configuration file could not be read');
+});
+
+test('keeps unreadable dotenv configuration files in the typed error channel', async () => {
+  const { configuration } = await makeConfiguration();
+  const error = await Effect.runPromise(
+    Effect.flip(
+      loadGatewayIssuerConfig({
+        environment: {
+          ONTOS_GATEWAY_ISSUER: configuration.issuer,
+          ONTOS_GATEWAY_PRIVATE_JWK: JSON.stringify(configuration.privateJwk),
+        },
+        envPath: process.cwd(),
+      }),
+    ),
+  );
+
+  expect(error._tag).toBe('GatewayIssuerConfigError');
+  expect(error.reason).toBe('configuration file could not be read');
 });
 
 test('rejects missing configuration, HMAC keys, non-Ed25519 keys, and missing key IDs', async () => {

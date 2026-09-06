@@ -8,7 +8,7 @@ import type {
   GatewayContextClientOptions,
   GatewayContextResponse,
 } from '@app/shared-contracts';
-import { DateTime, Effect, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
 import * as AresApplication from '../../shared/domain/ares-application.ts';
 import type {
   AresAppliedEvidence,
@@ -75,10 +75,50 @@ export const operationGateway = actionGateway;
 export const { deriveAresCorrectionReviewHandoffs, prefillPartyCandidateFromAres } =
   AresApplication;
 
+/** `code` and `reason` stay the stable vocabulary every caller already matches on. The original
+ * decode/policy failure is preserved off-schema by {@link readAresApplySelectionOriginalCause},
+ * because provider failures can quote credentials and must never reach the wire. */
 export class AresApplySelectionInvalid extends Schema.TaggedError<AresApplySelectionInvalid>()(
   'AresApplySelectionInvalid',
-  { code: Schema.Literal('ares_apply_selection_invalid'), reason: Schema.String },
+  {
+    code: Schema.Literal('ares_apply_selection_invalid'),
+    reason: Schema.String,
+  },
 ) {}
+
+/** Symbol key, so the preserved failure is never a string-keyed own property, and never named
+ * `cause`, which Node's error inspection prints even when non-enumerable. */
+const ARES_APPLY_SELECTION_ORIGINAL_CAUSE: unique symbol = Symbol(
+  'party-registry/ares-apply-selection-original-cause',
+);
+
+/** The only constructor that preserves an original failure. The failure is attached to the
+ * rejection itself, symbol-keyed and non-enumerable, so it stays out of `JSON.stringify`, Schema
+ * encoding and ordinary inspection, and needs no module-level table to survive. */
+export const makeAresApplySelectionInvalid = (
+  reason: string,
+  cause?: unknown,
+): AresApplySelectionInvalid => {
+  const rejection = new AresApplySelectionInvalid({ code: 'ares_apply_selection_invalid', reason });
+  return cause === undefined
+    ? rejection
+    : Object.defineProperty(rejection, ARES_APPLY_SELECTION_ORIGINAL_CAUSE, {
+        configurable: false,
+        enumerable: false,
+        value: cause,
+        writable: false,
+      });
+};
+
+/** Internal diagnostics accessor: the only way back to the original decode/policy failure a
+ * rejection was derived from, `None` when it was raised without one. Never put the preserved
+ * failure in a response or a log payload. */
+export const readAresApplySelectionOriginalCause = (
+  rejection: AresApplySelectionInvalid,
+): Option.Option<unknown> => {
+  const preserved = Object.getOwnPropertyDescriptor(rejection, ARES_APPLY_SELECTION_ORIGINAL_CAUSE);
+  return preserved === undefined ? Option.none() : Option.some(preserved.value);
+};
 
 export type AresApplySelection = { readonly idempotencyKey: string } & (
   | {
@@ -234,8 +274,7 @@ const loadDefaultReads = () =>
       party: modules.party.executePartyDetailWithAuthorization,
     })),
   );
-const invalidSelection = (reason: string) =>
-  new AresApplySelectionInvalid({ code: 'ares_apply_selection_invalid', reason });
+const invalidSelection = makeAresApplySelectionInvalid;
 const sameParty = (left: PartyRef, right: PartyRef): boolean =>
   left.tenantId === right.tenantId &&
   left.resourceId === right.resourceId &&
@@ -288,7 +327,9 @@ const validateRequest = (request: AresApplyRequest) => {
     }
   }
   return Schema.decodeUnknownEffect(AresSubjectEvidenceSchema)(request.observation).pipe(
-    Effect.mapError(() => invalidSelection('ARES observation is not a bounded valid observation')),
+    Effect.mapError((decodeFailure) =>
+      invalidSelection('ARES observation is not a bounded valid observation', decodeFailure),
+    ),
   );
 };
 
@@ -597,8 +638,11 @@ export const applyAresObservationWithActions = <Failure>(
       revision = loadedRevision;
     }
     const application = yield* Effect.try({
-      catch: () =>
-        invalidSelection('The trusted ARES evidence cannot be evaluated under the owner policy'),
+      catch: (policyFailure) =>
+        invalidSelection(
+          'The trusted ARES evidence cannot be evaluated under the owner policy',
+          policyFailure,
+        ),
       try: () =>
         AresApplication.deriveAresEvidenceApplication({
           canonical,

@@ -84,6 +84,21 @@ export interface OutboxRuntimeService {
 const descriptorFailure = (reason: string): OutboxWorkerDescriptorError =>
   new OutboxWorkerDescriptorError({ code: 'outbox_worker_descriptor_invalid', reason });
 
+// Pure definition validators throw descriptor errors; other exceptions remain defects.
+const validateDescriptor = <Value>(
+  validate: () => Value,
+  snapshotReason?: string,
+): Effect.Effect<Value, OutboxWorkerDescriptorError> =>
+  Effect.suspend(() => {
+    try {
+      return Effect.succeed(validate());
+    } catch (error) {
+      return error instanceof OutboxWorkerDescriptorError
+        ? Effect.fail(snapshotReason === undefined ? error : descriptorFailure(snapshotReason))
+        : Effect.die(error);
+    }
+  });
+
 const validateCycleInput = <Registration extends AnyOutboxWorkerRegistration>(
   input: RunOutboxCycleInput<Registration>,
 ): Effect.Effect<
@@ -95,30 +110,22 @@ const validateCycleInput = <Registration extends AnyOutboxWorkerRegistration>(
   },
   OutboxWorkerDescriptorError
 > =>
-  Effect.try({
-    catch: (error) =>
-      error instanceof OutboxWorkerDescriptorError
-        ? error
-        : descriptorFailure('The Outbox Worker descriptor set is invalid'),
-    try: () => {
-      if (input.claimOwner.trim().length === 0 || input.claimOwner.length > 200) {
-        throw descriptorFailure('claimOwner must be a non-empty stable runtime identity');
-      }
-      const maxDeliveries = input.maxDeliveries ?? 100;
-      if (!Number.isSafeInteger(maxDeliveries) || maxDeliveries < 1 || maxDeliveries > 1000) {
-        throw descriptorFailure('maxDeliveries must be an integer from 1 through 1000');
-      }
-      const now = input.now ?? new Date();
-      if (Number.isNaN(now.getTime())) {
-        throw descriptorFailure('now must be a valid timestamp');
-      }
-      return {
-        claimOwner: input.claimOwner,
-        maxDeliveries,
-        now,
-        registrations: validateOutboxWorkerRegistrations(input.registrations),
-      };
-    },
+  Effect.gen(function* validateCycleInputEffect() {
+    if (input.claimOwner.trim().length === 0 || input.claimOwner.length > 200) {
+      return yield* descriptorFailure('claimOwner must be a non-empty stable runtime identity');
+    }
+    const maxDeliveries = input.maxDeliveries ?? 100;
+    if (!Number.isSafeInteger(maxDeliveries) || maxDeliveries < 1 || maxDeliveries > 1000) {
+      return yield* descriptorFailure('maxDeliveries must be an integer from 1 through 1000');
+    }
+    const now = input.now ?? new Date();
+    if (Number.isNaN(now.getTime())) {
+      return yield* descriptorFailure('now must be a valid timestamp');
+    }
+    const registrations = yield* validateDescriptor(() =>
+      validateOutboxWorkerRegistrations(input.registrations),
+    );
+    return { claimOwner: input.claimOwner, maxDeliveries, now, registrations };
   });
 
 const claimAnnotations = (claim: OutboxClaim, outcome?: string) =>
@@ -234,10 +241,10 @@ const validateDeployedRegistrationSnapshot = (
 export const makeOutboxRuntime = (repository: OutboxRepositoryService): OutboxRuntimeService => {
   const matchMessages: OutboxRuntimeService['matchMessages'] = (input) =>
     Effect.gen(function* matchOutboxMessagesEffect() {
-      const subscriptions = yield* Effect.try({
-        catch: () => descriptorFailure('The installed subscription snapshot is invalid'),
-        try: () => validateOutboxWorkerSubscriptions(input.subscriptions),
-      });
+      const subscriptions = yield* validateDescriptor(
+        () => validateOutboxWorkerSubscriptions(input.subscriptions),
+        'The installed subscription snapshot is invalid',
+      );
       const now = input.now ?? new Date();
       if (Number.isNaN(now.getTime())) {
         return yield* descriptorFailure('now must be a valid timestamp');
@@ -253,10 +260,10 @@ export const makeOutboxRuntime = (repository: OutboxRepositoryService): OutboxRu
   ) =>
     Effect.gen(function* runOutboxCycleEffect() {
       const validated = yield* validateCycleInput(input);
-      const deployedSubscriptions = yield* Effect.try({
-        catch: () => descriptorFailure('The deployed subscription snapshot is invalid'),
-        try: () => validateOutboxWorkerSubscriptions(input.subscriptions),
-      });
+      const deployedSubscriptions = yield* validateDescriptor(
+        () => validateOutboxWorkerSubscriptions(input.subscriptions),
+        'The deployed subscription snapshot is invalid',
+      );
       yield* validateDeployedRegistrationSnapshot(validated.registrations, deployedSubscriptions);
       const registrationsByKey = new Map<string, Registration>(
         validated.registrations.map(

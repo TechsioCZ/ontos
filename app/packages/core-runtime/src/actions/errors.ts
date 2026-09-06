@@ -105,7 +105,22 @@ export class ActionCollectorError extends Schema.TaggedError<ActionCollectorErro
     code: Schema.Literal('action_collector_invalid'),
     ...safeReason,
   },
-) {}
+) {
+  #cause: unknown | undefined = undefined;
+
+  static withCause(reason: string, cause: unknown): ActionCollectorError {
+    const failure = new ActionCollectorError({
+      code: 'action_collector_invalid',
+      reason,
+    });
+    failure.#cause = cause;
+    return failure;
+  }
+
+  static getCause(failure: ActionCollectorError): unknown | undefined {
+    return failure.#cause;
+  }
+}
 
 export class ActionHandlerExecutionError extends Schema.TaggedError<ActionHandlerExecutionError>()(
   'ActionHandlerExecutionError',

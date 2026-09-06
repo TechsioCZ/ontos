@@ -12,45 +12,47 @@ export class InstalledVerticalTopologyError extends Schema.TaggedError<Installed
 
 const stableAppIdPattern = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u;
 
-const object = (value: JsonValue) => {
-  if (!Predicate.isObjectKeyword(value) || value === null || Array.isArray(value)) {
-    throw new TypeError('expected object');
-  }
-  return Schema.decodeUnknownSync(JsonObjectSchema)(value);
-};
+const malformedTopology = () =>
+  new InstalledVerticalTopologyError({
+    reason: 'The authoritative installed MicroVertical topology is malformed',
+  });
+
+const object = (value: JsonValue) =>
+  Effect.gen(function* () {
+    if (!Predicate.isObjectKeyword(value) || value === null || Array.isArray(value)) {
+      return yield* malformedTopology();
+    }
+    return yield* Schema.decodeUnknownEffect(JsonObjectSchema)(value).pipe(
+      Effect.mapError(malformedTopology),
+    );
+  });
 
 export const deriveInstalledVerticalIds = (
   input: JsonValue,
 ): Effect.Effect<ReadonlySet<string>, InstalledVerticalTopologyError> =>
-  Effect.try({
-    catch: () =>
-      new InstalledVerticalTopologyError({
-        reason: 'The authoritative installed MicroVertical topology is malformed',
-      }),
-    try: () => {
-      const topology = object(input);
-      if (!Array.isArray(topology['verticals'])) {
-        throw new TypeError('Topology verticals are missing');
-      }
+  Effect.gen(function* () {
+    const topology = yield* object(input);
+    if (!Array.isArray(topology['verticals'])) {
+      return yield* malformedTopology();
+    }
 
-      const installedVerticalIds = new Set<string>();
-      for (const value of topology['verticals']) {
-        const entry = object(value);
-        if (entry['kind'] !== 'vertical') {
-          throw new Error('Topology contains a non-vertical installed candidate');
-        }
-        const { id } = entry;
-        if (!Predicate.isString(id) || !stableAppIdPattern.test(id)) {
-          throw new Error('Topology contains an invalid vertical ID');
-        }
-        if (installedVerticalIds.has(id)) {
-          throw new Error('Topology contains duplicate vertical IDs');
-        }
-        installedVerticalIds.add(id);
+    const installedVerticalIds = new Set<string>();
+    for (const value of topology['verticals']) {
+      const entry = yield* object(value);
+      if (entry['kind'] !== 'vertical') {
+        return yield* malformedTopology();
       }
+      const { id } = entry;
+      if (!Predicate.isString(id) || !stableAppIdPattern.test(id)) {
+        return yield* malformedTopology();
+      }
+      if (installedVerticalIds.has(id)) {
+        return yield* malformedTopology();
+      }
+      installedVerticalIds.add(id);
+    }
 
-      return installedVerticalIds;
-    },
+    return installedVerticalIds;
   });
 
 export const installedVerticalIds: Effect.Effect<

@@ -35,8 +35,21 @@ test('derives installed vertical IDs from the injected topology without hardcode
 });
 
 test('rejects malformed, non-vertical, invalid, and duplicate installed entries', async () => {
-  const inputs = [
+  const inputs: Schema.Schema.Type<typeof Schema.Json>[] = [
+    null,
+    [],
+    'topology',
     {},
+    { verticals: null },
+    { verticals: {} },
+    { verticals: [null] },
+    { verticals: [[]] },
+    { verticals: ['inventory'] },
+    { verticals: [{ kind: 'vertical' }] },
+    { verticals: [{ id: 1, kind: 'vertical' }] },
+    { verticals: [{ id: 'Inventory', kind: 'vertical' }] },
+    { verticals: [{ id: 'inventory-', kind: 'vertical' }] },
+    { verticals: [{ id: 'inventory', kind: 'package' }] },
     { verticals: [{ id: 'shell-super-app', kind: 'shell' }] },
     { verticals: [{ id: '../inventory', kind: 'vertical' }] },
     {
@@ -51,5 +64,36 @@ test('rejects malformed, non-vertical, invalid, and duplicate installed entries'
       async (input) => await Effect.runPromise(Effect.flip(deriveInstalledVerticalIds(input))),
     ),
   );
-  expect(errors.every((error) => error._tag === 'InstalledVerticalTopologyError')).toBe(true);
+  for (const error of errors) {
+    expect(error._tag).toBe('InstalledVerticalTopologyError');
+    expect(error.reason).toBe('The authoritative installed MicroVertical topology is malformed');
+  }
+});
+
+test('accepts empty topology and dotted IDs without including other topology owners', async () => {
+  expect([...(await Effect.runPromise(deriveInstalledVerticalIds({ verticals: [] })))]).toEqual([]);
+  const ids = await Effect.runPromise(
+    deriveInstalledVerticalIds({
+      shell: { id: 'shell-super-app', kind: 'shell' },
+      sharedPackages: [{ id: 'shared-contracts', kind: 'package' }],
+      verticals: [{ id: 'inventory.stock', kind: 'vertical' }],
+    }),
+  );
+  expect([...ids]).toEqual(['inventory.stock']);
+});
+
+test('keeps unexpected topology access exceptions as defects, not safe configuration failures', async () => {
+  const defect = new Error('unexpected getter failure');
+  const input = {
+    get verticals(): [] {
+      throw defect;
+    },
+  };
+  const result = await Effect.runPromise(
+    deriveInstalledVerticalIds(input).pipe(
+      Effect.catchTag('InstalledVerticalTopologyError', () => Effect.succeed('typed failure')),
+      Effect.catchDefect((cause) => Effect.succeed(cause)),
+    ),
+  );
+  expect(result).toBe(defect);
 });

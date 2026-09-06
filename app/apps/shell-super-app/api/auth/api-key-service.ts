@@ -39,7 +39,23 @@ export class ApiKeyRateLimitedError extends Schema.TaggedError<ApiKeyRateLimited
 export class ApiKeyProviderUnavailableError extends Schema.TaggedError<ApiKeyProviderUnavailableError>()(
   'ApiKeyProviderUnavailableError',
   { code: Schema.Literal('api_key_provider_unavailable'), reason: Schema.String },
-) {}
+) {
+  #originalFailure: unknown = undefined;
+
+  static withOriginalFailure(originalFailure?: unknown): ApiKeyProviderUnavailableError {
+    const failure = new ApiKeyProviderUnavailableError({
+      code: 'api_key_provider_unavailable',
+      reason: 'The credential provider is temporarily unavailable',
+    });
+    failure.#originalFailure = originalFailure;
+    return failure;
+  }
+
+  // Keep diagnostics off the Schema wire contract, JSON and ordinary Error inspection.
+  getOriginalFailure(): unknown {
+    return this.#originalFailure;
+  }
+}
 export class ApiKeyStateInconsistentError extends Schema.TaggedError<ApiKeyStateInconsistentError>()(
   'ApiKeyStateInconsistentError',
   { code: Schema.Literal('api_key_state_inconsistent'), reason: Schema.String },
@@ -101,11 +117,8 @@ export class ApiKeyService extends Context.Service<ApiKeyService, ApiKeyServiceC
   '@app/shell-super-app/api/auth/api-key-service/ApiKeyService',
 ) {}
 
-const unavailable = () =>
-  new ApiKeyProviderUnavailableError({
-    code: 'api_key_provider_unavailable',
-    reason: 'The credential provider is temporarily unavailable',
-  });
+const unavailable = (originalFailure?: unknown) =>
+  ApiKeyProviderUnavailableError.withOriginalFailure(originalFailure);
 const invalid = () =>
   new ApiKeyCredentialInvalidError({
     code: 'api_key_invalid',
@@ -127,7 +140,7 @@ const mapProviderError = <Failure>(error: Failure): ApiKeyProviderError => {
   if (error instanceof APIError && error.statusCode < 500) {
     return invalid();
   }
-  return unavailable();
+  return unavailable(error);
 };
 const PENDING_BINDING_LEASE_MILLISECONDS = 5 * 60 * 1000;
 const PENDING_CLEANUP_BATCH_SIZE = 100;
@@ -333,8 +346,8 @@ export const makeApiKeyService = (
     setEnabled: (keyId, enabled) =>
       Effect.tryPromise({
         catch: unavailable,
-        try: async () => {
-          const [updated] = await database
+        try: () =>
+          database
             .update(apikey)
             .set({ enabled, updatedAt: new Date() })
             .where(eq(apikey.id, keyId))
@@ -345,13 +358,12 @@ export const makeApiKeyService = (
               id: apikey.id,
               name: apikey.name,
               start: apikey.start,
-            });
-          if (updated === undefined) {
-            throw new Error('missing key');
-          }
-          return toSafe(updated);
-        },
-      }),
+            }),
+      }).pipe(
+        Effect.flatMap(([updated]) =>
+          updated === undefined ? Effect.fail(unavailable()) : Effect.succeed(toSafe(updated)),
+        ),
+      ),
     verify: (rawKey) =>
       Effect.tryPromise({
         catch: mapProviderError,

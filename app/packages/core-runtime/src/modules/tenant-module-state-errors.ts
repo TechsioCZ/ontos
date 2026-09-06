@@ -7,7 +7,23 @@ export class TenantModuleStateReadUnavailableError extends Schema.TaggedError<Te
     code: Schema.Literal('tenant_module_state_read_unavailable'),
     reason: Schema.String,
   },
-) {}
+) {
+  #originalFailure: unknown = undefined;
+
+  static withOriginalFailure(originalFailure?: unknown): TenantModuleStateReadUnavailableError {
+    const failure = new TenantModuleStateReadUnavailableError({
+      code: 'tenant_module_state_read_unavailable',
+      reason: 'Tenant module state is temporarily unavailable',
+    });
+    failure.#originalFailure = originalFailure;
+    return failure;
+  }
+
+  // Keep diagnostics off the Schema wire contract, JSON and ordinary Error inspection.
+  getOriginalFailure(): unknown {
+    return this.#originalFailure;
+  }
+}
 
 export class TenantModuleStatePersistenceUnavailableError extends Schema.TaggedError<TenantModuleStatePersistenceUnavailableError>()(
   'TenantModuleStatePersistenceUnavailableError',
@@ -15,7 +31,25 @@ export class TenantModuleStatePersistenceUnavailableError extends Schema.TaggedE
     code: Schema.Literal('tenant_module_state_persistence_unavailable'),
     reason: Schema.String,
   },
-) {}
+) {
+  #originalFailure: unknown = undefined;
+
+  static withOriginalFailure(
+    originalFailure?: unknown,
+  ): TenantModuleStatePersistenceUnavailableError {
+    const failure = new TenantModuleStatePersistenceUnavailableError({
+      code: 'tenant_module_state_persistence_unavailable',
+      reason: 'Tenant module state could not be persisted',
+    });
+    failure.#originalFailure = originalFailure;
+    return failure;
+  }
+
+  // Keep diagnostics off the Schema wire contract, JSON and ordinary Error inspection.
+  getOriginalFailure(): unknown {
+    return this.#originalFailure;
+  }
+}
 
 export class TenantModuleStateTenantMissingError extends Schema.TaggedError<TenantModuleStateTenantMissingError>()(
   'TenantModuleStateTenantMissingError',

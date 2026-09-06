@@ -1,5 +1,5 @@
 /* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Effect's typed catch combinator is not Promise chaining. */
-import { Duration, Effect, Schedule, Schema } from 'effect';
+import { Duration, Effect, Schedule } from 'effect';
 import type {
   AnyOutboxWorkerRegistration,
   OutboxWorkerRequirements,
@@ -60,53 +60,48 @@ const parseInteger = (
   fallback: number,
   minimum: number,
   maximum: number,
-): number => {
-  const value = environment[key]?.trim();
-  if (value === undefined || value.length === 0) {
-    return fallback;
-  }
-  if (!/^\d+$/u.test(value)) {
-    throw configError(`${key} must be an integer from ${minimum} through ${maximum}`);
-  }
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
-    throw configError(`${key} must be an integer from ${minimum} through ${maximum}`);
-  }
-  return parsed;
-};
+): Effect.Effect<number, OutboxPollerConfigError> =>
+  Effect.gen(function* parseIntegerEffect() {
+    const value = environment[key]?.trim();
+    if (value === undefined || value.length === 0) {
+      return fallback;
+    }
+    if (!/^\d+$/u.test(value)) {
+      return yield* configError(`${key} must be an integer from ${minimum} through ${maximum}`);
+    }
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+      return yield* configError(`${key} must be an integer from ${minimum} through ${maximum}`);
+    }
+    return parsed;
+  });
 
 export const parseOutboxPollingConfig = ({
   defaultClaimOwner,
   environment = process.env,
 }: ParseOutboxPollingConfigInput): Effect.Effect<OutboxPollingConfig, OutboxPollerConfigError> =>
-  Effect.try({
-    catch: (error) =>
-      Schema.is(OutboxPollerConfigError)(error)
-        ? error
-        : configError('The Outbox polling configuration is invalid'),
-    try: () => {
-      const claimOwner = environment['OUTBOX_WORKER_CLAIM_OWNER']?.trim() || defaultClaimOwner;
-      if (claimOwner.length === 0 || claimOwner.length > 200) {
-        throw configError('OUTBOX_WORKER_CLAIM_OWNER must contain from 1 through 200 characters');
-      }
-      return Object.freeze({
-        claimOwner,
-        maxDeliveries: parseInteger(
-          environment,
-          'OUTBOX_WORKER_MAX_DELIVERIES',
-          DEFAULT_MAX_DELIVERIES,
-          1,
-          1000,
-        ),
-        pollIntervalMs: parseInteger(
-          environment,
-          'OUTBOX_WORKER_POLL_INTERVAL_MS',
-          DEFAULT_POLL_INTERVAL_MS,
-          10,
-          3_600_000,
-        ),
-      });
-    },
+  Effect.gen(function* parseOutboxPollingConfigEffect() {
+    const claimOwner = environment['OUTBOX_WORKER_CLAIM_OWNER']?.trim() || defaultClaimOwner;
+    if (claimOwner.length === 0 || claimOwner.length > 200) {
+      return yield* configError(
+        'OUTBOX_WORKER_CLAIM_OWNER must contain from 1 through 200 characters',
+      );
+    }
+    const maxDeliveries = yield* parseInteger(
+      environment,
+      'OUTBOX_WORKER_MAX_DELIVERIES',
+      DEFAULT_MAX_DELIVERIES,
+      1,
+      1000,
+    );
+    const pollIntervalMs = yield* parseInteger(
+      environment,
+      'OUTBOX_WORKER_POLL_INTERVAL_MS',
+      DEFAULT_POLL_INTERVAL_MS,
+      10,
+      3_600_000,
+    );
+    return Object.freeze({ claimOwner, maxDeliveries, pollIntervalMs });
   });
 
 const hasActivity = (result: OutboxCycleResult): boolean =>

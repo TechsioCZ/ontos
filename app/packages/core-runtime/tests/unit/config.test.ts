@@ -9,17 +9,19 @@ import {
   parseDatabaseConfig,
   parseDatabaseConnectionPair,
 } from '../../src/db/config.ts';
+import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
 
-void test('loads the root environment independently of the invocation directory', async () => {
+void test('loads synthetic configuration independently of the invocation directory', async () => {
   const originalDirectory = process.cwd();
-  const rootExamplePath = ROOT_ENV_PATH.replace(/\.env$/u, '.env.example');
 
   try {
     process.chdir('/');
     const configuration = await Effect.runPromise(
       loadDatabaseConfig({
-        environment: {},
-        envPath: rootExamplePath,
+        environment: {
+          DATABASE_URL: 'postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos',
+        },
+        envPath: '/path/that/does/not/exist/ontos-config',
       }),
     );
 
@@ -32,6 +34,43 @@ void test('loads the root environment independently of the invocation directory'
   } finally {
     process.chdir(originalDirectory);
   }
+});
+
+void test('keeps SpiceDB loader failures typed and secret-safe', async () => {
+  const secret = 'spicedb-secret';
+  const environment = {
+    SPICEDB_ENDPOINT: 'spicedb.internal.example:443',
+    SPICEDB_INSECURE: 'false',
+    SPICEDB_PRESHARED_KEY: secret,
+  };
+  const configuration = await Effect.runPromise(
+    loadSpiceDbConfig({
+      environment,
+      envPath: '/path/that/does/not/exist/ontos-spicedb-config',
+    }),
+  );
+  const failure = await Effect.runPromise(
+    Effect.flip(
+      loadSpiceDbConfig({
+        environment,
+        envPath: process.cwd(),
+      }),
+    ),
+  );
+
+  assert.deepEqual(
+    { ...configuration, preSharedKey: Redacted.value(configuration.preSharedKey) },
+    {
+      endpoint: 'spicedb.internal.example:443',
+      insecureLocal: false,
+      preSharedKey: secret,
+    },
+  );
+  assert.doesNotMatch(JSON.stringify(configuration), /spicedb-secret/u);
+  assert.equal(failure._tag, 'SpiceDbConfigError');
+  assert.equal(failure.reason, 'Unable to load the root environment');
+  assert.doesNotMatch(failure.reason, /spicedb-secret/u);
+  assert.doesNotMatch(JSON.stringify(failure), /spicedb-secret/u);
 });
 
 void test('parses valid local PostgreSQL connection settings', async () => {
@@ -58,17 +97,29 @@ void test('parses valid local PostgreSQL connection settings', async () => {
 });
 
 void test('keeps missing and malformed configuration in the typed error channel', async () => {
+  const malformedDsn = 'https://runtime:database-password@example.test/not-postgres';
+  const malformedEncodingDsn = 'postgresql://runtime:database-password@localhost:5433/%E0%A4%A';
   const missing = await Effect.runPromise(Effect.flip(parseDatabaseConfig({})));
   const malformed = await Effect.runPromise(
     Effect.flip(
       parseDatabaseConfig({
-        DATABASE_URL: 'https://localhost/not-postgres',
+        DATABASE_URL: malformedDsn,
+      }),
+    ),
+  );
+  const malformedEncoding = await Effect.runPromise(
+    Effect.flip(
+      parseDatabaseConfig({
+        DATABASE_URL: malformedEncodingDsn,
       }),
     ),
   );
 
-  assert.equal(missing._tag, 'DatabaseConfigError');
-  assert.equal(malformed._tag, 'DatabaseConfigError');
+  for (const error of [missing, malformed, malformedEncoding]) {
+    assert.equal(error._tag, 'DatabaseConfigError');
+    assert.doesNotMatch(error.reason, /database-password/u);
+    assert.doesNotMatch(JSON.stringify(error), /database-password/u);
+  }
 });
 
 void test('requires distinct administrative and least-privilege runtime identities', async () => {
@@ -115,6 +166,14 @@ void test('requires distinct administrative and least-privilege runtime identiti
       }),
     ),
   );
+  const malformedAdmin = await Effect.runPromise(
+    Effect.flip(
+      parseDatabaseConnectionPair({
+        DATABASE_ADMIN_URL: 'postgresql://admin:admin-password@localhost:5433/%E0%A4%A',
+        DATABASE_URL: 'postgresql://runtime:runtime-password@localhost:5433/ontos',
+      }),
+    ),
+  );
 
   assert.equal(valid.admin.user, 'ontos_admin');
   assert.equal(valid.runtime.user, 'ontos_runtime');
@@ -124,6 +183,18 @@ void test('requires distinct administrative and least-privilege runtime identiti
   assert.equal(identical._tag, 'DatabaseConfigError');
   assert.equal(queryParameterCollision._tag, 'DatabaseConfigError');
   assert.equal(superuserCompatible._tag, 'DatabaseConfigError');
+  assert.equal(malformedAdmin._tag, 'DatabaseConfigError');
+
+  for (const error of [
+    missing,
+    identical,
+    queryParameterCollision,
+    superuserCompatible,
+    malformedAdmin,
+  ]) {
+    assert.doesNotMatch(error.reason, /secret|password/u);
+    assert.doesNotMatch(JSON.stringify(error), /secret|password/u);
+  }
 });
 
 void test('finalizes the pool resource when its Effect scope closes', async () => {
