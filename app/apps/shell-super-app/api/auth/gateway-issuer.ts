@@ -75,23 +75,40 @@ export const makeGatewayIssuer = (
   dependencies: GatewayIssuerDependencies = gatewayIssuerLiveDependencies,
   importSigningKey: GatewaySigningKeyImporter = (privateJwk) => importJWK(privateJwk, 'EdDSA'),
 ): GatewayIssuer => {
-  const loadConfiguration = Effect.runSync(
-    Effect.cached(
-      dependencies.loadConfig.pipe(Effect.mapError(() => unavailable('configuration'))),
-    ),
+  const loadConfiguration = dependencies.loadConfig.pipe(
+    Effect.mapError(() => unavailable('configuration')),
   );
-  const loadSigningKey = Effect.runSync(
-    Effect.cached(
-      loadConfiguration.pipe(
-        Effect.flatMap((configuration) =>
-          Effect.tryPromise({
-            catch: () => unavailable('signing'),
-            try: async () => await importSigningKey(configuration.privateJwk),
-          }),
-        ),
-      ),
-    ),
-  );
+  let cachedSigningKey:
+    | {
+        readonly cacheKey: string;
+        readonly effect: Effect.Effect<GatewaySigningKey, GatewayIssuerError>;
+      }
+    | undefined;
+
+  const loadSigningKey = (
+    privateJwk: GatewayIssuerConfigValue['privateJwk'],
+  ): Effect.Effect<GatewaySigningKey, GatewayIssuerError> => {
+    const cacheKey = `${privateJwk.kid}:${privateJwk.x}:${privateJwk.d}`;
+    if (cachedSigningKey?.cacheKey === cacheKey) {
+      return cachedSigningKey.effect;
+    }
+
+    const importPromise = Promise.resolve().then(async () => await importSigningKey(privateJwk));
+    const next = {
+      cacheKey,
+      effect: Effect.tryPromise({
+        catch: () => unavailable('signing'),
+        try: () => importPromise,
+      }),
+    };
+    cachedSigningKey = next;
+    void importPromise.catch(() => {
+      if (cachedSigningKey === next) {
+        cachedSigningKey = undefined;
+      }
+    });
+    return next.effect;
+  };
 
   return <Principal>(input: IssueGatewayAssertionInput<Principal>) =>
     Effect.gen(function* issueGatewayContextAssertionEffect() {
@@ -116,7 +133,7 @@ export const makeGatewayIssuer = (
       }
       const expiresAt = issuedAt + GATEWAY_ASSERTION_TTL_SECONDS;
       const jti = yield* dependencies.generateJti;
-      const key = yield* loadSigningKey;
+      const key = yield* loadSigningKey(configuration.privateJwk);
 
       const token = yield* Effect.tryPromise({
         catch: () => unavailable('signing'),
