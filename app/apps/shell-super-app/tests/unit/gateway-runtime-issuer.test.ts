@@ -115,12 +115,15 @@ test('shares signing import across runtime gateway/provider assertions, but not 
   };
   const tokens = await Promise.all([gateway(0), provider(0), gateway(0), provider(0)]);
   tokens.push(await gateway(0), await provider(0));
+  // Configuration is read on every issuance so key rotation is observed without a restart;
+  // the imported signing key is shared per runtime and per JWK.
   expect(importKey).toHaveBeenCalledTimes(1);
-  expect(loadConfig).toHaveBeenCalledTimes(1);
+  expect(loadConfig).toHaveBeenCalledTimes(6);
   tokens.push(...(await Promise.all([gateway(1), provider(1)])));
   expect(importKey).toHaveBeenCalledTimes(2);
-  expect(loadConfig).toHaveBeenCalledTimes(2);
+  expect(loadConfig).toHaveBeenCalledTimes(8);
   tokens.push(await provider(0));
   expect(importKey).toHaveBeenCalledTimes(2);
+  expect(loadConfig).toHaveBeenCalledTimes(9);
   expect(new Set(tokens.map((token) => jose.decodeJwt(token).jti)).size).toBe(tokens.length);
 });
