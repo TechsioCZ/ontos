@@ -23,8 +23,15 @@ import { PartyOfficialIdentifierDetailApi } from './apis/party-official-identifi
 import { PartyOfficialIdentifierHistoryApi } from './apis/party-official-identifier-history.ts';
 import { PartyRelationshipDetailApi } from './apis/party-relationship-detail.ts';
 import { partyRegistryCommandRecoveryApi, partyRegistryCommandsApi } from './command-api.ts';
+import {
+  organizationEngagementMutationApi,
+  personEngagementMutationApi,
+} from './engagement-profile-api.ts';
+import { OrganizationEngagementProfileApi } from './apis/organization-engagement-profile.ts';
+import { PersonEngagementProfileApi } from './apis/person-engagement-profile.ts';
 
 export * from './command-api.ts';
+export * from './engagement-profile-api.ts';
 
 export * from './apis/ares-lookup.ts';
 export * from './apis/counterparties-search.ts';
@@ -121,6 +128,10 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(partyRegistryFoundationApi)
   .addHttpApi(partyRegistryCommandsApi)
   .addHttpApi(partyRegistryCommandRecoveryApi)
+  .addHttpApi(organizationEngagementMutationApi)
+  .addHttpApi(personEngagementMutationApi)
+  .addHttpApi(OrganizationEngagementProfileApi)
+  .addHttpApi(PersonEngagementProfileApi)
   .addHttpApi(PartyDetailApi)
   // Read-only UX preview; durable matching is the explicit matchParty command.
   .addHttpApi(PartyMatchApi)

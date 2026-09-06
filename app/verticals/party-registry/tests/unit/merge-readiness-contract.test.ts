@@ -1,11 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Node's test runner reads source-only contracts; remove-when: manifests are importable without TSX loaders.
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { Schema } from 'effect';
-import {
-  getVerticalRuntimeActions,
-  getVerticalRuntimeEntrypoints,
-  getVerticalRuntimeOutboxWorkers,
-} from '@app/core-runtime';
 import {
   PartyMergeReadinessRequestSchema,
   PartyMergeReadinessResponseSchema,
@@ -26,8 +23,6 @@ import {
 } from '../../src/merge/merge-readiness.ts';
 import { selectCanonicalSurvivor } from '../../src/merge/canonical-survivor-selection.ts';
 import { partyRegistryApi } from '../../shared/api.ts';
-import { partyRegistryManifest } from '../../vertical.manifest.ts';
-import { partyRegistryRegistration } from '../../vertical.registration.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const party = (resourceId: string) => ({
@@ -189,36 +184,47 @@ test('keeps prepared merge and permanent alias schemas explainable without enabl
   assert.equal(partyAliasResourceDescriptor.capabilities.searchable, false);
 });
 
-test('has no registered Party Merge Action, event, outbox consumer, or write endpoint', () => {
-  const actions = [
-    ...partyRegistryManifest.publicSurface.actions,
-    ...getVerticalRuntimeActions(partyRegistryRegistration),
-  ];
-  assert.ok(actions.length > 0);
-  for (const { descriptor } of actions) {
-    assert.doesNotMatch(descriptor.actionKey, /merge/iu);
-  }
-  assert.deepEqual(partyRegistryManifest.publicSurface.events, []);
-  const outboxWorkers = getVerticalRuntimeOutboxWorkers(partyRegistryRegistration);
-  assert.ok(outboxWorkers.length > 0);
-  for (const { descriptor } of outboxWorkers) {
-    assert.doesNotMatch(descriptor.topic, /merge/iu);
-  }
-  const endpoints = Object.values(partyRegistryApi.groups).flatMap((group) =>
-    Object.values(group.endpoints),
-  );
-  assert.ok(Object.keys(partyRegistryApi.groups.partyCommands.endpoints).length > 0);
-  assert.deepEqual(
-    endpoints.filter(({ path }) => /merge/iu.test(path)).map(({ path }) => path),
-    ['/reads/party-merge-readiness'],
-  );
-  assert.deepEqual(
-    Object.keys(getVerticalRuntimeEntrypoints(partyRegistryRegistration).api).filter((name) =>
-      /merge/iu.test(name),
-    ),
-    ['party-merge-readiness'],
-  );
-});
+test('has no registered Party Merge Action, event, outbox consumer, or write endpoint', () =>
+  Promise.all([
+    readFile(new URL('../../vertical.manifest.ts', import.meta.url), 'utf-8'),
+    readFile(new URL('../../vertical.registration.ts', import.meta.url), 'utf-8'),
+  ]).then(([manifestSource, registrationSource]) => {
+    assert.doesNotMatch(manifestSource, /merge[^\n]*Action|Action[^\n]*merge/iu);
+    assert.doesNotMatch(registrationSource, /merge[^\n]*Action|Action[^\n]*merge/iu);
+    assert.match(registrationSource, /'party-merge-readiness'/u);
+    const endpoints = Object.values(partyRegistryApi.groups).flatMap((group) =>
+      Object.values(group.endpoints),
+    );
+    assert.ok(Object.keys(partyRegistryApi.groups.partyCommands.endpoints).length > 0);
+    assert.deepEqual(
+      endpoints.filter(({ path }) => /merge/iu.test(path)).map(({ path }) => path),
+      ['/reads/party-merge-readiness'],
+    );
+  }));
+
+test('serves the generated OntOS module contract before i18n redirects in development', () =>
+  readFile(new URL('../../modern.config.ts', import.meta.url), 'utf-8').then(
+    (modernConfigSource) => {
+      assert.match(
+        modernConfigSource,
+        /new URL\('\.dev-public\/\.well-known\/ontos-module-manifest\.json', import\.meta\.url\)/u,
+      );
+      assert.match(modernConfigSource, /setupMiddlewares:/u);
+      assert.match(
+        modernConfigSource,
+        /request\.url\?\.split\('\?', 1\)\[0\] !== '\/\.well-known\/ontos-module-manifest\.json'/u,
+      );
+      assert.match(
+        modernConfigSource,
+        /response\.setHeader\('Content-Type', 'application\/json'\)/u,
+      );
+      assert.match(modernConfigSource, /ignoreRedirectRoutes: \[\s*'\/\.well-known'/u);
+      assert.match(
+        modernConfigSource,
+        /publicDir: \['\.\/locales', '\.\/assets', '\.\/\.dev-public'\]/u,
+      );
+    },
+  ));
 
 test('readiness response schema cannot claim production merge is enabled', () => {
   assert.deepEqual(

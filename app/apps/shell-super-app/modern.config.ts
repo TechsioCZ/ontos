@@ -231,11 +231,6 @@ export default defineConfig(
           },
           services: [
             {
-              binding: envValue('VERTICAL_CONTACTS_WORKER_BINDING') ?? 'VERTICAL_CONTACTS_WORKER',
-              prefix: '/contacts-api',
-              service: envValue('VERTICAL_CONTACTS_WORKER_NAME') ?? 'app-contacts',
-            },
-            {
               binding:
                 envValue('VERTICAL_PARTY_REGISTRY_WORKER_BINDING') ??
                 'VERTICAL_PARTY_REGISTRY_WORKER',

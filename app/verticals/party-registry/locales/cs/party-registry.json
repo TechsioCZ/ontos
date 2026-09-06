@@ -1,0 +1,10 @@
+{
+  "party-registry": {
+    "pages": {
+      "contacts": {
+        "description": "Party Registry uchovává kanonické strany, protistrany a jejich profily zapojení v jednom modulu.",
+        "title": "Kontakty"
+      }
+    }
+  }
+}

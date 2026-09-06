@@ -64,7 +64,7 @@ index 38e47a2ba5c0186660f29ea0add05f18256e3b4c..16085a6a428609b948c9084a0d002ced
          hostOnlyNoExposes
      };
 diff --git a/dist/cjs/ultramodern-workspace/module-federation/config.cjs b/dist/cjs/ultramodern-workspace/module-federation/config.cjs
-index 45a7179587e8ab49d1828ba05d25241acad5db82..60cd360e337c3245b89cb540b10e3b241331eb08 100644
+index 45a7179587e8ab49d1828ba05d25241acad5db82..1d196cdcc5e9d12f69eabba19a99c323026df396 100644
 --- a/dist/cjs/ultramodern-workspace/module-federation/config.cjs
 +++ b/dist/cjs/ultramodern-workspace/module-federation/config.cjs
 @@ -46,19 +46,18 @@ const external_shared_config_cjs_namespaceObject = require("./shared-config.cjs"
@@ -133,7 +133,7 @@ index 45a7179587e8ab49d1828ba05d25241acad5db82..60cd360e337c3245b89cb540b10e3b24
      const configuredCorsSource = `const moduleFederationDevServerAllowedOrigins = [
  ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
  ];`;
-@@ -154,6 +152,103 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+@@ -154,7 +152,125 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
            },
          },`;
      const useConfiguredCorsAllowlist = void 0 !== configuredDevPorts;
@@ -235,9 +235,31 @@ index 45a7179587e8ab49d1828ba05d25241acad5db82..60cd360e337c3245b89cb540b10e3b24
 +          headers: appDevServerHeaders,
 +        },`;
      const configuredCorsHeader = useConfiguredCorsAllowlist ? 1 === developmentPorts.length ? "'Access-Control-Allow-Origin': moduleFederationDevServerAllowedOrigins[0]," : '' : "'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,";
++    const servesModuleContract = 'shell' !== app.kind;
++    const developmentContractImport = servesModuleContract ? "import { readFileSync } from 'node:fs';\n" : '';
++    const developmentContractSource = servesModuleContract ? `const resolveDevelopmentModuleContractPath = () => fileURLToPath(
++  new URL('.dev-public/.well-known/ontos-module-manifest.json', import.meta.url),
++);` : '';
++    const developmentContractMiddleware = servesModuleContract ? `
++        setupMiddlewares: [
++          ({ unshift }) => {
++            unshift((request, response, next) => {
++              if (request.url?.split('?', 1)[0] !== '/.well-known/ontos-module-manifest.json') {
++                next();
++                return;
++              }
++              const contract = readFileSync(resolveDevelopmentModuleContractPath());
++              response.setHeader('Cache-Control', 'no-cache');
++              response.setHeader('Content-Type', 'application/json');
++              response.setHeader('Content-Length', String(contract.byteLength));
++              response.end(contract);
++            });
++          },
++        ],` : '';
      return (0, external_fs_io_cjs_namespaceObject.renderFileTemplate)('workspace/apps/modern.config.ts', {
          value0: `${bffImport}${tailwindImport}`,
-@@ -176,7 +271,7 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+         value1: app.id,
+@@ -176,7 +292,7 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
          value17: (0, external_naming_cjs_namespaceObject.createRspackChunkLoadingGlobal)(app),
          value18: tailwindBuilderPluginsConfig,
          value19: useConfiguredCorsAllowlist ? configuredCorsSource : legacyCorsSource,
@@ -246,7 +268,7 @@ index 45a7179587e8ab49d1828ba05d25241acad5db82..60cd360e337c3245b89cb540b10e3b24
          value21: configuredCorsHeader,
          value22: uiImports,
          value23: zephyrPluginSource,
-@@ -184,7 +279,14 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+@@ -184,7 +300,19 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
          value25: uiPluginEntries,
          value26: deliveryUnit.unitId,
          value27: deliveryUnit.buildMarker,
@@ -258,11 +280,16 @@ index 45a7179587e8ab49d1828ba05d25241acad5db82..60cd360e337c3245b89cb540b10e3b24
 +        value32: apiRspackToolsSource,
 +        value33: useConfiguredCorsAllowlist ? '' : legacyCorsHeadersSource,
 +        value34: emitsUi ? 'AppTools, ' : '',
-+        value35: emitsUi ? ', CliPlugin' : ''
++        value35: emitsUi ? ', CliPlugin' : '',
++        value36: developmentContractImport,
++        value37: developmentContractSource,
++        value38: developmentContractMiddleware,
++        value39: servesModuleContract ? "              '/.well-known'," : '',
++        value40: servesModuleContract ? ", './.dev-public'" : ''
      });
  }
  function createModuleFederationBridgeConfig(enableBridgeRouter) {
-@@ -239,15 +341,15 @@ export default moduleFederationConfig;
+@@ -239,15 +367,15 @@ export default moduleFederationConfig;
  function createBackendModuleFederationConfig(app) {
      return `import { createRequire } from 'node:module';
  import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
@@ -398,7 +425,7 @@ index d3d50e38814b4f1c95815a1bb61065c163ab8772..7f8bc5f5d7699225fadf3d711ab0571f
          hostOnlyNoExposes
      };
 diff --git a/dist/esm/ultramodern-workspace/module-federation/config.js b/dist/esm/ultramodern-workspace/module-federation/config.js
-index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..91c854c35dac43d6e55a23e6692aeba13e7f9063 100644
+index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..d323f12dd2c225739f86274768e003119f3f2968 100644
 --- a/dist/esm/ultramodern-workspace/module-federation/config.js
 +++ b/dist/esm/ultramodern-workspace/module-federation/config.js
 @@ -11,19 +11,18 @@ import { createSharedModuleFederationConfig, formatTsObjectLiteral } from "./sha
@@ -467,7 +494,7 @@ index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..91c854c35dac43d6e55a23e6692aeba1
      const configuredCorsSource = `const moduleFederationDevServerAllowedOrigins = [
  ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
  ];`;
-@@ -119,6 +117,103 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+@@ -119,7 +117,125 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
            },
          },`;
      const useConfiguredCorsAllowlist = void 0 !== configuredDevPorts;
@@ -569,9 +596,31 @@ index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..91c854c35dac43d6e55a23e6692aeba1
 +          headers: appDevServerHeaders,
 +        },`;
      const configuredCorsHeader = useConfiguredCorsAllowlist ? 1 === developmentPorts.length ? "'Access-Control-Allow-Origin': moduleFederationDevServerAllowedOrigins[0]," : '' : "'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,";
++    const servesModuleContract = 'shell' !== app.kind;
++    const developmentContractImport = servesModuleContract ? "import { readFileSync } from 'node:fs';\n" : '';
++    const developmentContractSource = servesModuleContract ? `const resolveDevelopmentModuleContractPath = () => fileURLToPath(
++  new URL('.dev-public/.well-known/ontos-module-manifest.json', import.meta.url),
++);` : '';
++    const developmentContractMiddleware = servesModuleContract ? `
++        setupMiddlewares: [
++          ({ unshift }) => {
++            unshift((request, response, next) => {
++              if (request.url?.split('?', 1)[0] !== '/.well-known/ontos-module-manifest.json') {
++                next();
++                return;
++              }
++              const contract = readFileSync(resolveDevelopmentModuleContractPath());
++              response.setHeader('Cache-Control', 'no-cache');
++              response.setHeader('Content-Type', 'application/json');
++              response.setHeader('Content-Length', String(contract.byteLength));
++              response.end(contract);
++            });
++          },
++        ],` : '';
      return renderFileTemplate('workspace/apps/modern.config.ts', {
          value0: `${bffImport}${tailwindImport}`,
-@@ -141,7 +236,7 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+         value1: app.id,
+@@ -141,7 +257,7 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
          value17: createRspackChunkLoadingGlobal(app),
          value18: tailwindBuilderPluginsConfig,
          value19: useConfiguredCorsAllowlist ? configuredCorsSource : legacyCorsSource,
@@ -580,7 +629,7 @@ index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..91c854c35dac43d6e55a23e6692aeba1
          value21: configuredCorsHeader,
          value22: uiImports,
          value23: zephyrPluginSource,
-@@ -149,7 +244,14 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+@@ -149,7 +265,19 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
          value25: uiPluginEntries,
          value26: deliveryUnit.unitId,
          value27: deliveryUnit.buildMarker,
@@ -592,11 +641,16 @@ index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..91c854c35dac43d6e55a23e6692aeba1
 +        value32: apiRspackToolsSource,
 +        value33: useConfiguredCorsAllowlist ? '' : legacyCorsHeadersSource,
 +        value34: emitsUi ? 'AppTools, ' : '',
-+        value35: emitsUi ? ', CliPlugin' : ''
++        value35: emitsUi ? ', CliPlugin' : '',
++        value36: developmentContractImport,
++        value37: developmentContractSource,
++        value38: developmentContractMiddleware,
++        value39: servesModuleContract ? "              '/.well-known'," : '',
++        value40: servesModuleContract ? ", './.dev-public'" : ''
      });
  }
  function createModuleFederationBridgeConfig(enableBridgeRouter) {
-@@ -204,15 +306,15 @@ export default moduleFederationConfig;
+@@ -204,15 +332,15 @@ export default moduleFederationConfig;
  function createBackendModuleFederationConfig(app) {
      return `import { createRequire } from 'node:module';
  import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
@@ -733,7 +787,7 @@ index c333334745820eaf95b7a9783e481b500c669590..5bfe33f755f0ad4460fb93a47f4f2fd0
          hostOnlyNoExposes
      };
 diff --git a/dist/esm-node/ultramodern-workspace/module-federation/config.js b/dist/esm-node/ultramodern-workspace/module-federation/config.js
-index 5956501f8ec070d086690b2be4096c40c0c249c0..079df825aa7f0c60040d7dc6e253417ca923cc4a 100644
+index 5956501f8ec070d086690b2be4096c40c0c249c0..63fb7474a65ea6e6edd1f5c00a3578bbfa6548d2 100644
 --- a/dist/esm-node/ultramodern-workspace/module-federation/config.js
 +++ b/dist/esm-node/ultramodern-workspace/module-federation/config.js
 @@ -12,19 +12,18 @@ import { createSharedModuleFederationConfig, formatTsObjectLiteral } from "./sha
@@ -802,7 +856,7 @@ index 5956501f8ec070d086690b2be4096c40c0c249c0..079df825aa7f0c60040d7dc6e253417c
      const configuredCorsSource = `const moduleFederationDevServerAllowedOrigins = [
  ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
  ];`;
-@@ -120,6 +118,103 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+@@ -120,7 +118,125 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
            },
          },`;
      const useConfiguredCorsAllowlist = void 0 !== configuredDevPorts;
@@ -904,9 +958,31 @@ index 5956501f8ec070d086690b2be4096c40c0c249c0..079df825aa7f0c60040d7dc6e253417c
 +          headers: appDevServerHeaders,
 +        },`;
      const configuredCorsHeader = useConfiguredCorsAllowlist ? 1 === developmentPorts.length ? "'Access-Control-Allow-Origin': moduleFederationDevServerAllowedOrigins[0]," : '' : "'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,";
++    const servesModuleContract = 'shell' !== app.kind;
++    const developmentContractImport = servesModuleContract ? "import { readFileSync } from 'node:fs';\n" : '';
++    const developmentContractSource = servesModuleContract ? `const resolveDevelopmentModuleContractPath = () => fileURLToPath(
++  new URL('.dev-public/.well-known/ontos-module-manifest.json', import.meta.url),
++);` : '';
++    const developmentContractMiddleware = servesModuleContract ? `
++        setupMiddlewares: [
++          ({ unshift }) => {
++            unshift((request, response, next) => {
++              if (request.url?.split('?', 1)[0] !== '/.well-known/ontos-module-manifest.json') {
++                next();
++                return;
++              }
++              const contract = readFileSync(resolveDevelopmentModuleContractPath());
++              response.setHeader('Cache-Control', 'no-cache');
++              response.setHeader('Content-Type', 'application/json');
++              response.setHeader('Content-Length', String(contract.byteLength));
++              response.end(contract);
++            });
++          },
++        ],` : '';
      return renderFileTemplate('workspace/apps/modern.config.ts', {
          value0: `${bffImport}${tailwindImport}`,
-@@ -142,7 +237,7 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+         value1: app.id,
+@@ -142,7 +258,7 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
          value17: createRspackChunkLoadingGlobal(app),
          value18: tailwindBuilderPluginsConfig,
          value19: useConfiguredCorsAllowlist ? configuredCorsSource : legacyCorsSource,
@@ -915,7 +991,7 @@ index 5956501f8ec070d086690b2be4096c40c0c249c0..079df825aa7f0c60040d7dc6e253417c
          value21: configuredCorsHeader,
          value22: uiImports,
          value23: zephyrPluginSource,
-@@ -150,7 +245,14 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+@@ -150,7 +266,19 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
          value25: uiPluginEntries,
          value26: deliveryUnit.unitId,
          value27: deliveryUnit.buildMarker,
@@ -927,11 +1003,16 @@ index 5956501f8ec070d086690b2be4096c40c0c249c0..079df825aa7f0c60040d7dc6e253417c
 +        value32: apiRspackToolsSource,
 +        value33: useConfiguredCorsAllowlist ? '' : legacyCorsHeadersSource,
 +        value34: emitsUi ? 'AppTools, ' : '',
-+        value35: emitsUi ? ', CliPlugin' : ''
++        value35: emitsUi ? ', CliPlugin' : '',
++        value36: developmentContractImport,
++        value37: developmentContractSource,
++        value38: developmentContractMiddleware,
++        value39: servesModuleContract ? "              '/.well-known'," : '',
++        value40: servesModuleContract ? ", './.dev-public'" : ''
      });
  }
  function createModuleFederationBridgeConfig(enableBridgeRouter) {
-@@ -205,15 +307,15 @@ export default moduleFederationConfig;
+@@ -205,15 +333,15 @@ export default moduleFederationConfig;
  function createBackendModuleFederationConfig(app) {
      return `import { createRequire } from 'node:module';
  import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
@@ -1015,12 +1096,12 @@ index ebbc5176bacfd3790c8f01c8000e258ad348ce00..2d9e878b3f30650b0ca3e7b78d8c63de
  export declare const defaultAppRootDirs: string[];
  export declare const skippedScanDirs: Set<string>;
 diff --git a/templates/workspace/apps/modern.config.ts.handlebars b/templates/workspace/apps/modern.config.ts.handlebars
-index 2144abc7232f756a7d824e18bd90ce881e0dadc2..df32f795ae765176365e81a251b7da4a084011dc 100644
+index 2144abc7232f756a7d824e18bd90ce881e0dadc2..90a60a9de370f33986aad0cbd1faacebdc324af6 100644
 --- a/templates/workspace/apps/modern.config.ts.handlebars
 +++ b/templates/workspace/apps/modern.config.ts.handlebars
 @@ -1,8 +1,12 @@
 -import {
-+import { {{value29}}createRequire } from 'node:module';
++{{value36}}import { {{value29}}createRequire } from 'node:module';
 +{{value30}}import {
    appTools,
    defineConfig,
@@ -1032,11 +1113,12 @@ index 2144abc7232f756a7d824e18bd90ce881e0dadc2..df32f795ae765176365e81a251b7da4a
  import {
    getBuildConfigEnvironment,
    withBuildConfigEnvironment,
-@@ -10,9 +14,10 @@ import {
+@@ -10,9 +14,11 @@ import {
  {{value0}}import { i18nPlugin } from '@modern-js/plugin-i18n';
  import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
  {{value22}}
 +Object.assign(globalThis, { require: createRequire(import.meta.url) });
++{{value37}}
  const cloudflareDeployEnabled =
    getBuildConfigEnvironment('MODERNJS_DEPLOY') === 'cloudflare';
 -
@@ -1044,7 +1126,7 @@ index 2144abc7232f756a7d824e18bd90ce881e0dadc2..df32f795ae765176365e81a251b7da4a
  {{value23}}const appId = '{{value1}}';
  const cloudflareWorkerName = '{{value2}}';
  const port = Number(getBuildConfigEnvironment('{{value3}}') ?? {{value4}});
-@@ -35,16 +40,16 @@ const inferredCloudflareUrl =
+@@ -35,16 +41,16 @@ const inferredCloudflareUrl =
  // Site origin (SEO: canonical/hreflang URLs) prefers the site-wide public URL;
  // the per-app deployment URL only fills in when no site origin is configured.
  const siteUrl =
@@ -1065,7 +1147,7 @@ index 2144abc7232f756a7d824e18bd90ce881e0dadc2..df32f795ae765176365e81a251b7da4a
  const buildTarget = cloudflareDeployEnabled ? 'cloudflare' : 'web';
  const buildOutputRoot = cloudflareDeployEnabled ? 'dist-cloudflare' : 'dist';
  const buildTempDirectory = `node_modules/.modern-js-${appId}-${buildTarget}`;
-@@ -62,21 +67,24 @@ if (
+@@ -62,23 +68,26 @@ if (
    );
  }
 
@@ -1100,9 +1182,29 @@ index 2144abc7232f756a7d824e18bd90ce881e0dadc2..df32f795ae765176365e81a251b7da4a
 -        : {}),
 +{{value9}}{{value18}}      ...cloudflareDeployment,
        dev: {
- {{value13}}{{value20}}
+-{{value13}}{{value20}}
++{{value13}}{{value20}}{{value38}}
        },
-@@ -145,6 +153,8 @@ export default defineConfig(
+       html: {
+         outputStructure: 'flat',
+@@ -115,6 +124,7 @@ export default defineConfig(
+           localeDetection: {
+             fallbackLanguage: 'en',
+             ignoreRedirectRoutes: [
++{{value39}}
+               '/@mf-types',
+               '/assets',
+               '/bundles',
+@@ -137,7 +147,7 @@ export default defineConfig(
+ {{value15}}{{value25}}      ],
+       server: {
+         port,
+-        publicDir: ['./locales', './assets'],
++        publicDir: ['./locales', './assets'{{value40}}],
+       },
+       source: {
+         alias: {
+@@ -145,6 +155,8 @@ export default defineConfig(
              '@modern-js/plugin-i18n/runtime/no-react-i18next',
          },
          globalVars: {
@@ -1111,7 +1213,7 @@ index 2144abc7232f756a7d824e18bd90ce881e0dadc2..df32f795ae765176365e81a251b7da4a
            ULTRAMODERN_SITE_URL: siteUrl,
          },
          mainEntryName: 'index',
-@@ -153,21 +163,13 @@ export default defineConfig(
+@@ -153,21 +165,13 @@ export default defineConfig(
          autoprefixer: {
            overrideBrowserslist: ['defaults'],
          },

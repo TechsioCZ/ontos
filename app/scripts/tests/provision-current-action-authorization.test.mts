@@ -28,12 +28,6 @@ import {
 } from '../provision-current-action-authorization.mts';
 
 const currentActionKeys = [
-  'contacts.core.archive-organization-engagement',
-  'contacts.core.archive-person-engagement',
-  'contacts.core.attach-organization-engagement',
-  'contacts.core.attach-person-engagement',
-  'contacts.core.unarchive-organization-engagement',
-  'contacts.core.unarchive-person-engagement',
   'core.identity.bind-managed-api-key',
   'core.identity.bind-self-api-key',
   'core.identity.change-principal-status',
@@ -44,7 +38,11 @@ const currentActionKeys = [
   'core.modules.change-tenant-module-state',
   'party.registry.add-contact-point',
   'party.registry.add-party-official-identifier',
+  'party.registry.archive-organization-engagement',
   'party.registry.archive-party',
+  'party.registry.archive-person-engagement',
+  'party.registry.attach-organization-engagement',
+  'party.registry.attach-person-engagement',
   'party.registry.confirm-duplicate-parties',
   'party.registry.correct-party-fact',
   'party.registry.counterparty-create',
@@ -61,7 +59,9 @@ const currentActionKeys = [
   'party.registry.request-search-rebuild',
   'party.registry.resolve-duplicate-candidate-create',
   'party.registry.resolve-duplicate-candidate-match',
+  'party.registry.unarchive-organization-engagement',
   'party.registry.unarchive-party',
+  'party.registry.unarchive-person-engagement',
   'party.registry.update-contact-point',
   'party.registry.update-party',
   'party.registry.update-party-official-identifier',
@@ -225,13 +225,12 @@ test('workspace validation rejects both provisioning spellings in every automati
   }
 });
 
-test('discovers exactly the current generated Core and Contacts Action baseline', async () => {
+test('discovers exactly the current generated Core and Party Registry Action baseline', async () => {
   const workspaceRoot = path.resolve(import.meta.dirname, '../..');
   assert.deepEqual(await discoverCurrentActionKeys(workspaceRoot), currentActionKeys);
   assert.equal(new Set(currentActionKeys).size, 38);
   assert.equal(currentActionKeys.filter((key) => key.startsWith('core.')).length, 8);
-  assert.equal(currentActionKeys.filter((key) => key.startsWith('contacts.core.')).length, 6);
-  assert.equal(currentActionKeys.filter((key) => key.startsWith('party.registry.')).length, 24);
+  assert.equal(currentActionKeys.filter((key) => key.startsWith('party.registry.')).length, 30);
 });
 
 test('builds lossless, deterministic Tenant-membership grants for development and stage', async () => {
@@ -267,13 +266,13 @@ test('builds lossless, deterministic Tenant-membership grants for development an
   );
   assert.equal(
     Buffer.from(
-      toSpiceDbActionObjectId('contacts.core.attach-person-engagement').slice(3),
+      toSpiceDbActionObjectId('party.registry.attach-person-engagement').slice(3),
       'base64url',
     ).toString('utf-8'),
-    'contacts.core.attach-person-engagement',
+    'party.registry.attach-person-engagement',
   );
   assert.notEqual(
-    toSpiceDbActionObjectId('contacts.core.attach-person-engagement'),
+    toSpiceDbActionObjectId('party.registry.attach-person-engagement'),
     toSpiceDbActionObjectId('contacts-core-attach-person-engagement'),
   );
 });
@@ -384,7 +383,7 @@ test('never grants explicit Actions through Tenant membership and verifies recor
     provisionActionAuthorization(client, {
       actions: [
         {
-          actionKey: 'contacts.core.attach-person-engagement',
+          actionKey: 'party.registry.attach-person-engagement',
           provisioning: 'tenant_membership_default',
         },
         { actionKey: 'core.identity.restricted', provisioning: 'explicit' },
@@ -406,7 +405,7 @@ test('never grants explicit Actions through Tenant membership and verifies recor
   assert.equal(state.updates.length, 2);
   assert.equal(
     state.updates[0]?.relationship?.resource?.objectId,
-    toSpiceDbActionObjectId('contacts.core.attach-person-engagement'),
+    toSpiceDbActionObjectId('party.registry.attach-person-engagement'),
   );
 });
 
@@ -497,11 +496,11 @@ test('rejects invalid input and missing membership before writing grants', async
     provisionActionAuthorization(client, {
       actions: [
         {
-          actionKey: 'contacts.core.attach-person-engagement',
+          actionKey: 'party.registry.attach-person-engagement',
           provisioning: 'tenant_membership_default',
         },
         {
-          actionKey: 'contacts.core.attach-person-engagement',
+          actionKey: 'party.registry.attach-person-engagement',
           provisioning: 'tenant_membership_default',
         },
       ],

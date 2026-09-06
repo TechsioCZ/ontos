@@ -32,6 +32,7 @@ import { counterpartiesReadApiLive } from './counterparties-search-server.ts';
 import { counterpartyReadReadApiLive } from './counterparty-read-read-server.ts';
 import { counterpartyRoleHistoryReadApiLive } from './counterparty-role-history-read-server.ts';
 import { duplicateCandidateDetailReadApiLive } from './duplicate-candidate-detail-read-server.ts';
+import { engagementProfileApiHandlersLive } from './engagement-profile-server.ts';
 import { partiesReadApiLive } from './parties-search-server.ts';
 import { partyContactPointDetailReadApiLive } from './party-contact-point-detail-read-server.ts';
 import { partyContactPointsReadApiLive } from './party-contact-points-read-server.ts';
@@ -102,6 +103,7 @@ export const makePartyRegistryApiRuntime = (
     foundationLive,
     partyRegistryCommandsLive.pipe(Layer.provide(actionRuntime)),
     partyRegistryCommandRecoveryLive.pipe(Layer.provide(actionRuntime)),
+    engagementProfileApiHandlersLive.pipe(Layer.provide(actionRuntime), Layer.provide(readRuntime)),
     partyDetailReadApiLive.pipe(Layer.provide(readRuntime)),
     partyMatchReadApiLive.pipe(Layer.provide(readRuntime)),
     partyMatchDecisionReadApiLive.pipe(Layer.provide(readRuntime)),

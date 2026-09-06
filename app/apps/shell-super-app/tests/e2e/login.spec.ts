@@ -177,6 +177,7 @@ test('loads localized English and Czech Contacts pages only after login', async 
   await form.getByLabel(/^Heslo/u).fill(e2eCredentials.password);
   await form.getByRole('button', { name: 'Přihlásit se' }).click();
   await expect(page).toHaveURL(/\/cs\/?$/u);
+  await expect(page.getByText('Nasazení modulu je dočasně nedostupné.')).toHaveCount(0);
 
   const contactsLink = page.locator('a[href="/cs/contacts"]');
   await expect(contactsLink).toHaveAttribute('href', '/cs/contacts');
@@ -185,10 +186,11 @@ test('loads localized English and Czech Contacts pages only after login', async 
   await expect(page).toHaveURL(/\/cs\/contacts\/?$/u);
   await expect(page.getByRole('heading', { name: 'Kontakty' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Modul' })).toHaveCount(0);
-  await expect(page.getByRole('link', { name: 'Zákazníci' })).toHaveAttribute(
-    'href',
-    '/cs/contacts/customers',
-  );
+  await expect(
+    page.getByText(
+      'Party Registry uchovává kanonické strany, protistrany a jejich profily zapojení v jednom modulu.',
+    ),
+  ).toBeVisible();
   await expect(page.getByText('Tato stránka je připravena k implementaci.')).toHaveCount(0);
   await expect(page.getByText('Zatím zde není žádný obsah.')).toHaveCount(0);
   await expect(page.getByRole('complementary', { name: 'Postranní panel přehledu' })).toBeVisible();
@@ -197,10 +199,11 @@ test('loads localized English and Czech Contacts pages only after login', async 
   await expect(page).toHaveURL(/\/en\/contacts\/?$/u);
   await expect(page.getByRole('heading', { name: 'Contacts' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Module' })).toHaveCount(0);
-  await expect(page.getByRole('link', { name: 'Customers' })).toHaveAttribute(
-    'href',
-    '/en/contacts/customers',
-  );
+  await expect(
+    page.getByText(
+      'Party Registry keeps canonical Parties, Counterparties, and their engagement profiles in one module.',
+    ),
+  ).toBeVisible();
   await expect(page.getByText('This page is ready for implementation.')).toHaveCount(0);
   await expect(page.getByText('No content has been added yet.')).toHaveCount(0);
   await expect(page.getByText('The module is temporarily unavailable. Try again.')).toHaveCount(0);

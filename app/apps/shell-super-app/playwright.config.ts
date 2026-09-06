@@ -28,14 +28,14 @@ export default defineConfig({
   webServer: [
     {
       command: 'pnpm dev',
-      cwd: '../../verticals/contacts',
+      cwd: '../../verticals/party-registry',
       env: {
         GIT_CEILING_DIRECTORIES: repositoryRoot,
         ULTRAMODERN_MF_DEV_ORIGIN: origin,
         ULTRAMODERN_SOURCE_REVISION: e2eSourceRevision,
       },
       reuseExistingServer: !process.env.CI,
-      url: 'http://127.0.0.1:4101/en',
+      url: 'http://127.0.0.1:4102/en',
     },
     {
       command: 'pnpm dev',

@@ -65,15 +65,18 @@ test('exact reconciliation is idempotent and contradictory records fail closed',
 
 test('module-state reconciliation preserves migrated IDs and rejects identity collisions', () => {
   const expected = {
-    moduleKey: 'contacts.core',
+    moduleKey: 'party.registry',
     state: 'active',
     tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
-    tenantModuleStateId: moduleStateIdFor('contacts.core'),
+    tenantModuleStateId: moduleStateIdFor('party.registry'),
   } as const;
-  assert.equal(classifyLocalModuleState('Contacts module state', undefined, expected), 'create');
+  assert.equal(
+    classifyLocalModuleState('Party Registry module state', undefined, expected),
+    'create',
+  );
   assert.equal(
     classifyLocalModuleState(
-      'Contacts module state',
+      'Party Registry module state',
       { ...expected, tenantModuleStateId: '7f000000-0000-4000-8000-000000000001' },
       expected,
     ),
@@ -82,7 +85,7 @@ test('module-state reconciliation preserves migrated IDs and rejects identity co
   assert.throws(
     () =>
       classifyLocalModuleState(
-        'Contacts module state',
+        'Party Registry module state',
         {
           ...expected,
           moduleKey: 'inventory.core',
@@ -94,18 +97,18 @@ test('module-state reconciliation preserves migrated IDs and rejects identity co
   );
 });
 
-test('derives only configured Contacts through its generated owner contract', async () => {
+test('derives only configured Party Registry through its generated owner contract', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'ontos-local-modules-'));
   await mkdir(path.join(root, 'topology'), { recursive: true });
   await writeFile(
     path.join(root, 'topology/reference-topology.json'),
-    JSON.stringify({ verticals: [{ id: 'contacts' }, { id: 'inventory' }] }),
+    JSON.stringify({ verticals: [{ id: 'party-registry' }, { id: 'inventory' }] }),
     'utf-8',
   );
   const deriveContract = (async ({ vertical }: { readonly vertical: string }) => ({
     manifest: { module: { id: `${vertical}.core` } },
   })) as unknown as typeof deriveOntosModuleDeploymentContract;
-  assert.deepEqual(await deriveActivatedModuleIds(root, deriveContract), ['contacts.core']);
+  assert.deepEqual(await deriveActivatedModuleIds(root, deriveContract), ['party-registry.core']);
 });
 
 test('rejects duplicate module IDs derived from different verticals', async () => {
@@ -113,22 +116,22 @@ test('rejects duplicate module IDs derived from different verticals', async () =
   await mkdir(path.join(root, 'topology'), { recursive: true });
   await writeFile(
     path.join(root, 'topology/reference-topology.json'),
-    JSON.stringify({ verticals: [{ id: 'contacts' }, { id: 'inventory' }] }),
+    JSON.stringify({ verticals: [{ id: 'party-registry' }, { id: 'inventory' }] }),
     'utf-8',
   );
   const deriveContract = (async () => ({
     manifest: { module: { id: 'duplicate.core' } },
   })) as unknown as typeof deriveOntosModuleDeploymentContract;
   await assert.rejects(
-    deriveActivatedModuleIds(root, deriveContract, ['contacts', 'inventory']),
+    deriveActivatedModuleIds(root, deriveContract, ['party-registry', 'inventory']),
     LocalDevelopmentInitializationError,
   );
 });
 
 test('generates stable module state IDs and complete access relationships', () => {
-  assert.equal(moduleStateIdFor('contacts.core'), moduleStateIdFor('contacts.core'));
-  assert.notEqual(moduleStateIdFor('contacts.core'), moduleStateIdFor('inventory.core'));
-  const relationships = buildLocalDevelopmentRelationships(['contacts.core', 'inventory.core']);
+  assert.equal(moduleStateIdFor('party.registry'), moduleStateIdFor('party.registry'));
+  assert.notEqual(moduleStateIdFor('party.registry'), moduleStateIdFor('inventory.core'));
+  const relationships = buildLocalDevelopmentRelationships(['party.registry', 'inventory.core']);
   assert.equal(relationships.length, 7);
   assert.equal(relationships.filter(({ relation }) => relation === 'accessor').length, 2);
   assert.equal(relationships.filter(({ relation }) => relation === 'legal_entity').length, 2);

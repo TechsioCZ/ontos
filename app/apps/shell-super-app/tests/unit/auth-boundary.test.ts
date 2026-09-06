@@ -44,16 +44,16 @@ test('keeps authentication in the existing Shell/Core ownership boundary', () =>
 
   expect(authentication.kind).toBe('shell-core-capability');
   expect(authentication.owners).toEqual(['shell-super-app', 'core-runtime']);
-  expect(installedVerticalIds).toEqual(['contacts', 'party-registry']);
+  expect(installedVerticalIds).toEqual(['party-registry']);
   expect(verticalRefs).toEqual(installedVerticalIds);
-  expect(browserRemoteIds).toEqual(['contacts']);
+  expect(browserRemoteIds).toEqual(['party-registry']);
   expect(moduleFederation.remotes.map(({ id }) => id)).toEqual(browserRemoteIds);
   expect(fs.existsSync(new URL('verticals/auth', workspaceRoot))).toBe(false);
   expect(shellPackageSource).not.toContain('@app/auth');
   expect(ownershipSource).not.toContain('"id":"auth"');
 });
 
-test('keeps only the current Contacts landing page in the lazy browser allowlist', () => {
+test('keeps the Contacts page in the Party Registry lazy browser allowlist', () => {
   const source = readText('apps/shell-super-app/src/api/vertical-clients.ts');
   const lazyRemotes = [...source.matchAll(/import\('(?<remote>[^']+)'\)/gu)].map(
     (match) => match.groups?.['remote'],
@@ -61,6 +61,6 @@ test('keeps only the current Contacts landing page in the lazy browser allowlist
   const componentKeys = [...source.matchAll(/componentKey: '(?<key>[^']+)'/gu)].map(
     (match) => match.groups?.['key'],
   );
-  expect(lazyRemotes).toEqual(['contacts/PageContacts']);
-  expect(componentKeys).toEqual(['contacts.core.page-contacts']);
+  expect(lazyRemotes).toEqual(['partyRegistry/PageContacts']);
+  expect(componentKeys).toEqual(['party.registry.page-contacts']);
 });

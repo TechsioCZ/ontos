@@ -57,7 +57,7 @@ export const LOCAL_DEVELOPMENT_CONTEXT = Object.freeze({
   tenantSlug: 'techsio',
 });
 
-export const LOCAL_DEVELOPMENT_VERTICALS = Object.freeze(['contacts'] as const);
+export const LOCAL_DEVELOPMENT_VERTICALS = Object.freeze(['party-registry'] as const);
 
 export interface LocalDevelopmentConfiguration {
   readonly authBaseUrl: string;

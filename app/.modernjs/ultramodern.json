@@ -42,16 +42,15 @@
           "name": "shellSuperApp",
           "exposes": [],
           "verticalRefs": [
-            "contacts",
             "party-registry"
           ],
           "remotes": [
             {
-              "id": "contacts",
-              "alias": "contacts",
-              "name": "verticalContacts",
-              "manifestEnv": "VERTICAL_CONTACTS_MF_MANIFEST",
-              "manifestUrl": "http://localhost:4101/mf-manifest.json"
+              "id": "party-registry",
+              "alias": "partyRegistry",
+              "name": "verticalPartyRegistry",
+              "manifestEnv": "VERTICAL_PARTY_REGISTRY_MF_MANIFEST",
+              "manifestUrl": "http://localhost:4102/mf-manifest.json"
             }
           ],
           "ssr": true,
@@ -202,293 +201,6 @@
         }
       },
       {
-        "id": "contacts",
-        "kind": "vertical",
-        "package": "@app/contacts",
-        "packageSuffix": "contacts",
-        "displayName": "Contacts Vertical",
-        "path": "verticals/contacts",
-        "domain": "contacts",
-        "port": 4101,
-        "portEnv": "VERTICAL_CONTACTS_PORT",
-        "moduleFederation": {
-          "role": "remote",
-          "name": "verticalContacts",
-          "exposes": [
-            "./PageContacts"
-          ],
-          "ssr": true,
-          "dts": {
-            "compilerInstance": "effect-tsgo",
-            "tsConfigPath": "./tsconfig.mf-types.json"
-          }
-        },
-        "backendFederation": {
-          "role": "microvertical-server",
-          "name": "verticalContactsBackend",
-          "runtimeFramework": "effect",
-          "strictEffectApproach": true,
-          "deliveryUnit": {
-            "schemaVersion": 1,
-            "kind": "microvertical-delivery-unit",
-            "unitId": "app/contacts",
-            "packageName": "@app/contacts",
-            "version": "0.1.0",
-            "buildMarker": "b08ddded31ae2315",
-            "sourceRevision": "workspace"
-          },
-          "exposes": {
-            "./effect-api": {
-              "contract": "verticals/contacts/shared/api.ts",
-              "runtime": "verticals/contacts/api/index.ts",
-              "client": "verticals/contacts/src/api/contacts-client.ts",
-              "openapi": "/contacts-api/openapi.json",
-              "readiness": "/contacts-api/contacts/readiness"
-            }
-          },
-          "versionBoundary": {
-            "invariant": "web-and-api-same-build",
-            "identityRoot": "deliveryUnit",
-            "packageName": "@app/contacts",
-            "ui": {
-              "manifestEnv": "VERTICAL_CONTACTS_MF_MANIFEST",
-              "manifestUrl": "http://localhost:4101/mf-manifest.json",
-              "buildMarker": "verticals/contacts/src/routes/ultramodern-route-metadata.ts"
-            },
-            "api": {
-              "readiness": "/contacts-api/contacts/readiness",
-              "buildMarker": "verticals/contacts/shared/ultramodern-build.ts",
-              "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CONTACTS"
-            }
-          },
-          "executionSurfaces": {
-            "cloudflare": {
-              "kind": "cloudflare-worker-snapshot",
-              "workerName": "app-contacts",
-              "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CONTACTS",
-              "ssr": {
-                "workerEntry": ".output/server/index.mjs",
-                "workerManifest": ".output/server/modern-worker-manifest.json",
-                "routeManifest": ".output/server/route.json",
-                "ssrBundle": ".output/worker/index.js",
-                "effectBffBundle": ".output/worker/__modern_bff_effect.js",
-                "assetsBinding": "ASSETS"
-              },
-              "zephyr": {
-                "runtime": "ssr-worker",
-                "integration": "managed-cloudflare",
-                "snapshotIdEnv": "ZEPHYR_CONTACTS_SNAPSHOT_ID",
-                "versionIdEnv": "ZEPHYR_CONTACTS_VERSION_ID",
-                "applicationUidEnv": "ZEPHYR_CONTACTS_APPLICATION_UID"
-              },
-              "workerDispatch": {
-                "preferred": "service-binding",
-                "serviceBinding": "VERTICAL_CONTACTS_WORKER",
-                "serviceBindingEnv": "VERTICAL_CONTACTS_WORKER_BINDING",
-                "dispatchNamespaceEnv": "VERTICAL_CONTACTS_DISPATCH_NAMESPACE",
-                "dispatchWorkerNameEnv": "VERTICAL_CONTACTS_WORKER_NAME",
-                "requestInterface": "fetch"
-              }
-            },
-            "node": {
-              "kind": "node-mf-runtime",
-              "adapterVersion": "backend-mf-effect-v1",
-              "remoteName": "verticalContactsBackend",
-              "manifestEnv": "VERTICAL_CONTACTS_BACKEND_MF_MANIFEST",
-              "manifestUrl": "http://localhost:4101/backend-mf-manifest.json",
-              "containerEntry": "http://localhost:4101/backendRemoteEntry.cjs",
-              "remoteType": "commonjs-module",
-              "expose": "./effect-api",
-              "runtimePackage": "@modern-js/plugin-bff/effect",
-              "expected": {
-                "unitId": "app/contacts",
-                "buildMarker": "b08ddded31ae2315"
-              }
-            }
-          },
-          "compatibility": {
-            "contractVersion": "microvertical-server-effect-v1",
-            "packageName": "@app/contacts",
-            "effectVersion": "4.0.0-beta.107",
-            "moduleFederationVersion": "2.8.0"
-          },
-          "cache": {
-            "cloudflareSnapshot": "immutable",
-            "nodeManifest": "no-store",
-            "nodeVersionedContainer": "immutable",
-            "nodeUnpinnedContainer": "revalidate"
-          },
-          "fallback": {
-            "timeoutMs": 1500,
-            "failureEvent": "modernjs:microvertical-server-fallback",
-            "strategy": "typed-effect-error"
-          }
-        },
-        "deliveryUnit": {
-          "schemaVersion": 1,
-          "kind": "microvertical-delivery-unit",
-          "unitId": "app/contacts",
-          "packageName": "@app/contacts",
-          "version": "0.1.0",
-          "buildMarker": "b08ddded31ae2315",
-          "sourceRevision": "workspace"
-        },
-        "api": {
-          "runtime": "effect",
-          "stem": "contacts",
-          "prefix": "/contacts-api",
-          "consumedBy": [
-            "shell-super-app",
-            "contacts"
-          ],
-          "serverEntry": "verticals/contacts/api/index.ts"
-        },
-        "deploy": {
-          "cloudflare": {
-            "target": "cloudflare",
-            "workerName": "app-contacts",
-            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CONTACTS",
-            "compatibilityDate": "2026-06-02",
-            "compatibilityFlags": [
-              "nodejs_compat",
-              "global_fetch_strictly_public"
-            ],
-            "assetsBinding": "ASSETS",
-            "routes": {
-              "ssr": "/en",
-              "mfManifest": "/mf-manifest.json",
-              "locale": "/locales/en/contacts.json",
-              "apiReadiness": "/contacts-api/contacts/readiness"
-            },
-            "security": {
-              "enabled": true,
-              "headers": {
-                "referrerPolicy": "strict-origin-when-cross-origin",
-                "contentTypeOptions": "nosniff",
-                "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
-              },
-              "contentSecurityPolicy": {
-                "mode": "report-only",
-                "directives": {
-                  "base-uri": [
-                    "'self'"
-                  ],
-                  "connect-src": [
-                    "'self'",
-                    "https:",
-                    "http:",
-                    "wss:",
-                    "ws:"
-                  ],
-                  "default-src": [
-                    "'self'"
-                  ],
-                  "font-src": [
-                    "'self'",
-                    "data:",
-                    "https:",
-                    "http:"
-                  ],
-                  "form-action": [
-                    "'self'"
-                  ],
-                  "frame-ancestors": [
-                    "'self'"
-                  ],
-                  "img-src": [
-                    "'self'",
-                    "data:",
-                    "blob:",
-                    "https:",
-                    "http:"
-                  ],
-                  "manifest-src": [
-                    "'self'",
-                    "https:",
-                    "http:"
-                  ],
-                  "object-src": [
-                    "'none'"
-                  ],
-                  "script-src": [
-                    "'self'",
-                    "'unsafe-inline'",
-                    "'unsafe-eval'",
-                    "https:",
-                    "http:",
-                    "blob:"
-                  ],
-                  "style-src": [
-                    "'self'",
-                    "'unsafe-inline'",
-                    "https:",
-                    "http:"
-                  ],
-                  "worker-src": [
-                    "'self'",
-                    "blob:"
-                  ]
-                },
-                "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
-              },
-              "noindex": {
-                "workersDev": true,
-                "localhost": true,
-                "previewHostnames": []
-              }
-            },
-            "qualityGates": {
-              "publicRoutes": {
-                "requireSitemapWhenPresent": true,
-                "requireRobotsSitemapConsistency": true,
-                "requireWebManifestWhenPresent": true
-              },
-              "statusCodes": {
-                "notFoundRoute": "/__ultramodern-smoke-missing/nope",
-                "unknownRouteStatus": 404
-              },
-              "indexing": {
-                "previewNoindex": true,
-                "productionPublicRoutesIndexable": true
-              },
-              "assets": {
-                "cssPreloadRequired": true,
-                "cssResponseRequired": true,
-                "cacheControlRequiredForCss": true,
-                "sourcemapsPubliclyReferenced": false
-              },
-              "budgets": {
-                "ssrHtmlMaxBytes": 250000,
-                "mfManifestMaxBytes": 500000,
-                "localeJsonMaxBytes": 100000,
-                "sitemapXmlMaxBytes": 500000,
-                "cssAssetMaxBytes": 750000
-              },
-              "csp": {
-                "finalMode": "report-only-dogfood",
-                "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
-              }
-            },
-            "evidence": {
-              "proofScript": "scripts/proof-cloudflare-version.mts",
-              "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
-            },
-            "jsonSmokeChecks": [
-              {
-                "id": "contacts-readiness-smoke",
-                "route": "/contacts-api/contacts/readiness",
-                "expect": {
-                  "status": "ready",
-                  "checks.api": "ready",
-                  "checks.moduleFederation": "ready",
-                  "checks.ssr": "ready"
-                }
-              }
-            ]
-          }
-        }
-      },
-      {
         "id": "party-registry",
         "kind": "vertical",
         "package": "@app/party-registry",
@@ -501,7 +213,9 @@
         "moduleFederation": {
           "role": "remote",
           "name": "verticalPartyRegistry",
-          "exposes": [],
+          "exposes": [
+            "./PageContacts"
+          ],
           "ssr": true
         },
         "backendFederation": {
@@ -804,90 +518,19 @@
         "hostOnly": true
       },
       {
-        "id": "contacts",
-        "path": "verticals/contacts",
-        "role": "remote",
-        "name": "verticalContacts",
-        "exposes": [
-          "./PageContacts"
-        ],
-        "hostOnly": false
-      },
-      {
         "id": "party-registry",
         "path": "verticals/party-registry",
         "role": "remote",
         "name": "verticalPartyRegistry",
-        "exposes": [],
+        "exposes": [
+          "./PageContacts"
+        ],
         "hostOnly": false
       }
     ]
   },
   "backendFederation": {
     "apps": [
-      {
-        "id": "contacts",
-        "path": "verticals/contacts",
-        "role": "microvertical-server",
-        "name": "verticalContactsBackend",
-        "runtimeFramework": "effect",
-        "strictEffectApproach": true,
-        "contractVersion": "microvertical-server-effect-v1",
-        "deliveryUnit": {
-          "schemaVersion": 1,
-          "kind": "microvertical-delivery-unit",
-          "unitId": "app/contacts",
-          "packageName": "@app/contacts",
-          "version": "0.1.0",
-          "buildMarker": "b08ddded31ae2315",
-          "sourceRevision": "workspace"
-        },
-        "executionSurfaces": {
-          "cloudflare": {
-            "kind": "cloudflare-worker-snapshot",
-            "workerName": "app-contacts",
-            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CONTACTS",
-            "ssr": {
-              "workerEntry": ".output/server/index.mjs",
-              "workerManifest": ".output/server/modern-worker-manifest.json",
-              "routeManifest": ".output/server/route.json",
-              "ssrBundle": ".output/worker/index.js",
-              "effectBffBundle": ".output/worker/__modern_bff_effect.js",
-              "assetsBinding": "ASSETS"
-            },
-            "zephyr": {
-              "runtime": "ssr-worker",
-              "integration": "managed-cloudflare",
-              "snapshotIdEnv": "ZEPHYR_CONTACTS_SNAPSHOT_ID",
-              "versionIdEnv": "ZEPHYR_CONTACTS_VERSION_ID",
-              "applicationUidEnv": "ZEPHYR_CONTACTS_APPLICATION_UID"
-            },
-            "workerDispatch": {
-              "preferred": "service-binding",
-              "serviceBinding": "VERTICAL_CONTACTS_WORKER",
-              "serviceBindingEnv": "VERTICAL_CONTACTS_WORKER_BINDING",
-              "dispatchNamespaceEnv": "VERTICAL_CONTACTS_DISPATCH_NAMESPACE",
-              "dispatchWorkerNameEnv": "VERTICAL_CONTACTS_WORKER_NAME",
-              "requestInterface": "fetch"
-            }
-          },
-          "node": {
-            "kind": "node-mf-runtime",
-            "adapterVersion": "backend-mf-effect-v1",
-            "remoteName": "verticalContactsBackend",
-            "manifestEnv": "VERTICAL_CONTACTS_BACKEND_MF_MANIFEST",
-            "manifestUrl": "http://localhost:4101/backend-mf-manifest.json",
-            "containerEntry": "http://localhost:4101/backendRemoteEntry.cjs",
-            "remoteType": "commonjs-module",
-            "expose": "./effect-api",
-            "runtimePackage": "@modern-js/plugin-bff/effect",
-            "expected": {
-              "unitId": "app/contacts",
-              "buildMarker": "b08ddded31ae2315"
-            }
-          }
-        }
-      },
       {
         "id": "party-registry",
         "path": "verticals/party-registry",

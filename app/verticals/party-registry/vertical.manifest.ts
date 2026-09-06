@@ -6,8 +6,13 @@ import { defineOntosModuleManifest } from '@app/core-runtime';
 import { addContactPointAction } from './src/actions/add-contact-point.action.ts';
 import { addPartyOfficialIdentifierAction } from './src/actions/add-party-official-identifier.action.ts';
 import { archivePartyAction } from './src/actions/archive-party.action.ts';
+import { archiveOrganizationEngagementAction } from './src/actions/archive-organization-engagement.action.ts';
+import { archivePersonEngagementAction } from './src/actions/archive-person-engagement.action.ts';
 import { AresLookupApi } from './shared/apis/ares-lookup.ts';
+import { attachOrganizationEngagementAction } from './src/actions/attach-organization-engagement.action.ts';
+import { attachPersonEngagementAction } from './src/actions/attach-person-engagement.action.ts';
 import { confirmDuplicatePartiesAction } from './src/actions/confirm-duplicate-parties.action.ts';
+import { ContactsPage } from './src/routes/[lang]/contacts/page.tsx';
 import { correctPartyFactAction } from './src/actions/correct-party-fact.action.ts';
 import { counterpartyCreateAction } from './src/actions/counterparty-create.action.ts';
 import { CounterpartyReadApi } from './shared/apis/counterparty-read.ts';
@@ -26,6 +31,8 @@ import { endPartyOfficialIdentifierAction } from './src/actions/end-party-offici
 import { endPartyRelationshipAction } from './src/actions/end-party-relationship.action.ts';
 import { markDuplicateCandidateNeedsEvidenceAction } from './src/actions/mark-duplicate-candidate-needs-evidence.action.ts';
 import { matchPartyAction } from './src/actions/match-party.action.ts';
+import { OrganizationEngagementProfileApi } from './shared/apis/organization-engagement-profile.ts';
+import { organizationEngagementProfileResourceDescriptor } from './shared/resources/organization-engagement-profile.ts';
 import { partyAliasResourceDescriptor } from './shared/resources/party-alias.ts';
 import { PartyContactPointDetailApi } from './shared/apis/party-contact-point-detail.ts';
 import { partyContactPointResourceDescriptor } from './shared/resources/party-contact-point.ts';
@@ -44,10 +51,14 @@ import { partyOfficialIdentifierResourceDescriptor } from './shared/resources/pa
 import { PartyRelationshipDetailApi } from './shared/apis/party-relationship-detail.ts';
 import { partyRelationshipResourceDescriptor } from './shared/resources/party-relationship.ts';
 import { partyResourceDescriptor } from './shared/resources/party.ts';
+import { PersonEngagementProfileApi } from './shared/apis/person-engagement-profile.ts';
+import { personEngagementProfileResourceDescriptor } from './shared/resources/person-engagement-profile.ts';
 import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 import { resolveDuplicateCandidateCreateAction } from './src/actions/resolve-duplicate-candidate-create.action.ts';
 import { resolveDuplicateCandidateMatchAction } from './src/actions/resolve-duplicate-candidate-match.action.ts';
 import { unarchivePartyAction } from './src/actions/unarchive-party.action.ts';
+import { unarchiveOrganizationEngagementAction } from './src/actions/unarchive-organization-engagement.action.ts';
+import { unarchivePersonEngagementAction } from './src/actions/unarchive-person-engagement.action.ts';
 import { updateContactPointAction } from './src/actions/update-contact-point.action.ts';
 import { updatePartyAction } from './src/actions/update-party.action.ts';
 import { updatePartyOfficialIdentifierAction } from './src/actions/update-party-official-identifier.action.ts';
@@ -81,7 +92,11 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       // <generated-module-manifest-actions>
       addContactPointAction,
       addPartyOfficialIdentifierAction,
+      archiveOrganizationEngagementAction,
       archivePartyAction,
+      archivePersonEngagementAction,
+      attachOrganizationEngagementAction,
+      attachPersonEngagementAction,
       confirmDuplicatePartiesAction,
       correctPartyFactAction,
       counterpartyCreateAction,
@@ -98,7 +113,9 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       requestSearchRebuildAction,
       resolveDuplicateCandidateCreateAction,
       resolveDuplicateCandidateMatchAction,
+      unarchiveOrganizationEngagementAction,
       unarchivePartyAction,
+      unarchivePersonEngagementAction,
       updateContactPointAction,
       updatePartyAction,
       updatePartyOfficialIdentifierAction,
@@ -111,6 +128,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       'counterparty-read': CounterpartyReadApi,
       'counterparty-role-history': CounterpartyRoleHistoryApi,
       'duplicate-candidate-detail': DuplicateCandidateDetailApi,
+      'organization-engagement-profile': OrganizationEngagementProfileApi,
       'party-contact-point-detail': PartyContactPointDetailApi,
       'party-contact-points': PartyContactPointsApi,
       'party-correction': PartyCorrectionApi,
@@ -121,10 +139,12 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       'party-official-identifier-detail': PartyOfficialIdentifierDetailApi,
       'party-official-identifier-history': PartyOfficialIdentifierHistoryApi,
       'party-relationship-detail': PartyRelationshipDetailApi,
+      'person-engagement-profile': PersonEngagementProfileApi,
       // </generated-module-manifest-apis>
     },
     components: {
       // <generated-module-manifest-components>
+      'page-contacts': ContactsPage,
       // </generated-module-manifest-components>
     },
     events: [],
@@ -137,6 +157,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       counterpartyResourceDescriptor,
       counterpartyRolePeriodResourceDescriptor,
       duplicateCandidateCaseResourceDescriptor,
+      organizationEngagementProfileResourceDescriptor,
       partyAliasResourceDescriptor,
       partyContactPointResourceDescriptor,
       partyCorrectionResourceDescriptor,
@@ -145,6 +166,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       partyOfficialIdentifierResourceDescriptor,
       partyRelationshipResourceDescriptor,
       partyResourceDescriptor,
+      personEngagementProfileResourceDescriptor,
       // </generated-module-manifest-resources>
     ],
     search: [
@@ -170,10 +192,37 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       mediaAttachments: [],
       navigation: [
         // <generated-module-shell-navigation>
+        {
+          contributionKey: 'party.registry.navigation.contacts',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
+            entrypointKey: 'party.registry.page.contacts',
+            moduleKey: 'party.registry',
+            role: 'page',
+            scope: 'tenant',
+          },
+          groupKey: 'shell.navigation.modules',
+          order: 100,
+          pageKey: 'party.registry.page.contacts',
+        },
         // </generated-module-shell-navigation>
       ],
       pages: [
         // <generated-module-shell-pages>
+        {
+          componentKey: 'party.registry.page-contacts',
+          contributionKey: 'party.registry.page.contacts',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
+            entrypointKey: 'party.registry.page.contacts',
+            moduleKey: 'party.registry',
+            role: 'page',
+            scope: 'tenant',
+          },
+          routePath: '/contacts',
+        },
         // </generated-module-shell-pages>
       ],
       publicComponents: [
