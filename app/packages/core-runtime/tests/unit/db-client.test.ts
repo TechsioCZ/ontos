@@ -59,7 +59,6 @@ void test('passes bounded pg options through the existing factory and closes its
   assert.equal(received?.query_timeout, undefined);
   assert.deepEqual(DEFAULT_DATABASE_POOL_DEADLINES, {
     connectionTimeoutMillis: 5000,
-    lock_timeout: 5000,
     statement_timeout: 30_000,
   });
   assert.deepEqual(received, {

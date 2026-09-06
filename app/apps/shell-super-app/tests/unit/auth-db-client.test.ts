@@ -32,7 +32,6 @@ test('forwards the core PostgreSQL pool defaults to the auth pool factory', asyn
   expect(received).toEqual({
     connectionString: rawConnectionString,
     connectionTimeoutMillis: 5000,
-    lock_timeout: 5000,
     statement_timeout: 30_000,
   });
 });
@@ -57,7 +56,7 @@ test('rejects unsafe URI options before acquiring the auth pool', async () => {
 
   expect(acquired).toBe(false);
   expect(error._tag).toBe('AuthDatabaseConnectionError');
-  expect(error.reason).toBe('Unable to initialize the authentication PostgreSQL pool');
+  expect(error.reason).toMatch(/^Unable to initialize the authentication PostgreSQL pool: .+/u);
   expect(error.reason).not.toContain(connectionString);
 });
 

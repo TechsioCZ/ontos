@@ -50,7 +50,6 @@ test('forwards default pool deadlines to the Party Registry PoolFactory', async 
   assert.deepEqual(receivedConfiguration, {
     connectionString: 'postgresql://ontos_runtime:test@localhost:5433/ontos',
     connectionTimeoutMillis: 5000,
-    lock_timeout: 5000,
     statement_timeout: 30_000,
   });
   assert.equal(finalized, true);

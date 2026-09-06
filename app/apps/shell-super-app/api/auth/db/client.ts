@@ -46,9 +46,9 @@ export const makeAuthDatabase = (
 ) =>
   makeDatabasePoolConfiguration(Redacted.value(configuration.connectionString)).pipe(
     Effect.mapError(
-      () =>
+      (error) =>
         new AuthDatabaseConnectionError({
-          reason: 'Unable to initialize the authentication PostgreSQL pool',
+          reason: `Unable to initialize the authentication PostgreSQL pool: ${error.reason}`,
         }),
     ),
     Effect.flatMap((poolConfiguration) =>

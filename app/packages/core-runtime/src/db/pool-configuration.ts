@@ -4,14 +4,18 @@ import { DatabaseConnectionError } from './connection-error.ts';
 
 export interface DatabasePoolDeadlines {
   readonly connectionTimeoutMillis: number;
-  readonly lock_timeout: number;
+  /**
+   * Opt-in only. Row and advisory lock waits (duplicate invocation rendezvous, search
+   * rebuilds, case merges) are designed serialization, so the statement deadline is the
+   * single bound on them; a shorter pool-wide lock deadline would turn waiting into failure.
+   */
+  readonly lock_timeout?: number;
   readonly statement_timeout: number;
 }
 
 // Runtime work should fail promptly under saturation without cutting off ordinary queries.
 export const DEFAULT_DATABASE_POOL_DEADLINES: Readonly<DatabasePoolDeadlines> = Object.freeze({
   connectionTimeoutMillis: 5000,
-  lock_timeout: 5000,
   statement_timeout: 30_000,
 });
 
@@ -28,6 +32,9 @@ export const makeDatabasePoolConfiguration = Effect.fn(
 ): Effect.fn.Return<PoolConfig, DatabaseConnectionError> {
   const options = { ...DEFAULT_DATABASE_POOL_DEADLINES, ...poolDeadlines };
   for (const value of Object.values(options)) {
+    if (value === undefined) {
+      continue;
+    }
     // Zero disables pg deadlines; oversized Node timers overflow to 1ms.
     if (!Number.isInteger(value) || value <= 0 || value > 2_147_483_647) {
       return yield* new DatabaseConnectionError({
