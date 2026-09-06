@@ -8,9 +8,7 @@ import {
   CorePersistenceLive,
   CoreSearchProjectionStoreLive,
   CoreSearchQueryRuntimeLive,
-  ModuleStateGateLive,
   ReadRuntime,
-  TenantModuleStateServiceLive,
   loadDatabaseConnectionPair,
   runAction,
   resolveActionCommit,
@@ -106,14 +104,8 @@ test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims
   const adminPool = new Pool({
     connectionString: Redacted.value(connections.admin.connectionString),
   });
-  const moduleStateLayer = ModuleStateGateLive.pipe(
-    Layer.provideMerge(
-      TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive), Layer.orDie),
-    ),
-    Layer.orDie,
-  );
-  const fixtureLayer = fixture.layer.pipe(Layer.provide(moduleStateLayer));
-  const otherLayer = other.layer.pipe(Layer.provide(moduleStateLayer));
+  const fixtureLayer = fixture.layer;
+  const otherLayer = other.layer;
   const coreSearchProjectionStoreLayer = CoreSearchProjectionStoreLive.pipe(
     Layer.provide(CorePersistenceLive),
     Layer.orDie,
