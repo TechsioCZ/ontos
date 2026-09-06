@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Context, Effect, Predicate, Schema } from 'effect';
+import { Cause, Context, Deferred, Effect, Exit, Logger, Predicate, Schema } from 'effect';
 import { Pool } from 'pg';
 import { defineRead } from '../../src/reads/definition.ts';
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
@@ -264,6 +264,51 @@ void test('rolls back a handler defect before releasing its sanitized failure', 
   assert.equal(error.reason, 'The read handler failed unexpectedly');
   assert.equal(queries.at(-1), 'rollback');
   assert.equal(harness.evidence(), 0);
+});
+
+void test('preserves caller interruption while a governed read handler is running', async () => {
+  const handlerStarted = Deferred.makeUnsafe<void>();
+  const releaseHandler = Deferred.makeUnsafe<void>();
+  const harness = makeHarness();
+  const governed = defineRead(
+    registration().descriptor,
+    () =>
+      Effect.gen(function* handler() {
+        yield* Deferred.succeed(handlerStarted, undefined);
+        yield* Deferred.await(releaseHandler);
+        return { evidence: { resultCount: 0 }, result: [] };
+      }),
+    () => Effect.succeed({}),
+    () => ({ kind: 'module', moduleId: 'core.shell' }),
+  );
+  const logMessages: unknown[] = [];
+  const logger = Logger.make(({ message }) => {
+    logMessages.push(message);
+  });
+  const controller = new AbortController();
+  const result = Effect.runPromiseExit(
+    harness.runtime
+      .runRead({
+        input: {},
+        principal: scope,
+        registration: governed,
+        transport: { correlationId: scope.correlationId },
+      })
+      .pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger]))),
+    { signal: controller.signal },
+  );
+  try {
+    await Effect.runPromise(Deferred.await(handlerStarted));
+    controller.abort();
+    const exit = await result;
+    assert.ok(Exit.isFailure(exit));
+    assert.ok(Cause.hasInterrupts(exit.cause));
+    assert.equal(Cause.findErrorOption(exit.cause)._tag, 'None');
+    assert.deepEqual(logMessages, []);
+  } finally {
+    Effect.runSync(Deferred.succeed(releaseHandler, undefined));
+    await result;
+  }
 });
 
 void test('runs every gate before the handler and persists evidence before releasing zero results', async () => {

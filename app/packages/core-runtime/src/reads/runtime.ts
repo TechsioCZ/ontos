@@ -794,6 +794,9 @@ export const makeReadRuntime = (
       ).pipe(
         Effect.catchCause((cause) => {
           const failure = Cause.findErrorOption(cause);
+          if (Cause.hasInterrupts(cause) && !Cause.hasDies(cause) && failure._tag === 'None') {
+            return Effect.failCause(cause as Cause.Cause<ReadCoreError>);
+          }
           let error: ReadTransactionFailure;
           if (Cause.hasDies(cause) || Cause.hasInterrupts(cause) || failure._tag === 'None') {
             error = new ReadTransactionFailure(
