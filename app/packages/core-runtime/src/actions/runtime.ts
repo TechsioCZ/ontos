@@ -1,5 +1,5 @@
 /* oxlint-disable sonarjs/no-duplicate-string, sonarjs/no-inverted-boolean-check */
-/* eslint-disable max-classes-per-file, promise/prefer-await-to-callbacks, unicorn/no-array-method-this-argument -- The public Effect service, private sentinels, Effect callbacks, and Effect dual flatMap API are deliberate. */
+/* eslint-disable promise/prefer-await-to-callbacks, unicorn/no-array-method-this-argument -- The public Effect service, private sentinels, Effect callbacks, and Effect dual flatMap API are deliberate. */
 // @effect-diagnostics asyncFunction:off
 // Drizzle owns the Promise transaction callback; Effect exits are carried
 // through a private rollback signal so typed handler failures remain typed.
@@ -76,6 +76,7 @@ import type {
 import { ModuleStateGate, ModuleStateGateLive } from '../modules/module-state-gate.ts';
 import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
+import { runCoreTransaction, CoreTransactionBridgeFailure } from '../db/transaction-bridge.ts';
 import { OperationalScopeResolver, OperationalScopeResolverLive } from '../operations/context.ts';
 import type { OperationalScope, OperationalScopeResolverService } from '../operations/context.ts';
 import { ContextAccess, ContextAccessLive } from '../permissions/context-access.ts';
@@ -191,87 +192,30 @@ export interface ActionRuntimeOptions {
   readonly resolveServiceFactory?: typeof getActionServiceFactory;
 }
 
-type ActionRollbackToken = symbol;
-
-class ActionRollbackSignal<Error, DefectError = never> {
-  readonly cause: Cause.Cause<Error>;
-  readonly defectCause: Cause.Cause<DefectError> | undefined;
-  readonly #token: ActionRollbackToken;
-
-  constructor(
-    token: ActionRollbackToken,
-    cause: Cause.Cause<Error>,
-    defectCause?: Cause.Cause<DefectError>,
-  ) {
-    this.#token = token;
-    this.cause = cause;
-    this.defectCause = defectCause;
-  }
-
-  matches(token: ActionRollbackToken): boolean {
-    return this.#token === token;
-  }
-}
-
-class TransactionBridgeFailure<Original> {
-  readonly _tag = 'TransactionBridgeFailure';
-  readonly original: Original;
-
-  constructor(original: Original) {
-    this.original = original;
-  }
-}
-
-const exitValueOrRollback = <Value, Error>(
-  exit: Exit.Exit<Value, Error>,
-  token: ActionRollbackToken,
-): Value => {
-  if (Exit.isFailure(exit)) {
-    const failure = Cause.findErrorOption(exit.cause);
-    let defectCause: Cause.Cause<never> | undefined = undefined;
-    if (failure._tag === 'Some' && Schema.is(ActionTransactionError)(failure.value)) {
-      defectCause = getActionTransactionFailureCause(failure.value);
-    } else if (
-      failure._tag === 'Some' &&
-      Schema.is(ActionInvocationPersistenceError)(failure.value)
-    ) {
-      defectCause = getActionInvocationPersistenceFailureCause(failure.value);
-    }
-    throw new ActionRollbackSignal(token, exit.cause, defectCause);
-  }
-  return exit.value;
-};
-
 const logInvocationPersistenceFailure = (
   failure: ActionInvocationPersistenceError,
   annotations: Readonly<Record<string, string>>,
 ): Effect.Effect<void> => logActionInvocationPersistenceFailureCause(failure, annotations);
 
-const isCommitAcknowledgementFailure = <Failure>(error: Failure): boolean => {
+const isConfirmedTransactionAbort = <Failure>(error: Failure): boolean => {
   if (!Predicate.isObjectKeyword(error) || error === null) {
     return false;
   }
   if ('commitIndeterminate' in error && error.commitIndeterminate === true) {
-    return true;
+    return false;
+  }
+  // A ROLLBACK rejection may replace the COMMIT error in Drizzle. It cannot
+  // establish the outcome of the preceding COMMIT, even if it has a SQLSTATE.
+  if ('query' in error && error.query === 'rollback') {
+    return false;
   }
   if ('code' in error && Predicate.isString(error.code)) {
-    const networkCodes = new Set([
-      'ECONNABORTED',
-      'ECONNRESET',
-      'EHOSTDOWN',
-      'EHOSTUNREACH',
-      'ENETDOWN',
-      'ENETRESET',
-      'ENETUNREACH',
-      'EPIPE',
-      'ETIMEDOUT',
-    ]);
-    if (error.code.startsWith('08') || error.code === '57P01' || networkCodes.has(error.code)) {
-      return true;
-    }
+    // Serialization, deadlock, and integrity violations prove an abort.
+    // In particular, class 40 also includes 40003 (completion unknown).
+    return error.code === '40001' || error.code === '40P01' || /^23[0-9A-Z]{3}$/.test(error.code);
   }
   return 'cause' in error && error.cause !== error
-    ? isCommitAcknowledgementFailure(error.cause)
+    ? isConfirmedTransactionAbort(error.cause)
     : false;
 };
 
@@ -979,48 +923,31 @@ export const makeActionRuntime = (
       notifyStage('invocation_running');
 
       let transactionBodyCompleted = false;
-      const rollbackToken = Symbol('@app/core-runtime/actions/rollback');
-      const transaction = Effect.tryPromise({
-        catch: (error) => new TransactionBridgeFailure(error),
-        try: async () =>
-          await database.executor.transaction(async (drizzleTransaction: CoreTransaction) => {
-            const lockedInvocation = exitValueOrRollback(
-              await Effect.runPromiseExit(
-                repository.lockInvocation(drizzleTransaction, invocation.actionInvocationId),
-              ),
-              rollbackToken,
+      let handlerDefectCause: Cause.Cause<unknown> | undefined;
+      const transactionExit = yield* Effect.exit(
+        runCoreTransaction(database.executor, (drizzleTransaction: CoreTransaction) =>
+          Effect.gen(function* actionTransactionBody() {
+            const lockedInvocation = yield* repository.lockInvocation(
+              drizzleTransaction,
+              invocation.actionInvocationId,
             );
             notifyStage('invocation_locked');
-            exitValueOrRollback(
-              await Effect.runPromiseExit(verifyInvocation(lockedInvocation, requestHash)),
-              rollbackToken,
-            );
+            yield* verifyInvocation(lockedInvocation, requestHash);
 
-            const scopedTransaction = exitValueOrRollback(
-              await Effect.runPromiseExit(installScope(drizzleTransaction, scope)),
-              rollbackToken,
-            );
+            const scopedTransaction = yield* installScope(drizzleTransaction, scope);
             notifyStage('database_scope_installed');
 
             if (isTenantActionEntrypoint(input.registration.descriptor.entrypoint)) {
-              exitValueOrRollback(
-                await Effect.runPromiseExit(
-                  moduleStateGate.recheckWrite(
-                    drizzleTransaction,
-                    scope.tenantId,
-                    input.registration.descriptor.entrypoint,
-                  ),
-                ),
-                rollbackToken,
+              yield* moduleStateGate.recheckWrite(
+                drizzleTransaction,
+                scope.tenantId,
+                input.registration.descriptor.entrypoint,
               );
             }
             notifyStage('module_state_rechecked');
             const serviceFactory = resolveServiceFactory(input.registration);
-            const services = exitValueOrRollback(
-              await Effect.runPromiseExit(
-                serviceFactory(scopedTransaction, scope).pipe(Effect.provide(handlerRequirements)),
-              ),
-              rollbackToken,
+            const services = yield* serviceFactory(scopedTransaction, scope).pipe(
+              Effect.provide(handlerRequirements),
             );
             const handler = resolveHandler(input.registration);
 
@@ -1040,7 +967,7 @@ export const makeActionRuntime = (
               services,
             });
 
-            const handlerExit = await Effect.runPromiseExit(
+            const handlerExit = yield* Effect.exit(
               Effect.suspend(() => handler(payload, handlerContext)).pipe(
                 Effect.provide(handlerRequirements),
               ),
@@ -1048,112 +975,128 @@ export const makeActionRuntime = (
 
             if (Exit.isFailure(handlerExit)) {
               if (Cause.hasDies(handlerExit.cause) || Cause.hasInterrupts(handlerExit.cause)) {
-                throw new ActionRollbackSignal(
-                  rollbackToken,
-                  Cause.fail(makeHandlerExecutionError()),
-                  handlerExit.cause,
+                handlerDefectCause = handlerExit.cause;
+                return yield* Effect.failCause(
+                  Cause.combine(Cause.fail(makeHandlerExecutionError()), handlerExit.cause),
                 );
               }
               const domainError = Cause.findErrorOption(handlerExit.cause);
               if (domainError._tag === 'None') {
-                throw new ActionRollbackSignal(
-                  rollbackToken,
-                  Cause.fail(makeHandlerExecutionError()),
-                  handlerExit.cause,
+                handlerDefectCause = handlerExit.cause;
+                return yield* Effect.failCause(
+                  Cause.combine(Cause.fail(makeHandlerExecutionError()), handlerExit.cause),
                 );
               }
               if (Schema.is(ActionCollectorError)(domainError.value)) {
-                throw new ActionRollbackSignal(rollbackToken, Cause.fail(domainError.value));
+                return yield* Effect.failCause(handlerExit.cause);
               }
-              const decodedDomainError = await Effect.runPromiseExit(
+              const decodedDomainError = yield* Effect.exit(
                 Schema.decodeUnknownEffect(input.registration.descriptor.domainErrorSchema)(
                   domainError.value,
                 ),
               );
               if (Exit.isFailure(decodedDomainError)) {
-                throw new ActionRollbackSignal(
-                  rollbackToken,
-                  Cause.fail(makeHandlerExecutionError()),
-                  handlerExit.cause,
+                handlerDefectCause = handlerExit.cause;
+                return yield* Effect.failCause(
+                  Cause.combine(Cause.fail(makeHandlerExecutionError()), handlerExit.cause),
                 );
               }
-              throw new ActionRollbackSignal(rollbackToken, Cause.fail(decodedDomainError.value));
+              return yield* Effect.fail(decodedDomainError.value);
             }
             notifyStage('handler_executed');
 
-            const result = exitValueOrRollback(
-              await Effect.runPromiseExit(
-                decodeActionResult(input.registration.descriptor.resultSchema, handlerExit.value),
-              ),
-              rollbackToken,
+            const result = yield* decodeActionResult(
+              input.registration.descriptor.resultSchema,
+              handlerExit.value,
             );
 
             const resultHash = computeCanonicalValueHash(result);
-            const persistenceExit = await Effect.runPromiseExit(
-              repository.flushSuccess(drizzleTransaction, {
-                actionInvocationId: invocation.actionInvocationId,
-                actionKey: input.registration.descriptor.actionKey,
-                allowedPolicies,
-                auditProfile: input.registration.descriptor.auditProfile,
-                evidence: collector.snapshot(),
-                principal,
-                resultHash,
-                transport: governedTransport,
-              }),
-            );
-            exitValueOrRollback(persistenceExit, rollbackToken);
+            yield* repository.flushSuccess(drizzleTransaction, {
+              actionInvocationId: invocation.actionInvocationId,
+              actionKey: input.registration.descriptor.actionKey,
+              allowedPolicies,
+              auditProfile: input.registration.descriptor.auditProfile,
+              evidence: collector.snapshot(),
+              principal,
+              resultHash,
+              transport: governedTransport,
+            });
             notifyStage('success_evidence_flushed');
             transactionBodyCompleted = true;
             return result;
           }),
-      });
-      const isCurrentRollback = <Value>(
-        value: Value,
-      ): value is Value &
-        ActionRollbackSignal<ActionCoreError | DomainErrorSchema['Type'], unknown> =>
-        value instanceof ActionRollbackSignal && value.matches(rollbackToken);
+        ),
+      );
 
-      return yield* transaction.pipe(
-        Effect.catch((bridgeError) => {
-          const transactionError = bridgeError.original;
-          if (isCurrentRollback(transactionError)) {
-            return Effect.gen(function* reportRollback() {
-              if (transactionError.defectCause !== undefined) {
-                yield* Effect.annotateLogs(
-                  Effect.logError(
-                    'Unexpected Action execution defect',
-                    transactionError.defectCause,
-                  ),
-                  {
-                    actionKey: input.registration.descriptor.actionKey,
-                    correlationId: transport.correlationId,
-                    invocationId: invocation.actionInvocationId,
-                  },
-                );
-              }
-              return yield* Effect.failCause(transactionError.cause);
-            });
+      if (Exit.isSuccess(transactionExit)) {
+        return transactionExit.value;
+      }
+
+      const failure = Cause.findErrorOption(transactionExit.cause);
+      if (failure._tag === 'Some' && failure.value instanceof CoreTransactionBridgeFailure) {
+        yield* Effect.annotateLogs(
+          Effect.logError('Unexpected Action transaction failure', failure.value.original),
+          {
+            actionKey: input.registration.descriptor.actionKey,
+            correlationId: transport.correlationId,
+            invocationId: invocation.actionInvocationId,
+          },
+        );
+      }
+
+      if (handlerDefectCause !== undefined) {
+        // The bridge surfaces handler defects as a typed transaction failure; log the original Cause here.
+        yield* Effect.annotateLogs(
+          Effect.logError('Unexpected Action execution defect', handlerDefectCause),
+          {
+            actionKey: input.registration.descriptor.actionKey,
+            correlationId: transport.correlationId,
+            invocationId: invocation.actionInvocationId,
+          },
+        );
+      }
+      if (failure._tag === 'Some' && Schema.is(ActionTransactionError)(failure.value)) {
+        const defectCause = getActionTransactionFailureCause(failure.value);
+        if (defectCause !== undefined) {
+          yield* Effect.annotateLogs(
+            Effect.logError('Unexpected Action execution defect', defectCause),
+            {
+              actionKey: input.registration.descriptor.actionKey,
+              correlationId: transport.correlationId,
+              invocationId: invocation.actionInvocationId,
+            },
+          );
+        }
+      } else if (
+        failure._tag === 'Some' &&
+        Schema.is(ActionInvocationPersistenceError)(failure.value)
+      ) {
+        const defectCause = getActionInvocationPersistenceFailureCause(failure.value);
+        if (defectCause !== undefined) {
+          yield* Effect.annotateLogs(
+            Effect.logError('Unexpected Action execution defect', defectCause),
+            {
+              actionKey: input.registration.descriptor.actionKey,
+              correlationId: transport.correlationId,
+              invocationId: invocation.actionInvocationId,
+            },
+          );
+        }
+      }
+      return yield* Effect.failCause(
+        Cause.map(transactionExit.cause, (error) => {
+          if (!(error instanceof CoreTransactionBridgeFailure)) {
+            return error;
           }
-          if (transactionBodyCompleted && isCommitAcknowledgementFailure(transactionError)) {
-            return Effect.fail(
-              new ActionCommitIndeterminate({
+          // Once the body completed, missing acknowledgement is not proof of
+          // rollback. Map only bridge failures, retaining every other Cause.
+          return transactionBodyCompleted && !isConfirmedTransactionAbort(error.original)
+            ? new ActionCommitIndeterminate({
                 code: 'action_commit_indeterminate',
                 invocationId: invocation.actionInvocationId,
                 reason: 'The database did not confirm whether the Action commit completed',
-              }),
-            );
-          }
-          return Effect.gen(function* reportTransactionFailure() {
-            yield* Effect.annotateLogs(
-              Effect.logError('Unexpected Action transaction failure', transactionError),
-              {
-                actionKey: input.registration.descriptor.actionKey,
-                correlationId: transport.correlationId,
-                invocationId: invocation.actionInvocationId,
-              },
-            );
-            return yield* transactionFailure();
-          });
+              })
+            : transactionFailure();
         }),
       );
     });

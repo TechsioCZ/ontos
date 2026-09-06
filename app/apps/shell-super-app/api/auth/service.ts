@@ -14,7 +14,7 @@ import { apiKey } from '@better-auth/api-key';
 import { APIError, betterAuth } from 'better-auth';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { admin } from 'better-auth/plugins';
-import { Context, Effect, Layer, Schema, Predicate } from 'effect';
+import { Context, Effect, Layer, Schema, Predicate, Result } from 'effect';
 import { AuthConfig } from './config.ts';
 import type { AuthConfigValue } from './config.ts';
 import { AuthDatabase } from './db/client.ts';
@@ -211,12 +211,6 @@ export class AuthenticationService extends Context.Service<
   AuthenticationServiceContract
 >()('@app/shell-super-app/api/auth/service/AuthenticationService') {}
 
-const isTagged = <Value>(value: Value): value is Value & { readonly _tag: string } =>
-  Predicate.isObjectKeyword(value) && value !== null && '_tag' in value;
-
-const isResolverUnavailable = <Failure>(error: Failure) =>
-  isTagged(error) && error._tag === 'PrincipalResolverUnavailableError';
-
 const mapResolverError = (
   error: PrincipalResolutionError,
 ): AuthenticationUnavailableError | OntosIdentityForbiddenError =>
@@ -224,25 +218,44 @@ const mapResolverError = (
     ? new AuthenticationUnavailableError()
     : new OntosIdentityForbiddenError();
 
-const resolveForSession = async (
-  resolver: PrincipalResolverService,
-  betterAuthUserId: string,
-): Promise<ResolvedPrincipalIdentity> =>
-  await Effect.runPromise(resolver.resolveDefaultBetterAuthUser(betterAuthUserId)).catch(
-    <Failure>(error: Failure) => {
-      if (isResolverUnavailable(error)) {
+const AUTH_EFFECT_CONTEXT_KEY = '__ontosEffectContext';
+
+// Better Auth spreads top-level API input into hooks but replaces its `context` field.
+// Keep this private, per-call adapter at the top level. Capturing the
+// caller's context retains services/tracing; its signal interrupts the resolver fiber, not
+// Better Auth's database work (the foreign API does not offer that cancellation contract).
+class AuthEffectExecution {
+  readonly run: ReturnType<typeof Effect.runPromiseWith<never>>;
+  readonly signal: AbortSignal | undefined;
+
+  constructor(context: Context.Context<never>, signal?: AbortSignal) {
+    this.run = Effect.runPromiseWith(context);
+    this.signal = signal;
+  }
+
+  resolveSession(resolver: PrincipalResolverService, userId: string) {
+    return this.run(
+      Effect.suspend(() => resolver.resolveDefaultBetterAuthUser(userId)).pipe(Effect.result),
+      this.signal === undefined ? undefined : { signal: this.signal },
+    ).then((result) => {
+      // Inspect the typed channel before crossing the Promise boundary. Defects and
+      // interruption reject separately; a FiberFailure is never a resolver denial.
+      if (Result.isSuccess(result)) {
+        return result.success;
+      }
+      if (result.failure._tag === 'PrincipalResolverUnavailableError') {
         throw new APIError('SERVICE_UNAVAILABLE', {
           code: IDENTITY_UNAVAILABLE_CODE,
           message: 'Authentication is temporarily unavailable',
         });
       }
-
       throw new APIError('FORBIDDEN', {
         code: FORBIDDEN_IDENTITY_CODE,
         message: 'The authenticated identity cannot access OntOS',
       });
-    },
-  );
+    });
+  }
+}
 
 const setCookieHeaders = (headers: Headers): readonly string[] =>
   Predicate.isFunction(headers.getSetCookie) ? headers.getSetCookie() : [];
@@ -369,14 +382,21 @@ export const makeAuthenticationService = (
     databaseHooks: {
       session: {
         create: {
-          before: async (session) =>
-            await resolveForSession(resolver, session.userId).then((principal) => ({
+          before: (session, context) => {
+            const captured =
+              context === null ? undefined : Reflect.get(context, AUTH_EFFECT_CONTEXT_KEY);
+            const execution =
+              captured instanceof AuthEffectExecution
+                ? captured
+                : new AuthEffectExecution(Context.empty());
+            return execution.resolveSession(resolver, session.userId).then((principal) => ({
               data: {
                 ...session,
                 activeLegalEntityId: null,
                 activeTenantId: principal.tenantId,
               },
-            })),
+            }));
+          },
         },
       },
     },
@@ -446,6 +466,21 @@ export const makeAuthenticationService = (
     },
     trustedOrigins: [...configuration.trustedOrigins],
   });
+
+  const runAuthPromise = <Value, Failure>(
+    operation: (context: Record<string, unknown>) => PromiseLike<Value>,
+    mapFailure: (error: unknown) => Failure,
+  ): Effect.Effect<Value, Failure> =>
+    Effect.gen(function* runAuthPromiseEffect() {
+      const context = yield* Effect.context<never>();
+      return yield* Effect.tryPromise({
+        catch: mapFailure,
+        try: (signal) =>
+          operation({
+            [AUTH_EFFECT_CONTEXT_KEY]: new AuthEffectExecution(context, signal),
+          }),
+      });
+    });
 
   const resolveIdentity = (
     user: {
@@ -576,14 +611,15 @@ export const makeAuthenticationService = (
     });
 
   const getSession = (requestHeaders: Headers) =>
-    Effect.tryPromise({
-      catch: mapRuntimeError,
-      try: async () =>
-        await auth.api.getSession({
+    runAuthPromise(
+      (context) =>
+        auth.api.getSession({
+          ...context,
           headers: requestHeaders,
           returnHeaders: true,
         }),
-    });
+      mapRuntimeError,
+    );
 
   const readResolvedSession = (
     requestHeaders: Headers,
@@ -662,15 +698,16 @@ export const makeAuthenticationService = (
 
         return resolveDefaultIdentity(response.user, response.session.id).pipe(
           Effect.flatMap(({ identity, principal }) =>
-            Effect.tryPromise({
-              catch: mapSessionUpdateError,
-              try: async () =>
-                await auth.api.updateSession({
+            runAuthPromise(
+              (context) =>
+                auth.api.updateSession({
                   body: { activeTenantId: identity.tenantId },
+                  ...context,
                   headers: requestHeaders,
                   returnHeaders: true,
                 }),
-            }).pipe(
+              mapSessionUpdateError,
+            ).pipe(
               Effect.map((updated) => ({
                 identity,
                 principal,
@@ -731,15 +768,16 @@ export const makeAuthenticationService = (
         if (resolved.savedLegalEntityId === undefined) {
           return resolved.setCookieHeaders;
         }
-        const updated = yield* Effect.tryPromise({
-          catch: mapSessionUpdateError,
-          try: async () =>
-            await auth.api.updateSession({
+        const updated = yield* runAuthPromise(
+          (context) =>
+            auth.api.updateSession({
               body: { activeLegalEntityId: null },
+              ...context,
               headers: requestHeaders,
               returnHeaders: true,
             }),
-        });
+          mapSessionUpdateError,
+        );
         return [...resolved.setCookieHeaders, ...setCookieHeaders(updated.headers)];
       });
       if (selection.state === 'access_blocked') {
@@ -778,15 +816,16 @@ export const makeAuthenticationService = (
           state: 'authenticated',
         };
       }
-      const updated = yield* Effect.tryPromise({
-        catch: mapSessionUpdateError,
-        try: async () =>
-          await auth.api.updateSession({
+      const updated = yield* runAuthPromise(
+        (context) =>
+          auth.api.updateSession({
             body: { activeLegalEntityId: selection.selected.legalEntityId },
+            ...context,
             headers: requestHeaders,
             returnHeaders: true,
           }),
-      });
+        mapSessionUpdateError,
+      );
       return {
         availableLegalEntities: selection.available,
         identity,
@@ -811,17 +850,18 @@ export const makeAuthenticationService = (
       ),
     createFixtureUser: (email, name, password) =>
       options.allowFixtureSignUp === true
-        ? Effect.tryPromise({
-            catch: mapRuntimeError,
-            try: async () =>
-              await auth.api.signUpEmail({
+        ? runAuthPromise(
+            (context) =>
+              auth.api.signUpEmail({
                 body: {
                   email,
                   name,
                   password,
                 },
+                ...context,
               }),
-          }).pipe(Effect.map((result) => result.user.id))
+            mapRuntimeError,
+          ).pipe(Effect.map((result) => result.user.id))
         : Effect.fail(new AuthenticationInternalError()),
     currentSession: (requestHeaders) =>
       readResolvedSession(requestHeaders).pipe(
@@ -859,18 +899,19 @@ export const makeAuthenticationService = (
         ),
       ),
     signIn: (email, password, requestHeaders) =>
-      Effect.tryPromise({
-        catch: mapRuntimeError,
-        try: async () =>
-          await auth.api.signInEmail({
+      runAuthPromise(
+        (context) =>
+          auth.api.signInEmail({
             body: {
               email,
               password,
             },
+            ...context,
             headers: requestHeaders,
             returnHeaders: true,
           }),
-      }).pipe(
+        mapRuntimeError,
+      ).pipe(
         Effect.flatMap((result) =>
           resolver.resolveDefaultBetterAuthUser(result.response.user.id).pipe(
             Effect.mapError(mapResolverError),
@@ -882,14 +923,15 @@ export const makeAuthenticationService = (
         ),
       ),
     signOut: (requestHeaders) =>
-      Effect.tryPromise({
-        catch: mapRuntimeError,
-        try: async () =>
-          await auth.api.signOut({
+      runAuthPromise(
+        (context) =>
+          auth.api.signOut({
+            ...context,
             headers: requestHeaders,
             returnHeaders: true,
           }),
-      }).pipe(
+        mapRuntimeError,
+      ).pipe(
         Effect.map((result) => ({
           setCookieHeaders: [
             ...setCookieHeaders(result.headers),
@@ -925,15 +967,16 @@ export const makeAuthenticationService = (
                     selectedLegalEntityId: selected.legalEntityId,
                     setCookieHeaders: resolved.setCookieHeaders,
                   })
-                : Effect.tryPromise({
-                    catch: mapSessionUpdateError,
-                    try: async () =>
-                      await auth.api.updateSession({
+                : runAuthPromise(
+                    (context) =>
+                      auth.api.updateSession({
                         body: { activeLegalEntityId: selected.legalEntityId },
+                        ...context,
                         headers: requestHeaders,
                         returnHeaders: true,
                       }),
-                  }).pipe(
+                    mapSessionUpdateError,
+                  ).pipe(
                     Effect.map((updated) => ({
                       selectedLegalEntityId: selected.legalEntityId,
                       setCookieHeaders: [
@@ -961,15 +1004,16 @@ export const makeAuthenticationService = (
                     selectedTenantId: tenantId,
                     setCookieHeaders: resolved.setCookieHeaders,
                   })
-                : Effect.tryPromise({
-                    catch: mapSessionUpdateError,
-                    try: async () =>
-                      await auth.api.updateSession({
+                : runAuthPromise(
+                    (context) =>
+                      auth.api.updateSession({
                         body: { activeLegalEntityId: null, activeTenantId: tenantId },
+                        ...context,
                         headers: requestHeaders,
                         returnHeaders: true,
                       }),
-                  }).pipe(
+                    mapSessionUpdateError,
+                  ).pipe(
                     Effect.map((updated) => ({
                       selectedTenantId: tenantId,
                       setCookieHeaders: [
