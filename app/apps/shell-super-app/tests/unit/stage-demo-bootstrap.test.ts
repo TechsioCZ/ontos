@@ -162,7 +162,7 @@ test('validates lazily, trims values and accepts both PostgreSQL schemes', () =>
       STAGE_DEMO_PASSWORD: ' password ',
     }),
   );
-  expect(trimmed.databaseAdminUrl).toBe('postgres://db:password@db:5432/db');
+  expect(Redacted.value(trimmed.databaseAdminUrl)).toBe('postgres://db:password@db:5432/db');
   expect(trimmed.accounts.map(({ email }) => email)).toEqual([
     'demo@test.com',
     'siampark01@test.com',
