@@ -109,14 +109,15 @@ test.each([
     const { service } = makeService(() => Promise.reject(cause));
     const failure = await Effect.runPromise(Effect.flip(service.setEnabled(record.id, false)));
     expect(failure).toBeInstanceOf(ApiKeyProviderUnavailableError);
-    const wire = Schema.encodeSync(ApiKeyProviderUnavailableError)(
-      failure as ApiKeyProviderUnavailableError,
-    );
+    const unavailableFailure = failure as ApiKeyProviderUnavailableError;
+    const wire = Schema.encodeSync(ApiKeyProviderUnavailableError)(unavailableFailure);
     expect(wire).toEqual({
       _tag: 'ApiKeyProviderUnavailableError',
       code: 'api_key_provider_unavailable',
       reason: 'The credential provider is temporarily unavailable',
     });
-    expect(JSON.stringify(failure)).not.toContain('secret database details');
+    expect(unavailableFailure.getOriginalFailure()).toBe(cause);
+    expect(JSON.stringify(unavailableFailure)).not.toContain('secret database details');
+    expect(String(unavailableFailure)).not.toContain('secret database details');
   },
 );

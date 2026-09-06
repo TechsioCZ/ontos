@@ -27,6 +27,8 @@ const validUrls = {
   'property-registry': 'http://127.0.0.1:4101/.well-known/ontos-module-manifest.json',
 };
 
+const PUBLIC_INVALID_REASON = 'The generated module deployment allowlist is invalid';
+
 test('derives an immutable, topology-authorized and deterministically ordered allowlist', async () => {
   const allowlist = await Effect.runPromise(
     deriveDeploymentAllowlist({
@@ -57,7 +59,7 @@ test('decodes a malformed injected object as a typed configuration error', async
   expect(error).toBeInstanceOf(DeploymentAllowlistConfigurationError);
   expect(error).toMatchObject({
     code: 'deployment_allowlist_invalid',
-    reason: 'expected object',
+    reason: PUBLIC_INVALID_REASON,
   });
 });
 
@@ -75,7 +77,7 @@ test('decodes a missing injected member as a typed configuration error', async (
   expect(error).toBeInstanceOf(DeploymentAllowlistConfigurationError);
   expect(error).toMatchObject({
     code: 'deployment_allowlist_invalid',
-    reason: 'missing JSON member ontosModuleManifests',
+    reason: PUBLIC_INVALID_REASON,
   });
 });
 
@@ -91,7 +93,13 @@ test('reports an invalid URL as a typed error with a safe reason', async () => {
   );
 
   expect(error).toBeInstanceOf(DeploymentAllowlistConfigurationError);
-  expect(error).toMatchObject({ code: 'deployment_allowlist_invalid', reason: 'Invalid URL' });
+  expect(error).toMatchObject({
+    code: 'deployment_allowlist_invalid',
+    reason: PUBLIC_INVALID_REASON,
+  });
+  expect(error.getOriginalFailure()).toBe('Invalid URL');
+  expect(JSON.stringify(error)).not.toContain('Invalid URL');
+  expect(String(error)).not.toContain('Invalid URL');
 });
 
 test.each([
@@ -167,16 +175,42 @@ test.each([
     { ...validUrls, 'property-registry': 'http://localhost:4101/private.json' },
     'contract URL contains unsupported authority or path data',
   ],
-])('rejects %s configuration without authorizing a fetch', async (_label, manifests, reason) => {
-  await expect(
-    Effect.runPromise(
+])('rejects %s configuration without authorizing a fetch', async (_label, manifests, detail) => {
+  const error = await Effect.runPromise(
+    Effect.flip(
       deriveDeploymentAllowlist({
         environment: 'development',
         overlay: overlay(manifests),
         topology,
       }),
     ),
-  ).rejects.toMatchObject({ code: 'deployment_allowlist_invalid', reason });
+  );
+  expect(error).toMatchObject({
+    code: 'deployment_allowlist_invalid',
+    reason: PUBLIC_INVALID_REASON,
+  });
+  expect(error.getOriginalFailure()).toBe(detail);
+  expect(JSON.stringify(error)).not.toContain(detail);
+  expect(String(error)).not.toContain(detail);
+});
+
+test('retains schema decode details privately', async () => {
+  const error = await Effect.runPromise(
+    Effect.flip(
+      deriveDeploymentAllowlist({
+        environment: 'development',
+        overlay: overlay(validUrls),
+        topology: {
+          verticals: [{ id: 'secret invalid app id', kind: 'vertical' }],
+        },
+      }),
+    ),
+  );
+  const detail = error.getOriginalFailure();
+  expect(error.reason).toBe(PUBLIC_INVALID_REASON);
+  expect(detail).toEqual(expect.any(String));
+  expect(JSON.stringify(error)).not.toContain(detail as string);
+  expect(String(error)).not.toContain(detail as string);
 });
 
 test('requires HTTPS outside loopback development', async () => {

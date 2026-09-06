@@ -9,7 +9,23 @@ export class DeploymentAllowlistConfigurationError extends Schema.TaggedError<De
     code: Schema.Literal('deployment_allowlist_invalid'),
     reason: Schema.String,
   },
-) {}
+) {
+  #originalFailure: unknown = undefined;
+
+  static withOriginalFailure(originalFailure?: unknown): DeploymentAllowlistConfigurationError {
+    const failure = new DeploymentAllowlistConfigurationError({
+      code: 'deployment_allowlist_invalid',
+      reason: 'The generated module deployment allowlist is invalid',
+    });
+    failure.#originalFailure = originalFailure;
+    return failure;
+  }
+
+  // Keep diagnostics off the Schema wire contract, JSON and ordinary Error inspection.
+  getOriginalFailure(): unknown {
+    return this.#originalFailure;
+  }
+}
 
 export interface DeploymentAllowlistEntry {
   readonly appId: OntosDeploymentAppId;
@@ -32,10 +48,7 @@ export interface DeploymentAllowlistInput {
 }
 
 const invalid = (reason: string): DeploymentAllowlistConfigurationError =>
-  new DeploymentAllowlistConfigurationError({
-    code: 'deployment_allowlist_invalid',
-    reason,
-  });
+  DeploymentAllowlistConfigurationError.withOriginalFailure(reason);
 
 const object = (
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Build-time globals and JSON files enter here and are decoded immediately by the Json object schema.
