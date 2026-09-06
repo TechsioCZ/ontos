@@ -5,6 +5,7 @@ import {
   GatewayTrustedPrincipalContextSchema,
 } from '@app/shared-contracts';
 import type { GatewayContextResponse, GatewayTrustedPrincipalContext } from '@app/shared-contracts';
+import { createHash } from 'node:crypto';
 import { Clock, Effect, Schema } from 'effect';
 import { SignJWT, importJWK } from 'jose';
 import type { InstalledVerticalTopologyError } from '../verticals/installed-verticals.ts';
@@ -88,8 +89,11 @@ export const makeGatewayIssuer = (
   const loadSigningKey = (
     privateJwk: GatewayIssuerConfigValue['privateJwk'],
   ): Effect.Effect<GatewaySigningKey, GatewayIssuerError> => {
-    // Public material identifies the key; a rotated private scalar always changes `x` as well.
-    const cacheKey = `${privateJwk.kid}:${privateJwk.x}`;
+    // A non-reversible fingerprint of the complete key material: any change, including a private
+    // scalar that no longer matches `x`, invalidates the memo without retaining the scalar.
+    const cacheKey = createHash('sha256')
+      .update(`${privateJwk.kid}\n${privateJwk.x}\n${privateJwk.d}`)
+      .digest('base64url');
     if (cachedSigningKey?.cacheKey === cacheKey) {
       return cachedSigningKey.effect;
     }
