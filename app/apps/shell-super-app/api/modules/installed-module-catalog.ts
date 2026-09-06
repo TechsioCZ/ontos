@@ -10,7 +10,7 @@ import type {
   InstalledDeploymentResolutionInput,
   InstalledModuleCatalog,
 } from '@app/core-runtime';
-import { Context, Duration, Effect, Exit, Layer, Schema } from 'effect';
+import { Context, Deferred, Effect, Exit, Layer, Ref, Schema } from 'effect';
 import type { DeploymentAllowlist } from './deployment-allowlist.ts';
 import { deploymentAllowlist } from './deployment-allowlist.ts';
 
@@ -150,7 +150,8 @@ const fetchContract = (
   options: Required<InstalledModuleCatalogLoaderOptions>,
 ): Effect.Effect<InstalledDeploymentResolutionInput> =>
   Effect.tryPromise({
-    catch: (error) => (error instanceof InstalledModuleCatalogInvalidError ? error : unavailable()),
+    catch: (error) =>
+      Schema.is(InstalledModuleCatalogInvalidError)(error) ? error : unavailable(),
     // Effect owns the signal; a fetcher that cannot cancel its Promise may settle later,
     // but tryPromise discards that settlement after this fiber has been interrupted.
     try: async (signal) => {
@@ -197,24 +198,74 @@ export const makeInstalledModuleCatalogLoader = (
     );
     return yield* Effect.try({
       catch: (error) =>
-        error instanceof InstalledModuleCatalogUnavailableError ? error : invalid(),
+        Schema.is(InstalledModuleCatalogUnavailableError)(error) ? error : invalid(),
       try: () => resolveInstalledModuleCatalog(contracts),
     });
   });
-  let loading: Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError> | undefined;
-  let invalidate: Effect.Effect<void> | undefined;
+  type CatalogLoad = Deferred.Deferred<InstalledModuleCatalog, InstalledModuleCatalogError>;
+  type LoaderState =
+    | { readonly _tag: 'empty' }
+    | { readonly _tag: 'loading'; readonly deferred: CatalogLoad }
+    | { readonly _tag: 'healthy'; readonly catalog: InstalledModuleCatalog };
+  type LoadRequest =
+    | { readonly _tag: 'start'; readonly deferred: CatalogLoad }
+    | { readonly _tag: 'wait'; readonly deferred: CatalogLoad }
+    | { readonly _tag: 'healthy'; readonly catalog: InstalledModuleCatalog };
+
+  const state = Ref.makeUnsafe<LoaderState>({ _tag: 'empty' });
+  const completeLoad = (deferred: CatalogLoad): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(loadCatalog);
+      yield* Ref.modify(state, (current): readonly [undefined, LoaderState] => {
+        if (current._tag !== 'loading' || current.deferred !== deferred) {
+          return [undefined, current];
+        }
+        if (Exit.isSuccess(exit) && isHealthy(exit.value)) {
+          return [undefined, { _tag: 'healthy', catalog: exit.value }];
+        }
+        return [undefined, { _tag: 'empty' }];
+      });
+      yield* Deferred.done(deferred, exit);
+    });
+
   return Effect.gen(function* () {
-    if (loading === undefined || invalidate === undefined) {
-      [loading, invalidate] = yield* Effect.cachedInvalidateWithTTL(loadCatalog, Duration.infinity);
-    }
-    if (loading === undefined || invalidate === undefined) {
-      return yield* Effect.die('Installed module catalog cache was not initialized');
-    }
-    const currentLoading = loading;
-    const currentInvalidate = invalidate;
-    return yield* Effect.onExit(currentLoading, (exit) =>
-      Exit.isSuccess(exit) && isHealthy(exit.value) ? Effect.void : currentInvalidate,
+    const request = yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        const request = yield* Ref.modify(state, (current): readonly [LoadRequest, LoaderState] => {
+          switch (current._tag) {
+            case 'healthy':
+              return [{ _tag: 'healthy', catalog: current.catalog }, current];
+            case 'loading':
+              return [{ _tag: 'wait', deferred: current.deferred }, current];
+            case 'empty': {
+              const deferred = Deferred.makeUnsafe<
+                InstalledModuleCatalog,
+                InstalledModuleCatalogError
+              >();
+              return [
+                { _tag: 'start', deferred },
+                { _tag: 'loading', deferred },
+              ];
+            }
+          }
+        });
+        if (request._tag === 'start') {
+          yield* Effect.forkDetach(completeLoad(request.deferred), {
+            startImmediately: true,
+            uninterruptible: false,
+          });
+        }
+        return request;
+      }),
     );
+
+    switch (request._tag) {
+      case 'healthy':
+        return request.catalog;
+      case 'start':
+      case 'wait':
+        return yield* Deferred.await(request.deferred);
+    }
   });
 };
 

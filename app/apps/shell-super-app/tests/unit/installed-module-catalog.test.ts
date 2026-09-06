@@ -1,7 +1,7 @@
 /* eslint-disable promise/avoid-new -- The timeout fixture must wait for the injected AbortSignal. */
 // @effect-diagnostics asyncFunction:off preferSchemaOverJson:off
 import { expect, test } from '@rstest/core';
-import { Effect, Predicate } from 'effect';
+import { Effect, Fiber, Predicate } from 'effect';
 import type { DeploymentAllowlist } from '../../api/modules/deployment-allowlist.ts';
 import {
   installedModuleCatalog,
@@ -367,6 +367,157 @@ test('recovers a deployment on a later read and caches only the fully healthy re
     { appId: 'property-registry', moduleId: 'property.registry', status: 'available' },
   ]);
   expect(cached).toBe(recovered);
+  expect(requests).toBe(2);
+});
+
+test('shares one degraded in-flight load with all concurrent callers', async () => {
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let requests = 0;
+  const loader = makeInstalledModuleCatalogLoader(
+    allowlist([
+      {
+        appId: 'property-registry',
+        contractUrl: 'https://property.example.test/.well-known/ontos-module-manifest.json',
+      },
+    ]),
+    async () => {
+      requests += 1;
+      started.resolve();
+      await release.promise;
+      throw new Error('deployment unreachable');
+    },
+  );
+  const callers = [Effect.runFork(loader), Effect.runFork(loader), Effect.runFork(loader)];
+
+  try {
+    await started.promise;
+    release.resolve();
+    const catalogs = await Promise.all(
+      callers.map((caller) => Effect.runPromise(Fiber.join(caller))),
+    );
+
+    expect(catalogs).toHaveLength(3);
+    for (const catalog of catalogs) {
+      expect(catalog.deploymentStatuses).toEqual([
+        { appId: 'property-registry', reason: 'unavailable', status: 'unavailable' },
+      ]);
+    }
+    expect(catalogs[0]).toBe(catalogs[1]);
+    expect(catalogs[0]).toBe(catalogs[2]);
+    expect(requests).toBe(1);
+  } finally {
+    release.resolve();
+    await Effect.runPromise(Fiber.interruptAll(callers));
+  }
+});
+
+test('keeps the detached load alive when the first caller is interrupted', async () => {
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let requests = 0;
+  const loader = makeInstalledModuleCatalogLoader(
+    allowlist([
+      {
+        appId: 'property-registry',
+        contractUrl: 'https://property.example.test/.well-known/ontos-module-manifest.json',
+      },
+    ]),
+    async () => {
+      requests += 1;
+      started.resolve();
+      await release.promise;
+      return response(contract('property-registry', 'property.registry'));
+    },
+  );
+  const first = Effect.runFork(loader);
+
+  try {
+    await started.promise;
+    const second = Effect.runFork(loader);
+    const third = Effect.runFork(loader);
+    await Effect.runPromise(Fiber.interrupt(first));
+    release.resolve();
+
+    const [secondCatalog, thirdCatalog] = await Promise.all([
+      Effect.runPromise(Fiber.join(second)),
+      Effect.runPromise(Fiber.join(third)),
+    ]);
+    expect(secondCatalog.moduleIds).toEqual(['property.registry']);
+    expect(thirdCatalog).toBe(secondCatalog);
+    expect(requests).toBe(1);
+
+    await Effect.runPromise(loader);
+    expect(requests).toBe(1);
+  } finally {
+    release.resolve();
+    await Effect.runPromise(Fiber.interrupt(first));
+  }
+});
+
+test('shares one healthy load between concurrent callers and caches it for later calls', async () => {
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let requests = 0;
+  const loader = makeInstalledModuleCatalogLoader(
+    allowlist([
+      {
+        appId: 'property-registry',
+        contractUrl: 'https://property.example.test/.well-known/ontos-module-manifest.json',
+      },
+    ]),
+    async () => {
+      requests += 1;
+      started.resolve();
+      await release.promise;
+      return response(contract('property-registry', 'property.registry'));
+    },
+  );
+  const callers = [Effect.runFork(loader), Effect.runFork(loader), Effect.runFork(loader)];
+
+  try {
+    await started.promise;
+    release.resolve();
+    const catalogs = await Promise.all(
+      callers.map((caller) => Effect.runPromise(Fiber.join(caller))),
+    );
+    const later = await Effect.runPromise(loader);
+
+    expect(catalogs[0]).toBe(catalogs[1]);
+    expect(catalogs[0]).toBe(catalogs[2]);
+    expect(later).toBe(catalogs[0]);
+    expect(requests).toBe(1);
+  } finally {
+    release.resolve();
+    await Effect.runPromise(Fiber.interruptAll(callers));
+  }
+});
+
+test('does not reuse a degraded result for the next call', async () => {
+  let requests = 0;
+  const loader = makeInstalledModuleCatalogLoader(
+    allowlist([
+      {
+        appId: 'property-registry',
+        contractUrl: 'https://property.example.test/.well-known/ontos-module-manifest.json',
+      },
+    ]),
+    async () => {
+      requests += 1;
+      if (requests === 1) {
+        throw new Error('temporarily unreachable');
+      }
+      return response(contract('property-registry', 'property.registry'));
+    },
+  );
+
+  const degraded = await Effect.runPromise(loader);
+  const recovered = await Effect.runPromise(loader);
+
+  expect(degraded.deploymentStatuses).toEqual([
+    { appId: 'property-registry', reason: 'unavailable', status: 'unavailable' },
+  ]);
+  expect(recovered.moduleIds).toEqual(['property.registry']);
   expect(requests).toBe(2);
 });
 
