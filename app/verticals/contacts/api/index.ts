@@ -1,11 +1,17 @@
 /* eslint-disable complexity, promise/prefer-await-to-callbacks, promise/prefer-await-to-then, unicorn/switch-case-braces -- The strict Effect BFF keeps complete typed error mappings visible. */
 import {
+  ActionPermissionLive,
+  ActionRepositoryLive,
   ActionRuntime,
   ActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
   GatewayAssertionRedemptionService,
-  makeReadRuntimeLive,
+  ModuleEntrypointGatewayLive,
+  ModuleStateGateLive,
+  OperationalScopeResolverLive,
+  ReadRuntimeLive,
+  TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import type {
   ActionCoreError,
@@ -56,7 +62,7 @@ import type { PartyRegistryReferenceRequestOptions } from '../src/integrations/p
 import { organizationEngagementProfileReadApiLive } from './organization-engagement-profile-read-server.ts';
 import { personEngagementProfileReadApiLive } from './person-engagement-profile-read-server.ts';
 import { verifyOperationPrincipal } from './auth/action-principal.ts';
-import { GatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
+import { ContactsGatewayAssertionRedemptionLive } from '../src/runtime-infrastructure.ts';
 
 interface OperationSpanAttributes extends Readonly<Record<string, string | undefined>> {
   'modernjs.operation.id': string;
@@ -380,11 +386,30 @@ const personEngagementMutationsLive = HttpApiBuilder.group(
       ),
 );
 
-const actionRuntimeLive = ActionRuntimeLive.pipe(Layer.provide(CorePersistenceLive), Layer.orDie);
-const readRuntimeLive = makeReadRuntimeLive(ContextAccessLive).pipe(
+const gatewayAssertionRedemptionLive = ContactsGatewayAssertionRedemptionLive.pipe(Layer.orDie);
+
+const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(
   Layer.provide(CorePersistenceLive),
   Layer.orDie,
 );
+const moduleStateLive = ModuleStateGateLive.pipe(
+  Layer.provideMerge(tenantModuleStateServiceLive),
+  Layer.orDie,
+);
+const runtimeServicesLive = Layer.mergeAll(
+  ModuleEntrypointGatewayLive,
+  OperationalScopeResolverLive,
+).pipe(
+  Layer.provideMerge(ContextAccessLive),
+  Layer.provideMerge(moduleStateLive),
+  Layer.provideMerge(CorePersistenceLive),
+  Layer.orDie,
+);
+const actionRuntimeLive = ActionRuntimeLive.pipe(
+  Layer.provide([ActionRepositoryLive, ActionPermissionLive, runtimeServicesLive]),
+  Layer.orDie,
+);
+const readRuntimeLive = ReadRuntimeLive.pipe(Layer.provide(runtimeServicesLive), Layer.orDie);
 const readShellOrigin = (): string => {
   let configuredOrigin: string | undefined;
   try {
@@ -400,7 +425,7 @@ export const makeContactsApiRuntime = (
   actionRuntime: Layer.Layer<ActionRuntime>,
   readRuntime: Layer.Layer<ReadRuntime>,
   configuration: Layer.Layer<never> = ConfigProvider.layer(ConfigProvider.fromEnv()),
-  gatewayAssertionRedemption: Layer.Layer<GatewayAssertionRedemptionService> = GatewayAssertionRedemptionLive,
+  gatewayAssertionRedemption: Layer.Layer<GatewayAssertionRedemptionService> = gatewayAssertionRedemptionLive,
 ): EffectBffDefinition<typeof contactsApi> & EffectBffRuntime<typeof contactsApi> => {
   const apiHandlersLive = Layer.mergeAll(
     foundationLive,
@@ -414,9 +439,11 @@ export const makeContactsApiRuntime = (
     ),
     organizationEngagementProfileReadApiLive.pipe(Layer.provide(readRuntime)),
     personEngagementProfileReadApiLive.pipe(Layer.provide(readRuntime)),
-  ).pipe(Layer.provide(configuration));
+  );
   const layer = HttpApiBuilder.layer(contactsApi).pipe(
-    Layer.provide(apiHandlersLive.pipe(Layer.provide(gatewayAssertionRedemption))),
+    Layer.provide(
+      apiHandlersLive.pipe(Layer.provide(gatewayAssertionRedemption), Layer.provide(configuration)),
+    ),
     Layer.merge(
       HttpRouter.cors({
         allowedHeaders: [...contactsCorsAllowedHeaders],

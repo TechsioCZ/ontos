@@ -235,6 +235,11 @@ void test('deduplicates one batch, reuses an immutable snapshot, and fails undec
     Effect.flip(checkModuleEntrypoint(snapshot, undeclaredSameModule)),
   );
   assert.equal(sameModuleFailure._tag, 'ModuleStateCheckUnavailableError');
+  const forged = { ...snapshot };
+  const forgedFailure = await Effect.runPromise(
+    Effect.flip(checkModuleEntrypoint(forged, descriptors[0])),
+  );
+  assert.equal(forgedFailure._tag, 'ModuleStateCheckUnavailableError');
   assert.equal(reads, 1);
 });
 

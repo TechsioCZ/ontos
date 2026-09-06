@@ -6,7 +6,6 @@ import { Effect, Layer, Schema } from 'effect';
 import { CoreDatabase } from '../db/client.ts';
 import { searchIndexEntries, searchProjectionRebuilds } from '../db/schema.ts';
 import type { CoreTransaction } from '../db/types.ts';
-import { CorePersistenceLive } from '../runtime-infrastructure.ts';
 import {
   CoreSearchAliasSchema,
   CoreSearchFacetSchema,
@@ -419,19 +418,20 @@ export const makePostgresCoreSearchProjectionStore = (
     ),
 });
 
+/** Dependency-transparent projection store; the host supplies CoreDatabase. */
 export const CoreSearchProjectionStoreLive = Layer.effect(
   CoreSearchProjectionStore,
   Effect.gen(function* makeCoreSearchProjectionStoreLive() {
     const database = yield* CoreDatabase;
     return makePostgresCoreSearchProjectionStore(database);
   }),
-).pipe(Layer.provide(CorePersistenceLive));
+);
 
-/** Fully composed production query layer; owner adapters never import Core database capabilities. */
+/** Dependency-transparent query runtime; the host supplies the projection store. */
 export const CoreSearchQueryRuntimeLive = Layer.effect(
   CoreSearchQueryRuntime,
   Effect.gen(function* makeCoreSearchQueryRuntimeLive() {
     const store = yield* CoreSearchProjectionStore;
     return createCoreSearchQueryRuntime(store);
   }),
-).pipe(Layer.provide(CoreSearchProjectionStoreLive));
+);

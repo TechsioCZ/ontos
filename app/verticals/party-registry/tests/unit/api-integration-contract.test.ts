@@ -101,8 +101,27 @@ test('composes generated governed servers through the Core read runtime', async 
   for (const serverFile of serverFiles) {
     assert.match(source, new RegExp(serverFile.replaceAll('-', '[-]'), 'u'));
   }
-  assert.match(source, /makeReadRuntimeLive\(ContextAccessLive\)/u);
-  assert.match(source, /Layer\.provide\(CorePersistenceLive\)/u);
+  assert.match(
+    source,
+    /const runtimeDependenciesLive = Layer\.mergeAll\(\s*OperationalScopeResolverLive,\s*ModuleEntrypointGatewayLive,?\s*\)\.pipe\(\s*Layer\.provideMerge\(ContextAccessLive\),\s*Layer\.provideMerge\(moduleStateLive\),\s*Layer\.provideMerge\(CorePersistenceLive\),\s*Layer\.orDie,?\s*\)/u,
+  );
+  assert.match(
+    source,
+    /const readRuntimeLive = ReadRuntimeLive\.pipe\(\s*Layer\.provide\(runtimeDependenciesLive\),?\s*\)/u,
+  );
+  assert.match(
+    source,
+    /const actionRuntimeLive = ActionRuntimeLive\.pipe\(\s*Layer\.provide\(ActionRepositoryLive\),\s*Layer\.provide\(ActionPermissionLive\),\s*Layer\.provide\(runtimeDependenciesLive\),?\s*\)/u,
+  );
+  assert.match(
+    source,
+    /const tenantModuleStateServiceLive = TenantModuleStateServiceLive\.pipe\(\s*Layer\.provide\(CorePersistenceLive\)/u,
+  );
+  assert.match(
+    source,
+    /const moduleStateLive = ModuleStateGateLive\.pipe\(\s*Layer\.provideMerge\(tenantModuleStateServiceLive\)/u,
+  );
+  assert.doesNotMatch(source, /makeReadRuntimeLive|Layer\.fresh/u);
   assert.doesNotMatch(source, /partyRegistryItems|Wire a real|generated-party-registry/u);
   assert.doesNotMatch(source, /\.handle\(['"]create['"]/u);
   assert.match(source, /ActionRuntimeLive/u);

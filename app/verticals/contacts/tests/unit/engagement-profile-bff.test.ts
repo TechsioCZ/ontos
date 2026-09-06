@@ -58,6 +58,9 @@ test('authenticates before dispatch and lets Core replay committed attach withou
       keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'contacts-replay', use: 'sig' }],
     }),
   };
+  // No database configuration: an unused live redemption pool must not be built.
+  let redemptionAcquisitions = 0;
+  let redemptionReleases = 0;
   let invocations = 0;
   let networkCalls = 0;
   context.mock.method(globalThis, 'fetch', async () => {
@@ -89,7 +92,19 @@ test('authenticates before dispatch and lets Core replay committed attach withou
     Layer.succeed(ActionRuntime, actionRuntime),
     Layer.succeed(ReadRuntime, { runRead: () => Effect.die('Read is not used by this fixture') }),
     ConfigProvider.layer(ConfigProvider.fromUnknown(environment)),
-    Layer.succeed(GatewayAssertionRedemptionService, { consume: () => Effect.void }),
+    Layer.effect(
+      GatewayAssertionRedemptionService,
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          redemptionAcquisitions += 1;
+          return { consume: () => Effect.void };
+        }),
+        () =>
+          Effect.sync(() => {
+            redemptionReleases += 1;
+          }),
+      ),
+    ),
   ).createHandler();
   const request = (authorization?: string) => {
     const headers = new Headers({
@@ -115,7 +130,10 @@ test('authenticates before dispatch and lets Core replay committed attach withou
     assert.deepEqual(await replay.json(), committedProfile);
     assert.equal(invocations, 1);
     assert.equal(networkCalls, 0);
+    assert.equal(redemptionAcquisitions, 1);
+    assert.equal(redemptionReleases, 0);
   } finally {
     await runtime.dispose();
   }
+  assert.equal(redemptionReleases, 1);
 });

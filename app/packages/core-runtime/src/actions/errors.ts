@@ -75,13 +75,56 @@ export class ActionRequestHashConflict extends Schema.TaggedError<ActionRequestH
   },
 ) {}
 
+// Module-private capability: only this module can hand it to the reader below, so the retained
+// cause stays in a private field that neither reflection nor other packages can reach.
+const persistenceCauseAccess = Symbol('ActionInvocationPersistenceError.retainedCause');
+
 export class ActionInvocationPersistenceError extends Schema.TaggedError<ActionInvocationPersistenceError>()(
   'ActionInvocationPersistenceError',
   {
     code: Schema.Literal('action_invocation_persistence_failed'),
     ...safeReason,
   },
-) {}
+) {
+  #persistenceCause: unknown = undefined;
+
+  static withCause<FailureCause>(
+    reason: string,
+    cause?: FailureCause,
+  ): ActionInvocationPersistenceError {
+    const failure = new ActionInvocationPersistenceError({
+      code: 'action_invocation_persistence_failed',
+      reason,
+    });
+    failure.#persistenceCause = cause;
+    return failure;
+  }
+
+  /**
+   * Returns nothing without the module-private capability.
+   *
+   * @internal
+   */
+  static retainedCause(
+    access: typeof persistenceCauseAccess,
+    failure: ActionInvocationPersistenceError,
+  ): unknown {
+    return access === persistenceCauseAccess ? failure.#persistenceCause : undefined;
+  }
+
+  static {
+    // Not writable or configurable: nothing can swap the factory to capture a raw cause, or the
+    // reader to intercept the capability.
+    for (const name of ['withCause', 'retainedCause']) {
+      Object.defineProperty(this, name, { configurable: false, writable: false });
+    }
+  }
+}
+
+/** @internal */
+export const getActionInvocationPersistenceErrorCause = (
+  failure: ActionInvocationPersistenceError,
+): unknown => ActionInvocationPersistenceError.retainedCause(persistenceCauseAccess, failure);
 
 export class ActionInvocationNotFound extends Schema.TaggedError<ActionInvocationNotFound>()(
   'ActionInvocationNotFound',
@@ -147,13 +190,52 @@ export class ActionPolicyEvaluationError extends Schema.TaggedError<ActionPolicy
   },
 ) {}
 
+// Module-private capability: only this module can hand it to the reader below, so the retained
+// cause stays in a private field that neither reflection nor other packages can reach.
+const transactionCauseAccess = Symbol('ActionTransactionError.retainedCause');
+
 export class ActionTransactionError extends Schema.TaggedError<ActionTransactionError>()(
   'ActionTransactionError',
   {
     code: Schema.Literal('action_transaction_failed'),
     ...safeReason,
   },
-) {}
+) {
+  #transactionCause: unknown = undefined;
+
+  static withCause<FailureCause>(reason: string, cause?: FailureCause): ActionTransactionError {
+    const failure = new ActionTransactionError({
+      code: 'action_transaction_failed',
+      reason,
+    });
+    failure.#transactionCause = cause;
+    return failure;
+  }
+
+  /**
+   * Returns nothing without the module-private capability.
+   *
+   * @internal
+   */
+  static retainedCause(
+    access: typeof transactionCauseAccess,
+    failure: ActionTransactionError,
+  ): unknown {
+    return access === transactionCauseAccess ? failure.#transactionCause : undefined;
+  }
+
+  static {
+    // Not writable or configurable: nothing can swap the factory to capture a raw cause, or the
+    // reader to intercept the capability.
+    for (const name of ['withCause', 'retainedCause']) {
+      Object.defineProperty(this, name, { configurable: false, writable: false });
+    }
+  }
+}
+
+/** @internal */
+export const getActionTransactionErrorCause = (failure: ActionTransactionError): unknown =>
+  ActionTransactionError.retainedCause(transactionCauseAccess, failure);
 
 export class ActionCommitIndeterminate extends Schema.TaggedError<ActionCommitIndeterminate>()(
   'ActionCommitIndeterminate',

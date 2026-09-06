@@ -22,6 +22,8 @@ import {
   ActionInvocationPersistenceError,
   ActionInvocationStateError,
   ActionTransactionError,
+  getActionInvocationPersistenceErrorCause,
+  getActionTransactionErrorCause,
 } from './errors.ts';
 import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
 
@@ -245,24 +247,14 @@ const invocationSelection = {
   status: actionInvocations.status,
 } as const;
 
-const invocationPersistenceFailureCauses = new WeakMap<ActionInvocationPersistenceError, unknown>();
-
-const persistenceFailure = <FailureCause>(reason: string, cause?: FailureCause) => {
-  const failure = new ActionInvocationPersistenceError({
-    code: 'action_invocation_persistence_failed',
-    reason,
-  });
-  if (cause !== undefined) {
-    invocationPersistenceFailureCauses.set(failure, cause);
-  }
-  return failure;
-};
+const persistenceFailure = <FailureCause>(reason: string, cause?: FailureCause) =>
+  ActionInvocationPersistenceError.withCause(reason, cause);
 
 /** Internal bridge used by the transaction boundary to preserve the original defect. */
 export const getActionInvocationPersistenceFailureCause = (
   failure: ActionInvocationPersistenceError,
 ): Cause.Cause<never> | undefined => {
-  const cause = invocationPersistenceFailureCauses.get(failure);
+  const cause = getActionInvocationPersistenceErrorCause(failure);
   return cause === undefined ? undefined : Cause.die(cause);
 };
 
@@ -270,7 +262,7 @@ export const logActionInvocationPersistenceFailureCause = (
   failure: ActionInvocationPersistenceError,
   annotations: Readonly<Record<string, string>>,
 ): Effect.Effect<void> => {
-  const cause = invocationPersistenceFailureCauses.get(failure);
+  const cause = getActionInvocationPersistenceErrorCause(failure);
   return cause === undefined
     ? Effect.void
     : Effect.annotateLogs(
@@ -279,18 +271,8 @@ export const logActionInvocationPersistenceFailureCause = (
       );
 };
 
-const transactionFailureCauses = new WeakMap<ActionTransactionError, unknown>();
-
-const transactionFailure = <FailureCause>(reason: string, cause?: FailureCause) => {
-  const failure = new ActionTransactionError({
-    code: 'action_transaction_failed',
-    reason,
-  });
-  if (cause !== undefined) {
-    transactionFailureCauses.set(failure, cause);
-  }
-  return failure;
-};
+const transactionFailure = <FailureCause>(reason: string, cause?: FailureCause) =>
+  ActionTransactionError.withCause(reason, cause);
 
 type DenialError =
   | ActionInvocationPersistenceError
@@ -317,7 +299,7 @@ class DenialRollbackCauseSignal {
 export const getActionTransactionFailureCause = (
   failure: ActionTransactionError,
 ): Cause.Cause<never> | undefined => {
-  const cause = transactionFailureCauses.get(failure);
+  const cause = getActionTransactionErrorCause(failure);
   return cause === undefined ? undefined : Cause.die(cause);
 };
 
@@ -326,7 +308,7 @@ export const logActionTransactionFailureCause = (
   message: string,
   annotations: Readonly<Record<string, string>>,
 ): Effect.Effect<void> => {
-  const cause = transactionFailureCauses.get(failure);
+  const cause = getActionTransactionErrorCause(failure);
   return cause === undefined
     ? Effect.void
     : Effect.annotateLogs(Effect.logError(message, cause), annotations);

@@ -37,11 +37,8 @@ import {
 } from './shell-governed-read-schemas.ts';
 import { ShellInstalledModuleCatalog } from './installed-module-catalog.ts';
 import type { ShellInstalledModuleCatalogService } from './installed-module-catalog.ts';
-import { ShellCompositionFactory, ShellCompositionFactoryLive } from './shell-composition.ts';
-import {
-  ShellResourceServicesFactory,
-  ShellResourceServicesFactoryLive,
-} from './shell-resources.ts';
+import { ShellCompositionFactory } from './shell-composition.ts';
+import { ShellResourceServicesFactory } from './shell-resources.ts';
 import type { ShellProviderAssertionIssuer, ShellResourceGateways } from './shell-resources.ts';
 
 const withOptionalProperty = <
@@ -450,7 +447,4 @@ export const createShellGovernedReadsLayer = (
           }),
       };
     }),
-  ).pipe(
-    Layer.provide(ShellCompositionFactoryLive),
-    Layer.provide(ShellResourceServicesFactoryLive),
   );

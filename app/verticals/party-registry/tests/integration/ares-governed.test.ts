@@ -93,6 +93,7 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
     ].map(({ descriptor }) => descriptor.actionKey),
     runtimeConnectionString: Redacted.value(connections.runtime.connectionString),
   });
+  const fixtureLayer = fixture.layer;
   const pool = new Pool({ connectionString: Redacted.value(connections.admin.connectionString) });
   const admin = drizzle({ client: pool, relations: partyRelations });
   const { privateKey, publicKey } = await generateKeyPair('Ed25519');
@@ -139,7 +140,7 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
     partyContactPointsReadApiLive,
     aresLookupReadApiLive.pipe(Layer.provide(upstream)),
   ).pipe(
-    Layer.provide(fixture.layer),
+    Layer.provide(fixtureLayer),
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
@@ -153,7 +154,7 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
   const app = HttpRouter.toWebHandler(
     HttpApiBuilder.layer(api).pipe(
       Layer.provide(handlers),
-      Layer.provideMerge(fixture.layer),
+      Layer.provideMerge(fixtureLayer),
       Layer.provideMerge(upstream),
       Layer.provide(HttpServer.layerServices),
     ),

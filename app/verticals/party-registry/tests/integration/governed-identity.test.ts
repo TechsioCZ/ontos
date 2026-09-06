@@ -5,6 +5,8 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import type { ActionRuntime, TrustedPrincipalContext } from '@app/core-runtime';
 import {
+  CorePersistenceLive,
+  CoreSearchProjectionStoreLive,
   CoreSearchQueryRuntimeLive,
   ReadRuntime,
   loadDatabaseConnectionPair,
@@ -102,9 +104,15 @@ test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims
   const adminPool = new Pool({
     connectionString: Redacted.value(connections.admin.connectionString),
   });
+  const fixtureLayer = fixture.layer;
+  const otherLayer = other.layer;
+  const coreSearchProjectionStoreLayer = CoreSearchProjectionStoreLive.pipe(
+    Layer.provide(CorePersistenceLive),
+    Layer.orDie,
+  );
   const admin = drizzle({ client: adminPool, relations: partyRelations });
   const run = <A, E>(effect: Effect.Effect<A, E, ActionRuntime | ReadRuntime>) =>
-    Effect.runPromise(effect.pipe(Effect.provide(fixture.layer)));
+    Effect.runPromise(effect.pipe(Effect.provide(fixtureLayer)));
   const create = (
     value: PartyCandidate,
     idempotencyKey = randomUUID(),
@@ -275,7 +283,7 @@ test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims
     assert.deepEqual(rolledBack.core.outbox, beforeDenied.core.outbox);
 
     const independent = await Effect.runPromise(
-      create(exact, randomUUID(), other.manager).pipe(Effect.provide(other.layer)),
+      create(exact, randomUUID(), other.manager).pipe(Effect.provide(otherLayer)),
     );
     assert.ok(independent.outcome === 'CREATED');
     assert.notEqual(independent.partyRef.resourceId, partyRef.resourceId);
@@ -286,7 +294,9 @@ test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims
     );
     assert.equal(await run(tag(detail(partyRef, fixture.legalEntityOnly))), 'ReadPermissionDenied');
     const searchLayer = PartySearchProjectionGatewayLive.pipe(
-      Layer.provide(CoreSearchQueryRuntimeLive),
+      Layer.provide(
+        CoreSearchQueryRuntimeLive.pipe(Layer.provide(coreSearchProjectionStoreLayer), Layer.orDie),
+      ),
     );
     const deniedSearch = ReadRuntime.use((runtime) =>
       runtime.runRead({
