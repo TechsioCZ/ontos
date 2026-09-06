@@ -79,6 +79,7 @@ interface HarnessOptions {
   readonly commitFailureCode?: string;
   readonly createRecord?: ActionInvocationRecord;
   readonly legalEntityPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
+  readonly lockFailure?: Error;
   readonly lockedModuleState?: 'active' | 'denied' | 'unavailable';
   readonly moduleState?: TenantModuleState | 'missing' | 'unavailable';
   readonly permissionDecision?: ActionPermissionDecision;
@@ -158,10 +159,17 @@ const makeHarness = (options: HarnessOptions = {}) => {
     },
     lockInvocation: () => {
       lockCount += 1;
-      return Effect.succeed({
-        ...currentInvocation,
-        requestHash: currentInvocation.requestHash || preparedHash,
-      });
+      return options.lockFailure === undefined
+        ? Effect.succeed({
+            ...currentInvocation,
+            requestHash: currentInvocation.requestHash || preparedHash,
+          })
+        : Effect.fail(
+            ActionInvocationPersistenceError.withCause(
+              'Unable to lock the Action invocation',
+              options.lockFailure,
+            ),
+          );
     },
     rejectPermissionDenied: (_executor, input) => {
       rejectionCount += 1;
@@ -2036,6 +2044,34 @@ test('sanitizes undeclared handler failures instead of widening the domain error
   assert.equal(error._tag, 'ActionHandlerExecutionError');
   assert.equal(error.reason.includes('secret'), false);
   assert.equal(harness.flushed.length, 0);
+});
+
+test('classifies a timed-out duplicate invocation lock wait as indeterminate', async () => {
+  for (const code of ['57014', '55P03']) {
+    const harness = makeHarness({
+      lockFailure: Object.assign(new Error('invocation lock wait exceeded its deadline'), { code }),
+    });
+    const error = await Effect.runPromise(
+      Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 1 },
+          principal,
+          registration: registration(),
+          transport: transport(`lock-wait-${code}`),
+        }),
+      ),
+    );
+
+    assert.equal(error._tag, 'ActionCommitIndeterminate');
+    assert.equal(error.code, 'action_commit_indeterminate');
+    assert.equal(error.invocationId, 'invocation-1');
+    assert.equal(
+      error.reason,
+      'A concurrent invocation with the same key is still in progress and its outcome is not yet known',
+    );
+    assert.equal(error.reason.includes('rolled back'), false);
+    assert.deepEqual(harness.transactionCommands, ['begin', 'rollback']);
+  }
 });
 
 test('handles committed, conflict, definite rollback, and indeterminate commit branches', async () => {
