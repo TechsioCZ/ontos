@@ -1,6 +1,6 @@
 import { inspect } from 'node:util';
 import { expect, test } from '@rstest/core';
-import { Cause, Effect, Exit } from 'effect';
+import { Effect } from 'effect';
 import {
   decodeJwt,
   decodeProtectedHeader,
@@ -316,7 +316,7 @@ test('identifies configuration and signing failures without exposing key materia
   expect(signingError.reason).not.toContain(configuration.privateJwk.d);
 });
 
-test('sanitizes malformed configuration and preserves unexpected loader defects', async () => {
+test('sanitizes malformed configuration and preserves typed loader failures', async () => {
   const { configuration } = await makeConfiguration();
   const parsed = await Effect.runPromise(
     parseGatewayIssuerConfig({
@@ -353,20 +353,38 @@ test('sanitizes malformed configuration and preserves unexpected loader defects'
   expect(malformedError._tag).toBe('GatewayIssuerConfigError');
   expect(malformedErrorText).not.toContain(secret);
 
-  const loaderExit = Effect.runSyncExit(
-    loadGatewayIssuerConfig({
-      environment: {
-        ONTOS_GATEWAY_ISSUER: issuer,
-        ONTOS_GATEWAY_PRIVATE_JWK: JSON.stringify(configuration.privateJwk),
-      },
-      envPath: String.fromCodePoint(0),
-    }),
+  const loaderError = await Effect.runPromise(
+    Effect.flip(
+      loadGatewayIssuerConfig({
+        environment: {
+          ONTOS_GATEWAY_ISSUER: issuer,
+          ONTOS_GATEWAY_PRIVATE_JWK: JSON.stringify(configuration.privateJwk),
+        },
+        envPath: String.fromCodePoint(0),
+      }),
+    ),
   );
 
-  expect(Exit.isFailure(loaderExit)).toBe(true);
-  if (Exit.isFailure(loaderExit)) {
-    expect(Cause.hasDies(loaderExit.cause)).toBe(true);
-  }
+  expect(loaderError._tag).toBe('GatewayIssuerConfigError');
+  expect(loaderError.reason).toBe('configuration file could not be read');
+});
+
+test('keeps unreadable dotenv configuration files in the typed error channel', async () => {
+  const { configuration } = await makeConfiguration();
+  const error = await Effect.runPromise(
+    Effect.flip(
+      loadGatewayIssuerConfig({
+        environment: {
+          ONTOS_GATEWAY_ISSUER: configuration.issuer,
+          ONTOS_GATEWAY_PRIVATE_JWK: JSON.stringify(configuration.privateJwk),
+        },
+        envPath: process.cwd(),
+      }),
+    ),
+  );
+
+  expect(error._tag).toBe('GatewayIssuerConfigError');
+  expect(error.reason).toBe('configuration file could not be read');
 });
 
 test('rejects missing configuration, HMAC keys, non-Ed25519 keys, and missing key IDs', async () => {

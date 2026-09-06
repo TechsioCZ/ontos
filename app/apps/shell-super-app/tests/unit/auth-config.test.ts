@@ -1,5 +1,5 @@
 import { expect, test } from '@rstest/core';
-import { Cause, Effect, Exit } from 'effect';
+import { Effect } from 'effect';
 import { loadAuthConfig, parseAuthConfig } from '../../api/auth/config.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 
@@ -42,7 +42,7 @@ test('requires a strong secret and PostgreSQL URL in the typed error channel', a
     expect(databaseError._tag).toBe('AuthConfigError');
   }));
 
-test('keeps malformed configuration typed and unexpected loader failures as defects', async () => {
+test('keeps malformed configuration and loader failures typed', async () => {
   const [baseUrlError, trustedOriginError] = await Promise.all([
     Effect.runPromise(
       Effect.flip(
@@ -65,17 +65,31 @@ test('keeps malformed configuration typed and unexpected loader failures as defe
   expect(baseUrlError._tag).toBe('AuthConfigError');
   expect(trustedOriginError._tag).toBe('AuthConfigError');
 
-  const loaderExit = Effect.runSyncExit(
-    loadAuthConfig({
-      environment: validEnvironment,
-      envPath: String.fromCodePoint(0),
-    }),
+  const loaderError = await Effect.runPromise(
+    Effect.flip(
+      loadAuthConfig({
+        environment: validEnvironment,
+        envPath: String.fromCodePoint(0),
+      }),
+    ),
   );
 
-  expect(Exit.isFailure(loaderExit)).toBe(true);
-  if (Exit.isFailure(loaderExit)) {
-    expect(Cause.hasDies(loaderExit.cause)).toBe(true);
-  }
+  expect(loaderError._tag).toBe('AuthConfigError');
+  expect(loaderError.reason).toBe('configuration file could not be read');
+});
+
+test('keeps unreadable dotenv configuration files in the typed error channel', async () => {
+  const error = await Effect.runPromise(
+    Effect.flip(
+      loadAuthConfig({
+        environment: validEnvironment,
+        envPath: process.cwd(),
+      }),
+    ),
+  );
+
+  expect(error._tag).toBe('AuthConfigError');
+  expect(error.reason).toBe('configuration file could not be read');
 });
 
 test('keeps gateway signing configuration independent from Better Auth configuration', async () => {

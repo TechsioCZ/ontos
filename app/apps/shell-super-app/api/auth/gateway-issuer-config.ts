@@ -149,7 +149,11 @@ export const loadGatewayIssuerConfig = (
       return dotenvError !== undefined &&
         dotenvErrorCode !== 'ENOENT' &&
         dotenvErrorCode !== 'NOT_FOUND_DOTENV_ENVIRONMENT'
-        ? Effect.die(dotenvError)
+        ? Effect.fail(
+            new GatewayIssuerConfigError({
+              reason: 'configuration file could not be read',
+            }),
+          )
         : Effect.succeed(environment);
     }),
     Effect.flatMap(parseGatewayIssuerConfig),

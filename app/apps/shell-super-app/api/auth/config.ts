@@ -129,7 +129,11 @@ export const loadAuthConfig = (
       return dotenvError !== undefined &&
         dotenvErrorCode !== 'ENOENT' &&
         dotenvErrorCode !== 'NOT_FOUND_DOTENV_ENVIRONMENT'
-        ? Effect.die(dotenvError)
+        ? Effect.fail(
+            new AuthConfigError({
+              reason: 'configuration file could not be read',
+            }),
+          )
         : Effect.succeed(environment);
     }),
     Effect.flatMap(parseAuthConfig),
