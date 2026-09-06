@@ -88,7 +88,8 @@ export const makeGatewayIssuer = (
   const loadSigningKey = (
     privateJwk: GatewayIssuerConfigValue['privateJwk'],
   ): Effect.Effect<GatewaySigningKey, GatewayIssuerError> => {
-    const cacheKey = `${privateJwk.kid}:${privateJwk.x}:${privateJwk.d}`;
+    // Public material identifies the key; a rotated private scalar always changes `x` as well.
+    const cacheKey = `${privateJwk.kid}:${privateJwk.x}`;
     if (cachedSigningKey?.cacheKey === cacheKey) {
       return cachedSigningKey.effect;
     }

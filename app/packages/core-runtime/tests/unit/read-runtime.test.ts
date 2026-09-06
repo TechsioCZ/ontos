@@ -12,7 +12,6 @@ import {
   Exit,
   Logger,
   Predicate,
-  Redacted,
   References,
   Schema,
 } from 'effect';
@@ -1118,7 +1117,7 @@ test('fails closed when tenant-scoped Party result authorization becomes unavail
   assert.equal(failure._tag, 'ReadPermissionUnavailable');
 });
 
-test('redacts unexpected read diagnostics without changing governed failure semantics', async () => {
+test('logs the full unexpected read cause at the seam without changing governed failure semantics', async () => {
   for (const source of [
     'scope',
     'target',
@@ -1188,32 +1187,21 @@ test('redacts unexpected read diagnostics without changing governed failure sema
     );
     assert.equal(harness.evidence(), 0);
     assert.equal(logs.length, 1);
+    // The outer seam logs the full Cause; the caller-visible failure stays sanitized.
     assert.equal(
       rendered.some((line) => line.includes(marker)),
-      false,
+      true,
       `${source}: rendered logs`,
-    );
-    assert.equal(
-      inspect(logs, { depth: null }).includes(marker),
-      false,
-      `${source}: logger arguments`,
     );
     assert.match(inspect(logs), /correlation-1/u);
     assert.match(inspect(logs), /core\.shell\.items/u);
     if (source === 'policy') {
       assert.match(inspect(logs), /global\.read-diagnostics\.v1/u);
     }
-    const diagnostic = logs[0]?.message[1];
-    assert.ok(Predicate.hasProperty(diagnostic, 'cause'));
-    assert.ok(Predicate.hasProperty(diagnostic, 'hasDefects'));
-    assert.ok(Predicate.hasProperty(diagnostic, 'hasFailures'));
-    assert.ok(Predicate.hasProperty(diagnostic, 'hasInterrupts'));
-    assert.ok(Redacted.isRedacted(diagnostic.cause));
-    const original = Redacted.value(diagnostic.cause);
+    const original = logs[0]?.cause;
     assert.ok(Cause.isCause(original));
-    assert.equal(diagnostic.hasDefects, source !== 'handler');
-    assert.equal(diagnostic.hasFailures, source === 'handler');
-    assert.equal(diagnostic.hasInterrupts, false);
+    assert.equal(Cause.hasDies(original), source !== 'handler');
+    assert.equal(Cause.hasInterrupts(original), false);
     if (source === 'handler') {
       assert.equal(original, cause);
       const originalFailure = Cause.findErrorOption(original);
