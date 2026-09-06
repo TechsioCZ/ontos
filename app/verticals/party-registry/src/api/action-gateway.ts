@@ -261,12 +261,15 @@ export interface AresApplyOptions {
 }
 
 const loadDefaultReads = () =>
-  Effect.all({
-    ares: Effect.promise(() => import('./ares-lookup-client.ts')),
-    contactPoints: Effect.promise(() => import('./party-contact-points-client.ts')),
-    identifiers: Effect.promise(() => import('./party-official-identifier-history-client.ts')),
-    party: Effect.promise(() => import('./party-detail-client.ts')),
-  }).pipe(
+  Effect.all(
+    {
+      ares: Effect.promise(() => import('./ares-lookup-client.ts')),
+      contactPoints: Effect.promise(() => import('./party-contact-points-client.ts')),
+      identifiers: Effect.promise(() => import('./party-official-identifier-history-client.ts')),
+      party: Effect.promise(() => import('./party-detail-client.ts')),
+    },
+    { concurrency: 1 },
+  ).pipe(
     Effect.map((modules): AresApplyReads => ({
       contactPoints: modules.contactPoints.executePartyContactPointsWithAuthorization,
       identifiers: modules.identifiers.executePartyOfficialIdentifierHistoryWithAuthorization,

@@ -1,4 +1,5 @@
 // @effect-diagnostics asyncFunction:off
+import { makeDatabasePoolConfiguration } from '@app/core-runtime';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Context, Effect, Layer, Redacted } from 'effect';
 import type { Scope } from 'effect';
@@ -43,11 +44,16 @@ export const makeAuthDatabase = (
   configuration: AuthConfigValue,
   poolFactory: PoolFactory = defaultPoolFactory,
 ) =>
-  acquirePoolResource(() =>
-    poolFactory({
-      connectionString: Redacted.value(configuration.connectionString),
-    }),
-  ).pipe(
+  makeDatabasePoolConfiguration(Redacted.value(configuration.connectionString)).pipe(
+    Effect.mapError(
+      (error) =>
+        new AuthDatabaseConnectionError({
+          reason: `Unable to initialize the authentication PostgreSQL pool: ${error.reason}`,
+        }),
+    ),
+    Effect.flatMap((poolConfiguration) =>
+      acquirePoolResource(() => poolFactory(poolConfiguration)),
+    ),
     Effect.map((pool) => ({
       executor: drizzle({
         client: pool,

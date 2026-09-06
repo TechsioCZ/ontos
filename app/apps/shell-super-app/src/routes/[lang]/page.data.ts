@@ -127,16 +127,23 @@ export const loadHomePageModel = (request: Request): Promise<HomePageModel> =>
                     state: 'available' as const,
                     unavailableDeployments: [] as const,
                   });
-            return Effect.all({
-              legalEntities,
-              navigation,
-              tenants: availableTenants(options).pipe(
-                Effect.map(({ tenants }) => ({ items: tenants, state: 'available' as const })),
-                Effect.catch((error) =>
-                  Effect.succeed(tenantRead(error, session.identity.tenantId)),
+            return Effect.all(
+              {
+                legalEntities,
+                navigation,
+                tenants: availableTenants(options).pipe(
+                  Effect.map(({ tenants }) => ({ items: tenants, state: 'available' as const })),
+                  Effect.catch((error) =>
+                    Effect.succeed(tenantRead(error, session.identity.tenantId)),
+                  ),
                 ),
-              ),
-            }).pipe(
+              },
+              // Sequential by intent, now stated: these are authenticated session reads sharing one
+              // set of credentials, not independent module loads, and a stale tenant read decides
+              // the anonymous outcome. Fanning them out would widen the blast radius of a session
+              // that expires mid-load.
+              { concurrency: 1 },
+            ).pipe(
               Effect.map(
                 ({ legalEntities: choices, navigation: items, tenants }): HomePageModel => {
                   if (tenants.state === 'stale') {

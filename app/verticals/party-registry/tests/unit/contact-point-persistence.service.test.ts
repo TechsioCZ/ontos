@@ -8,6 +8,7 @@ import {
   addContactPointRecord as addRecord,
   endContactPointRecord as endRecord,
   findPartyContactPointRecord,
+  listPartyContactPointRecords,
   updateContactPointRecord as updateRecord,
 } from '../../src/services/party-contact-point-persistence.service.ts';
 import { makePartyAliasResolutionService } from '../../src/merge/party-alias-resolution.service.ts';
@@ -737,6 +738,34 @@ test('rejects an explicit alias Party add but keeps durable ContactPoint updates
       assert.equal(addHarness.insertValues.length, 0);
 
       const row = contactRow();
+      const secondContactPointId = '30000000-0000-4000-8000-000000000002';
+      const listHarness = transactionHarness([
+        [
+          row,
+          contactRow({
+            contactPointId: secondContactPointId,
+            displayValue: 'second@example.test',
+            normalizedValue: 'second@example.test',
+          }),
+        ],
+        [],
+        [],
+      ]);
+      const listed = yield* listPartyContactPointRecords(
+        listHarness.transaction,
+        scope,
+        { includeHistorical: true, partyId },
+        aliases,
+      );
+      assert.deepEqual(
+        listed.map(({ contactPointRef }) => contactPointRef.resourceId),
+        [contactPointId, secondContactPointId],
+      );
+      assert.deepEqual(
+        listed.map(({ partyRef }) => partyRef.resourceId),
+        [canonicalPartyId, canonicalPartyId],
+      );
+
       const updateHarness = transactionHarness([
         [row],
         [{ partyId: canonicalPartyId }],

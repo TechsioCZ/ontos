@@ -86,7 +86,9 @@ const safeState = (
     case 'ShellPolicyConflictProblem':
     case 'ShellPolicyUnprocessableProblem':
     case 'ShellPreconditionRequiredProblem':
-    case 'ShellRateLimitedProblem': {
+    case 'ShellRateLimitedProblem':
+    // A request budget expiry is a transport outcome, not an auth or domain answer.
+    case 'TimeoutError': {
       return { shell, state: 'unavailable' };
     }
     default: {

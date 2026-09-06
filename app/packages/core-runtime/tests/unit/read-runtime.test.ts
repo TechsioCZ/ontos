@@ -59,6 +59,9 @@ const makeHarness = (
     readonly onTenantPermission?: (permission: string) => void;
     readonly permissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly resolvedScope?: typeof scope & { readonly legalEntityId?: string };
+    readonly resourcePermission?: (
+      resourceId: string,
+    ) => Effect.Effect<'allowed' | 'denied' | 'unavailable'>;
     readonly resultPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly resultTenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly tenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
@@ -140,6 +143,16 @@ const makeHarness = (
         const [target] = resources;
         if (target !== undefined) {
           options.onResourceTarget?.(target);
+          if (options.resourcePermission !== undefined) {
+            return options.resourcePermission(target.resourceId).pipe(
+              Effect.map((decision) => [
+                {
+                  decision,
+                  key: `${target.moduleId}:${target.resourceType}:${target.resourceId}`,
+                },
+              ]),
+            );
+          }
         }
         return Effect.succeed(
           resources.map((resource) => ({
@@ -804,6 +817,144 @@ test('authorizes a canonical Resource through explicit tenant Party administrati
   assert.equal(denial._tag, 'ReadPermissionDenied');
   assert.equal(denied.evidence(), 1);
   assert.equal(handlerCalls, 2);
+});
+
+const resourceTarget = (index: number) => ({
+  kind: 'resource' as const,
+  resource: {
+    moduleId: 'party.registry',
+    resourceId: String(index),
+    resourceType: 'counterparty',
+  },
+});
+
+test('bounds alternative checks while preserving classification and canonical target order', async () => {
+  const legalEntityId = '00000000-0000-4000-8000-000000000004';
+  await Promise.all(
+    (['allowed', 'unavailable', 'denied'] as const).map(async (decision) => {
+      const gates = Array.from({ length: 5 }, () => ({
+        release: Promise.withResolvers<null>(),
+        started: Promise.withResolvers<null>(),
+      }));
+      let active = 0;
+      let peak = 0;
+      let handlerCalls = 0;
+      const completed: number[] = [];
+      const policyTargets: unknown[] = [];
+      const policy = defineGlobalPolicy<Readonly<Record<string, never>>>({
+        evaluate: ({ target }) => {
+          policyTargets.push(target);
+          return Effect.void;
+        },
+        policyKey: 'core.shell.bounded-alternatives.v1',
+      });
+      const harness = makeHarness({
+        resolvedScope: { ...scope, legalEntityId },
+        resourcePermission: (resourceId) =>
+          Effect.promise(async () => {
+            const index = Number(resourceId);
+            const gate = gates[index];
+            assert.ok(gate);
+            active += 1;
+            peak = Math.max(peak, active);
+            gate.started.resolve(null);
+            await gate.release.promise;
+            active -= 1;
+            completed.push(index);
+            // The canonical check finishes last; allowed must beat unavailable.
+            if (index === 0) {
+              return decision;
+            }
+            return decision === 'allowed' ? 'unavailable' : 'denied';
+          }),
+      });
+      const governed = defineRead(
+        {
+          ...registration().descriptor,
+          legalEntityScope: 'required',
+          permissionTarget: 'resource',
+          policies: [{ denialStatus: 422, policyKey: policy.policyKey }],
+        },
+        () => {
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 2 }, result: ['first', 'second'] });
+        },
+        () => Effect.succeed({}),
+        () => ({
+          kind: 'any_of',
+          targets: [
+            resourceTarget(0),
+            resourceTarget(1),
+            resourceTarget(2),
+            resourceTarget(3),
+            resourceTarget(4),
+          ],
+        }),
+        undefined,
+        [policy],
+      );
+      const result = Effect.runPromise(
+        harness.runtime
+          .runRead({
+            input: {},
+            principal: { ...scope, legalEntityId },
+            registration: governed,
+            transport: { correlationId: scope.correlationId },
+          })
+          .pipe(
+            Effect.match({
+              onFailure: (error) => error._tag,
+              onSuccess: (value) => value,
+            }),
+          ),
+      );
+      const [first, second] = gates;
+      assert.ok(first);
+      assert.ok(second);
+      await first.started.promise;
+      await second.started.promise;
+      try {
+        await Promise.all(
+          gates.slice(1).map(async (gate) => {
+            await gate.started.promise;
+            assert.equal(active, 2);
+            assert.equal(handlerCalls, 0);
+            assert.equal(harness.evidence(), 0);
+            gate.release.resolve(null);
+          }),
+        );
+      } finally {
+        for (const gate of gates) {
+          gate.release.resolve(null);
+        }
+      }
+      assert.deepEqual(
+        await result,
+        {
+          allowed: ['first', 'second'],
+          denied: 'ReadPermissionDenied',
+          unavailable: 'ReadPermissionUnavailable',
+        }[decision],
+      );
+      assert.equal(peak, 2);
+      assert.equal(active, 0);
+      assert.deepEqual(completed, [1, 2, 3, 4, 0]);
+      assert.equal(handlerCalls, decision === 'allowed' ? 1 : 0);
+      assert.equal(harness.evidence(), decision === 'unavailable' ? 0 : 1);
+      assert.deepEqual(
+        policyTargets,
+        decision === 'allowed'
+          ? [
+              {
+                targetModuleKey: 'party.registry',
+                targetResourceId: '0',
+                targetResourceType: 'counterparty',
+              },
+            ]
+          : [],
+      );
+    }),
+  );
 });
 
 test('rejects generic tenant access as an alternative permission target', async () => {

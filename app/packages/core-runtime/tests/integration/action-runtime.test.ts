@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 // @effect-diagnostics asyncFunction:off globalDateInEffect:off
 import { randomUUID } from 'node:crypto';
 import test, { after, before } from 'node:test';
-import { and, eq } from 'drizzle-orm';
-import { Cause, Deferred, Effect, Exit, Schema, Predicate } from 'effect';
+import { and, eq, sql } from 'drizzle-orm';
+import { Cause, Deferred, Effect, Exit, Fiber, Schema, Predicate } from 'effect';
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { defineAction } from '../../src/actions/definition.ts';
@@ -213,6 +213,58 @@ const databasePromise = async <Value>(
 ): Promise<Value> =>
   await Effect.runPromise(withDatabase((database) => Effect.promise(() => operation(database))));
 
+// Capture the actual transaction connection, not a pooled observer connection.
+const transactionProbe = (
+  database: ContextServiceContract,
+  beforeCallback: Effect.Effect<unknown> = Effect.void,
+) => {
+  const pid = Effect.runSync(Deferred.make<number>());
+  const transactionOverride = {
+    transaction: async (callback, configuration) =>
+      await database.executor.transaction(async (transaction) => {
+        const [row] = await transaction
+          .select({ pid: sql<number>`pg_backend_pid()` })
+          .from(sql`(select 1) as probe`);
+        assert.ok(row);
+        Effect.runSync(Deferred.succeed(pid, row.pid));
+        await Effect.runPromise(beforeCallback.pipe(Effect.timeout('3 seconds')));
+        return await callback(transaction);
+      }, configuration),
+  } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
+  const executor: ContextServiceContract['executor'] = Object.assign(
+    Object.create(database.executor),
+    transactionOverride,
+  );
+  return { database: { executor }, pid };
+};
+
+const waitForTransactionLock = (
+  database: ContextServiceContract,
+  blocked: Deferred.Deferred<number>,
+  blocker: Deferred.Deferred<number>,
+) =>
+  Effect.gen(function* observeTransactionLock() {
+    const [blockedPid, blockerPid] = yield* Effect.all([
+      Deferred.await(blocked),
+      Deferred.await(blocker),
+    ]);
+    // Round trips yield to PostgreSQL; the attempt budget bounds failure, never proves blocking.
+    for (let attempt = 0; attempt < 1000; attempt += 1) {
+      const [row] = yield* Effect.promise(
+        async () =>
+          await database.executor
+            .select({
+              blocked: sql<boolean>`${blockerPid} = any(pg_blocking_pids(${blockedPid}))`,
+            })
+            .from(sql`(select 1) as probe`),
+      );
+      if (row?.blocked === true) {
+        return;
+      }
+    }
+    assert.fail(`Transaction ${blockedPid} never blocked on ${blockerPid}`);
+  }).pipe(Effect.timeout('2 seconds'));
+
 const liveModuleStateOptions = (database: ContextServiceContract) => {
   const moduleStateGate = makeModuleStateGate(makeTenantModuleStateService(database));
   return {
@@ -298,19 +350,19 @@ type TestActionContext = ActionHandlerContext<typeof TestDomainEvents, TestActio
 
 interface RegistrationOptions {
   readonly actionKey: string;
+  readonly handlerRelease?: Deferred.Deferred<null>;
   readonly mode?: 'orphan-outbox' | 'reject' | 'success';
   readonly moduleStateKey: string;
   readonly onExecute?: () => void;
-  readonly pause?: boolean;
   readonly policies?: readonly ActionPolicy<{ readonly value: string }, 'core.shell'>[];
 }
 
 const makeRegistration = ({
   actionKey,
+  handlerRelease,
   mode = 'success',
   moduleStateKey,
   onExecute,
-  pause = false,
   policies = [],
 }: RegistrationOptions) =>
   defineAction(
@@ -388,8 +440,8 @@ const makeRegistration = ({
           topic: 'test-state.project',
         });
 
-        if (pause) {
-          yield* Effect.sleep('100 millis');
+        if (handlerRelease !== undefined) {
+          yield* Deferred.await(handlerRelease);
         }
         if (mode === 'reject') {
           return yield* new TestDomainRejected({ reason: 'test domain rejection' });
@@ -1177,15 +1229,18 @@ void test('keeps Policy rejection terminal and deduplicates repeated and concurr
 void test('never lets a losing Policy denial replace a running or successful invocation', async () => {
   await databasePromise(async (database) => {
     const repository = makeActionRepository();
+    const allowedProbe = transactionProbe(database);
+    const deniedProbe = transactionProbe(database);
+    const handlerRelease = Effect.runSync(Deferred.make<null>());
     const allowedRuntime = makeActionRuntime(
-      database,
+      allowedProbe.database,
       repository,
       allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
     );
     const deniedRuntime = makeActionRuntime(
-      database,
+      deniedProbe.database,
       repository,
       allowedPermission,
       testOperationalScopeResolver,
@@ -1197,11 +1252,11 @@ void test('never lets a losing Policy denial replace a running or successful inv
     const actionKey = 'shell.test.policy-loses-to-success';
     const allowed = makeRegistration({
       actionKey,
+      handlerRelease,
       moduleStateKey,
       onExecute: () => {
         Effect.runSync(Deferred.succeed(handlerStarted, null));
       },
-      pause: true,
     });
     const denial = defineGlobalPolicy<{ readonly value: string }>({
       evaluate: () => Effect.fail(denyPolicy('late_denial', 'This denial arrived too late')),
@@ -1225,6 +1280,12 @@ void test('never lets a losing Policy denial replace a running or successful inv
     const rejected = Effect.runPromise(
       Effect.exit(deniedRuntime.runAction({ ...sharedInput, registration: denied })),
     );
+    try {
+      await Effect.runPromise(waitForTransactionLock(database, deniedProbe.pid, allowedProbe.pid));
+    } finally {
+      Effect.runSync(Deferred.succeed(handlerRelease, null));
+      await Promise.allSettled([success, rejected]);
+    }
     const [successResult, rejectedExit] = await Promise.all([success, rejected]);
     const [invocation] = await database.executor
       .select()
@@ -1253,6 +1314,20 @@ void test('serializes concurrent requests and enforces committed, open-retry, an
         testOperationalScopeResolver,
         openActionRuntimeOptions,
       );
+      const handlerStarted = Effect.runSync(Deferred.make<null>());
+      const handlerRelease = Effect.runSync(Deferred.make<null>());
+      // Both autocommit running transitions must finish before the first row lock.
+      // Otherwise the duplicate blocks before its transaction can publish a PID.
+      const secondProbe = transactionProbe(database, Deferred.await(handlerStarted));
+      const firstProbe = transactionProbe(database, Deferred.await(secondProbe.pid));
+      const concurrentRuntime = (probe: ReturnType<typeof transactionProbe>) =>
+        makeActionRuntime(
+          probe.database,
+          makeActionRepository(),
+          allowedPermission,
+          testOperationalScopeResolver,
+          openActionRuntimeOptions,
+        );
       let executions = 0;
       const concurrentKey = 'concurrent-once';
       const concurrentModule = `test.concurrent.${tenantId}`;
@@ -1261,22 +1336,36 @@ void test('serializes concurrent requests and enforces committed, open-retry, an
         principal,
         registration: makeRegistration({
           actionKey: 'shell.test.concurrent',
+          handlerRelease,
           moduleStateKey: concurrentModule,
           onExecute: () => {
             executions += 1;
+            Effect.runSync(Deferred.succeed(handlerStarted, null));
           },
-          pause: true,
         }),
         transport: transport(concurrentKey, concurrentModule),
       };
 
       return Effect.gen(function* concurrencyProof() {
-        const concurrentResults = yield* Effect.all(
-          [
-            Effect.exit(runtime.runAction(concurrentInput)),
-            Effect.exit(runtime.runAction(concurrentInput)),
-          ],
-          { concurrency: 'unbounded' },
+        const first = yield* Effect.forkChild(
+          Effect.exit(concurrentRuntime(firstProbe).runAction(concurrentInput)),
+        );
+        const second = yield* Effect.forkChild(
+          Effect.exit(concurrentRuntime(secondProbe).runAction(concurrentInput)),
+        );
+        const concurrentResults = yield* Effect.gen(function* lockedDuplicate() {
+          yield* Deferred.await(handlerStarted).pipe(Effect.timeout('3 seconds'));
+          yield* waitForTransactionLock(database, secondProbe.pid, firstProbe.pid);
+          yield* Deferred.succeed(handlerRelease, null);
+          return yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
+        }).pipe(
+          Effect.ensuring(
+            Effect.gen(function* releaseAndDrainTransactions() {
+              yield* Deferred.succeed(handlerRelease, null);
+              yield* Fiber.await(first);
+              yield* Fiber.await(second);
+            }),
+          ),
         );
 
         assert.equal(executions, 1);
@@ -1341,9 +1430,14 @@ void test('serializes Domain Event allocation by tenant commit order', async () 
   await databasePromise(async (database) => {
     const firstCommitRelease = await Effect.runPromise(Deferred.make<null>());
     const firstFlushed = await Effect.runPromise(Deferred.make<null>());
+    const secondCallbackRelease = await Effect.runPromise(Deferred.make<null>());
+    // Finish both autocommit invocation inserts before the tenant FOR UPDATE lock.
+    // Otherwise the second insert's tenant FK blocks before its transaction has a PID.
+    const secondProbe = transactionProbe(database, Deferred.await(secondCallbackRelease));
+    const firstProbe = transactionProbe(database, Deferred.await(secondProbe.pid));
     const delayedTransaction = {
       transaction: async (callback, configuration) =>
-        await database.executor.transaction(async (transaction) => {
+        await firstProbe.database.executor.transaction(async (transaction) => {
           const result = await callback(transaction);
           Effect.runSync(Deferred.succeed(firstFlushed, null));
           await Effect.runPromise(Deferred.await(firstCommitRelease));
@@ -1363,7 +1457,7 @@ void test('serializes Domain Event allocation by tenant commit order', async () 
       openActionRuntimeOptions,
     );
     const secondRuntime = makeActionRuntime(
-      database,
+      secondProbe.database,
       repository,
       allowedPermission,
       testOperationalScopeResolver,
@@ -1383,8 +1477,6 @@ void test('serializes Domain Event allocation by tenant commit order', async () 
         transport: transport('sequence-first', firstModule),
       }),
     );
-    await Effect.runPromise(Deferred.await(firstFlushed));
-
     let secondCompleted = false;
     const second = Effect.runPromise(
       secondRuntime.runAction({
@@ -1400,10 +1492,20 @@ void test('serializes Domain Event allocation by tenant commit order', async () 
       secondCompleted = true;
     });
 
-    await Effect.runPromise(Effect.sleep('50 millis'));
-    assert.equal(secondCompleted, false);
-
-    Effect.runSync(Deferred.succeed(firstCommitRelease, null));
+    // Attach rejection handlers immediately, including failures before either rendezvous.
+    const drained = Promise.allSettled([first, second]);
+    try {
+      await Effect.runPromise(Deferred.await(firstFlushed).pipe(Effect.timeout('3 seconds')));
+      // The first has allocated its event but cannot commit. Let the second transaction
+      // contend with that tenant lock (its business insert also checks the tenant FK).
+      Effect.runSync(Deferred.succeed(secondCallbackRelease, null));
+      await Effect.runPromise(waitForTransactionLock(database, secondProbe.pid, firstProbe.pid));
+      assert.equal(secondCompleted, false);
+    } finally {
+      Effect.runSync(Deferred.succeed(secondCallbackRelease, null));
+      Effect.runSync(Deferred.succeed(firstCommitRelease, null));
+      await drained;
+    }
     await Promise.all([first, second]);
 
     const events = await database.executor

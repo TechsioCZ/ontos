@@ -1,5 +1,5 @@
 import { beforeEach, expect, rstest, test } from '@rstest/core';
-import { Effect } from 'effect';
+import { Cause, Effect } from 'effect';
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
   rstest: 'importActual',
 };
@@ -392,4 +392,14 @@ test.each([
       request: request(),
     }),
   ).resolves.toMatchObject({ state });
+});
+
+test('maps a request budget timeout to unavailable without a resolved target', async () => {
+  resolveModuleTargetMock.mockReturnValueOnce(Effect.fail(new Cause.TimeoutError('budget spent')));
+  await expect(
+    loader({
+      params: { entrypointKey: 'contacts.core.page.customers', moduleId: 'contacts.core' },
+      request: request(),
+    }),
+  ).resolves.toEqual({ shell: authenticatedShell, state: 'unavailable' });
 });

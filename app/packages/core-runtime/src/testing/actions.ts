@@ -248,7 +248,7 @@ export const makeActionTestHarness = (options: ActionTestHarnessOptions = {}) =>
                   if (sql === 'begin') {
                     transactionCount += 1;
                   } else if (sql === 'commit') {
-                    yield* Effect.all(pendingCommit, { discard: true });
+                    yield* Effect.all(pendingCommit, { concurrency: 1, discard: true });
                     pendingCommit = [];
                     if (loseCommitAcknowledgement) {
                       loseCommitAcknowledgement = false;

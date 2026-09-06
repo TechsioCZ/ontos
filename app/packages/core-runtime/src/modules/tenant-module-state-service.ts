@@ -160,6 +160,7 @@ export const makeTenantModuleStateService = (database: {
         Effect.map((state) => Object.freeze({ moduleKey: row.moduleKey, state })),
         Effect.mapError(tenantModuleStateReadUnavailable),
       ),
+      { concurrency: 1 },
     )(rows).pipe(Effect.map((records) => Object.freeze(records)));
 
   const listTenantModuleStates = (tenantId: string) =>

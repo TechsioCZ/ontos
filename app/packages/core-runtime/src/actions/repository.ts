@@ -4,7 +4,7 @@
 // keep the exported repository operations in typed Effect error channels.
 import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
-import { Cause, Context, Effect, Exit, Layer, Predicate, Result } from 'effect';
+import { Cause, Context, Effect, Exit, Layer, Predicate, Result, Schema } from 'effect';
 import {
   actionInvocations,
   auditEvents,
@@ -249,6 +249,32 @@ const invocationSelection = {
 
 const persistenceFailure = <FailureCause>(reason: string, cause?: FailureCause) =>
   ActionInvocationPersistenceError.withCause(reason, cause);
+
+const ACTION_INVOCATION_LOCK_WAIT_CODES = new Set(['57014', '55P03']);
+
+const hasInvocationLockWaitCode = (failure: unknown): boolean => {
+  let current: unknown = failure;
+  const visited = new Set<object>();
+  while (Predicate.isObjectKeyword(current) && current !== null && !visited.has(current)) {
+    visited.add(current);
+    if (
+      'code' in current &&
+      Predicate.isString(current.code) &&
+      ACTION_INVOCATION_LOCK_WAIT_CODES.has(current.code)
+    ) {
+      return true;
+    }
+    current = 'cause' in current ? current.cause : undefined;
+  }
+  return false;
+};
+
+export const isActionInvocationLockWaitFailure = (failure: unknown): boolean =>
+  hasInvocationLockWaitCode(
+    Schema.is(ActionInvocationPersistenceError)(failure)
+      ? getActionInvocationPersistenceErrorCause(failure)
+      : failure,
+  );
 
 /** Internal bridge used by the transaction boundary to preserve the original defect. */
 export const getActionInvocationPersistenceFailureCause = (

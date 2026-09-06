@@ -10,7 +10,10 @@ import {
 import type { HttpApiClient, HttpClientError } from '@modern-js/plugin-bff/effect-client';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
+import { Context } from 'effect';
+import type { Cause } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import type { Headers } from 'effect/unstable/http';
 
 export const GATEWAY_ASSERTION_VERSION = 1 as const;
 export const GATEWAY_ASSERTION_TTL_SECONDS = 300 as const;
@@ -236,39 +239,87 @@ export type GatewayContextClient = HttpApiClient.Client<
 export interface GatewayContextClientOptions {
   readonly baseUrl?: string | URL;
   readonly cookie?: string;
+  /** Whole-operation budget, response decode included. Overridable per call so tests stay bounded. */
+  readonly timeoutMs?: number;
 }
 
 export type GatewayContextClientError =
   | GatewayContextProblem
   | HttpClientError.HttpClientError
-  | Schema.SchemaError;
+  | Schema.SchemaError
+  | Cause.TimeoutError;
 
 export type GatewayContextClientEffect<Success> = Effect.Effect<Success, GatewayContextClientError>;
 
-const createGatewayContextClient = (
-  options: GatewayContextClientOptions,
-): Effect.Effect<GatewayContextClient> => {
-  const transformClient =
-    options.cookie === undefined
-      ? {}
-      : {
-          transformClient: HttpClient.mapRequest(
-            HttpClientRequest.setHeader('cookie', options.cookie),
-          ),
-        };
+const DEFAULT_TIMEOUT_MS = 10_000;
 
-  return makeEffectHttpApiClient(GatewayContextApi, {
-    baseUrl: options.baseUrl ?? shellGatewayContextContract.apiPrefix,
-    ...transformClient,
-  });
-};
+/** What one in-flight issuance contributes to its request; never held by the client. */
+interface GatewayContextCallTransport {
+  readonly baseUrl: string;
+  readonly headers: Headers.Input;
+}
+
+/**
+ * A `Context.Reference`, not a service: its default keeps both public Effects at `R = never`, and it
+ * is fail-closed, so a request issued outside a prepared call dies instead of borrowing a credential.
+ */
+const CurrentGatewayContextCall = Context.Reference<GatewayContextCallTransport | null>(
+  'shell-super-app/CurrentGatewayContextCall',
+  { defaultValue: () => null },
+);
+
+/**
+ * `mapRequestEffect` resolves in the fiber that issues the request, so interleaved calls each read
+ * their own base URL and cookie off the one shared client.
+ */
+const applyCallTransport = (client: HttpClient.HttpClient): HttpClient.HttpClient =>
+  HttpClient.mapRequestEffect(client, (request) =>
+    Effect.flatMap(Effect.service(CurrentGatewayContextCall), (transport) =>
+      transport === null
+        ? Effect.die('The gateway context client was used outside a prepared call')
+        : Effect.succeed(
+            request.pipe(
+              HttpClientRequest.setHeaders(transport.headers),
+              HttpClientRequest.prependUrl(transport.baseUrl),
+            ),
+          ),
+    ),
+  );
+
+/**
+ * The module's single typed client, built once at module load on its own root fiber. Construction
+ * captures context that is merged under every later request, so building inside the first caller
+ * would pin that caller's fetch, logger and spans onto every later call. `baseUrl` stays out of
+ * construction — `HttpApiClient` bakes it into the transport — and moves to the per-call prefix,
+ * applied by the same `prependUrl` the option itself used.
+ */
+const gatewayContextClient = Effect.runSync(
+  makeEffectHttpApiClient(GatewayContextApi, { transformClient: applyCallTransport }),
+);
+
+const callTransport = (
+  options: GatewayContextClientOptions,
+  headers: Headers.Input,
+): GatewayContextCallTransport => ({
+  baseUrl: (options.baseUrl ?? shellGatewayContextContract.apiPrefix).toString(),
+  headers,
+});
 
 export const issueGatewayContext = (
   payload: GatewayContextRequest,
   options: GatewayContextClientOptions = {},
 ): GatewayContextClientEffect<GatewayContextResponse> =>
-  createGatewayContextClient(options).pipe(
-    Effect.flatMap((client) => client.gatewayContext.issueGatewayContext({ payload })),
+  gatewayContextClient.gatewayContext.issueGatewayContext({ payload }).pipe(
+    // No `cookie` header when the caller supplies none, so same-origin calls keep sending the
+    // browser's own session cookie exactly as before.
+    Effect.provideService(
+      CurrentGatewayContextCall,
+      callTransport(options, options.cookie === undefined ? {} : { cookie: options.cookie }),
+    ),
+    // Outside the operation, so the budget covers connect, body and decode. Expiry is a typed
+    // `TimeoutError` and is never retried here: an assertion may already have been minted, so a
+    // deadline is an unknown outcome, not a known refusal.
+    Effect.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
   );
 
 export const issueApiKeyGatewayContext = (
@@ -276,11 +327,11 @@ export const issueApiKeyGatewayContext = (
   payload: GatewayContextRequest,
   options: Omit<GatewayContextClientOptions, 'cookie'> = {},
 ): GatewayContextClientEffect<GatewayContextResponse> =>
-  createGatewayContextClient(options).pipe(
-    Effect.flatMap((client) =>
-      client.gatewayContext.issueApiKeyGatewayContext({
-        headers: { 'x-api-key': rawKey },
-        payload,
-      }),
-    ),
-  );
+  gatewayContextClient.gatewayContext
+    .issueApiKeyGatewayContext({ headers: { 'x-api-key': rawKey }, payload })
+    .pipe(
+      // The key stays on the typed endpoint headers; the transport adds only the prefix.
+      Effect.provideService(CurrentGatewayContextCall, callTransport(options, {})),
+      // A deadline here may also have spent this key's rate-limit budget; it is not a rejection.
+      Effect.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+    );

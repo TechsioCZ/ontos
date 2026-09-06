@@ -220,77 +220,85 @@ test('preserves definite requested-checkpoint errors for their declared HTTP map
   }
 });
 
-test('removes the provider session and recovery when started evidence cannot commit', async () => {
-  const startedFailure = new ActionPermissionDenied({
-    code: 'action_permission_denied',
-    reason: 'The started checkpoint was denied',
-  });
-  const deletedTables: string[] = [];
-  const actionRuntime = makeActionRuntimeDouble([
-    actionSuccess({ checkpoint: 'requested', recorded: true }),
-    actionCoreFailure(startedFailure),
-  ]);
-  const service = makeSupportImpersonationService({
-    actionRuntime: actionRuntime.runtime,
-    authentication: makeAuthenticationServiceDouble({
-      resolveTenantContext: () =>
-        Effect.succeed({
-          identity: {
-            displayName: 'Original administrator',
-            email: 'original@example.test',
-            principalId: originalPrincipalId,
-            tenantId,
-          },
-          principal: {
-            authBindingId: originalAuthBindingId,
-            authContextRef: `better-auth-session:${restoredSessionId}`,
-            authMethod: 'session',
-            principalId: originalPrincipalId,
-            tenantId,
-          },
-          setCookieHeaders: [],
-          state: 'authenticated',
+test.each([false, true])(
+  'orders cleanup and preserves the started failure (cleanup fails: %s)',
+  async (cleanupFails) => {
+    const startedFailure = new ActionPermissionDenied({
+      code: 'action_permission_denied',
+      reason: 'The started checkpoint was denied',
+    });
+    const deletedTables: string[] = [];
+    const actionRuntime = makeActionRuntimeDouble([
+      actionSuccess({ checkpoint: 'requested', recorded: true }),
+      actionCoreFailure(startedFailure),
+    ]);
+    const service = makeSupportImpersonationService({
+      actionRuntime: actionRuntime.runtime,
+      authentication: makeAuthenticationServiceDouble({
+        resolveTenantContext: () =>
+          Effect.succeed({
+            identity: {
+              displayName: 'Original administrator',
+              email: 'original@example.test',
+              principalId: originalPrincipalId,
+              tenantId,
+            },
+            principal: {
+              authBindingId: originalAuthBindingId,
+              authContextRef: `better-auth-session:${restoredSessionId}`,
+              authMethod: 'session',
+              principalId: originalPrincipalId,
+              tenantId,
+            },
+            setCookieHeaders: [],
+            state: 'authenticated',
+          }),
+      }),
+      configuration,
+      provider: makeSupportAuthProviderDouble({
+        impersonateUser: async () => ({
+          headers: new Headers(),
+          response: { session: { id: impersonationSessionId } },
         }),
-    }),
-    configuration,
-    provider: makeSupportAuthProviderDouble({
-      impersonateUser: async () => ({
-        headers: new Headers(),
-        response: { session: { id: impersonationSessionId } },
       }),
-    }),
-    resolver: makePrincipalResolverDouble({
-      resolveBetterAuthUserForPrincipal: () => Effect.succeed('target-provider-user'),
-    }),
-    store: makeSupportImpersonationStoreDouble({
-      deleteRecovery: async () => {
-        deletedTables.push('deleted');
-      },
-      deleteSession: async () => {
-        deletedTables.push('deleted');
-      },
-      insertRecovery: async () => {},
-      updateImpersonationSession: async () => {},
-    }),
-    supportRecoveryPrincipal,
-  });
-
-  const failure = await Effect.runPromise(
-    Effect.flip(
-      service.start({
-        correlationId: 'correlation-started-compensation',
-        idempotencyKey: 'started-compensation',
-        reason: 'Investigate a support incident',
-        requestHeaders: new Headers(),
-        targetPrincipalId,
+      resolver: makePrincipalResolverDouble({
+        resolveBetterAuthUserForPrincipal: () => Effect.succeed('target-provider-user'),
       }),
-    ),
-  );
+      store: makeSupportImpersonationStoreDouble({
+        deleteRecovery: async () => {
+          deletedTables.push('recovery');
+          if (cleanupFails) {
+            throw new Error('recovery cleanup unavailable');
+          }
+        },
+        deleteSession: async () => {
+          deletedTables.push('session:start');
+          await Promise.resolve();
+          deletedTables.push('session:end');
+        },
+        insertRecovery: async () => {},
+        updateImpersonationSession: async () => {},
+      }),
+      supportRecoveryPrincipal,
+    });
 
-  expect(failure).toBe(startedFailure);
-  expect(actionRuntime.invocationCount()).toBe(2);
-  expect(deletedTables).toHaveLength(2);
-});
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        service.start({
+          correlationId: 'correlation-started-compensation',
+          idempotencyKey: 'started-compensation',
+          reason: 'Investigate a support incident',
+          requestHeaders: new Headers(),
+          targetPrincipalId,
+        }),
+      ),
+    );
+
+    expect(failure).toBe(startedFailure);
+    expect(actionRuntime.invocationCount()).toBe(2);
+    expect(deletedTables).toEqual(['session:start', 'session:end', 'recovery']);
+  },
+);
 
 test('persists stop recovery before provider restoration and returns restored cookies on evidence failure', async () => {
   let recovery: SupportRecoveryRecord | undefined;
@@ -396,70 +404,113 @@ test('terminates the target session before retrying stopped evidence from the re
   expect(recoveryDeleted).toBe(true);
 });
 
-test('completes every pending checkpoint correlated to the restored session', async () => {
-  const secondImpersonationSessionId = 'second-impersonated-session-id';
-  const recoveries = [
-    {
-      actionId: 'impersonation-action-one',
-      createdAt: new Date('2026-08-09T00:00:00.000Z'),
-      impersonationSessionId,
-      originalAuthBindingId,
-      originalPrincipalId,
-      originalSessionId: restoredSessionId,
-      reason: 'First support request',
-      targetPrincipalId,
-      tenantId,
-    },
-    {
-      actionId: 'impersonation-action-two',
-      createdAt: new Date('2026-08-09T00:01:00.000Z'),
-      impersonationSessionId: secondImpersonationSessionId,
-      originalAuthBindingId,
-      originalPrincipalId,
-      originalSessionId: restoredSessionId,
-      reason: 'Second support request',
-      targetPrincipalId: '30000000-0000-4000-8000-000000000002',
-      tenantId,
-    },
-  ];
-  let deleteCount = 0;
-  const actionRuntime = makeActionRuntimeDouble([
-    actionSuccess({ checkpoint: 'stopped', recorded: true }),
-    actionSuccess({ checkpoint: 'stopped', recorded: true }),
-  ]);
-  const service = makeSupportImpersonationService({
-    actionRuntime: actionRuntime.runtime,
-    authentication: makeAuthenticationServiceDouble(),
-    configuration,
-    provider: provider(false),
-    resolver: makePrincipalResolverDouble(),
-    store: makeSupportImpersonationStoreDouble({
-      deleteRecovery: async () => {
-        deleteCount += 1;
+test.each([
+  { lostResponse: false, checkpointFails: false },
+  { lostResponse: false, checkpointFails: true },
+  { lostResponse: true, checkpointFails: false },
+  { lostResponse: true, checkpointFails: true },
+])(
+  'completes pending recoveries sequentially with partial failures: %o',
+  async ({ lostResponse, checkpointFails }) => {
+    const adminValue = 'original-session-token:true';
+    const adminCookie = encodeURIComponent(
+      `${adminValue}.${await makeSignature(adminValue, Redacted.value(configuration.secret))}`,
+    );
+    const secondImpersonationSessionId = 'second-impersonated-session-id';
+    const recoveries = [
+      {
+        actionId: 'impersonation-action-one',
+        createdAt: new Date('2026-08-09T00:00:00.000Z'),
+        impersonationSessionId,
+        originalAuthBindingId,
+        originalPrincipalId,
+        originalSessionId: restoredSessionId,
+        reason: 'First support request',
+        targetPrincipalId,
+        tenantId,
       },
-      deleteSession: async () => {
-        deleteCount += 1;
+      {
+        actionId: 'impersonation-action-two',
+        createdAt: new Date('2026-08-09T00:01:00.000Z'),
+        impersonationSessionId: secondImpersonationSessionId,
+        originalAuthBindingId,
+        originalPrincipalId,
+        originalSessionId: restoredSessionId,
+        reason: 'Second support request',
+        targetPrincipalId: '30000000-0000-4000-8000-000000000002',
+        tenantId,
       },
-      loadRecoveries: async () => recoveries,
-    }),
-    supportRecoveryPrincipal,
-  });
+    ];
+    const events: string[] = [];
+    const actionRuntime = makeActionRuntimeDouble([
+      checkpointFails
+        ? actionCoreFailure(
+            new ActionTransactionError({
+              code: 'action_transaction_failed',
+              reason: 'First recovery checkpoint failed',
+            }),
+          )
+        : actionSuccess({ checkpoint: 'stopped', recorded: true }),
+      actionSuccess({ checkpoint: 'stopped', recorded: true }),
+    ]);
+    const service = makeSupportImpersonationService({
+      actionRuntime: actionRuntime.runtime,
+      authentication: makeAuthenticationServiceDouble(),
+      configuration,
+      provider: lostResponse
+        ? makeSupportAuthProviderDouble({
+            getSession: async () => ({ headers: new Headers(), response: null }),
+          })
+        : provider(false),
+      resolver: makePrincipalResolverDouble(),
+      store: makeSupportImpersonationStoreDouble({
+        deleteRecovery: async (id) => {
+          events.push(`recovery:${id}:start`);
+          await Promise.resolve();
+          events.push(`recovery:${id}:end`);
+        },
+        deleteSession: async (id) => {
+          events.push(`session:${id}:start`);
+          await Promise.resolve();
+          events.push(`session:${id}:end`);
+        },
+        loadOriginalSession: async () => ({
+          expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+          id: restoredSessionId,
+        }),
+        loadRecoveries: async () => recoveries,
+      }),
+      supportRecoveryPrincipal,
+    });
 
-  const result = await Effect.runPromise(
-    service.stop({
-      correlationId: 'correlation-3',
-      idempotencyKey: 'stop-request-3',
-      requestHeaders: new Headers(),
-    }),
-  );
+    const result = await Effect.runPromise(
+      service.stop({
+        correlationId: 'correlation-3',
+        idempotencyKey: 'stop-request-3',
+        requestHeaders: new Headers({ cookie: `better-auth.admin_session=${adminCookie}` }),
+      }),
+    );
 
-  expect(actionRuntime.payloads).toEqual([
-    expect.objectContaining({ sessionRef: `better-auth-session:${impersonationSessionId}` }),
-    expect.objectContaining({ sessionRef: `better-auth-session:${secondImpersonationSessionId}` }),
-  ]);
-  expect(result.checkpointPending).toBe(false);
-  expect(deleteCount).toBe(4);
-});
+    expect(actionRuntime.payloads).toEqual([
+      expect.objectContaining({ sessionRef: `better-auth-session:${impersonationSessionId}` }),
+      expect.objectContaining({
+        sessionRef: `better-auth-session:${secondImpersonationSessionId}`,
+      }),
+    ]);
+    expect(result.checkpointPending).toBe(checkpointFails);
+    expect(events).toEqual([
+      `session:${impersonationSessionId}:start`,
+      `session:${impersonationSessionId}:end`,
+      ...(checkpointFails
+        ? []
+        : [`recovery:${impersonationSessionId}:start`, `recovery:${impersonationSessionId}:end`]),
+      `session:${secondImpersonationSessionId}:start`,
+      `session:${secondImpersonationSessionId}:end`,
+      `recovery:${secondImpersonationSessionId}:start`,
+      `recovery:${secondImpersonationSessionId}:end`,
+    ]);
+  },
+);
 
 test('persists and completes stopped evidence on the first stop after impersonation expiry', async () => {
   const expiredToken = 'expired-impersonation-token';

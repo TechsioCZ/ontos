@@ -55,6 +55,7 @@ import {
   computeCanonicalValueHash,
   getActionInvocationPersistenceFailureCause,
   getActionTransactionFailureCause,
+  isActionInvocationLockWaitFailure,
   logActionInvocationPersistenceFailureCause,
   logActionTransactionFailureCause,
 } from './repository.ts';
@@ -219,6 +220,14 @@ const transactionFailure = () =>
   new ActionTransactionError({
     code: 'action_transaction_failed',
     reason: 'The Action transaction failed and was rolled back',
+  });
+
+const concurrentInvocationOutcomeUnknown = (invocationId: string) =>
+  new ActionCommitIndeterminate({
+    code: 'action_commit_indeterminate',
+    invocationId,
+    reason:
+      'A concurrent invocation with the same key is still in progress and its outcome is not yet known',
   });
 
 const alreadyCommitted = (invocationId: string) =>
@@ -921,14 +930,17 @@ export const makeActionRuntime = (
       notifyStage('invocation_running');
 
       let transactionBodyCompleted = false;
+      let invocationLockInProgress = false;
       let handlerDefectCause: Cause.Cause<unknown> | undefined;
       const transactionExit = yield* Effect.exit(
         runCoreTransaction(database.executor, (drizzleTransaction: CoreTransaction) =>
           Effect.gen(function* actionTransactionBody() {
+            invocationLockInProgress = true;
             const lockedInvocation = yield* repository.lockInvocation(
               drizzleTransaction,
               invocation.actionInvocationId,
             );
+            invocationLockInProgress = false;
             notifyStage('invocation_locked');
             yield* verifyInvocation(lockedInvocation, requestHash);
 
@@ -1086,6 +1098,11 @@ export const makeActionRuntime = (
       }
       return yield* Effect.failCause(
         Cause.map(transactionExit.cause, (error) => {
+          const originalError =
+            error instanceof CoreTransactionBridgeFailure ? error.original : error;
+          if (invocationLockInProgress && isActionInvocationLockWaitFailure(originalError)) {
+            return concurrentInvocationOutcomeUnknown(invocation.actionInvocationId);
+          }
           if (!(error instanceof CoreTransactionBridgeFailure)) {
             return error;
           }

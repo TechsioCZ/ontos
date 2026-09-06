@@ -8,8 +8,9 @@ import { executePartyMatchDecisionWithAuthorization } from './party-match-decisi
 import type { GatewayContextClientOptions } from '@app/shared-contracts';
 import { Effect, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
 import type { HttpApi, HttpApiClient, HttpApiGroup } from '@modern-js/plugin-bff/effect-client';
-import { Redacted } from 'effect';
+import { Context, Redacted } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import type { Headers } from 'effect/unstable/http';
 import {
   partyRegistryCommandsApi,
   partyRegistryCommandRecoveryApi,
@@ -54,8 +55,20 @@ export interface PartyCommandRecoveryOptions {
   readonly baseUrl?: string | URL;
   readonly correlationId: string;
   readonly gateway?: GatewayContextClientOptions;
+  readonly timeoutMs?: number;
   readonly traceId?: string;
 }
+
+const DEFAULT_BASE_URL = '/party-registry-api';
+
+/**
+ * Budget for one HTTP leg — that leg's request and its response decode, end to end. It is not an
+ * end-to-end budget for a multi-leg operation: the gateway assertion each leg acquires is bounded
+ * separately by `GatewayContextClientOptions`, and a recovery that resolves the commit and then
+ * reads the durable decision spends this budget once per leg. Overridable per call so tests stay
+ * bounded.
+ */
+const DEFAULT_TIMEOUT_MS = 10_000;
 
 export interface PartyCommandOptions extends PartyCommandRecoveryOptions {
   readonly idempotencyKey: string;
@@ -82,19 +95,80 @@ const requestHeaders = (
   return { ...headers, authorization: Redacted.value(authorization) };
 };
 
-const makeClient = (authorization: Redacted.Redacted<string>, options: PartyCommandOptions) =>
-  makeEffectHttpApiClient(partyRegistryCommandsApi, {
-    baseUrl: options.baseUrl ?? '/party-registry-api',
-    transformClient: HttpClient.mapRequest(
-      HttpClientRequest.setHeaders(requestHeaders(authorization, options)),
-    ),
-  });
+/** What one in-flight command contributes to its request; never held by a client. */
+interface PartyCommandCallTransport {
+  readonly baseUrl: string;
+  readonly headers: Headers.Input;
+}
 
+/**
+ * A `Context.Reference`, not a service: it carries a default, so every public Effect keeps
+ * `R = never`. That default is fail-closed — a request issued outside a prepared call dies
+ * instead of borrowing whichever credential happened to be in scope.
+ */
+const CurrentPartyCommandCall = Context.Reference<PartyCommandCallTransport | null>(
+  'party-registry/CurrentPartyCommandCall',
+  { defaultValue: () => null },
+);
+
+/**
+ * `HttpClient.mapRequestEffect` resolves its effect in the fiber that executes the request, so
+ * interleaved commands each read their own transport off one shared client.
+ */
+const applyCallTransport = (client: HttpClient.HttpClient): HttpClient.HttpClient =>
+  HttpClient.mapRequestEffect(client, (request) =>
+    Effect.flatMap(Effect.service(CurrentPartyCommandCall), (transport) =>
+      transport === null
+        ? Effect.die('The Party command client was used outside a prepared call')
+        : Effect.succeed(
+            request.pipe(
+              HttpClientRequest.setHeaders(transport.headers),
+              HttpClientRequest.prependUrl(transport.baseUrl),
+            ),
+          ),
+    ),
+  );
+
+/**
+ * The two typed clients this module owns, each built once on its own root fiber at module load.
+ * `HttpApiClient.makeClient` and `FetchHttpClient.layer` both capture construction context and merge
+ * it *under* every later request, so building inside the first caller would pin that caller's fetch,
+ * logger and spans onto every later command. Building here leaves both captures empty: services a
+ * call injects win, and a call that injects none falls through to the ordinary defaults. `baseUrl`
+ * stays out of construction — it bakes into the transport — and moves to the per-call prefix above.
+ */
+const partyCommandsClient = Effect.runSync(
+  makeEffectHttpApiClient(partyRegistryCommandsApi, { transformClient: applyCallTransport }),
+);
+
+const partyCommandRecoveryClient = Effect.runSync(
+  makeEffectHttpApiClient(partyRegistryCommandRecoveryApi, {
+    transformClient: applyCallTransport,
+  }),
+);
+
+const callTransport = (
+  authorization: Redacted.Redacted<string>,
+  options: PartyCommandRecoveryOptions,
+): PartyCommandCallTransport => ({
+  baseUrl: (options.baseUrl ?? DEFAULT_BASE_URL).toString(),
+  headers: requestHeaders(authorization, options),
+});
+
+/**
+ * The whole command, response decode included, is bounded. A timed-out write is *not* a known
+ * failure: the typed `TimeoutError` leaves the commit outcome unknown, so it surfaces unretried and
+ * is settled with `resolvePartyCommandCommit`, never by resubmitting the side effect.
+ */
 const invokeAuthorized = <Success, Failure>(
   authorization: Redacted.Redacted<string>,
   options: PartyCommandOptions,
   operation: (client: PartyCommandClient) => Effect.Effect<Success, Failure>,
-) => makeClient(authorization, options).pipe(Effect.flatMap(operation));
+) =>
+  operation(partyCommandsClient).pipe(
+    Effect.provideService(CurrentPartyCommandCall, callTransport(authorization, options)),
+    Effect.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+  );
 
 // Defer gateway loading to the attempt: the gateway's ARES coordinator uses these exact commands.
 // Assertions are acquired afresh, never cached in a client, route loader, or module initializer.
@@ -111,12 +185,12 @@ export const resolvePartyCommandCommitWithAuthorization = (
   authorization: Redacted.Redacted<string>,
   options: PartyCommandRecoveryOptions,
 ) =>
-  makeEffectHttpApiClient(partyRegistryCommandRecoveryApi, {
-    baseUrl: options.baseUrl ?? '/party-registry-api',
-    transformClient: HttpClient.mapRequest(
-      HttpClientRequest.setHeaders(requestHeaders(authorization, options)),
-    ),
-  }).pipe(Effect.flatMap((client) => client.partyCommandRecovery.resolve({ payload })));
+  partyCommandRecoveryClient.partyCommandRecovery
+    .resolve({ payload })
+    .pipe(
+      Effect.provideService(CurrentPartyCommandCall, callTransport(authorization, options)),
+      Effect.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+    );
 
 export const resolvePartyCommandCommit = (
   payload: ResolvePartyCommandCommitPayload,
@@ -596,7 +670,10 @@ export const recoverPartyCreate = (
         { actionInvocationId: payload.invocationId },
         authorization,
         options.correlationId,
-        options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl },
+        {
+          ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
+          ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+        },
       ),
     );
     const result = committedCreateResult(decision);

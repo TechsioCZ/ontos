@@ -100,6 +100,7 @@ const mapCounterpartyProjectionHit = (hit: CoreSearchProjectionHit) =>
     const rolePeriods = yield* Effect.forEach(
       (hit.temporalFacets ?? []).filter(({ key }) => key === 'current-role'),
       mapRolePeriod,
+      { concurrency: 1 },
     );
     const base = {
       canonicalPartyRef,
@@ -144,7 +145,9 @@ export const makePartySearchProjectionGateway = (
               },
         )
         .pipe(
-          Effect.flatMap((hits) => Effect.forEach(mapCounterpartyProjectionHit)(hits)),
+          Effect.flatMap((hits) =>
+            Effect.forEach(mapCounterpartyProjectionHit, { concurrency: 1 })(hits),
+          ),
           Effect.mapError(projectionUnavailable),
         ),
     searchParties: (input: PartySearchProjectionQuery) =>
@@ -157,7 +160,7 @@ export const makePartySearchProjectionGateway = (
           tenantId: input.tenantId,
         })
         .pipe(
-          Effect.flatMap((hits) => Effect.forEach(mapPartyProjectionHit)(hits)),
+          Effect.flatMap((hits) => Effect.forEach(mapPartyProjectionHit, { concurrency: 1 })(hits)),
           Effect.mapError(projectionUnavailable),
         ),
   });

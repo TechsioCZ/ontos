@@ -1,8 +1,9 @@
-// @effect-diagnostics asyncFunction:off globalTimers:off newPromise:off nodeBuiltinImport:off processEnv:off
-/* eslint-disable promise/avoid-new -- Child-process events are bounded explicitly. */
+// @effect-diagnostics asyncFunction:off nodeBuiltinImport:off processEnv:off
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import test from 'node:test';
+
+import { Effect } from 'effect';
 
 const assertGracefulShutdown = async (signal: 'SIGINT' | 'SIGTERM'): Promise<void> => {
   const child = spawn(
@@ -34,24 +35,30 @@ const assertGracefulShutdown = async (signal: 'SIGINT' | 'SIGTERM'): Promise<voi
     errors += chunk;
   });
 
-  let timeout: NodeJS.Timeout | undefined;
-  const result = await Promise.race([
-    new Promise<{ readonly code: number | null; readonly signal: NodeJS.Signals | null }>(
-      (resolve, reject) => {
-        child.once('error', reject);
-        child.once('exit', (code, exitSignal) => resolve({ code, signal: exitSignal }));
-      },
+  const result = await Effect.runPromise(
+    Effect.callback<{
+      readonly code: number | null;
+      readonly signal: NodeJS.Signals | null;
+    }>((resume) => {
+      const onError = (error: Error) => resume(Effect.die(error));
+      const onExit = (code: number | null, exitSignal: NodeJS.Signals | null) =>
+        resume(Effect.succeed({ code, signal: exitSignal }));
+      child.once('error', onError);
+      child.once('exit', onExit);
+      return Effect.sync(() => {
+        child.off('error', onError);
+        child.off('exit', onExit);
+      });
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: '3 seconds',
+        orElse: () =>
+          Effect.sync(() => child.kill('SIGKILL')).pipe(
+            Effect.flatMap(() => Effect.die(new Error(`worker process did not stop\n${errors}`))),
+          ),
+      }),
     ),
-    new Promise<never>((_resolve, reject) => {
-      timeout = setTimeout(() => {
-        child.kill('SIGKILL');
-        reject(new Error(`worker process did not stop\n${errors}`));
-      }, 3000);
-    }),
-  ]);
-  if (timeout !== undefined) {
-    clearTimeout(timeout);
-  }
+  );
 
   assert.deepEqual(result, { code: 0, signal: null }, `${errors}\n${output}`);
   assert.match(output, /cycle:1/u);

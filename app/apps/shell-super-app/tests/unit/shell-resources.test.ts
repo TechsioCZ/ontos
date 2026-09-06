@@ -6,7 +6,7 @@ import type {
   InstalledModuleCatalog,
   TenantModuleState,
 } from '@app/core-runtime';
-import { Effect, Redacted } from 'effect';
+import { Deferred, Effect, Exit, Fiber, Redacted } from 'effect';
 import {
   attachShellMedia,
   makeShellResourceDetail,
@@ -208,6 +208,148 @@ const dependencies = (
     },
   };
 };
+
+const providerKeys = Array.from({ length: 6 }, (_, index) => `property.registry.search-${index}`);
+const concurrentCatalog = () => {
+  const [contract] = catalog().contracts;
+  if (contract === undefined) {
+    throw new Error('The test catalog must include one installed contract');
+  }
+  return buildInstalledModuleCatalog([
+    {
+      contract: {
+        ...contract,
+        manifest: {
+          ...contract.manifest,
+          publicSurface: {
+            ...contract.manifest.publicSurface,
+            search: providerKeys.map((key) => ({
+              accessFiltering: 'resource_permission' as const,
+              key,
+              owningModuleId: moduleId,
+              resourceType,
+            })),
+            shellContributions: {
+              ...contract.manifest.publicSurface.shellContributions,
+              search: providerKeys.map((searchKey) => ({
+                contributionKey: `${searchKey}.contribution`,
+                entrypoint: { ...entrypoint('search'), entrypointKey: searchKey },
+                searchKey,
+              })),
+            },
+          },
+        },
+      },
+      expectedAppId: 'property-registry',
+    },
+  ]);
+};
+
+for (const phase of ['permission', 'assertion', 'provider'] as const) {
+  for (const cancel of [false, true]) {
+    test(`search bounds ${phase} work to four and ${cancel ? 'cancels queued work' : 'preserves advertised order'}`, async () => {
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const gates = yield* Effect.forEach(providerKeys, () => Deferred.make<void>());
+          const started: number[] = [];
+          let active = 0;
+          let peak = 0;
+          let permissions = 0;
+          let assertions = 0;
+          let providerCalls = 0;
+          const block = (index: number) =>
+            Effect.gen(function* () {
+              const gate = gates[index];
+              if (gate === undefined) {
+                return yield* Effect.die('Missing provider gate');
+              }
+              started.push(index);
+              active += 1;
+              peak = Math.max(peak, active);
+              yield* Deferred.await(gate).pipe(
+                Effect.ensuring(
+                  Effect.sync(() => {
+                    active -= 1;
+                  }),
+                ),
+              );
+            });
+          const baseline = dependencies();
+          const search = makeShellSearch(
+            {
+              ...baseline,
+              catalog: Effect.succeed(concurrentCatalog()),
+              contextAccess: {
+                ...baseline.contextAccess,
+                modules: (input) =>
+                  Effect.gen(function* () {
+                    const index = permissions++;
+                    if (phase === 'permission') {
+                      yield* block(index);
+                    }
+                    return yield* baseline.contextAccess.modules(input);
+                  }),
+              },
+              issueAssertion: () =>
+                Effect.gen(function* () {
+                  const index = assertions++;
+                  expect(permissions).toBe(6);
+                  if (phase === 'assertion') {
+                    yield* block(index);
+                  }
+                  return Redacted.make(`Bearer ${index}`);
+                }),
+            },
+            {
+              search: ({ searchKey, authorization }) =>
+                Effect.gen(function* () {
+                  providerCalls += 1;
+                  const index = providerKeys.indexOf(searchKey);
+                  expect(Redacted.isRedacted(authorization)).toBe(true);
+                  expect(Redacted.value(authorization)).toBe(`Bearer ${index}`);
+                  if (phase === 'provider') {
+                    yield* block(index);
+                  }
+                  if (index === 1) {
+                    return yield* Effect.fail(new ShellProviderUnavailableError());
+                  }
+                  return [{ ref, title: `Provider ${index}` }];
+                }),
+            },
+          );
+          const fiber = yield* search.search(context, 'unit').pipe(Effect.forkChild);
+          yield* Effect.yieldNow;
+          expect(started).toEqual([0, 1, 2, 3]);
+          expect(active).toBe(4);
+          if (cancel) {
+            yield* Fiber.interrupt(fiber);
+            expect(Exit.isFailure(yield* Fiber.await(fiber))).toBe(true);
+            expect(started).toEqual([0, 1, 2, 3]);
+            expect(active).toBe(0);
+            expect(providerCalls).toBe(phase === 'provider' ? 4 : 0);
+            return;
+          }
+          // Finish later providers first; duplicate precedence must remain catalog-ordered.
+          for (const index of [3, 4, 5, 2, 1, 0]) {
+            const gate = gates[index];
+            if (gate === undefined) {
+              return yield* Effect.die('Missing provider gate');
+            }
+            yield* Deferred.succeed(gate, undefined);
+            yield* Effect.yieldNow;
+          }
+          expect(yield* Fiber.join(fiber)).toEqual({
+            partial: true,
+            results: [{ kind: 'resource', ref, title: 'Provider 5' }],
+          });
+          expect(started).toEqual([0, 1, 2, 3, 4, 5]);
+          expect(peak).toBe(4);
+          expect(active).toBe(0);
+        }),
+      );
+    });
+  }
+}
 
 test('search treats empty input as empty without touching providers', async () => {
   let calls = 0;

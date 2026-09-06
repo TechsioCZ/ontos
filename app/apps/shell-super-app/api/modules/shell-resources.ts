@@ -1,5 +1,5 @@
 // @effect-diagnostics anyUnknownInErrorContext:off catchUnfailableEffect:off effectSucceedWithVoid:off schemaSyncInEffect:off unnecessaryPipeChain:off
-/* eslint-disable complexity, max-classes-per-file, no-negated-condition, react-doctor/js-combine-iterations, react-doctor/js-set-map-lookups, unicorn/no-array-method-this-argument, unicorn/no-negated-condition -- Search/resource/media orchestration keeps its closed gate ordering visible in one module; provider and authorization batches are bounded by the installed catalog. */
+/* eslint-disable complexity, max-classes-per-file, no-negated-condition, react-doctor/js-combine-iterations, react-doctor/js-set-map-lookups, unicorn/no-negated-condition -- Search/resource/media orchestration keeps its closed gate ordering visible in one module; provider and authorization batches are bounded by the installed catalog. */
 import type {
   ContextAccessResult,
   ContextAccessService,
@@ -369,48 +369,52 @@ export const makeShellSearch = (
           decideModuleStateAccess(state, contribution.entrypoint.access) === 'allow'
         );
       });
-      const permissionOutcomes = yield* Effect.forEach(stateEligible, (provider) => {
-        if (provider.descriptor.accessFiltering === 'tenant_scope') {
-          const permission = provider.descriptor.tenantPermission;
-          if (permission === undefined) {
-            return Effect.succeed({ decision: 'unavailable' as const, provider });
+      const permissionOutcomes = yield* Effect.forEach(
+        stateEligible,
+        (provider) => {
+          if (provider.descriptor.accessFiltering === 'tenant_scope') {
+            const permission = provider.descriptor.tenantPermission;
+            if (permission === undefined) {
+              return Effect.succeed({ decision: 'unavailable' as const, provider });
+            }
+            return dependencies.contextAccess
+              .tenants({
+                permission,
+                principalId: context.principalId,
+                tenantIds: [context.tenantId],
+              })
+              .pipe(
+                Effect.map((decisions) => ({
+                  decision:
+                    decisions.length === 1 && decisions[0]?.key === context.tenantId
+                      ? decisions[0].decision
+                      : ('unavailable' as const),
+                  provider,
+                })),
+              );
+          }
+          if (context.legalEntityId === undefined) {
+            return Effect.succeed({ decision: 'denied' as const, provider });
           }
           return dependencies.contextAccess
-            .tenants({
-              permission,
+            .modules({
+              legalEntityId: context.legalEntityId,
+              moduleIds: [provider.moduleId],
               principalId: context.principalId,
-              tenantIds: [context.tenantId],
+              tenantId: context.tenantId,
             })
             .pipe(
               Effect.map((decisions) => ({
                 decision:
-                  decisions.length === 1 && decisions[0]?.key === context.tenantId
+                  decisions.length === 1 && decisions[0]?.key === provider.moduleId
                     ? decisions[0].decision
                     : ('unavailable' as const),
                 provider,
               })),
             );
-        }
-        if (context.legalEntityId === undefined) {
-          return Effect.succeed({ decision: 'denied' as const, provider });
-        }
-        return dependencies.contextAccess
-          .modules({
-            legalEntityId: context.legalEntityId,
-            moduleIds: [provider.moduleId],
-            principalId: context.principalId,
-            tenantId: context.tenantId,
-          })
-          .pipe(
-            Effect.map((decisions) => ({
-              decision:
-                decisions.length === 1 && decisions[0]?.key === provider.moduleId
-                  ? decisions[0].decision
-                  : ('unavailable' as const),
-              provider,
-            })),
-          );
-      });
+        },
+        { concurrency: 4 },
+      );
       if (permissionOutcomes.some(({ decision }) => decision === 'unavailable')) {
         return yield* unavailable();
       }
@@ -420,48 +424,51 @@ export const makeShellSearch = (
       if (eligible.length === 0) {
         return { partial: false, results: [] } as const;
       }
-      const attempts = yield* Effect.forEach(eligible, (provider) =>
-        dependencies
-          .issueAssertion({ appId: provider.appId, context })
-          .pipe(
-            Effect.flatMap((authorization) => {
-              const providerRequest: Parameters<ShellSearchProviderGateway['search']>[0] = {
-                appId: provider.appId,
-                authorization,
-                correlationId: context.correlationId,
-                query: normalizedQuery,
-                searchKey: provider.contribution.searchKey,
-              };
-              const archiveFiltered =
-                provider.descriptor.requestFilters?.includes('includeArchived') === true &&
-                searchRequest.includeArchived !== undefined
-                  ? { ...providerRequest, includeArchived: searchRequest.includeArchived }
-                  : providerRequest;
-              const roleFiltered =
-                provider.descriptor.requestFilters?.includes('role') === true &&
-                searchRequest.role !== undefined
-                  ? { ...archiveFiltered, role: searchRequest.role }
-                  : archiveFiltered;
-              return gateway.search(roleFiltered);
-            }),
-          )
-          .pipe(
-            Effect.flatMap((values) =>
-              Effect.try({
-                catch: unavailable,
-                try: () =>
-                  values.map((value) =>
-                    normalizeProviderResult(
-                      Schema.decodeUnknownSync(RawShellSearchResultSchema, {
-                        onExcessProperty: 'error',
-                      })(value),
-                    ),
-                  ),
+      const attempts = yield* Effect.forEach(
+        eligible,
+        (provider) =>
+          dependencies
+            .issueAssertion({ appId: provider.appId, context })
+            .pipe(
+              Effect.flatMap((authorization) => {
+                const providerRequest: Parameters<ShellSearchProviderGateway['search']>[0] = {
+                  appId: provider.appId,
+                  authorization,
+                  correlationId: context.correlationId,
+                  query: normalizedQuery,
+                  searchKey: provider.contribution.searchKey,
+                };
+                const archiveFiltered =
+                  provider.descriptor.requestFilters?.includes('includeArchived') === true &&
+                  searchRequest.includeArchived !== undefined
+                    ? { ...providerRequest, includeArchived: searchRequest.includeArchived }
+                    : providerRequest;
+                const roleFiltered =
+                  provider.descriptor.requestFilters?.includes('role') === true &&
+                  searchRequest.role !== undefined
+                    ? { ...archiveFiltered, role: searchRequest.role }
+                    : archiveFiltered;
+                return gateway.search(roleFiltered);
               }),
+            )
+            .pipe(
+              Effect.flatMap((values) =>
+                Effect.try({
+                  catch: unavailable,
+                  try: () =>
+                    values.map((value) =>
+                      normalizeProviderResult(
+                        Schema.decodeUnknownSync(RawShellSearchResultSchema, {
+                          onExcessProperty: 'error',
+                        })(value),
+                      ),
+                    ),
+                }),
+              ),
+              capture,
+              Effect.map((result) => ({ provider, result })),
             ),
-            capture,
-            Effect.map((result) => ({ provider, result })),
-          ),
+        { concurrency: 4 },
       );
       const succeeded = attempts.filter(({ result }) => result.ok);
       if (succeeded.length === 0) {
