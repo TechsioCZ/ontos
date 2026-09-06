@@ -2,7 +2,7 @@
 /* eslint-disable max-classes-per-file -- The validated service and its configuration error form one boundary. */
 import { APP_ENV_PATH } from '@app/core-runtime/workspace-environment';
 import { config as loadDotenv } from 'dotenv';
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Layer, Redacted, Schema } from 'effect';
 
 export class AuthConfigError extends Schema.TaggedError<AuthConfigError>()('AuthConfigError', {
   reason: Schema.String,
@@ -14,8 +14,8 @@ type Environment = Readonly<Record<string, string | undefined>>;
 
 export interface AuthConfigValue {
   readonly baseUrl: string;
-  readonly connectionString: string;
-  readonly secret: string;
+  readonly connectionString: Redacted.Redacted<string>;
+  readonly secret: Redacted.Redacted<string>;
   readonly secureCookies: boolean;
   readonly supportUserIds: readonly string[];
   readonly trustedOrigins: readonly string[];
@@ -86,8 +86,8 @@ export const parseAuthConfig = (
 
       return {
         baseUrl,
-        connectionString,
-        secret,
+        connectionString: Redacted.make(connectionString),
+        secret: Redacted.make(secret),
         secureCookies,
         supportUserIds,
         trustedOrigins,

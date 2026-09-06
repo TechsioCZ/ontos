@@ -5,7 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { v1 } from '@authzed/authzed-node';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import {
   ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID,
   ActionAuthorizationProvisioningError,
@@ -77,14 +77,14 @@ const developmentConfiguration: SpiceDbConfigValue = {
   deploymentEnvironment: 'development',
   endpoint: 'localhost:50051',
   insecureLocal: true,
-  preSharedKey: 'not-a-real-secret',
+  preSharedKey: Redacted.make('not-a-real-secret'),
 };
 
 const stageConfiguration: SpiceDbConfigValue = {
   deploymentEnvironment: 'stage',
   endpoint: 'spicedb:50051',
   insecureLocal: true,
-  preSharedKey: 'not-a-real-secret',
+  preSharedKey: Redacted.make('not-a-real-secret'),
 };
 
 const response = (permissionship: v1.CheckPermissionResponse_Permissionship) =>

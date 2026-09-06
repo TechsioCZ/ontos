@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { getTableConfig, pgSchema, text, uuid } from 'drizzle-orm/pg-core';
-import { Effect, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 import { Pool } from 'pg';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import {
@@ -73,8 +73,11 @@ void test('declares the composite same-tenant parent keys used by isolation fore
 
 void test('runtime RLS isolates tenant and legal-entity rows and never leaks transaction scope', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
-  const admin = new Pool({ connectionString: connections.admin.connectionString });
-  const runtime = new Pool({ connectionString: connections.runtime.connectionString, max: 1 });
+  const admin = new Pool({ connectionString: Redacted.value(connections.admin.connectionString) });
+  const runtime = new Pool({
+    connectionString: Redacted.value(connections.runtime.connectionString),
+    max: 1,
+  });
   const schema = `isolation_${randomUUID().replaceAll('-', '')}`;
   const tenantA = randomUUID();
   const tenantB = randomUUID();
@@ -201,8 +204,10 @@ void test('runtime RLS isolates tenant and legal-entity rows and never leaks tra
 
 void test('an unscoped owner repository remains isolated inside a governed read transaction', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
-  const admin = new Pool({ connectionString: connections.admin.connectionString });
-  const runtimePool = new Pool({ connectionString: connections.runtime.connectionString });
+  const admin = new Pool({ connectionString: Redacted.value(connections.admin.connectionString) });
+  const runtimePool = new Pool({
+    connectionString: Redacted.value(connections.runtime.connectionString),
+  });
   const runtimeDatabase = drizzle({ client: runtimePool, relations: coreRelations });
   const schemaName = `governed_isolation_${randomUUID().replaceAll('-', '')}`;
   const ownerSchema = pgSchema(schemaName);
@@ -417,7 +422,7 @@ void test('an unscoped owner repository remains isolated inside a governed read 
 
 void test('PostgreSQL rejects cross-tenant entity, principal, and Action references', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
-  const admin = new Pool({ connectionString: connections.admin.connectionString });
+  const admin = new Pool({ connectionString: Redacted.value(connections.admin.connectionString) });
   const client = await admin.connect();
   const tenantA = randomUUID();
   const tenantB = randomUUID();

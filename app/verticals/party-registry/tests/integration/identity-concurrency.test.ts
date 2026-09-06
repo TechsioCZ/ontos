@@ -4,7 +4,7 @@ import test from 'node:test';
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import { Pool } from 'pg';
 import { normalizeOfficialIdentifier } from '../../shared/domain/identifier-contracts.ts';
 import {
@@ -30,8 +30,13 @@ const principalId = 'bc200000-0000-4000-8000-000000000001';
 
 test('real PostgreSQL identity locks serialize concurrent exact creates and repeated identifier acceptance', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
-  const adminPool = new Pool({ connectionString: connections.admin.connectionString });
-  const runtimePool = new Pool({ connectionString: connections.runtime.connectionString, max: 2 });
+  const adminPool = new Pool({
+    connectionString: Redacted.value(connections.admin.connectionString),
+  });
+  const runtimePool = new Pool({
+    connectionString: Redacted.value(connections.runtime.connectionString),
+    max: 2,
+  });
   const admin = drizzle({ client: adminPool, relations: partyRelations });
   const runtime = drizzle({ client: runtimePool, relations: partyRelations });
   const cleanup = async () => {

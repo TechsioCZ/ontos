@@ -14,7 +14,7 @@ import { apiKey } from '@better-auth/api-key';
 import { APIError, betterAuth } from 'better-auth';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { admin } from 'better-auth/plugins';
-import { Context, Effect, Layer, Schema, Predicate, Result } from 'effect';
+import { Context, Effect, Layer, Schema, Predicate, Redacted, Result } from 'effect';
 import { AuthConfig } from './config.ts';
 import type { AuthConfigValue } from './config.ts';
 import { AuthDatabase } from './db/client.ts';
@@ -419,7 +419,7 @@ export const makeAuthenticationService = (
         allowImpersonatingAdmins: false,
       }),
     ],
-    secret: configuration.secret,
+    secret: Redacted.value(configuration.secret),
     session: {
       additionalFields: {
         activeLegalEntityId: {

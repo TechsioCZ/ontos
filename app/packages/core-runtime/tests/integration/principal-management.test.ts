@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import { Pool } from 'pg';
 import {
   bindApiKey,
@@ -19,7 +19,7 @@ void test('persists managed key lifecycle without credential material and enforc
   const tenantId = randomUUID();
   const providerKeyId = `better-auth-principal-management-${randomUUID()}`;
   const configuration = await Effect.runPromise(loadDatabaseConfig());
-  const pool = new Pool({ connectionString: configuration.connectionString });
+  const pool = new Pool({ connectionString: Redacted.value(configuration.connectionString) });
   const database = drizzle({ client: pool, relations: coreRelations });
   const cleanup = async () => {
     await database

@@ -5,7 +5,7 @@ import {
   PrincipalBindingMissingError,
   PrincipalResolverUnavailableError,
 } from '../../../../packages/core-runtime/src/auth/principal-resolver-errors.ts';
-import { Cause, Context, Effect, Exit } from 'effect';
+import { Cause, Context, Effect, Exit, Redacted } from 'effect';
 import type { AuthDatabaseExecutor } from '../../api/auth/db/types.ts';
 import { makePrincipalResolverDouble } from '../support/identity-service-doubles.ts';
 
@@ -38,8 +38,8 @@ rstest.mock('better-auth', () => ({
 
 const configuration = {
   baseUrl: 'http://localhost:3020',
-  connectionString: 'unused',
-  secret: 'test-only-secret-not-used-by-provider-mock',
+  connectionString: Redacted.make('unused'),
+  secret: Redacted.make('test-only-secret-not-used-by-provider-mock'),
   secureCookies: false,
   supportUserIds: [],
   trustedOrigins: [],

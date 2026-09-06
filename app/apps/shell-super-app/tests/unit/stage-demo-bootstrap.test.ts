@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
+import { inspect } from 'node:util';
 import { expect, test } from '@rstest/core';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import {
   STAGE_DEMO_ACCOUNTS,
   classifyExactStageDemoRecord,
@@ -20,23 +21,39 @@ const validEnvironment = {
 } as const;
 
 test('accepts the complete stage-only demo bootstrap configuration', () => {
-  expect(Effect.runSync(parseStageDemoBootstrapConfig(validEnvironment))).toEqual({
-    accounts: [
-      {
-        email: 'demo@test.com',
-        password: 'test-only-bootstrap-password',
-        principalDisplayName: 'Techsio Demo',
-      },
-      {
-        email: 'siampark01@test.com',
-        password: 'test-only-siampark-password',
-        principalDisplayName: 'Siampark 01',
-      },
-    ],
-    authBaseUrl: 'https://shell.stage.example.test',
-    authSecret: 'stage-auth-secret-with-at-least-32-characters',
-    databaseAdminUrl: 'postgresql://db:password@db:5432/db',
-  });
+  const configuration = Effect.runSync(parseStageDemoBootstrapConfig(validEnvironment));
+  expect(
+    configuration.accounts.map(({ email, principalDisplayName }) => ({
+      email,
+      principalDisplayName,
+    })),
+  ).toEqual([
+    {
+      email: 'demo@test.com',
+      principalDisplayName: 'Techsio Demo',
+    },
+    {
+      email: 'siampark01@test.com',
+      principalDisplayName: 'Siampark 01',
+    },
+  ]);
+  expect(configuration.authBaseUrl).toBe('https://shell.stage.example.test');
+  expect(Redacted.value(configuration.databaseAdminUrl)).toBe(
+    'postgresql://db:password@db:5432/db',
+  );
+  expect(Redacted.isRedacted(configuration.authSecret)).toBe(true);
+  expect(Redacted.value(configuration.authSecret)).toBe(
+    'stage-auth-secret-with-at-least-32-characters',
+  );
+  expect(configuration.accounts.every(({ password }) => Redacted.isRedacted(password))).toBe(true);
+  expect(Redacted.value(configuration.accounts[0].password)).toBe('test-only-bootstrap-password');
+  expect(Redacted.value(configuration.accounts[1].password)).toBe('test-only-siampark-password');
+  expect(JSON.stringify(configuration)).not.toMatch(
+    /stage-auth-secret-with-at-least-32-characters|test-only-bootstrap-password|test-only-siampark-password/u,
+  );
+  expect(inspect(configuration)).not.toMatch(
+    /stage-auth-secret-with-at-least-32-characters|test-only-bootstrap-password|test-only-siampark-password/u,
+  );
 });
 
 test('defines both exact stage accounts without storing their passwords', () => {

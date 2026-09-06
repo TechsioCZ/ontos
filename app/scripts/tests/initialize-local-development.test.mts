@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { Effect } from 'effect';
+import { inspect } from 'node:util';
+import { Effect, Redacted } from 'effect';
 import type { deriveOntosModuleDeploymentContract } from '../generate-ontos-module-contract.mts';
 import {
   LOCAL_DEVELOPMENT_CONTEXT,
@@ -32,7 +33,26 @@ test('accepts only a development configuration with local service endpoints', as
     parseLocalDevelopmentConfiguration(localEnvironment),
   );
   assert.equal(configuration.email, LOCAL_DEVELOPMENT_CONTEXT.email);
-  assert.equal(configuration.databaseAdminUrl, localEnvironment.DATABASE_ADMIN_URL);
+  assert.ok(Redacted.isRedacted(configuration.authSecret));
+  assert.equal(Redacted.value(configuration.authSecret), localEnvironment.BETTER_AUTH_SECRET);
+  assert.ok(Redacted.isRedacted(configuration.password));
+  assert.equal(Redacted.value(configuration.password), LOCAL_DEVELOPMENT_CONTEXT.password);
+  assert.doesNotMatch(
+    JSON.stringify(configuration),
+    /a-local-secret-with-at-least-32-characters|password1234/u,
+  );
+  assert.doesNotMatch(
+    inspect(configuration),
+    /a-local-secret-with-at-least-32-characters|password1234/u,
+  );
+  assert.ok(Redacted.isRedacted(configuration.databaseAdminUrl));
+  assert.equal(Redacted.value(configuration.databaseAdminUrl), localEnvironment.DATABASE_ADMIN_URL);
+  assert.ok(Redacted.isRedacted(configuration.spiceDbPreSharedKey));
+  assert.equal(
+    Redacted.value(configuration.spiceDbPreSharedKey),
+    localEnvironment.SPICEDB_PRESHARED_KEY,
+  );
+  assert.doesNotMatch(JSON.stringify(configuration), /local-spicedb-key/u);
 
   for (const environment of [
     { ...localEnvironment, ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage' },

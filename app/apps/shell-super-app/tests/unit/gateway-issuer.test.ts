@@ -1,9 +1,16 @@
 import { expect, test } from '@rstest/core';
 import { Effect } from 'effect';
-import { decodeJwt, decodeProtectedHeader, exportJWK, generateKeyPair, jwtVerify } from 'jose';
+import {
+  decodeJwt,
+  decodeProtectedHeader,
+  exportJWK,
+  generateKeyPair,
+  importJWK,
+  jwtVerify,
+} from 'jose';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';
-import { issueGatewayContextAssertion } from '../../api/auth/gateway-issuer.ts';
+import { issueGatewayContextAssertion, makeGatewayIssuer } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerDependencies } from '../../api/auth/gateway-issuer.ts';
 
 const withOptionalProperty = <
@@ -100,6 +107,129 @@ test('signs exact five-minute, audience-scoped EdDSA claims with the configured 
   expect(JSON.stringify(claims)).not.toMatch(
     /email|displayName|credential|cookie|sessionToken|actionKey|permission|policy|businessPayload/u,
   );
+});
+
+test('loads configuration for every issuance and shares concurrent signing-key imports', async () => {
+  const { configuration } = await makeConfiguration();
+  let loadConfigCount = 0;
+  let importCount = 0;
+  const importSigningKey = async (privateJwk: GatewayIssuerConfigValue['privateJwk']) => {
+    importCount += 1;
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    return await importJWK(privateJwk, 'EdDSA');
+  };
+  const issue = makeGatewayIssuer(
+    dependencies(configuration, {
+      loadConfig: Effect.sync(() => {
+        loadConfigCount += 1;
+        return configuration;
+      }),
+    }),
+    importSigningKey,
+  );
+
+  const results = await Promise.all(
+    Array.from({ length: 8 }, () =>
+      Effect.runPromise(issue({ audience: 'property-registry', principal })),
+    ),
+  );
+
+  expect(results.length).toBe(8);
+  expect(loadConfigCount).toBe(8);
+  expect(importCount).toBe(1);
+});
+
+test('replaces the signing key cache when the configured JWK rotates', async () => {
+  const { configuration: initialConfiguration, publicKey: initialPublicKey } =
+    await makeConfiguration();
+  const { configuration: generatedRotatedConfiguration, publicKey: rotatedPublicKey } =
+    await makeConfiguration();
+  const rotatedConfiguration = {
+    ...generatedRotatedConfiguration,
+    privateJwk: {
+      ...generatedRotatedConfiguration.privateJwk,
+      kid: 'rotated-2026-09',
+    },
+  };
+  let loadConfigCount = 0;
+  const importedKids: string[] = [];
+  const issue = makeGatewayIssuer(
+    dependencies(initialConfiguration, {
+      loadConfig: Effect.sync(() => {
+        loadConfigCount += 1;
+        return loadConfigCount === 1 ? initialConfiguration : rotatedConfiguration;
+      }),
+    }),
+    async (privateJwk) => {
+      importedKids.push(privateJwk.kid);
+      return await importJWK(privateJwk, 'EdDSA');
+    },
+  );
+
+  const initialResult = await Effect.runPromise(
+    issue({ audience: 'property-registry', principal }),
+  );
+  const rotatedResult = await Effect.runPromise(
+    issue({ audience: 'property-registry', principal }),
+  );
+  const initialHeader = decodeProtectedHeader(initialResult.token);
+  const rotatedHeader = decodeProtectedHeader(rotatedResult.token);
+
+  await jwtVerify(initialResult.token, initialPublicKey, {
+    algorithms: ['EdDSA'],
+    audience: 'property-registry',
+    currentDate: new Date(1_700_000_001_000),
+    issuer,
+  });
+  await jwtVerify(rotatedResult.token, rotatedPublicKey, {
+    algorithms: ['EdDSA'],
+    audience: 'property-registry',
+    currentDate: new Date(1_700_000_001_000),
+    issuer,
+  });
+
+  expect(loadConfigCount).toBe(2);
+  expect(importedKids).toEqual([
+    initialConfiguration.privateJwk.kid,
+    rotatedConfiguration.privateJwk.kid,
+  ]);
+  expect(rotatedHeader.kid).toBe(rotatedConfiguration.privateJwk.kid);
+  expect(rotatedHeader.kid).not.toBe(initialHeader.kid);
+});
+
+test('does not cache configuration or signing failures', async () => {
+  const { configuration } = await makeConfiguration();
+  let loadConfigCount = 0;
+  let importCount = 0;
+  const issue = makeGatewayIssuer(
+    dependencies(configuration, {
+      loadConfig: Effect.suspend(() => {
+        loadConfigCount += 1;
+        return loadConfigCount === 1 ? parseGatewayIssuerConfig({}) : Effect.succeed(configuration);
+      }),
+    }),
+    async (privateJwk) => {
+      importCount += 1;
+      if (importCount === 1) {
+        throw new Error('transient signing-key import failure');
+      }
+      return await importJWK(privateJwk, 'EdDSA');
+    },
+  );
+
+  const configurationError = await Effect.runPromise(
+    Effect.flip(issue({ audience: 'property-registry', principal })),
+  );
+  const signingError = await Effect.runPromise(
+    Effect.flip(issue({ audience: 'property-registry', principal })),
+  );
+  const result = await Effect.runPromise(issue({ audience: 'property-registry', principal }));
+
+  expect(configurationError.stage).toBe('configuration');
+  expect(signingError.stage).toBe('signing');
+  expect(result.token.length).toBeGreaterThan(0);
+  expect(loadConfigCount).toBe(3);
+  expect(importCount).toBe(2);
 });
 
 test('fails closed for unknown audiences and invalid Effect-managed time', async () => {

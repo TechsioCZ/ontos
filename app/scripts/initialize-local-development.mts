@@ -12,7 +12,7 @@ import { config as loadDotenv } from 'dotenv';
 import { and, eq, or } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { Effect, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 import { Pool } from 'pg';
 import {
   account,
@@ -61,14 +61,14 @@ export const LOCAL_DEVELOPMENT_VERTICALS = Object.freeze(['contacts'] as const);
 
 export interface LocalDevelopmentConfiguration {
   readonly authBaseUrl: string;
-  readonly authSecret: string;
-  readonly databaseAdminUrl: string;
+  readonly authSecret: Redacted.Redacted<string>;
+  readonly databaseAdminUrl: Redacted.Redacted<string>;
   readonly email: string;
-  readonly password: string;
+  readonly password: Redacted.Redacted<string>;
   readonly principalDisplayName: string;
   readonly spiceDbEndpoint: string;
   readonly spiceDbInsecureLocal: boolean;
-  readonly spiceDbPreSharedKey: string;
+  readonly spiceDbPreSharedKey: Redacted.Redacted<string>;
 }
 
 export interface LocalDevelopmentRelationship {
@@ -177,10 +177,10 @@ export const parseLocalDevelopmentConfiguration = (
     }
     return {
       authBaseUrl: assertLoopbackHttpOrigin(required(environment, 'BETTER_AUTH_URL')),
-      authSecret,
+      authSecret: Redacted.make(authSecret),
       databaseAdminUrl: databasePair.admin.connectionString,
       email: LOCAL_DEVELOPMENT_CONTEXT.email,
-      password: LOCAL_DEVELOPMENT_CONTEXT.password,
+      password: Redacted.make(LOCAL_DEVELOPMENT_CONTEXT.password),
       principalDisplayName: LOCAL_DEVELOPMENT_CONTEXT.principalDisplayName,
       spiceDbEndpoint: spiceDb.endpoint,
       spiceDbInsecureLocal: spiceDb.insecureLocal,
@@ -368,7 +368,10 @@ const ensureAuthUser = async (
     if (
       credential?.password === null ||
       credential?.password === undefined ||
-      !(await verifyPassword({ hash: credential.password, password: configuration.password }))
+      !(await verifyPassword({
+        hash: credential.password,
+        password: Redacted.value(configuration.password),
+      }))
     ) {
       throw failure('local_conflict', 'The existing local user has conflicting credentials');
     }
@@ -384,13 +387,13 @@ const ensureAuthUser = async (
     emailAndPassword: { autoSignIn: false, disableSignUp: true, enabled: true },
     logger: { disabled: true },
     plugins: [admin()],
-    secret: configuration.authSecret,
+    secret: Redacted.value(configuration.authSecret),
   });
   const created = await authentication.api.createUser({
     body: {
       email: configuration.email,
       name: configuration.principalDisplayName,
-      password: configuration.password,
+      password: Redacted.value(configuration.password),
     },
   });
   return { status: 'created', userId: created.user.id };
@@ -580,7 +583,7 @@ const touchRelationships = async (
     preSharedKey: configuration.spiceDbPreSharedKey,
   };
   const client = v1.NewClient(
-    configuration.spiceDbPreSharedKey,
+    Redacted.value(configuration.spiceDbPreSharedKey),
     configuration.spiceDbEndpoint,
     spiceDbClientSecurity(spiceDbConfiguration),
   );
@@ -655,7 +658,7 @@ export const initializeLocalDevelopment = (
               'The local Better Auth user could not be reconciled',
             ),
       try: async () => {
-        const pool = new Pool({ connectionString: configuration.databaseAdminUrl });
+        const pool = new Pool({ connectionString: Redacted.value(configuration.databaseAdminUrl) });
         try {
           const authDatabase = drizzle({ client: pool, relations: authRelations });
           return await ensureAuthUser(configuration, authDatabase);
@@ -670,7 +673,7 @@ export const initializeLocalDevelopment = (
           ? cause
           : failure('local_persistence_failed', 'The local Core context could not be reconciled'),
       try: async () => {
-        const pool = new Pool({ connectionString: configuration.databaseAdminUrl });
+        const pool = new Pool({ connectionString: Redacted.value(configuration.databaseAdminUrl) });
         try {
           const coreDatabase = drizzle({ client: pool, relations: coreRelations });
           await reconcileCoreContext(coreDatabase, authUser.userId, moduleIds);

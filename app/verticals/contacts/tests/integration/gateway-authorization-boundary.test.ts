@@ -7,7 +7,7 @@ import { GatewayAssertionReplayError, loadDatabaseConnectionPair } from '@app/co
 import { GATEWAY_ASSERTION_TTL_SECONDS, GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { Pool } from 'pg';
 import { verifyActionPrincipal } from '../../api/auth/action-principal.ts';
@@ -136,7 +136,7 @@ for (const credential of ['session', 'api_key'] as const) {
 
 test('owner-local redemption atomically rejects replay and prunes expired rows', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
-  const pool = new Pool({ connectionString: connections.admin.connectionString });
+  const pool = new Pool({ connectionString: Redacted.value(connections.admin.connectionString) });
   const database = drizzle({ client: pool, relations: contactsRelations });
   const redemption = makeGatewayAssertionRedemption(database);
   const databaseIssuer = 'https://shell.redemption-cleanup.test';

@@ -793,7 +793,8 @@ export const makeActionRuntime = (
         })
         .pipe(
           Effect.tapError((error) =>
-            Effect.annotateLogs(Effect.logError(error.reason), {
+            Effect.annotateLogs(Effect.logError('Action permission check failed', error), {
+              errorTag: 'ActionPermissionCheckError',
               actionKey: input.registration.descriptor.actionKey,
               correlationId: transport.correlationId,
               invocationId: invocation.actionInvocationId,
@@ -896,6 +897,7 @@ export const makeActionRuntime = (
         yield* Effect.annotateLogs(
           Effect.logError('Unexpected Action Policy evaluation failure', policyExit.cause),
           {
+            errorTag: 'ActionPolicyEvaluationError',
             actionKey: input.registration.descriptor.actionKey,
             correlationId: transport.correlationId,
             invocationId: invocation.actionInvocationId,
@@ -1037,6 +1039,7 @@ export const makeActionRuntime = (
         yield* Effect.annotateLogs(
           Effect.logError('Unexpected Action transaction failure', failure.value.original),
           {
+            errorTag: 'ActionTransactionError',
             actionKey: input.registration.descriptor.actionKey,
             correlationId: transport.correlationId,
             invocationId: invocation.actionInvocationId,
@@ -1045,10 +1048,10 @@ export const makeActionRuntime = (
       }
 
       if (handlerDefectCause !== undefined) {
-        // The bridge surfaces handler defects as a typed transaction failure; log the original Cause here.
         yield* Effect.annotateLogs(
           Effect.logError('Unexpected Action execution defect', handlerDefectCause),
           {
+            failureKind: 'execution_defect',
             actionKey: input.registration.descriptor.actionKey,
             correlationId: transport.correlationId,
             invocationId: invocation.actionInvocationId,
@@ -1061,6 +1064,7 @@ export const makeActionRuntime = (
           yield* Effect.annotateLogs(
             Effect.logError('Unexpected Action execution defect', defectCause),
             {
+              failureKind: 'execution_defect',
               actionKey: input.registration.descriptor.actionKey,
               correlationId: transport.correlationId,
               invocationId: invocation.actionInvocationId,
@@ -1076,6 +1080,7 @@ export const makeActionRuntime = (
           yield* Effect.annotateLogs(
             Effect.logError('Unexpected Action execution defect', defectCause),
             {
+              failureKind: 'execution_defect',
               actionKey: input.registration.descriptor.actionKey,
               correlationId: transport.correlationId,
               invocationId: invocation.actionInvocationId,

@@ -8,6 +8,7 @@ import type {
   HttpClientError,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
+import { Redacted } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import { contactsApi, contactsApiContract, contactsOperationContexts } from '../../shared/api.ts';
 import type {
@@ -51,7 +52,7 @@ export interface ContactsMutationOptions extends ContactsOperationOptions {
 }
 
 interface ContactsClientAuthorization {
-  readonly authorization: string;
+  readonly authorization: Redacted.Redacted<string>;
   readonly correlationId: string;
   readonly traceId?: string;
 }
@@ -62,8 +63,8 @@ interface ContactsClientRequestContext {
   traceparent?: string;
 }
 
-interface ContactsClientHeaders extends Readonly<Record<string, string | undefined>> {
-  authorization: string;
+/** Correlation metadata: plain strings that are safe to annotate, log and serialize. */
+interface ContactsCorrelationHeaders extends Readonly<Record<string, string | undefined>> {
   'x-correlation-id': string;
   'x-trace-id'?: string;
 }
@@ -89,8 +90,7 @@ const makeClient = (
   if (authentication === undefined) {
     return makeEffectHttpApiClient(contactsApi, config);
   }
-  const headers: ContactsClientHeaders = {
-    authorization: authentication.authorization,
+  const headers: ContactsCorrelationHeaders = {
     'x-correlation-id': authentication.correlationId,
   };
   if (authentication.traceId !== undefined) {
@@ -98,7 +98,14 @@ const makeClient = (
   }
   return makeEffectHttpApiClient(contactsApi, {
     ...config,
-    transformClient: HttpClient.mapRequest(HttpClientRequest.setHeaders(headers)),
+    // The outgoing header record is the single boundary that unwraps the assertion; the encoded
+    // wire header stays the same `authorization: Bearer …` string the owner deployment accepts.
+    transformClient: HttpClient.mapRequest(
+      HttpClientRequest.setHeaders({
+        ...headers,
+        authorization: Redacted.value(authentication.authorization),
+      }),
+    ),
   });
 };
 

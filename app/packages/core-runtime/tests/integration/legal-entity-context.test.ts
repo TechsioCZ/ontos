@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import { Pool } from 'pg';
 import { makeLegalEntityContext } from '../../src/auth/legal-entity-context.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
@@ -19,7 +19,7 @@ const foreign = '21000000-0000-4000-8000-000000000004';
 
 void test('lists and validates only active legal entities inside the exact tenant', async () => {
   const configuration = await Effect.runPromise(loadDatabaseConfig());
-  const pool = new Pool({ connectionString: configuration.connectionString });
+  const pool = new Pool({ connectionString: Redacted.value(configuration.connectionString) });
   const database = drizzle({ client: pool, relations: coreRelations });
   const context = makeLegalEntityContext({ executor: database });
 

@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { DateTime, Effect } from 'effect';
+import { DateTime, Effect, Redacted } from 'effect';
 import {
   makeAresAppliedEvidence,
   deriveAresEvidenceApplication,
@@ -137,7 +137,7 @@ const makeInvoker = (
   return {
     addContactPoint: () => Effect.never,
     addPartyOfficialIdentifier: (_payload, authorization) =>
-      complete(`add-party-official-identifier|${authorization}`, {
+      complete(`add-party-official-identifier|${Redacted.value(authorization)}`, {
         officialIdentifierRef: {
           moduleId: 'party.registry' as const,
           resourceId: '40000000-0000-4000-8000-000000000001',
@@ -147,7 +147,7 @@ const makeInvoker = (
         partyRef,
       }),
     updateParty: (_payload, authorization) =>
-      complete(`update-party|${authorization}`, {
+      complete(`update-party|${Redacted.value(authorization)}`, {
         archivedAt: null,
         createdAt: '2026-09-01T10:00:00.000Z',
         displayName: 'Example s.r.o.',
@@ -583,19 +583,19 @@ test('every governed read and selected Action receives fresh audience-scoped aut
   const authorized: string[] = [];
   const reads: AresApplyReads = {
     contactPoints: (payload, authorization, ...rest) => {
-      authorized.push(authorization);
+      authorized.push(Redacted.value(authorization));
       return delegate.contactPoints(payload, authorization, ...rest);
     },
     identifiers: (payload, authorization, ...rest) => {
-      authorized.push(authorization);
+      authorized.push(Redacted.value(authorization));
       return delegate.identifiers(payload, authorization, ...rest);
     },
     observation: (payload, authorization, ...rest) => {
-      authorized.push(authorization);
+      authorized.push(Redacted.value(authorization));
       return delegate.observation(payload, authorization, ...rest);
     },
     party: (payload, authorization, ...rest) => {
-      authorized.push(authorization);
+      authorized.push(Redacted.value(authorization));
       assert.equal(payload.includeFactHistory, undefined);
       return delegate.party(payload, authorization, ...rest);
     },

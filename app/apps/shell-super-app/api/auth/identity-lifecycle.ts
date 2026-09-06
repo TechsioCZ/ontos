@@ -19,7 +19,7 @@ import {
   setManagedApiKeyBindingStatusAction,
   setSelfApiKeyBindingStatusAction,
 } from '@app/core-runtime';
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Layer, Schema, Redacted } from 'effect';
 import { ApiKeyService } from './api-key-service.ts';
 import type {
   ApiKeyProviderError,
@@ -56,7 +56,7 @@ export interface ApiKeyLifecycleResult extends SafeApiKeyMetadata {
   readonly cleanupPending: boolean;
 }
 export interface ApiKeyIssueResult extends ApiKeyLifecycleResult {
-  readonly secret: string;
+  readonly secret: Redacted.Redacted<string>;
 }
 
 const lifecycleFailure = () =>

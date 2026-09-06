@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { v1 } from '@authzed/authzed-node';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Redacted } from 'effect';
 import { Pool } from 'pg';
 import { ActionRuntimeLive } from '../actions/runtime.ts';
 import { CoreDatabase } from '../db/client.ts';
@@ -60,7 +60,7 @@ export const makeLiveOperationFixture = async (configuration: {
   const pool = new Pool({ connectionString: configuration.runtimeConnectionString, max: 8 });
   const executor = drizzle({ client: pool, relations: coreRelations });
   const spice = v1.NewClient(
-    spiceDb.preSharedKey,
+    Redacted.value(spiceDb.preSharedKey),
     spiceDb.endpoint,
     v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED,
   );

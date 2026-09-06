@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import test, { after, before } from 'node:test';
 import { v1 } from '@authzed/authzed-node';
 import { and, eq } from 'drizzle-orm';
-import { Effect, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
 import { defineAction } from '../../src/actions/definition.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
@@ -179,7 +179,7 @@ const tenantMembership = (membershipTenantId: string, membershipPrincipalId: str
   });
 
 const adminClient = v1.NewClient(
-  spiceDbConfig.preSharedKey,
+  Redacted.value(spiceDbConfig.preSharedKey),
   spiceDbConfig.endpoint,
   spiceDbConfig.insecureLocal
     ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED
@@ -552,7 +552,10 @@ test('persists one normalized terminal denial and no business or collected evide
         outcomeStage: 'authz',
       },
     );
-    assert.equal(JSON.stringify(audits[0]).includes(spiceDbConfig.preSharedKey), false);
+    assert.equal(
+      JSON.stringify(audits[0]).includes(Redacted.value(spiceDbConfig.preSharedKey)),
+      false,
+    );
   });
 });
 
@@ -737,7 +740,10 @@ test('fails closed for invalid SpiceDB credentials and leaves retryable received
             }),
           ),
         ),
-      { ...spiceDbConfig, preSharedKey: 'invalid-integration-key' },
+      {
+        ...spiceDbConfig,
+        preSharedKey: Redacted.make('invalid-integration-key'),
+      },
     );
     const [invocation] = await database.executor
       .select()

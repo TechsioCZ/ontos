@@ -3,7 +3,7 @@ import {
   executeCounterpartyReadWithAuthorization,
   executePartyDetailWithAuthorization,
 } from '@app/party-registry/api/client';
-import { Config, Context, Effect, Layer } from 'effect';
+import { Config, Context, Effect, Layer, Redacted } from 'effect';
 import type { CounterpartyRef, PartyRef } from '../../../shared/party-registry-references.ts';
 import {
   EngagementProfileConflict,
@@ -47,13 +47,13 @@ export interface PartyRegistryReferenceGatewayOptions extends PartyRegistryRefer
 interface PartyRegistryReferenceGatewayDependencies {
   readonly executeCounterpartyRead: (
     ref: CounterpartyRef,
-    authorization: string,
+    authorization: Redacted.Redacted<string>,
     correlationId: string,
     baseUrl: URL,
   ) => Effect.Effect<PartyRegistryCounterpartyProjection, PartyRegistryReferenceUnavailable>;
   readonly executePartyRead: (
     ref: PartyRef,
-    authorization: string,
+    authorization: Redacted.Redacted<string>,
     correlationId: string,
     baseUrl: URL,
   ) => Effect.Effect<PartyRegistryPartyProjection, PartyRegistryReferenceUnavailable>;
@@ -129,7 +129,7 @@ const acquireAuthorization = (
         ? { baseUrl: options.gatewayBaseUrl }
         : { baseUrl: options.gatewayBaseUrl, cookie: options.cookie },
     )
-    .pipe(Effect.map(({ token }) => `Bearer ${token}`));
+    .pipe(Effect.map(({ token }) => Redacted.make(`Bearer ${token}`)));
 
 /** Builds validation operations exclusively from Party Registry's published contract-derived client. */
 export const makePartyRegistryReferenceOperations = (

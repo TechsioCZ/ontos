@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 import type { executePartyDetailWithAuthorization } from '@app/party-registry/api/client';
 import {
   OrganizationEngagementProfileSchema,
@@ -335,7 +335,9 @@ test('mints fresh Party assertions without reusing the Contacts bearer', async (
     {
       executeCounterpartyRead: (ref, authorization, correlationId, baseUrl) => {
         receivedBaseUrls.push(baseUrl.href);
-        receivedAuthorizations.push(authorization);
+        assert.equal(String(authorization), '<redacted>');
+        assert.equal(JSON.stringify({ authorization }), '{"authorization":"<redacted>"}');
+        receivedAuthorizations.push(Redacted.value(authorization));
         receivedCorrelationIds.push(correlationId);
         return Effect.succeed({
           counterpartyRef: ref,
@@ -345,7 +347,9 @@ test('mints fresh Party assertions without reusing the Contacts bearer', async (
       },
       executePartyRead: (ref, authorization, correlationId, baseUrl) => {
         receivedBaseUrls.push(baseUrl.href);
-        receivedAuthorizations.push(authorization);
+        assert.equal(String(authorization), '<redacted>');
+        assert.equal(JSON.stringify({ authorization }), '{"authorization":"<redacted>"}');
+        receivedAuthorizations.push(Redacted.value(authorization));
         receivedCorrelationIds.push(correlationId);
         return Effect.succeed({
           archived: false,

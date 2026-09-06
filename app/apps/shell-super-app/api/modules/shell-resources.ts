@@ -9,7 +9,7 @@ import type {
   TrustedPrincipalContext,
 } from '@app/core-runtime';
 import { decideModuleStateAccess } from '@app/core-runtime';
-import { Context, Effect, Exit, Layer, Schema } from 'effect';
+import { Context, Effect, Exit, Layer, Redacted, Schema } from 'effect';
 
 const stableKey = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 
@@ -146,13 +146,13 @@ export interface ShellProviderAssertionIssuer {
   readonly issueAssertion: (input: {
     readonly appId: string;
     readonly context: ShellResourceContext;
-  }) => Effect.Effect<string, ShellProviderUnavailableError>;
+  }) => Effect.Effect<Redacted.Redacted<string>, ShellProviderUnavailableError>;
 }
 
 export interface ShellSearchProviderGateway {
   readonly search: (input: {
     readonly appId: string;
-    readonly authorization: string;
+    readonly authorization: Redacted.Redacted<string>;
     readonly correlationId: string;
     readonly includeArchived?: boolean;
     readonly query: string;
@@ -165,14 +165,14 @@ export interface ShellResourceProviderGateway {
   readonly detail: (input: {
     readonly apiKey: string;
     readonly appId: string;
-    readonly authorization: string;
+    readonly authorization: Redacted.Redacted<string>;
     readonly correlationId: string;
     readonly ref: ResourceRef;
   }) => Effect.Effect<unknown, ShellProviderUnavailableError>;
   readonly timeline: (input: {
     readonly apiKey: string;
     readonly appId: string;
-    readonly authorization: string;
+    readonly authorization: Redacted.Redacted<string>;
     readonly correlationId: string;
     readonly ref: ResourceRef;
   }) => Effect.Effect<

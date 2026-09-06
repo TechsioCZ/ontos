@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { and, eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect, Predicate } from 'effect';
+import { Effect, Predicate, Redacted } from 'effect';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import { Pool } from 'pg';
 import {
@@ -55,8 +55,12 @@ const cookieHeader = (setCookieHeaders: readonly string[]): string => {
 
 void test('verifies provider keys and completes live support impersonation with durable stopped evidence', async (context) => {
   const baseConfiguration = await Effect.runPromise(loadAuthConfig());
-  const authPool = new Pool({ connectionString: baseConfiguration.connectionString });
-  const corePool = new Pool({ connectionString: baseConfiguration.connectionString });
+  const authPool = new Pool({
+    connectionString: Redacted.value(baseConfiguration.connectionString),
+  });
+  const corePool = new Pool({
+    connectionString: Redacted.value(baseConfiguration.connectionString),
+  });
   const authDatabase = drizzle({ client: authPool, relations: authRelations });
   const coreDatabase = drizzle({ client: corePool, relations: coreRelations });
   const tenantId = randomUUID();
@@ -317,7 +321,7 @@ void test('verifies provider keys and completes live support impersonation with 
         requestHeaders: originalHeaders,
       }),
     );
-    const verified = await Effect.runPromise(keys.verify(issued.secret));
+    const verified = await Effect.runPromise(keys.verify(Redacted.value(issued.secret)));
     const apiKeyAuthBindingId = issued.authBindingId;
     const apiKeyIdentity = await Effect.runPromise(
       resolver.resolveBetterAuthApiKey(verified.providerKeyId),
@@ -371,7 +375,10 @@ void test('verifies provider keys and completes live support impersonation with 
       principalId: originalPrincipalId,
       tenantId,
     });
-    assert.equal(JSON.stringify(verifiedAssertion.payload).includes(issued.secret), false);
+    assert.equal(
+      JSON.stringify(verifiedAssertion.payload).includes(Redacted.value(issued.secret)),
+      false,
+    );
     await Effect.runPromise(
       actionRuntime.runAction({
         payload: { displayName: 'API-key evidence target', kind: 'service' },
@@ -387,7 +394,9 @@ void test('verifies provider keys and completes live support impersonation with 
       }),
     );
     await Effect.runPromise(keys.setEnabled(verified.providerKeyId, false));
-    const invalidKey = await Effect.runPromise(Effect.flip(keys.verify(issued.secret)));
+    const invalidKey = await Effect.runPromise(
+      Effect.flip(keys.verify(Redacted.value(issued.secret))),
+    );
     assert.equal(invalidKey._tag, 'ApiKeyCredentialInvalidError');
 
     const managedPrincipal = await Effect.runPromise(

@@ -18,7 +18,7 @@ import { parseCookies } from 'better-auth/cookies';
 import { constantTimeEqual, makeSignature } from 'better-auth/crypto';
 import { admin } from 'better-auth/plugins';
 import { asc, eq } from 'drizzle-orm';
-import { Clock, Context, Effect, Layer, Schema, Predicate } from 'effect';
+import { Clock, Context, Effect, Layer, Schema, Predicate, Redacted } from 'effect';
 import { AuthConfig } from './config.ts';
 import type { AuthConfigValue } from './config.ts';
 import { AuthDatabase } from './db/client.ts';
@@ -158,7 +158,7 @@ const makeSupportAuthProvider = (
         allowImpersonatingAdmins: false,
       }),
     ],
-    secret: configuration.secret,
+    secret: Redacted.value(configuration.secret),
     session: {
       additionalFields: {
         activeLegalEntityId: { input: true, required: false, type: 'string' },
@@ -271,7 +271,7 @@ const clearAuthCookies = (configuration: AuthConfigValue): readonly string[] =>
 const decodeSignedCookie = async (
   requestHeaders: Headers,
   cookieName: string,
-  secret: string,
+  secret: Redacted.Redacted<string>,
 ): Promise<string | undefined> => {
   const encoded = parseCookies(requestHeaders.get('cookie') ?? '').get(cookieName);
   if (encoded === undefined) {
@@ -283,11 +283,14 @@ const decodeSignedCookie = async (
   }
   const value = encoded.slice(0, separator);
   const signature = encoded.slice(separator + 1);
-  const expected = await makeSignature(value, secret);
+  const expected = await makeSignature(value, Redacted.value(secret));
   return constantTimeEqual(signature, expected) ? value : undefined;
 };
-const encodeSignedCookie = async (value: string, secret: string): Promise<string> =>
-  encodeURIComponent(`${value}.${await makeSignature(value, secret)}`);
+const encodeSignedCookie = async (
+  value: string,
+  secret: Redacted.Redacted<string>,
+): Promise<string> =>
+  encodeURIComponent(`${value}.${await makeSignature(value, Redacted.value(secret))}`);
 
 export interface SupportImpersonationDependencies {
   readonly actionRuntime: ActionRuntimeService;

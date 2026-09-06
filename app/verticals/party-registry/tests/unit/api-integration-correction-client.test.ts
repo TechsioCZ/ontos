@@ -1,7 +1,7 @@
 // @effect-diagnostics asyncFunction:off
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 import { CorrectPartyFactPayloadSchema } from '../../shared/command-api.ts';
 import {
@@ -115,13 +115,13 @@ test('public clients discover the first assertion and submit a governed correcti
           validFrom: timestamp,
         },
       },
-      'Bearer test-assertion',
+      Redacted.make('Bearer test-assertion'),
       options,
     );
     assert.equal(created.outcome, 'CREATED');
     const before = yield* executePartyDetailWithAuthorization(
       { includeFactHistory: true, partyRef },
-      'Bearer test-assertion',
+      Redacted.make('Bearer test-assertion'),
       options.correlationId,
       options,
     );
@@ -139,13 +139,13 @@ test('public clients discover the first assertion and submit a governed correcti
         replacementValue: 'Corrected name',
         targetAssertionId: target.assertionId,
       },
-      'Bearer test-assertion',
+      Redacted.make('Bearer test-assertion'),
       { ...options, idempotencyKey: 'correct-first-assertion' },
     );
     assert.equal(correction.retractedAssertionId, target.assertionId);
     const after = yield* executePartyDetailWithAuthorization(
       { includeFactHistory: true, partyRef },
-      'Bearer test-assertion',
+      Redacted.make('Bearer test-assertion'),
       options.correlationId,
       options,
     );

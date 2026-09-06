@@ -7,7 +7,7 @@ import type {
   GatewayContextClientOptions,
   GatewayContextResponse,
 } from '@app/shared-contracts';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 
 export const ACTION_GATEWAY_AUDIENCE = 'contacts' as const;
 
@@ -17,16 +17,18 @@ export type ActionGatewayIssuer = (
 ) => GatewayContextClientEffect<GatewayContextResponse>;
 
 export type ActionGatewayAttempt<Success, Failure> = (
-  authorization: string,
+  authorization: Redacted.Redacted<string>,
 ) => Effect.Effect<Success, Failure>;
 
+// The freshly issued assertion is redacted here, at the only place it is built, so no span
+// attribute, log annotation or serialized error downstream can carry the credential.
 export const makeActionGateway = (acquire: ActionGatewayIssuer = issueGatewayContext) => ({
   invoke: <Success, Failure>(
     attempt: ActionGatewayAttempt<Success, Failure>,
     options: GatewayContextClientOptions = {},
   ) =>
     acquire({ audience: ACTION_GATEWAY_AUDIENCE }, options).pipe(
-      Effect.flatMap(({ token }) => attempt(`Bearer ${token}`)),
+      Effect.flatMap(({ token }) => attempt(Redacted.make(`Bearer ${token}`))),
     ),
 });
 

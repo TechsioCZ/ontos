@@ -3,7 +3,7 @@ import { v1 } from '@authzed/authzed-node';
 import { and, eq, or } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Redacted } from 'effect';
 import { Pool } from 'pg';
 import { parseDatabaseConfig } from '../db/config.ts';
 import {
@@ -63,7 +63,7 @@ type StageContext = (typeof STAGE_CONTEXTS)[StageContextKey];
 interface StageContextBootstrapConfiguration {
   readonly databaseAdminUrl: string;
   readonly spiceDbEndpoint: string;
-  readonly spiceDbPreSharedKey: string;
+  readonly spiceDbPreSharedKey: Redacted.Redacted<string>;
   readonly spiceDbSecurity: v1.ClientSecurity;
 }
 
@@ -373,7 +373,7 @@ const touchRelationships = async (
   context: StageContext,
 ): Promise<void> => {
   const client = v1.NewClient(
-    configuration.spiceDbPreSharedKey,
+    Redacted.value(configuration.spiceDbPreSharedKey),
     configuration.spiceDbEndpoint,
     configuration.spiceDbSecurity,
   );

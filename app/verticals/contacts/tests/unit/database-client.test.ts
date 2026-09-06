@@ -1,7 +1,7 @@
 // @effect-diagnostics asyncFunction:off
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import { acquirePoolResource, makeContactsDatabase } from '../../src/db/client.ts';
 
 test('finalizes the Contacts pool when its Effect scope closes', async () => {
@@ -26,7 +26,7 @@ test('keeps Contacts pool acquisition failure in the typed error channel', async
       Effect.scoped(
         makeContactsDatabase(
           {
-            connectionString: 'postgresql://ontos_runtime:test@localhost:5433/ontos',
+            connectionString: Redacted.make('postgresql://ontos_runtime:test@localhost:5433/ontos'),
             database: 'ontos',
             host: 'localhost',
             port: 5433,

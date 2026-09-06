@@ -102,17 +102,25 @@ const VerificationEnvironmentSchema = Schema.Struct({
 });
 
 const parseConfiguration = (environment: Readonly<Record<string, string | undefined>>) =>
-  Schema.decodeUnknownEffect(VerificationEnvironmentSchema)(environment).pipe(
-    Effect.mapError(configurationError),
-    Effect.map(({ ONTOS_GATEWAY_ISSUER: issuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks }) => ({
+  Effect.gen(function* parseConfigurationEffect() {
+    const rawJwks = environment['ONTOS_GATEWAY_PUBLIC_JWKS'];
+    if (rawJwks === undefined) {
+      return yield* Effect.fail(configurationError());
+    }
+    const { ONTOS_GATEWAY_ISSUER: issuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks } =
+      yield* Schema.decodeUnknownEffect(VerificationEnvironmentSchema)(environment).pipe(
+        Effect.mapError(configurationError),
+      );
+    return {
       issuer,
+      rawJwks,
       // JOSE receives only validated public verification material. Optional metadata and
       // operation declarations are checked above but are not needed by the verifier.
       jwks: {
         keys: jwks.keys.map(({ alg, crv, kid, kty, use, x }) => ({ alg, crv, kid, kty, use, x })),
       },
-    })),
-  );
+    };
+  });
 
 const VerificationFailureSchema = Schema.Struct({
   claim: Schema.optionalKey(Schema.String),
@@ -154,59 +162,83 @@ const readBearer = (
   return token === undefined ? Effect.fail(invalidError()) : Effect.succeed(token);
 };
 
-export const verifyActionPrincipal = (
-  authorization: string | undefined,
-  options: ActionPrincipalVerificationOptions = {},
-): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError> =>
-  Effect.gen(function* verifyActionPrincipalEffect() {
-    const token = yield* readBearer(authorization);
-    const configuration = yield* parseConfiguration(options.environment ?? {});
-    const now = yield* (
-      options.currentTimeSeconds ??
-        Clock.currentTimeMillis.pipe(Effect.map((milliseconds) => Math.floor(milliseconds / 1000)))
-    );
-    if (!Number.isSafeInteger(now) || now < 0) {
-      return yield* Effect.fail(configurationError());
-    }
-    const unverifiedHeader = yield* Effect.try({
-      // Local token parsing failures are unusable credentials, not verification outages.
-      catch: invalidError,
-      try: () => decodeProtectedHeader(token),
+/** Each verifier owns at most one validated public-key resolver, never request state. */
+export const createActionPrincipalVerifier = (
+  createResolver: typeof createLocalJWKSet = createLocalJWKSet,
+) => {
+  let cached: { rawJwks: string; resolver: ReturnType<typeof createLocalJWKSet> } | undefined;
+
+  return (
+    authorization: string | undefined,
+    options: ActionPrincipalVerificationOptions = {},
+  ): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError> =>
+    Effect.gen(function* verifyActionPrincipalEffect() {
+      const token = yield* readBearer(authorization);
+      const validated = yield* parseConfiguration(options.environment ?? {});
+      const configuration = yield* Effect.try({
+        catch: configurationError,
+        try: () => {
+          if (cached?.rawJwks !== validated.rawJwks) {
+            cached = {
+              rawJwks: validated.rawJwks,
+              resolver: createResolver(validated.jwks),
+            };
+          }
+          // Capture locally: another request may rotate the single cache entry while we yield.
+          return { issuer: validated.issuer, resolver: cached.resolver };
+        },
+      });
+      const now = yield* (
+        options.currentTimeSeconds ??
+          Clock.currentTimeMillis.pipe(
+            Effect.map((milliseconds) => Math.floor(milliseconds / 1000)),
+          )
+      );
+      if (!Number.isSafeInteger(now) || now < 0) {
+        return yield* Effect.fail(configurationError());
+      }
+      const unverifiedHeader = yield* Effect.try({
+        // Local token parsing failures are unusable credentials, not verification outages.
+        catch: invalidError,
+        try: () => decodeProtectedHeader(token),
+      });
+      const header = yield* decodeGatewayContextProtectedHeader(unverifiedHeader).pipe(
+        Effect.mapError(invalidError),
+      );
+      if (header.alg !== 'EdDSA' || header.typ !== 'JWT' || header.kid.length === 0) {
+        return yield* Effect.fail(invalidError());
+      }
+      const verified = yield* Effect.tryPromise({
+        catch: (cause) =>
+          Option.match(decodeVerificationFailure(cause), {
+            onNone: unavailableError,
+            onSome: classifyVerificationFailure,
+          }),
+        try: () =>
+          jwtVerify(token, configuration.resolver, {
+            algorithms: ['EdDSA'],
+            audience: ACTION_GATEWAY_AUDIENCE,
+            clockTolerance: GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
+            currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(now * 1000)),
+            issuer: configuration.issuer,
+          }),
+      });
+      const claims = yield* decodeGatewayContextClaims(verified.payload).pipe(
+        Effect.mapError(invalidError),
+      );
+      if (
+        claims.ver !== GATEWAY_ASSERTION_VERSION ||
+        claims.iat > now + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS
+      ) {
+        return yield* Effect.fail(invalidError());
+      }
+      return yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema, {
+        onExcessProperty: 'error',
+      })(claims.principal).pipe(Effect.mapError(invalidError));
     });
-    const header = yield* decodeGatewayContextProtectedHeader(unverifiedHeader).pipe(
-      Effect.mapError(invalidError),
-    );
-    if (header.alg !== 'EdDSA' || header.typ !== 'JWT' || header.kid.length === 0) {
-      return yield* Effect.fail(invalidError());
-    }
-    const verified = yield* Effect.tryPromise({
-      catch: (cause) =>
-        Option.match(decodeVerificationFailure(cause), {
-          onNone: unavailableError,
-          onSome: classifyVerificationFailure,
-        }),
-      try: () =>
-        jwtVerify(token, createLocalJWKSet(configuration.jwks), {
-          algorithms: ['EdDSA'],
-          audience: ACTION_GATEWAY_AUDIENCE,
-          clockTolerance: GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
-          currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(now * 1000)),
-          issuer: configuration.issuer,
-        }),
-    });
-    const claims = yield* decodeGatewayContextClaims(verified.payload).pipe(
-      Effect.mapError(invalidError),
-    );
-    if (
-      claims.ver !== GATEWAY_ASSERTION_VERSION ||
-      claims.iat > now + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS
-    ) {
-      return yield* Effect.fail(invalidError());
-    }
-    return yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema, {
-      onExcessProperty: 'error',
-    })(claims.principal).pipe(Effect.mapError(invalidError));
-  });
+};
+
+export const verifyActionPrincipal = createActionPrincipalVerifier();
 
 /** Shared trusted-identity acquisition for generated Actions and governed reads. */
 export const verifyOperationPrincipal = verifyActionPrincipal;

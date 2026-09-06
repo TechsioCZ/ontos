@@ -26,7 +26,7 @@ import type {
 } from '@app/core-runtime';
 import { defineEffectBff, HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect, Layer, Logger, Predicate, Schema } from 'effect';
+import { Effect, Layer, Logger, Predicate, Redacted, Schema } from 'effect';
 import { exportJWK, generateKeyPair } from 'jose';
 import { Pool } from 'pg';
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
@@ -47,6 +47,7 @@ import {
   SPICEDB_CHECK_TIMEOUT_MS,
   createSpiceDbPermissionClient,
 } from '../../../../packages/core-runtime/src/permissions/client.ts';
+import type { SpiceDbConfigValue } from '../../../../packages/core-runtime/src/permissions/config.ts';
 import {
   makeContextAccess,
   toLegalEntityAccessObjectId,
@@ -86,11 +87,13 @@ const withOptionalProperty = <
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
-const TEST_SPICEDB = {
+const TEST_SPICEDB: SpiceDbConfigValue = {
   endpoint: process.env['SPICEDB_ENDPOINT'] ?? 'localhost:50051',
   insecureLocal: (process.env['SPICEDB_INSECURE'] ?? 'true') === 'true',
-  preSharedKey: process.env['SPICEDB_PRESHARED_KEY'] ?? 'ontos-local-development-key',
-} as const;
+  preSharedKey: Redacted.make(
+    process.env['SPICEDB_PRESHARED_KEY'] ?? 'ontos-local-development-key',
+  ),
+};
 
 const testGatewayAssertionRedemption: GatewayAssertionRedemption = {
   consume: () => Effect.void,
@@ -429,10 +432,13 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
   const deniedResourceId = randomUUID();
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
   assert.equal(connections.runtime.user, 'ontos_runtime');
-  const admin = new Pool({ connectionString: connections.admin.connectionString });
+  const admin = new Pool({ connectionString: Redacted.value(connections.admin.connectionString) });
   // Shell and the independently deployed owner hold separate nested read transactions in this
   // in-process fixture, so the shared test pool needs more than one physical connection.
-  const runtimePool = new Pool({ connectionString: connections.runtime.connectionString, max: 4 });
+  const runtimePool = new Pool({
+    connectionString: Redacted.value(connections.runtime.connectionString),
+    max: 4,
+  });
   const runtimeDatabase = {
     executor: drizzle({ client: runtimePool, relations: coreRelations }),
   };
@@ -444,7 +450,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
   const capturedLogs: string[] = [];
   const loggerLayer = capturedLoggerLayer(capturedLogs);
   const spiceAdmin = v1.NewClient(
-    TEST_SPICEDB.preSharedKey,
+    Redacted.value(TEST_SPICEDB.preSharedKey),
     TEST_SPICEDB.endpoint,
     TEST_SPICEDB.insecureLocal
       ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED
@@ -678,7 +684,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
     const catalog = makeCatalog(contract);
     const gateway = {
       resource: {
-        detail: ({ authorization, correlationId, ref }: any) =>
+        detail: ({ authorization, correlationId, ref }) =>
           Effect.tryPromise({
             catch: () => new ShellProviderUnavailableError(),
             try: async () => {
@@ -686,7 +692,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
                 generated.detail,
                 '/reads/resource-detail',
                 { resourceId: ref.resourceId },
-                authorization,
+                Redacted.value(authorization),
                 correlationId,
               );
               if (!response.ok) {
@@ -695,7 +701,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
               return await decodeResponse(response, OwnerDetailSchema);
             },
           }),
-        timeline: ({ authorization, correlationId, ref }: any) =>
+        timeline: ({ authorization, correlationId, ref }) =>
           Effect.tryPromise({
             catch: () => new ShellProviderUnavailableError(),
             try: async () => {
@@ -703,7 +709,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
                 generated.list,
                 '/reads/resource-list',
                 { resourceId: ref.resourceId },
-                authorization,
+                Redacted.value(authorization),
                 correlationId,
               );
               if (!response.ok) {
@@ -714,7 +720,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
           }),
       },
       search: {
-        search: ({ authorization, correlationId, query }: any) =>
+        search: ({ authorization, correlationId, query }) =>
           Effect.tryPromise({
             catch: () => new ShellProviderUnavailableError(),
             try: async () => {
@@ -722,7 +728,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
                 generated.search,
                 `/${GENERATED_OWNER.moduleId}/search/records`,
                 { query },
-                authorization,
+                Redacted.value(authorization),
                 correlationId,
               );
               if (!response.ok) {
@@ -770,7 +776,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
       await Effect.runPromise(
         gateway.search.search({
           appId: GENERATED_OWNER.appId,
-          authorization: await issueAuthorization(principalA1),
+          authorization: Redacted.make(await issueAuthorization(principalA1)),
           correlationId: randomUUID(),
           query: 'searchable',
           searchKey: `${GENERATED_OWNER.moduleId}.records`,
@@ -790,7 +796,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
         issueAssertion: ({ context }) =>
           Effect.tryPromise({
             catch: () => new ShellProviderUnavailableError(),
-            try: async () => await issueProviderAuthorization(context),
+            try: async () => Redacted.make(await issueProviderAuthorization(context)),
           }),
         moduleStates,
       },
@@ -814,7 +820,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
         issueAssertion: ({ context }) =>
           Effect.tryPromise({
             catch: () => new ShellProviderUnavailableError(),
-            try: async () => await issueProviderAuthorization(context),
+            try: async () => Redacted.make(await issueProviderAuthorization(context)),
           }),
       },
       (transaction) => makeTenantModuleStateService({ executor: transaction }),

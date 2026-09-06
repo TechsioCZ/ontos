@@ -5,7 +5,7 @@ import test from 'node:test';
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { and, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import { Pool } from 'pg';
 import {
   counterparties,
@@ -70,8 +70,13 @@ const hasPostgreSqlCode = (expected: string) => {
 
 test('enforces Party owner invariants, tenant isolation, and independent fact lifecycles', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
-  const adminPool = new Pool({ connectionString: connections.admin.connectionString });
-  const runtimePool = new Pool({ connectionString: connections.runtime.connectionString, max: 1 });
+  const adminPool = new Pool({
+    connectionString: Redacted.value(connections.admin.connectionString),
+  });
+  const runtimePool = new Pool({
+    connectionString: Redacted.value(connections.runtime.connectionString),
+    max: 1,
+  });
   const admin = drizzle({ client: adminPool, relations: partyRelations });
   const runtime = drizzle({ client: runtimePool, relations: partyRelations });
 

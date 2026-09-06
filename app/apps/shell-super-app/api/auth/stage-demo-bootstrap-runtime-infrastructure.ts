@@ -7,7 +7,7 @@ import { admin } from 'better-auth/plugins';
 import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { Effect, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 import { Pool } from 'pg';
 import { account, authDatabaseSchema, authRelations, user } from './db/schema.ts';
 import {
@@ -56,7 +56,7 @@ const ensureAuthUser = async (
       credential?.password === undefined ||
       !(await verifyPassword({
         hash: credential.password,
-        password: accountConfiguration.password,
+        password: Redacted.value(accountConfiguration.password),
       }))
     ) {
       throw new StageDemoBootstrapError({
@@ -81,13 +81,13 @@ const ensureAuthUser = async (
     },
     logger: { disabled: true },
     plugins: [admin()],
-    secret: configuration.authSecret,
+    secret: Redacted.value(configuration.authSecret),
   });
   const created = await authentication.api.createUser({
     body: {
       email: accountConfiguration.email,
       name: accountConfiguration.principalDisplayName,
-      password: accountConfiguration.password,
+      password: Redacted.value(accountConfiguration.password),
     },
   });
   return { status: 'created', userId: created.user.id };
@@ -106,7 +106,7 @@ const reconcileAuthUser = (
             reason: 'The stage demo Better Auth user could not be reconciled',
           }),
     try: async () => {
-      const pool = new Pool({ connectionString: configuration.databaseAdminUrl });
+      const pool = new Pool({ connectionString: Redacted.value(configuration.databaseAdminUrl) });
       try {
         const authDatabase = drizzle({ client: pool, relations: authRelations });
         return await ensureAuthUser(configuration, accountConfiguration, authDatabase);

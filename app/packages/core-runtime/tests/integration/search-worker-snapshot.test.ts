@@ -7,7 +7,7 @@ import test from 'node:test';
 import { setTimeout } from 'node:timers/promises';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import { Pool } from 'pg';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations, domainEvents } from '../../src/db/schema.ts';
@@ -19,11 +19,13 @@ import {
 
 test('worker projection uses independent generations and one repeatable snapshot across tenant and Legal Entity scopes', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
-  const admin = new Pool({ connectionString: connections.admin.connectionString });
+  const admin = new Pool({
+    connectionString: Redacted.value(connections.admin.connectionString),
+  });
   const applicationName = `core-search-snapshot-${randomUUID()}`;
   const runtimePool = new Pool({
     application_name: applicationName,
-    connectionString: connections.runtime.connectionString,
+    connectionString: Redacted.value(connections.runtime.connectionString),
   });
   const tenantId = randomUUID();
   const legalEntityId = randomUUID();

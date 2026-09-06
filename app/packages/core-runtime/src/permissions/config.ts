@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off processEnv:off
 import { config as loadDotenv } from 'dotenv';
-import { Context, Effect, Layer } from 'effect';
+import { Context, Effect, Layer, Redacted } from 'effect';
 import { APP_ENV_PATH } from '../environment/workspace-environment.ts';
 import { SpiceDbConfigError } from './config-error.ts';
 
@@ -12,7 +12,7 @@ export interface SpiceDbConfigValue {
   readonly deploymentEnvironment?: string;
   readonly endpoint: string;
   readonly insecureLocal: boolean;
-  readonly preSharedKey: string;
+  readonly preSharedKey: Redacted.Redacted<string>;
 }
 
 export class SpiceDbConfig extends Context.Service<SpiceDbConfig, SpiceDbConfigValue>()(
@@ -134,7 +134,7 @@ export const parseSpiceDbConfig = (
   const configuration: SpiceDbConfigValue = {
     endpoint,
     insecureLocal: insecureFlag === 'true',
-    preSharedKey,
+    preSharedKey: Redacted.make(preSharedKey),
   };
   return Effect.succeed(
     deploymentEnvironment === undefined

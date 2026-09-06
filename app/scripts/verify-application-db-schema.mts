@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import { Client } from 'pg';
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 
@@ -11,7 +11,9 @@ const EXPECTED_MIGRATION_JOURNALS = [
 ] as const;
 
 const configuration = await Effect.runPromise(loadDatabaseConnectionPair());
-const client = new Client({ connectionString: configuration.admin.connectionString });
+const client = new Client({
+  connectionString: Redacted.value(configuration.admin.connectionString),
+});
 await client.connect();
 try {
   // PostgreSQL catalogs have no Drizzle table model. This verification-only query

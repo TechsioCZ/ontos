@@ -21,11 +21,19 @@ import {
   Layer,
   Schema,
 } from '@modern-js/plugin-bff/effect-edge';
+import { Redacted } from 'effect';
 import {
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_TTL_SECONDS,
 } from '../../../packages/shared-contracts/src/gateway-context.ts';
-import { SignJWT, exportJWK, generateKeyPair, generateSecret, importJWK } from 'jose';
+import {
+  SignJWT,
+  createLocalJWKSet,
+  exportJWK,
+  generateKeyPair,
+  generateSecret,
+  importJWK,
+} from 'jose';
 import type { JWK } from 'jose';
 import { issueGatewayContextAssertion } from '../../../apps/shell-super-app/api/auth/gateway-issuer.ts';
 import type { GatewayIssuerConfigValue } from '../../../apps/shell-super-app/api/auth/gateway-issuer-config.ts';
@@ -61,6 +69,15 @@ interface GeneratedPrincipalEnvironment {
   readonly ONTOS_GATEWAY_ISSUER?: string;
   readonly ONTOS_GATEWAY_PUBLIC_JWKS?: string;
 }
+
+type GeneratedPrincipalVerifier = (
+  authorization: string | undefined,
+  options: {
+    currentTimeSeconds: Effect.Effect<number>;
+    environment: GeneratedPrincipalEnvironment;
+    redemption: { readonly consume: () => Effect.Effect<void> };
+  },
+) => Effect.Effect<TrustedPrincipalContext, { readonly _tag: GeneratedPrincipalErrorTag }>;
 
 const StringRecordSchema = Schema.Record(Schema.String, Schema.String);
 const FixturePackageSchema = Schema.Struct({
@@ -663,7 +680,7 @@ test('generated read clients fetch mounted owner URLs and support separately dep
         '--input-type=module',
         '--eval',
         `
-      import { Effect } from 'effect';
+      import { Effect, Redacted } from 'effect';
       import { FetchHttpClient } from 'effect/unstable/http';
       import { executeResourceDetail, executeResourceDetailWithAuthorization } from './verticals/inventory-stock/src/api/resource-detail-client.ts';
       import { loadInventoryItemsClient, loadInventoryItemsClientWithAuthorization } from './verticals/inventory-stock/src/api/inventory-items-search-client.ts';
@@ -679,11 +696,11 @@ test('generated read clients fetch mounted owner URLs and support separately dep
           calls.push({ url: String(url), method: init.method, authorization: new Headers(init.headers).get('authorization'), correlationId: new Headers(init.headers).get('x-correlation-id') });
           return Response.json(response);
         };
-        await Effect.runPromise(invoke(payload, 'Bearer proof', 'correlation-proof', { baseUrl: new URL('https://inventory.example.test/custom/inventory-stock-api') }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch)));
+        await Effect.runPromise(invoke(payload, Redacted.make('Bearer proof'), 'correlation-proof', { baseUrl: new URL('https://inventory.example.test/custom/inventory-stock-api') }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch)));
       }
       globalThis.location = { origin: 'https://shell.example.test', pathname: '/cs/inventory' };
       for (const [invoke, payload, response] of cases) {
-        await Effect.runPromise(invoke(payload, 'Bearer proof', 'correlation-proof').pipe(Effect.provideService(FetchHttpClient.Fetch, async (url, init) => {
+        await Effect.runPromise(invoke(payload, Redacted.make('Bearer proof'), 'correlation-proof').pipe(Effect.provideService(FetchHttpClient.Fetch, async (url, init) => {
           calls.push({ url: String(url), method: init.method, authorization: new Headers(init.headers).get('authorization'), correlationId: new Headers(init.headers).get('x-correlation-id') });
           return Response.json(response);
         })));
@@ -853,7 +870,13 @@ test('governed contribution generators patch owner contracts and lazy adapters a
     for (const client of [moduleApiClient, searchClient, reportClient]) {
       assert.match(client, /operationGateway\.invoke\(\(authorization\) =>/u);
       assert.match(client, /WithAuthorization/u);
-      assert.match(client, /setHeaders\(\{ authorization, 'x-correlation-id': correlationId \}\)/u);
+      assert.match(client, /authorization: Redacted\.Redacted<string>,/u);
+      assert.match(
+        client,
+        /setHeaders\(\{\s+authorization: Redacted\.value\(authorization\),\s+'x-correlation-id': correlationId,\s+\}\)/u,
+      );
+      // The credential is unwrapped only at the outbound header boundary.
+      assert.equal(client.match(/Redacted\.value\(/gu)?.length, 1);
     }
     assert.doesNotMatch(searchClient, /\.provider\.ts|import\(/u);
     assert.doesNotMatch(reportClient, /\.provider\.ts|import\(/u);
@@ -1239,14 +1262,10 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
         path.join(fixture.root, 'verticals/inventory-stock/api/auth/action-principal.ts'),
       ).href
     )) as {
-      verifyActionPrincipal: (
-        authorization: string | undefined,
-        options: {
-          currentTimeSeconds: Effect.Effect<number>;
-          environment: GeneratedPrincipalEnvironment;
-          redemption: { readonly consume: () => Effect.Effect<void> };
-        },
-      ) => Effect.Effect<TrustedPrincipalContext, { readonly _tag: GeneratedPrincipalErrorTag }>;
+      createActionPrincipalVerifier: (
+        createResolver?: typeof createLocalJWKSet,
+      ) => GeneratedPrincipalVerifier;
+      verifyActionPrincipal: GeneratedPrincipalVerifier;
     };
     // SAFETY: The fixture client module was generated from the tested template at this temporary path; TypeScript cannot statically resolve its exports, and the invocation below verifies the declared gateway contract.
     const generatedClient = (await import(
@@ -1257,7 +1276,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
         acquire: (payload: { audience: string }) => Effect.Effect<{ token: string }>,
       ) => {
         invoke: <Success>(
-          attempt: (authorization: string) => Effect.Effect<Success>,
+          attempt: (authorization: Redacted.Redacted<string>) => Effect.Effect<Success>,
         ) => Effect.Effect<Success>;
       };
     };
@@ -1306,6 +1325,77 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
 
     assert.deepEqual(await verify(currentAssertion.token), principal);
     assert.deepEqual(await verify(retiringAssertion.token), principal);
+
+    let resolverCreations = 0;
+    let redemptions = 0;
+    const createResolver: typeof createLocalJWKSet = (jwks) => {
+      resolverCreations += 1;
+      return createLocalJWKSet(jwks);
+    };
+    const ownedVerifier = generated.createActionPrincipalVerifier(createResolver);
+    const verifyOwned = (token: string, override = environment, verifier = ownedVerifier) =>
+      Effect.runPromise(
+        verifier(`Bearer ${token}`, {
+          currentTimeSeconds: Effect.succeed(1_700_000_001),
+          environment: override,
+          redemption: {
+            consume: () =>
+              Effect.sync(() => {
+                redemptions += 1;
+              }),
+          },
+        }),
+      );
+    assert.deepEqual(await verifyOwned(currentAssertion.token), principal);
+    assert.deepEqual(await verifyOwned(retiringAssertion.token), principal);
+    assert.equal(resolverCreations, 1);
+    assert.equal(redemptions, 2, 'resolver reuse must not cache redemption');
+    await assert.rejects(
+      verifyOwned(currentAssertion.token, {
+        ...environment,
+        ONTOS_GATEWAY_ISSUER: 'file:///invalid',
+      }),
+      (error: { _tag?: string }) => error._tag === 'ActionPrincipalConfigurationError',
+    );
+    await assert.rejects(
+      verifyOwned(currentAssertion.token, {
+        ...environment,
+        ONTOS_GATEWAY_ISSUER: 'https://other.example.test',
+      }),
+      (error: { _tag?: string }) => error._tag === 'ActionPrincipalScopeError',
+    );
+    await assert.rejects(
+      verifyOwned(currentAssertion.token, {
+        ...environment,
+        ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
+          keys: [{ ...current.publicJwk, d: 'private-material' }],
+        }),
+      }),
+      (error: { _tag?: string }) => error._tag === 'ActionPrincipalConfigurationError',
+    );
+    assert.equal(resolverCreations, 1, 'invalid configuration cannot replace the resolver');
+    const rotatedEnvironment = {
+      ...environment,
+      ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [current.publicJwk] }),
+    };
+    assert.deepEqual(await verifyOwned(currentAssertion.token, rotatedEnvironment), principal);
+    await assert.rejects(
+      verifyOwned(retiringAssertion.token, rotatedEnvironment),
+      (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
+    );
+    assert.equal(resolverCreations, 2);
+    assert.deepEqual(await verifyOwned(retiringAssertion.token), principal);
+    assert.equal(resolverCreations, 3, 'returning to earlier JWKS rebuilds the single entry');
+    assert.deepEqual(
+      await verifyOwned(
+        currentAssertion.token,
+        environment,
+        generated.createActionPrincipalVerifier(createResolver),
+      ),
+      principal,
+    );
+    assert.equal(resolverCreations, 4, 'verifiers must not share resolver state');
+
     await assert.rejects(
       verify('not-a-jwt'),
       (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
@@ -1468,8 +1558,10 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
       assert.equal(audience, 'inventory-stock');
       return Effect.succeed({ token: `attempt-${acquisitions}` });
     });
-    const attempt = (authorization: string) => {
-      authorizations.push(authorization);
+    const attempt = (authorization: Redacted.Redacted<string>) => {
+      // The gateway hands out a redacted credential; a rendered assertion must never leak it.
+      assert.equal(String(authorization), '<redacted>');
+      authorizations.push(Redacted.value(authorization));
       return Effect.succeed(idempotencyKey);
     };
     assert.equal(await Effect.runPromise(actionGateway.invoke(attempt)), idempotencyKey);

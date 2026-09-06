@@ -41,7 +41,7 @@ import type {
   TenantModuleStateService,
 } from '@app/core-runtime';
 import type { GatewayContextProblem } from '@app/shared-contracts';
-import { Cause, pipe } from 'effect';
+import { Cause, pipe, Redacted } from 'effect';
 import { ShellAuthenticationApi } from '../shared/api.ts';
 import type {
   AuthenticationInternalProblem,
@@ -74,11 +74,12 @@ import {
   SupportImpersonationService,
   SupportImpersonationServiceLive,
 } from './auth/impersonation-service.ts';
-import {
-  gatewayIssuerLiveDependencies,
-  issueGatewayContextAssertion,
+import { gatewayIssuerLiveDependencies, makeGatewayIssuer } from './auth/gateway-issuer.ts';
+import type {
+  GatewayIssuer,
+  GatewayIssuerDependencies,
+  GatewayIssuerError,
 } from './auth/gateway-issuer.ts';
-import type { GatewayIssuerDependencies, GatewayIssuerError } from './auth/gateway-issuer.ts';
 import type { AuthenticationRuntimeError, SwitchTenantRuntimeError } from './auth/errors.ts';
 import type { ApiKeyProviderError } from './auth/api-key-service.ts';
 import type { IdentityLifecycleError } from './auth/identity-lifecycle.ts';
@@ -147,6 +148,10 @@ const apiKeyChallenge = HttpEffect.appendPreResponseHandler((_request, response)
   Effect.succeed(
     HttpServerResponse.setHeader(response, 'www-authenticate', 'ApiKey realm="ontos-gateway"'),
   ),
+);
+// Responses that carry a freshly issued API-key secret must never be retained by a browser or intermediary cache.
+const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
+  Effect.succeed(HttpServerResponse.setHeader(response, 'cache-control', 'no-store')),
 );
 
 const failGatewayProblem = <Failure extends GatewayContextProblem>(gatewayProblem: Failure) =>
@@ -1217,7 +1222,11 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
                 },
               ),
             )
-            .pipe(Effect.catch((error) => failIdentityProblem(identityProblem(error))));
+            .pipe(
+              Effect.tap(() => noStore),
+              Effect.map((result) => ({ ...result, secret: Redacted.value(result.secret) })),
+              Effect.catch((error) => failIdentityProblem(identityProblem(error))),
+            );
         }),
       ),
     )
@@ -1289,7 +1298,11 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
                 },
               ),
             )
-            .pipe(Effect.catch((error) => failIdentityProblem(identityProblem(error))));
+            .pipe(
+              Effect.tap(() => noStore),
+              Effect.map((result) => ({ ...result, secret: Redacted.value(result.secret) })),
+              Effect.catch((error) => failIdentityProblem(identityProblem(error))),
+            );
         }),
       ),
     )
@@ -1420,7 +1433,11 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
                 },
               ),
             )
-            .pipe(Effect.catch((error) => failIdentityProblem(identityProblem(error))));
+            .pipe(
+              Effect.tap(() => noStore),
+              Effect.map((result) => ({ ...result, secret: Redacted.value(result.secret) })),
+              Effect.catch((error) => failIdentityProblem(identityProblem(error))),
+            );
         }),
       ),
     )
@@ -1451,7 +1468,11 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
                 },
               ),
             )
-            .pipe(Effect.catch((error) => failIdentityProblem(identityProblem(error))));
+            .pipe(
+              Effect.tap(() => noStore),
+              Effect.map((result) => ({ ...result, secret: Redacted.value(result.secret) })),
+              Effect.catch((error) => failIdentityProblem(identityProblem(error))),
+            );
         }),
       ),
     )
@@ -1498,7 +1519,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
     );
 });
 
-const makeGatewayContextGroupLive = (issuerDependencies: GatewayIssuerDependencies) =>
+const makeGatewayContextGroupLive = (issueGatewayContextAssertion: GatewayIssuer) =>
   HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) =>
     handlers
       .handle('issueGatewayContext', ({ payload, request }) =>
@@ -1522,13 +1543,10 @@ const makeGatewayContextGroupLive = (issuerDependencies: GatewayIssuerDependenci
             return yield* failGatewayProblem(gatewayForbiddenProblem());
           }
 
-          return yield* issueGatewayContextAssertion(
-            {
-              audience: payload.audience,
-              principal: sessionResult.principal,
-            },
-            issuerDependencies,
-          ).pipe(
+          return yield* issueGatewayContextAssertion({
+            audience: payload.audience,
+            principal: sessionResult.principal,
+          }).pipe(
             Effect.tapError((error) =>
               logGatewayIssuerFailure(
                 'session',
@@ -1621,26 +1639,23 @@ const makeGatewayContextGroupLive = (issuerDependencies: GatewayIssuerDependenci
             );
             legalEntityId = selected.legalEntityId;
           }
-          return yield* issueGatewayContextAssertion(
-            {
-              audience: payload.audience,
-              principal: withOptionalProperty(
-                {
-                  authBindingId: identity.authBindingId,
-                  authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
-                  authMethod: 'api_key',
-                },
-                legalEntityId !== undefined,
-                'legalEntityId',
-                legalEntityId,
-                {
-                  principalId: identity.principalId,
-                  tenantId: identity.tenantId,
-                },
-              ),
-            },
-            issuerDependencies,
-          ).pipe(
+          return yield* issueGatewayContextAssertion({
+            audience: payload.audience,
+            principal: withOptionalProperty(
+              {
+                authBindingId: identity.authBindingId,
+                authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
+                authMethod: 'api_key',
+              },
+              legalEntityId !== undefined,
+              'legalEntityId',
+              legalEntityId,
+              {
+                principalId: identity.principalId,
+                tenantId: identity.tenantId,
+              },
+            ),
+          }).pipe(
             Effect.tapError((error) =>
               logGatewayIssuerFailure(
                 'api_key',
@@ -1699,6 +1714,7 @@ export const makeShellAuthenticationApiRuntime = (
     makeTenantModuleStateService({ executor: transaction }),
 ): EffectBffDefinition<typeof ShellAuthenticationApi> &
   EffectBffRuntime<typeof ShellAuthenticationApi> => {
+  const issueGatewayContextAssertion = makeGatewayIssuer(issuerDependencies);
   const moduleCatalogLayer =
     loadInstalledModuleCatalog === undefined
       ? ShellInstalledModuleCatalogLive
@@ -1715,42 +1731,39 @@ export const makeShellAuthenticationApiRuntime = (
       readonly appId: string;
       readonly context: ShellResourceContext;
     }) =>
-      issueGatewayContextAssertion(
-        {
-          audience: appId,
-          principal: withOptionalProperty(
+      issueGatewayContextAssertion({
+        audience: appId,
+        principal: withOptionalProperty(
+          withOptionalProperty(
             withOptionalProperty(
               withOptionalProperty(
-                withOptionalProperty(
-                  {
-                    authMethod: context.authMethod,
-                    principalId: context.principalId,
-                    tenantId: context.tenantId,
-                  },
-                  context.legalEntityId !== undefined,
-                  'legalEntityId',
-                  context.legalEntityId,
-                  {},
-                ),
-                context.authBindingId !== undefined,
-                'authBindingId',
-                context.authBindingId,
+                {
+                  authMethod: context.authMethod,
+                  principalId: context.principalId,
+                  tenantId: context.tenantId,
+                },
+                context.legalEntityId !== undefined,
+                'legalEntityId',
+                context.legalEntityId,
                 {},
               ),
-              context.authContextRef !== undefined,
-              'authContextRef',
-              context.authContextRef,
+              context.authBindingId !== undefined,
+              'authBindingId',
+              context.authBindingId,
               {},
             ),
-            context.impersonatedByPrincipalId !== undefined,
-            'impersonatedByPrincipalId',
-            context.impersonatedByPrincipalId,
+            context.authContextRef !== undefined,
+            'authContextRef',
+            context.authContextRef,
             {},
           ),
-        },
-        issuerDependencies,
-      ).pipe(
-        Effect.map(({ token }) => `Bearer ${token}`),
+          context.impersonatedByPrincipalId !== undefined,
+          'impersonatedByPrincipalId',
+          context.impersonatedByPrincipalId,
+          {},
+        ),
+      }).pipe(
+        Effect.map(({ token }) => Redacted.make(`Bearer ${token}`)),
         Effect.mapError(() => new ShellProviderUnavailableError()),
       ),
   };
@@ -1790,7 +1803,7 @@ export const makeShellAuthenticationApiRuntime = (
         legalEntityGroupLive,
         compositionGroupLive,
         resourcesGroupLive,
-        makeGatewayContextGroupLive(issuerDependencies),
+        makeGatewayContextGroupLive(issueGatewayContextAssertion),
         outboxMatcherLayer,
       ),
     ),

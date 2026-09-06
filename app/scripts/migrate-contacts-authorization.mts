@@ -1,7 +1,7 @@
 /* eslint-disable promise/prefer-await-to-callbacks -- The Authzed client exposes Promise APIs. */
 import { pathToFileURL } from 'node:url';
 import { v1 } from '@authzed/authzed-node';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import { Pool } from 'pg';
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 import {
@@ -291,9 +291,9 @@ export const migrateContactsAuthorization = async (
     Effect.runPromise(loadDatabaseConnectionPair()),
     Effect.runPromise(loadSpiceDbConfig()),
   ]);
-  const contexts = await loadAuthoritativeContexts(database.admin.connectionString);
+  const contexts = await loadAuthoritativeContexts(Redacted.value(database.admin.connectionString));
   const client = v1.NewClient(
-    spiceDb.preSharedKey,
+    Redacted.value(spiceDb.preSharedKey),
     spiceDb.endpoint,
     spiceDbClientSecurity(spiceDb),
   );

@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { v1 } from '@authzed/authzed-node';
-import { Effect, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 import {
   ActionAuthorizationProvisioningError,
   provisionActionAuthorization,
@@ -210,7 +210,7 @@ const createProvisioningClient = (
   configuration: SpiceDbConfigValue,
 ): CloseableProvisioningClient => {
   const client = v1.NewClient(
-    configuration.preSharedKey,
+    Redacted.value(configuration.preSharedKey),
     configuration.endpoint,
     spiceDbClientSecurity(configuration),
   );

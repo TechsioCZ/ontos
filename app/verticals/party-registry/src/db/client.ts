@@ -1,6 +1,6 @@
 import { DatabaseConfig } from '@app/core-runtime';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Context, Effect, Layer } from 'effect';
+import { Context, Effect, Layer, Redacted } from 'effect';
 import type { Scope } from 'effect';
 import { Pool } from 'pg';
 import type { PoolConfig } from 'pg';
@@ -50,7 +50,7 @@ export const makePartyDatabase = (
 > =>
   acquirePoolResource(() =>
     poolFactory({
-      connectionString: configuration.connectionString,
+      connectionString: Redacted.value(configuration.connectionString),
     }),
   ).pipe(
     Effect.map((pool) => ({
