@@ -307,7 +307,7 @@ test('bounds independent browser entrypoint loads and still returns them in requ
   // loader's bound rather than by elapsed time. An unbounded loader fills the window and then
   // keeps starting loads, driving the peak past the bound; a loader that never reaches the
   // bound leaves the gate shut and surfaces as timeouts rather than as a hang.
-  const windowFilled = Promise.withResolvers<void>();
+  const windowFilled = Promise.withResolvers<null>();
 
   const results = await Effect.runPromise(
     settleModuleEntrypointLoads(
@@ -318,7 +318,7 @@ test('bounds independent browser entrypoint loads and still returns them in requ
           inFlight += 1;
           peakInFlight = Math.max(peakInFlight, inFlight);
           if (inFlight === MODULE_LOAD_CONCURRENCY) {
-            windowFilled.resolve();
+            windowFilled.resolve(null);
           }
           await windowFilled.promise;
           inFlight -= 1;
@@ -332,6 +332,99 @@ test('bounds independent browser entrypoint loads and still returns them in requ
   expect(peakInFlight).toBe(MODULE_LOAD_CONCURRENCY);
   expect(results.map(({ identity }) => identity)).toEqual(identities);
   expect(results.every(({ state }) => state === 'ready')).toBe(true);
+});
+
+interface RemoteModule {
+  readonly default: () => null;
+}
+
+test('keeps timed-out load permits held until external promises settle', async () => {
+  const pendingLoads: PromiseWithResolvers<RemoteModule>[] = [];
+  const firstWindowStarted = Promise.withResolvers<null>();
+  const fifthLoadStarted = Promise.withResolvers<null>();
+  let loadCount = 0;
+  const resultsPromise = Effect.runPromise(
+    settleModuleEntrypointLoads(
+      Array.from({ length: 5 }, (_, index) => ({
+        identity: `module-${index}/page`,
+        isCompatible: compatibleRemoteModule,
+        load: async () => {
+          const pending = Promise.withResolvers<RemoteModule>();
+          pendingLoads.push(pending);
+          loadCount += 1;
+          if (loadCount === MODULE_LOAD_CONCURRENCY) {
+            firstWindowStarted.resolve(null);
+          }
+          if (loadCount === 5) {
+            fifthLoadStarted.resolve(null);
+          }
+          return await pending.promise;
+        },
+        timeoutMs: 10,
+      })),
+    ),
+  );
+
+  await firstWindowStarted.promise;
+  expect(loadCount).toBe(MODULE_LOAD_CONCURRENCY);
+  expect(pendingLoads).toHaveLength(MODULE_LOAD_CONCURRENCY);
+
+  const results = await resultsPromise;
+  expect(results).toEqual(
+    Array.from({ length: 5 }, (_, index) => ({
+      identity: `module-${index}/page`,
+      reason: 'timeout',
+      state: 'unavailable',
+    })),
+  );
+  expect(loadCount).toBe(MODULE_LOAD_CONCURRENCY);
+
+  pendingLoads[0]?.resolve({ default: () => null });
+  await fifthLoadStarted.promise;
+  expect(loadCount).toBe(5);
+
+  for (const pending of pendingLoads) {
+    pending.resolve({ default: () => null });
+  }
+});
+
+test('does not surface a late remote rejection after a timeout', async () => {
+  const pending = Promise.withResolvers<RemoteModule>();
+  const loadSettled = Promise.withResolvers<null>();
+  const result = await Effect.runPromise(
+    settleModuleEntrypointLoads([
+      {
+        identity: 'late-rejection/page',
+        isCompatible: compatibleRemoteModule,
+        load: async () => {
+          try {
+            return await pending.promise;
+          } finally {
+            loadSettled.resolve(null);
+          }
+        },
+        timeoutMs: 10,
+      },
+    ]),
+  );
+
+  expect(result).toEqual([
+    {
+      identity: 'late-rejection/page',
+      reason: 'timeout',
+      state: 'unavailable',
+    },
+  ]);
+
+  pending.reject(new Error('remote unavailable'));
+  await loadSettled.promise;
+  expect(result).toEqual([
+    {
+      identity: 'late-rejection/page',
+      reason: 'timeout',
+      state: 'unavailable',
+    },
+  ]);
 });
 
 test.each(['selection_required', 'not_found', 'forbidden', 'unavailable'] as const)(
