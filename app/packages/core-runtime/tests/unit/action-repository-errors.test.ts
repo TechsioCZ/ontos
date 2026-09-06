@@ -5,6 +5,8 @@ import { Cause, Effect, Schema } from 'effect';
 import {
   ActionInvocationPersistenceError,
   ActionTransactionError,
+  getActionInvocationPersistenceErrorCause,
+  getActionTransactionErrorCause,
 } from '../../src/actions/errors.ts';
 import {
   getActionInvocationPersistenceFailureCause,
@@ -27,8 +29,8 @@ const cases = [
       }),
     getCause: (failure: ActionInvocationPersistenceError) =>
       getActionInvocationPersistenceFailureCause(failure),
-    getOriginalCause: (failure: ActionInvocationPersistenceError) =>
-      ActionInvocationPersistenceError.getOriginalCause(failure),
+    getRawCause: (failure: ActionInvocationPersistenceError) =>
+      getActionInvocationPersistenceErrorCause(failure),
     encode: (failure: ActionInvocationPersistenceError) =>
       Schema.encodeSync(ActionInvocationPersistenceError)(failure),
     decode: (value: unknown) => Schema.decodeUnknownSync(ActionInvocationPersistenceError)(value),
@@ -38,8 +40,7 @@ const cases = [
     make: (cause?: unknown) => ActionTransactionError.withCause(reason, cause),
     plain: () => new ActionTransactionError({ code: 'action_transaction_failed', reason }),
     getCause: (failure: ActionTransactionError) => getActionTransactionFailureCause(failure),
-    getOriginalCause: (failure: ActionTransactionError) =>
-      ActionTransactionError.getOriginalCause(failure),
+    getRawCause: (failure: ActionTransactionError) => getActionTransactionErrorCause(failure),
     encode: (failure: ActionTransactionError) => Schema.encodeSync(ActionTransactionError)(failure),
     decode: (value: unknown) => Schema.decodeUnknownSync(ActionTransactionError)(value),
   },
@@ -51,7 +52,7 @@ const verifyError = <Failure extends Error>(entry: {
   make: (cause?: unknown) => Failure;
   plain: () => Failure;
   getCause: (failure: Failure) => Cause.Cause<never> | undefined;
-  getOriginalCause: (failure: Failure) => unknown;
+  getRawCause: (failure: Failure) => unknown;
   encode: (failure: Failure) => unknown;
   decode: (value: unknown) => Failure;
 }) => {
@@ -60,10 +61,10 @@ const verifyError = <Failure extends Error>(entry: {
     const original = Object.freeze({ code: '08006', cause: nested, details: [credential] });
     for (const cause of [original, nested, credential, null, false, 0]) {
       const failure = entry.make(cause);
-      assert.equal(entry.getOriginalCause(failure), cause);
+      assert.equal(entry.getRawCause(failure), cause);
       assert.deepEqual(entry.getCause(failure), Cause.die(cause));
-      assert.equal(entry.getOriginalCause(entry.make()), undefined);
-      assert.equal(entry.getOriginalCause(failure), cause);
+      assert.equal(entry.getRawCause(entry.make()), undefined);
+      assert.equal(entry.getRawCause(failure), cause);
     }
     assert.equal(original.cause, nested);
     assert.deepEqual(original.details, [credential]);
@@ -110,7 +111,7 @@ void test('repository persistence failure retains the exact thrown defect', () =
       );
       assert.ok(Schema.is(ActionInvocationPersistenceError)(failure));
       assert.equal(failure.reason, 'Unable to transition the Action invocation to running');
-      assert.equal(ActionInvocationPersistenceError.getOriginalCause(failure), original);
+      assert.equal(getActionInvocationPersistenceErrorCause(failure), original);
       assert.deepEqual(getActionInvocationPersistenceFailureCause(failure), Cause.die(original));
     }),
   ));
@@ -131,7 +132,7 @@ void test('repository transaction failure retains the exact rejected defect', ()
       );
       assert.ok(Schema.is(ActionTransactionError)(failure));
       assert.equal(failure.reason, 'Unable to persist Action permission denial evidence');
-      assert.equal(ActionTransactionError.getOriginalCause(failure), original);
+      assert.equal(getActionTransactionErrorCause(failure), original);
       assert.deepEqual(getActionTransactionFailureCause(failure), Cause.die(original));
     }),
   ));
