@@ -1,0 +1,10 @@
+{
+  "party-registry": {
+    "pages": {
+      "contacts": {
+        "description": "Party Registry keeps canonical Parties, Counterparties, and their engagement profiles in one module.",
+        "title": "Contacts"
+      }
+    }
+  }
+}

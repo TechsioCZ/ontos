@@ -17,7 +17,7 @@ test('derives installed vertical IDs from the injected topology without hardcode
   );
   const expectedInstalledIds = await Effect.runPromise(deriveInstalledVerticalIds(topology));
 
-  expect([...expectedInstalledIds]).toEqual(['contacts', 'party-registry']);
+  expect([...expectedInstalledIds]).toEqual(['party-registry']);
   expect(expectedInstalledIds.has('party.registry')).toBe(false);
   expect([...(await Effect.runPromise(installedVerticalIds))]).toEqual([...expectedInstalledIds]);
   const valid = await Effect.runPromise(

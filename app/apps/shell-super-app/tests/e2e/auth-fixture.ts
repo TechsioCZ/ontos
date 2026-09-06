@@ -223,8 +223,8 @@ export const createAuthenticationFixture = async () => {
     },
   ]);
   await coreDatabase.insert(tenantModuleStates).values([
-    { moduleKey: 'contacts.core', state: 'active', tenantId: e2eTenants.first.tenantId },
-    { moduleKey: 'contacts.core', state: 'active', tenantId: e2eTenants.second.tenantId },
+    { moduleKey: 'party.registry', state: 'active', tenantId: e2eTenants.first.tenantId },
+    { moduleKey: 'party.registry', state: 'active', tenantId: e2eTenants.second.tenantId },
     { moduleKey: 'e2e-first-module', state: 'active', tenantId: e2eTenants.first.tenantId },
     { moduleKey: 'e2e-second-module', state: 'active', tenantId: e2eTenants.second.tenantId },
   ]);

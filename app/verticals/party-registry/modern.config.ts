@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { builtinModules, createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +17,9 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
 const localisedUrls = ultramodernLocalisedUrls;
 
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
+
+const resolveDevelopmentModuleContractPath = () =>
+  fileURLToPath(new URL('.dev-public/.well-known/ontos-module-manifest.json', import.meta.url));
 
 const cloudflareDeployEnabled = getBuildConfigEnvironment('MODERNJS_DEPLOY') === 'cloudflare';
 const resolvePostgresProtocolCommonJsEntry = () =>
@@ -214,6 +218,21 @@ export default defineConfig(
         server: {
           headers: appDevServerHeaders,
         },
+        setupMiddlewares: [
+          ({ unshift }) => {
+            unshift((request, response, next) => {
+              if (request.url?.split('?', 1)[0] !== '/.well-known/ontos-module-manifest.json') {
+                next();
+                return;
+              }
+              const contract = readFileSync(resolveDevelopmentModuleContractPath());
+              response.setHeader('Cache-Control', 'no-cache');
+              response.setHeader('Content-Type', 'application/json');
+              response.setHeader('Content-Length', String(contract.byteLength));
+              response.end(contract);
+            });
+          },
+        ],
       },
       html: {
         outputStructure: 'flat',
@@ -250,6 +269,7 @@ export default defineConfig(
           localeDetection: {
             fallbackLanguage: 'en',
             ignoreRedirectRoutes: [
+              '/.well-known',
               '/@mf-types',
               '/assets',
               '/bundles',
@@ -276,7 +296,7 @@ export default defineConfig(
       ],
       server: {
         port,
-        publicDir: ['./locales', './assets'],
+        publicDir: ['./locales', './assets', './.dev-public'],
       },
       source: {
         alias: {

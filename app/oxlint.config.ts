@@ -172,7 +172,7 @@ export default defineConfig({
         'apps/shell-super-app/tests/unit/routes/modules/loader.test.ts',
         'packages/core-runtime/tests/unit/action-public-surface.test.ts',
         'packages/core-runtime/tests/unit/schema-contract.test.ts',
-        'verticals/contacts/tests/unit/schema-contract.test.ts',
+        'verticals/party-registry/tests/unit/schema-contract.test.ts',
       ],
       rules: {
         'import/no-namespace': 'off',
@@ -186,8 +186,8 @@ export default defineConfig({
         'apps/shell-super-app/module-federation.config.ts',
         'apps/shell-super-app/rstest.config.ts',
         'apps/shell-super-app/tests/integration/module-federation-i18n-runtime.test.ts',
-        'verticals/contacts/backend-federation.config.ts',
-        'verticals/contacts/module-federation.config.ts',
+        'verticals/party-registry/backend-federation.config.ts',
+        'verticals/party-registry/module-federation.config.ts',
       ],
       rules: {
         'sonarjs/no-wildcard-import': 'off',
@@ -197,8 +197,8 @@ export default defineConfig({
       // Module Federation reads dependency versions dynamically; static JSON imports cannot express this contract.
       files: [
         'apps/shell-super-app/module-federation.config.ts',
-        'verticals/contacts/backend-federation.config.ts',
-        'verticals/contacts/module-federation.config.ts',
+        'verticals/party-registry/backend-federation.config.ts',
+        'verticals/party-registry/module-federation.config.ts',
       ],
       rules: {
         'typescript/no-require-imports': 'off',
@@ -219,8 +219,8 @@ export default defineConfig({
       // DOM constructors are the platform-provided nominal narrowing boundary in these browser tests.
       files: [
         'apps/shell-super-app/tests/unit/layout.test.tsx',
-        'verticals/contacts/tests/components/customer-create-page.test.tsx',
-        'verticals/contacts/tests/components/customer-edit-page.test.tsx',
+        'verticals/party-registry/tests/components/customer-create-page.test.tsx',
+        'verticals/party-registry/tests/components/customer-edit-page.test.tsx',
       ],
       rules: {
         '@nkzw/no-instanceof': 'off',
@@ -256,9 +256,9 @@ export default defineConfig({
         '**/route.meta.ts',
         'apps/shell-super-app/shared/ultramodern-build.ts',
         'apps/shell-super-app/src/routes/ultramodern-route-metadata.ts',
-        'verticals/contacts/shared/ultramodern-build.ts',
-        'verticals/contacts/src/routes/ultramodern-route-metadata.ts',
-        'verticals/contacts/vertical.manifest.ts',
+        'verticals/party-registry/shared/ultramodern-build.ts',
+        'verticals/party-registry/src/routes/ultramodern-route-metadata.ts',
+        'verticals/party-registry/vertical.manifest.ts',
       ],
       rules: {
         'sonarjs/no-duplicate-string': 'off',
@@ -281,9 +281,9 @@ export default defineConfig({
         'packages/core-runtime/src/modules/tenant-module-state-service.ts',
         'packages/core-runtime/src/operations/context.ts',
         'packages/core-runtime/tests/fixtures/outbox-worker-process.fixture.ts',
-        'verticals/contacts/scripts/verify-db-schema.mts',
-        'verticals/contacts/src/actions/*.action.ts',
-        'verticals/contacts/src/api/customer-ares-lookup.read.ts',
+        'verticals/party-registry/scripts/verify-db-schema.mts',
+        'verticals/party-registry/src/actions/*.action.ts',
+        'verticals/party-registry/src/api/customer-ares-lookup.read.ts',
       ],
       rules: {
         'sonarjs/no-duplicate-string': 'off',
@@ -304,9 +304,9 @@ export default defineConfig({
         'packages/core-runtime/src/actions/runtime.ts',
         'packages/core-runtime/src/outbox/repository.ts',
         'packages/core-runtime/src/reads/runtime.ts',
-        'verticals/contacts/src/auth/gateway-assertion-redemption-runtime.ts',
-        'verticals/contacts/tests/integration/customer-contact-operations.test.ts',
-        'verticals/contacts/tests/unit/customer-contact-persistence.service.test.ts',
+        'verticals/party-registry/src/auth/gateway-assertion-redemption-runtime.ts',
+        'verticals/party-registry/tests/integration/customer-contact-operations.test.ts',
+        'verticals/party-registry/tests/unit/customer-contact-persistence.service.test.ts',
       ],
       rules: {
         'sonarjs/no-nested-functions': 'off',
@@ -343,8 +343,8 @@ export default defineConfig({
         'packages/core-runtime/tests/unit/action-collector.test.ts',
         'packages/core-runtime/tests/unit/action-runtime.test.ts',
         'packages/core-runtime/tests/unit/read-definition.test.ts',
-        'verticals/contacts/api/index.ts',
-        'verticals/contacts/tests/components/contact-edit-page.test.tsx',
+        'verticals/party-registry/api/index.ts',
+        'verticals/party-registry/tests/components/contact-edit-page.test.tsx',
       ],
       rules: {
         'sonarjs/no-undefined-assignment': 'off',
@@ -362,10 +362,10 @@ export default defineConfig({
       files: [
         'apps/shell-super-app/drizzle.auth.config.ts',
         'apps/shell-super-app/modern.rstest.config.ts',
-        'verticals/contacts/modern.rstest.config.ts',
-        'verticals/contacts/src/federation/page-customers-list.runtime.d.ts',
-        'verticals/contacts/tests/unit/ares-subject.service.test.ts',
-        'verticals/contacts/tests/unit/customer-contact-persistence.service.test.ts',
+        'verticals/party-registry/modern.rstest.config.ts',
+        'verticals/party-registry/src/federation/page-customers-list.runtime.d.ts',
+        'verticals/party-registry/tests/unit/ares-subject.service.test.ts',
+        'verticals/party-registry/tests/unit/customer-contact-persistence.service.test.ts',
       ],
       rules: {
         'github/filenames-match-regex': 'off',
@@ -388,7 +388,7 @@ export default defineConfig({
     {
       // Dynamic Modern.js cache paths contain `.js-${appId}` but are filesystem paths,
       // not CSS class names; the GitHub rule cannot distinguish those string domains.
-      files: ['apps/shell-super-app/modern.config.ts', 'verticals/contacts/modern.config.ts'],
+      files: ['apps/shell-super-app/modern.config.ts', 'verticals/party-registry/modern.config.ts'],
       rules: {
         'github/js-class-name': 'off',
       },
@@ -396,7 +396,7 @@ export default defineConfig({
     {
       // React Doctor currently emits its internal computed-property lowering TODO for this
       // typed form-error update; the code is valid and the dedicated compiler rules stay active.
-      files: ['verticals/contacts/src/features/customers/customer-form.tsx'],
+      files: ['verticals/party-registry/src/features/customers/customer-form.tsx'],
       rules: {
         'react/todo': 'off',
       },
@@ -448,12 +448,12 @@ export default defineConfig({
         'packages/core-runtime/tests/unit/module-manifest.test.ts',
         'packages/core-runtime/tests/unit/outbox-runtime.test.ts',
         'packages/core-runtime/tests/unit/read-runtime.test.ts',
-        'verticals/contacts/tests/components/contact-form.test.tsx',
-        'verticals/contacts/tests/components/customer-ares-loader.test.tsx',
-        'verticals/contacts/tests/components/customer-form.test.tsx',
-        'verticals/contacts/tests/integration/customer-ares-lookup-bff.test.ts',
-        'verticals/contacts/tests/integration/customer-contact-bff.test.ts',
-        'verticals/contacts/vertical.manifest.ts',
+        'verticals/party-registry/tests/components/contact-form.test.tsx',
+        'verticals/party-registry/tests/components/customer-ares-loader.test.tsx',
+        'verticals/party-registry/tests/components/customer-form.test.tsx',
+        'verticals/party-registry/tests/integration/customer-ares-lookup-bff.test.ts',
+        'verticals/party-registry/tests/integration/customer-contact-bff.test.ts',
+        'verticals/party-registry/vertical.manifest.ts',
       ],
       rules: {
         'typescript/strict-void-return': 'off',
@@ -469,8 +469,8 @@ export default defineConfig({
         'packages/core-runtime/src/auth/principal-management.ts',
         'packages/core-runtime/src/modules/module-state-gate.ts',
         'packages/core-runtime/src/outbox/runtime.ts',
-        'verticals/contacts/src/routes/ultramodern-route-head.tsx',
-        'verticals/contacts/tests/unit/action-principal.test.ts',
+        'verticals/party-registry/src/routes/ultramodern-route-head.tsx',
+        'verticals/party-registry/tests/unit/action-principal.test.ts',
       ],
       rules: {
         'typescript/consistent-return': 'off',
@@ -495,7 +495,7 @@ export default defineConfig({
         'apps/shell-super-app/modern.config.ts',
         'apps/shell-super-app/playwright.config.ts',
         'packages/core-runtime/src/outbox/poller.ts',
-        'verticals/contacts/modern.config.ts',
+        'verticals/party-registry/modern.config.ts',
       ],
       rules: {
         'typescript/prefer-nullish-coalescing': 'off',
@@ -506,8 +506,8 @@ export default defineConfig({
       // TSGo currently collapses these recursive JSON/locale aliases to `any` while the workspace
       // compiler resolves them correctly; keep the recursive boundary types and their parsers.
       files: [
-        'verticals/contacts/tests/support/json-value.ts',
-        'verticals/contacts/tests/support/locale-catalog.ts',
+        'verticals/party-registry/tests/support/json-value.ts',
+        'verticals/party-registry/tests/support/locale-catalog.ts',
       ],
       rules: {
         'typescript/no-redundant-type-constituents': 'off',
@@ -517,8 +517,8 @@ export default defineConfig({
       // Node HTTP invokes these async request adapters as void callbacks; the tests await server
       // responses and close the exact server, so the promise lifecycle is observed at the boundary.
       files: [
-        'verticals/contacts/tests/integration/customer-ares-lookup-bff.test.ts',
-        'verticals/contacts/tests/integration/customer-contact-bff.test.ts',
+        'verticals/party-registry/tests/integration/customer-ares-lookup-bff.test.ts',
+        'verticals/party-registry/tests/integration/customer-contact-bff.test.ts',
       ],
       rules: {
         'typescript/no-misused-promises': 'off',
@@ -559,7 +559,7 @@ export default defineConfig({
       files: [
         'apps/shell-super-app/api/auth/db/schema.ts',
         'packages/core-runtime/src/db/schema.ts',
-        'verticals/contacts/src/db/schema.ts',
+        'verticals/party-registry/src/db/schema.ts',
       ],
       rules: {
         'perfectionist/sort-objects': 'off',
@@ -577,8 +577,8 @@ export default defineConfig({
       // These memoized values cross form/query component boundaries where referential stability
       // avoids resetting controlled state; compiler caching is an optimization, not that contract.
       files: [
-        'verticals/contacts/src/routes/**/contacts/customers/page.tsx',
-        'verticals/contacts/src/routes/**/contacts/customers/**/page.tsx',
+        'verticals/party-registry/src/routes/**/contacts/customers/page.tsx',
+        'verticals/party-registry/src/routes/**/contacts/customers/**/page.tsx',
       ],
       rules: {
         'react-doctor/react-compiler-no-manual-memoization': 'off',
@@ -587,7 +587,9 @@ export default defineConfig({
     {
       // The edit page keeps one cohesive mutation/detail workflow; splitting it would move
       // authorization and retry state across component boundaries during this lint-only migration.
-      files: ['verticals/contacts/src/routes/**/contacts/customers/**/contacts/**/edit/page.tsx'],
+      files: [
+        'verticals/party-registry/src/routes/**/contacts/customers/**/contacts/**/edit/page.tsx',
+      ],
       rules: {
         'react-doctor/no-giant-component': 'off',
       },
@@ -608,7 +610,7 @@ export default defineConfig({
     {
       // tsgolint loses Modern.js route-hook generics for these pages while the referenced TSGo
       // build resolves them. Limit the exception to unsafe derivatives at that framework seam.
-      files: ['verticals/contacts/src/routes/**/page.tsx'],
+      files: ['verticals/party-registry/src/routes/**/page.tsx'],
       rules: {
         'typescript/no-unsafe-argument': 'off',
         'typescript/no-unsafe-assignment': 'off',
@@ -638,8 +640,8 @@ export default defineConfig({
       // Recursive readonly dictionary interfaces are required for TSGo's recursive-type support;
       // they intentionally carry their contract through the inherited index signature.
       files: [
-        'verticals/contacts/tests/support/json-value.ts',
-        'verticals/contacts/tests/support/locale-catalog.ts',
+        'verticals/party-registry/tests/support/json-value.ts',
+        'verticals/party-registry/tests/support/locale-catalog.ts',
       ],
       rules: {
         'typescript/no-empty-interface': 'off',
@@ -669,10 +671,10 @@ export default defineConfig({
         'apps/shell-super-app/src/api/vertical-clients.ts',
         'apps/shell-super-app/src/routes/**/*.{ts,tsx}',
         'packages/core-runtime/src/install/action-authorization-provisioning.ts',
-        'verticals/contacts/src/auth/gateway-assertion-redemption-runtime.ts',
-        'verticals/contacts/api/auth/action-principal.ts',
-        'verticals/contacts/src/db/client.ts',
-        'verticals/contacts/src/routes/**/*.tsx',
+        'verticals/party-registry/src/auth/gateway-assertion-redemption-runtime.ts',
+        'verticals/party-registry/api/auth/action-principal.ts',
+        'verticals/party-registry/src/db/client.ts',
+        'verticals/party-registry/src/routes/**/*.tsx',
         'verticals/*/vertical.registration.ts',
       ],
       rules: {
@@ -682,7 +684,7 @@ export default defineConfig({
     {
       // This Proxy preserves the real Drizzle executor type while replacing two methods in a live
       // integration fixture. Reflect.get is required to preserve the original receiver.
-      files: ['verticals/contacts/tests/integration/customer-ares-lookup-bff.test.ts'],
+      files: ['verticals/party-registry/tests/integration/customer-ares-lookup-bff.test.ts'],
       rules: {
         'anti-slop/no-reflect-get': 'off',
       },

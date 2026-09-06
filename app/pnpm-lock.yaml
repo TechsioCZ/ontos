@@ -17,7 +17,7 @@ patchedDependencies:
   '@better-fetch/fetch@1.3.1': 9276628e25c79910215b343c608abe336b3636f093565a04953069224d890747
   '@bleedingdev/modern-js-app-tools@3.8.2-ultramodern.12': 92106508bb75f01d2d27454563d5030569bcf89a49155b2cc91a2b9111360d4c
   '@bleedingdev/modern-js-builder@3.8.2-ultramodern.12': c5bdbbf89a17e39cb43c17f66a1904ed29a1462b09fd19aaf05c7301cbe4601c
-  '@bleedingdev/modern-js-create@3.8.2-ultramodern.12': a4aa9c6c036d00da57f7af366ef5c2850578e4bc9a14377241b6adc22940c219
+  '@bleedingdev/modern-js-create@3.8.2-ultramodern.12': 4954a538ab206291d85d4960a52717f1c6a814d0165b29a6d26081eba443677c
   '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12': e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0
   '@bleedingdev/modern-js-server-utils@3.8.2-ultramodern.12': 254be68a353f0c3a57aed91447a2de7b86afe26d1badeb9786945fd466fe760d
   '@module-federation/bridge-react@2.8.0': 54bfc79e097473222f83cbfa6d717792e3026bf16b5097c2ed91715b7da126be
@@ -60,7 +60,7 @@ importers:
         version: 2.6.9(supports-color@10.2.2)
       '@modern-js/create':
         specifier: npm:@bleedingdev/modern-js-create@3.8.2-ultramodern.12
-        version: '@bleedingdev/modern-js-create@3.8.2-ultramodern.12(patch_hash=a4aa9c6c036d00da57f7af366ef5c2850578e4bc9a14377241b6adc22940c219)(oxlint@1.79.0(oxlint-tsgolint@7.0.2001))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)'
+        version: '@bleedingdev/modern-js-create@3.8.2-ultramodern.12(patch_hash=4954a538ab206291d85d4960a52717f1c6a814d0165b29a6d26081eba443677c)(oxlint@1.79.0(oxlint-tsgolint@7.0.2001))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)'
       '@modern-js/plugin-bff':
         specifier: npm:@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12
         version: '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12(patch_hash=e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0)(02f8732f8d0ac3252ab424ea7a1b32c5)'
@@ -133,9 +133,6 @@ importers:
 
   apps/shell-super-app:
     dependencies:
-      '@app/contacts':
-        specifier: workspace:*
-        version: link:../../verticals/contacts
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
@@ -340,145 +337,6 @@ importers:
       '@effect/tsgo':
         specifier: 0.19.0
         version: 0.19.0
-
-  verticals/contacts:
-    dependencies:
-      '@app/core-runtime':
-        specifier: workspace:*
-        version: link:../../packages/core-runtime
-      '@app/party-registry':
-        specifier: workspace:*
-        version: link:../party-registry
-      '@app/shared-contracts':
-        specifier: workspace:*
-        version: link:../../packages/shared-contracts
-      '@app/shared-design-tokens':
-        specifier: workspace:*
-        version: link:../../packages/shared-design-tokens
-      '@authzed/authzed-node':
-        specifier: 1.6.1
-        version: 1.6.1
-      '@effect/opentelemetry':
-        specifier: 4.0.0-beta.107
-        version: 4.0.0-beta.107(@opentelemetry/api-logs@0.220.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.220.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))
-      '@modern-js/plugin-bff':
-        specifier: npm:@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12
-        version: '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12(patch_hash=e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0)(76a9f4d76a32c6bb3b280341cf123861)'
-      '@modern-js/plugin-i18n':
-        specifier: npm:@bleedingdev/modern-js-plugin-i18n@3.8.2-ultramodern.12
-        version: '@bleedingdev/modern-js-plugin-i18n@3.8.2-ultramodern.12(@bleedingdev/modern-js-runtime@3.8.2-ultramodern.12(@module-federation/runtime-tools@2.8.0)(core-js@3.49.0)(react-dom@19.2.8(react@19.2.8))(react-server-dom-rspack@0.1.0(@rspack/core@2.2.0(@module-federation/runtime-tools@2.8.0)(@swc/helpers@0.5.23))(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8))(@module-federation/runtime-tools@2.8.0)(core-js@3.49.0)(i18next@26.3.6(typescript@7.0.2))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
-      '@modern-js/plugin-tanstack':
-        specifier: npm:@bleedingdev/modern-js-plugin-tanstack@3.8.2-ultramodern.12
-        version: '@bleedingdev/modern-js-plugin-tanstack@3.8.2-ultramodern.12(@bleedingdev/modern-js-app-tools@3.8.2-ultramodern.12(patch_hash=92106508bb75f01d2d27454563d5030569bcf89a49155b2cc91a2b9111360d4c)(c95492ca4d79fdd0565fb79cc4972893))(@bleedingdev/modern-js-runtime@3.8.2-ultramodern.12(@module-federation/runtime-tools@2.8.0)(core-js@3.49.0)(react-dom@19.2.8(react@19.2.8))(react-server-dom-rspack@0.1.0(@rspack/core@2.2.0(@module-federation/runtime-tools@2.8.0)(@swc/helpers@0.5.23))(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8))(@module-federation/runtime-tools@2.8.0)(core-js@3.49.0)(react-dom@19.2.8(react@19.2.8))(react-server-dom-rspack@0.1.0(@rspack/core@2.2.0(@module-federation/runtime-tools@2.8.0)(@swc/helpers@0.5.23))(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)'
-      '@modern-js/runtime':
-        specifier: npm:@bleedingdev/modern-js-runtime@3.8.2-ultramodern.12
-        version: '@bleedingdev/modern-js-runtime@3.8.2-ultramodern.12(@module-federation/runtime-tools@2.8.0)(core-js@3.49.0)(react-dom@19.2.8(react@19.2.8))(react-server-dom-rspack@0.1.0(@rspack/core@2.2.0(@module-federation/runtime-tools@2.8.0)(@swc/helpers@0.5.23))(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)'
-      '@module-federation/bridge-react':
-        specifier: 2.8.0
-        version: 2.8.0(patch_hash=54bfc79e097473222f83cbfa6d717792e3026bf16b5097c2ed91715b7da126be)(react-dom@19.2.8(react@19.2.8))(react-router@7.18.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)
-      '@module-federation/modern-js-v3':
-        specifier: 2.8.0
-        version: 2.8.0(patch_hash=56ff0f8c26c40b18be1de105abd019422ebaa648941607d1d30b94cd620b57f3)(@rsbuild/core@2.2.0(@module-federation/runtime-tools@2.8.0)(core-js@3.49.0))(@rspack/core@2.2.0(@module-federation/runtime-tools@2.8.0)(@swc/helpers@0.5.23))(react-dom@19.2.8(react@19.2.8))(react-router@7.18.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)(typescript@7.0.2)(webpack@5.108.4(@swc/core@1.15.43(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@8.0.2(postcss@8.5.26))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.26))
-      '@module-federation/runtime':
-        specifier: 2.8.0
-        version: 2.8.0
-      '@tanstack/react-query':
-        specifier: 5.101.4
-        version: 5.101.4(react@19.2.8)
-      '@tanstack/react-router':
-        specifier: 1.170.25
-        version: 1.170.25(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      '@techsio/ui-kit':
-        specifier: 0.25.1
-        version: 0.25.1(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
-      dotenv:
-        specifier: 17.4.2
-        version: 17.4.2
-      drizzle-orm:
-        specifier: 1.0.0-rc.4
-        version: 1.0.0-rc.4(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(pg@8.22.0)(zod@4.4.3)
-      effect:
-        specifier: 4.0.0-beta.107
-        version: 4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)
-      i18next:
-        specifier: 26.3.6
-        version: 26.3.6(typescript@7.0.2)
-      jose:
-        specifier: 6.2.5
-        version: 6.2.5
-      node-fetch:
-        specifier: ^3.3.2
-        version: 3.3.2
-      pg:
-        specifier: 8.22.0
-        version: 8.22.0
-      react:
-        specifier: 19.2.8
-        version: 19.2.8
-      react-dom:
-        specifier: 19.2.8
-        version: 19.2.8(react@19.2.8)
-      react-router:
-        specifier: 7.18.1
-        version: 7.18.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-    devDependencies:
-      '@effect/tsgo':
-        specifier: 0.19.0
-        version: 0.19.0
-      '@modern-js/adapter-rstest':
-        specifier: npm:@bleedingdev/modern-js-adapter-rstest@3.8.2-ultramodern.12
-        version: '@bleedingdev/modern-js-adapter-rstest@3.8.2-ultramodern.12(914587a8ba3a134cde2c523e045244cd)'
-      '@modern-js/app-tools':
-        specifier: npm:@bleedingdev/modern-js-app-tools@3.8.2-ultramodern.12
-        version: '@bleedingdev/modern-js-app-tools@3.8.2-ultramodern.12(patch_hash=92106508bb75f01d2d27454563d5030569bcf89a49155b2cc91a2b9111360d4c)(c95492ca4d79fdd0565fb79cc4972893)'
-      '@rsbuild/plugin-tailwindcss':
-        specifier: ^2.0.3
-        version: 2.0.3(@rsbuild/core@2.2.0(@module-federation/runtime-tools@2.8.0)(core-js@3.49.0))(@rspack/core@2.2.0(@module-federation/runtime-tools@2.8.0)(@swc/helpers@0.5.23))(webpack@5.108.4(@swc/core@1.15.43(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@8.0.2(postcss@8.5.26))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.26))
-      '@rstest/core':
-        specifier: 0.11.10
-        version: 0.11.10(@module-federation/runtime-tools@2.8.0)(core-js@3.49.0)(happy-dom@20.8.3)
-      '@testing-library/dom':
-        specifier: 10.4.1
-        version: 10.4.1
-      '@testing-library/react':
-        specifier: 16.3.2
-        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      '@testing-library/user-event':
-        specifier: 14.6.1
-        version: 14.6.1(@testing-library/dom@10.4.1)
-      '@types/node':
-        specifier: ^20
-        version: 20.19.43
-      '@types/pg':
-        specifier: 8.20.0
-        version: 8.20.0
-      '@types/react':
-        specifier: ^19.2.17
-        version: 19.2.17
-      '@types/react-dom':
-        specifier: ^19.2.3
-        version: 19.2.3(@types/react@19.2.17)
-      '@typescript/native':
-        specifier: npm:typescript@7.0.2
-        version: typescript@7.0.2
-      drizzle-kit:
-        specifier: 1.0.0-rc.4
-        version: 1.0.0-rc.4
-      happy-dom:
-        specifier: 20.8.3
-        version: 20.8.3
-      tailwindcss:
-        specifier: ^4.3.2
-        version: 4.3.3
-      typescript:
-        specifier: 7.0.2
-        version: 7.0.2
-      wrangler:
-        specifier: 4.110.0
-        version: 4.110.0(@cloudflare/workers-types@5.20260810.1)
-      zephyr-rspack-plugin:
-        specifier: 1.2.4
-        version: 1.2.4(@rspack/core@2.2.0(@module-federation/runtime-tools@2.8.0)(@swc/helpers@0.5.23))(supports-color@10.2.2)(webpack@5.108.4(@swc/core@1.15.43(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@8.0.2(postcss@8.5.26))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.26))
 
   verticals/party-registry:
     dependencies:
@@ -9584,7 +9442,7 @@ snapshots:
       - react
       - react-dom
 
-  '@bleedingdev/modern-js-create@3.8.2-ultramodern.12(patch_hash=a4aa9c6c036d00da57f7af366ef5c2850578e4bc9a14377241b6adc22940c219)(oxlint@1.79.0(oxlint-tsgolint@7.0.2001))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)':
+  '@bleedingdev/modern-js-create@3.8.2-ultramodern.12(patch_hash=4954a538ab206291d85d4960a52717f1c6a814d0165b29a6d26081eba443677c)(oxlint@1.79.0(oxlint-tsgolint@7.0.2001))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)':
     dependencies:
       '@modern-js/codesmith': 2.6.9(supports-color@10.2.2)
       '@modern-js/i18n-utils': '@bleedingdev/modern-js-i18n-utils@3.8.2-ultramodern.12(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'

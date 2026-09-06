@@ -67,12 +67,12 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     filename: 'remoteEntry.js',
     name: 'shellSuperApp',
     remotes: {
-      contacts: createRemoteManifestUrl({
-        manifestEnv: 'VERTICAL_CONTACTS_MF_MANIFEST',
-        mfName: 'verticalContacts',
-        port: 4101,
-        publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CONTACTS',
-        workerName: 'app-contacts',
+      partyRegistry: createRemoteManifestUrl({
+        manifestEnv: 'VERTICAL_PARTY_REGISTRY_MF_MANIFEST',
+        mfName: 'verticalPartyRegistry',
+        port: 4102,
+        publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY',
+        workerName: 'app-party-registry',
       }),
     },
     shared: {

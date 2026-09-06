@@ -50,13 +50,13 @@ mise exec -- pnpm sandbox:new -- customer-search
 
 Replace `customer-search` with the feature slug. The command creates the branch and worktree,
 copies `app/.env`, installs dependencies, starts containers, runs Drizzle migrations, initializes
-the local tenant, legal entity, user, and Contacts MicroVertical, verifies the database, and opens
+the local tenant, legal entity, user, and Party Registry MicroVertical, verifies the database, and opens
 the configured AI harness. Record the printed sandbox ID.
 
 Forward application ports from macOS to the sandbox:
 
 ```sh
-locki pf --match 1aixi9oo 3020 4101
+locki pf --match 1aixi9oo 3020 4102
 ```
 
 Replace `1aixi9oo` with the sandbox ID. The command returns immediately.
@@ -71,17 +71,11 @@ mise exec -- pnpm dev
 
 `pnpm dev` occupies that terminal until stopped.
 
-Contacts calls Party Registry through its published client across the deployment boundary. Its
-server process needs the non-secret `ONTOS_SHELL_GATEWAY_BASE_URL` (including
-`/shell-super-app-api`) and `ONTOS_PARTY_REGISTRY_API_BASE_URL` (including
-`/party-registry-api`). `mise exec -- pnpm env:local:ensure` derives missing local values from the
-topology and development overlay while preserving explicit values. Run it after adding Party
-Registry to an existing sandbox; no secret values are printed. Start Party Registry alongside
-Contacts before exercising engagement-profile writes.
-
-Zerops configures these URLs with internal service names and ports. Other deployments must supply
-absolute HTTP(S) URLs for their own service routing; missing or invalid values fail closed rather
-than falling back to relative browser URLs or localhost in production.
+Party Registry owns Contacts, counterparties, and engagement profiles in one MicroVertical. Start
+the Shell and Party Registry processes before exercising engagement-profile writes; there is no
+separate Contacts deployment or cross-MicroVertical validation call. `mise exec -- pnpm
+env:local:ensure` materializes the shared local infrastructure values while preserving explicit
+values and printing no secrets.
 
 ### Fail-closed Action authorization checkpoint
 
@@ -89,7 +83,7 @@ Sandbox preparation creates the fixed development context and Tenant membership 
 provision Action executor relationships. For authorization changes, keep one sandbox unchanged
 and verify this order:
 
-1. invoke a representative Contacts mutation as `demo@test.com`;
+1. invoke a representative Party Registry engagement mutation as `demo@test.com`;
 2. confirm a localized error Toast and `403`, one rejected invocation/audit record, and no
    business write or handler effect;
 3. run `mise exec -- pnpm authorization:provision-current-actions` twice to prove idempotence;

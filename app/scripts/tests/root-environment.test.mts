@@ -38,7 +38,7 @@ test('workspace discovery resolves repository, app, shell, and microvertical dir
     repositoryRoot,
     appRoot,
     path.join(appRoot, 'apps/shell-super-app'),
-    path.join(appRoot, 'verticals/contacts'),
+    path.join(appRoot, 'verticals/party-registry'),
   ]) {
     assert.equal(resolveAppWorkspaceRoot(directory), appRoot);
   }

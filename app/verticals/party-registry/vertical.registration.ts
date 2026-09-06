@@ -7,6 +7,10 @@ import { partyRegistryManifest } from './vertical.manifest.ts';
 import { addContactPointAction } from './src/actions/add-contact-point.action.ts';
 import { addPartyOfficialIdentifierAction } from './src/actions/add-party-official-identifier.action.ts';
 import { archivePartyAction } from './src/actions/archive-party.action.ts';
+import { archiveOrganizationEngagementAction } from './src/actions/archive-organization-engagement.action.ts';
+import { archivePersonEngagementAction } from './src/actions/archive-person-engagement.action.ts';
+import { attachOrganizationEngagementAction } from './src/actions/attach-organization-engagement.action.ts';
+import { attachPersonEngagementAction } from './src/actions/attach-person-engagement.action.ts';
 import { confirmDuplicatePartiesAction } from './src/actions/confirm-duplicate-parties.action.ts';
 import { correctPartyFactAction } from './src/actions/correct-party-fact.action.ts';
 import { counterpartyCreateAction } from './src/actions/counterparty-create.action.ts';
@@ -39,6 +43,8 @@ import { requestSearchRebuildAction } from './src/actions/request-search-rebuild
 import { resolveDuplicateCandidateCreateAction } from './src/actions/resolve-duplicate-candidate-create.action.ts';
 import { resolveDuplicateCandidateMatchAction } from './src/actions/resolve-duplicate-candidate-match.action.ts';
 import { unarchivePartyAction } from './src/actions/unarchive-party.action.ts';
+import { unarchiveOrganizationEngagementAction } from './src/actions/unarchive-organization-engagement.action.ts';
+import { unarchivePersonEngagementAction } from './src/actions/unarchive-person-engagement.action.ts';
 import { updateContactPointAction } from './src/actions/update-contact-point.action.ts';
 import { updatePartyAction } from './src/actions/update-party.action.ts';
 import { updatePartyOfficialIdentifierAction } from './src/actions/update-party-official-identifier.action.ts';
@@ -50,7 +56,11 @@ export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
     // <generated-module-registration-actions>
     addContactPointAction,
     addPartyOfficialIdentifierAction,
+    archiveOrganizationEngagementAction,
     archivePartyAction,
+    archivePersonEngagementAction,
+    attachOrganizationEngagementAction,
+    attachPersonEngagementAction,
     confirmDuplicatePartiesAction,
     correctPartyFactAction,
     counterpartyCreateAction,
@@ -67,7 +77,9 @@ export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
     requestSearchRebuildAction,
     resolveDuplicateCandidateCreateAction,
     resolveDuplicateCandidateMatchAction,
+    unarchiveOrganizationEngagementAction,
     unarchivePartyAction,
+    unarchivePersonEngagementAction,
     updateContactPointAction,
     updatePartyAction,
     updatePartyOfficialIdentifierAction,
@@ -81,6 +93,8 @@ export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
       'counterparty-read': () => import('./src/api/counterparty-read-client.ts'),
       'counterparty-role-history': () => import('./src/api/counterparty-role-history-client.ts'),
       'duplicate-candidate-detail': () => import('./src/api/duplicate-candidate-detail-client.ts'),
+      'organization-engagement-profile': () =>
+        import('./src/api/organization-engagement-profile-client.ts'),
       'party-contact-point-detail': () => import('./src/api/party-contact-point-detail-client.ts'),
       'party-contact-points': () => import('./src/api/party-contact-points-client.ts'),
       'party-correction': () => import('./src/api/party-correction-client.ts'),
@@ -93,6 +107,7 @@ export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
       'party-official-identifier-history': () =>
         import('./src/api/party-official-identifier-history-client.ts'),
       'party-relationship-detail': () => import('./src/api/party-relationship-detail-client.ts'),
+      'person-engagement-profile': () => import('./src/api/person-engagement-profile-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {
@@ -101,6 +116,7 @@ export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
     },
     pages: {
       // <generated-module-registration-pages>
+      'page-contacts': () => import('./src/routes/[lang]/contacts/page.tsx'),
       // </generated-module-registration-pages>
     },
     reports: {

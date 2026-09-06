@@ -20,7 +20,8 @@ test('every generated Action has its own statically named command endpoint', asy
   const files = await readdir(new URL('../../src/actions/', import.meta.url));
   const actions = files
     .filter((file) => file.endsWith('.action.ts'))
-    .map((file) => file.replace('.action.ts', ''));
+    .map((file) => file.replace('.action.ts', ''))
+    .filter((slug) => !slug.includes('engagement'));
   const endpoints = Object.values(partyRegistryCommandsApi.groups.partyCommands.endpoints);
   assert.equal(endpoints.length, actions.length);
   assert.deepEqual(

@@ -362,16 +362,16 @@ test('all published scaffold formats retain lint-safe Party infrastructure parit
   );
 });
 
-test('API-only Party keeps executable backend tests without an obsolete component-test command', async () => {
+test('full-stack Party Registry keeps backend and Contacts component tests executable', async () => {
   const packageJson = JSON.parse(
     await readFile(path.join(workspaceRoot, 'verticals/party-registry/package.json'), 'utf-8'),
   );
-  assert.equal(packageJson.scripts['test:component'], undefined);
+  assert.equal(packageJson.scripts['test:component'], 'rstest --config rstest.config.ts');
   assert.equal(packageJson.scripts['test:unit'], 'node --test tests/unit/*.test.ts');
   assert.equal(packageJson.scripts['test:integration'], 'node --test tests/integration/*.test.ts');
-  await assert.rejects(
-    readFile(path.join(workspaceRoot, 'verticals/party-registry/rstest.config.ts')),
-    { code: 'ENOENT' },
+  assert.match(
+    await readFile(path.join(workspaceRoot, 'verticals/party-registry/rstest.config.ts'), 'utf-8'),
+    /tests\/components/u,
   );
 });
 const { validateApp } = await import(
@@ -565,7 +565,7 @@ test('Party deployment declares no fake SSR/locale URL while retaining backend c
   );
 });
 
-test('Contacts deployment public-client URLs follow internal service identity and topology ports', async () => {
+test('Party Registry is the sole deployment owner for Contacts capabilities', async () => {
   const topology = JSON.parse(
     await readFile(path.join(workspaceRoot, 'topology/reference-topology.json'), 'utf-8'),
   );
@@ -573,15 +573,18 @@ test('Contacts deployment public-client URLs follow internal service identity an
     await readFile(path.join(workspaceRoot, 'topology/local-overlays/development.json'), 'utf-8'),
   );
   const zerops = await readFile(path.join(workspaceRoot, 'zerops.yaml'), 'utf-8');
-  const contactsSetup = zerops.split("  - setup: 'contacts'")[1]?.split('  - setup:')[0];
-  assert.ok(contactsSetup);
-  const shellId = topology.shell.id;
+  const partySetup = zerops.split("  - setup: 'party-registry'")[1]?.split('  - setup:')[0];
+  assert.ok(partySetup);
+  assert.equal(zerops.includes("  - setup: 'contacts'"), false);
+  assert.equal(
+    topology.verticals.some((entry) => entry.id === 'contacts'),
+    false,
+  );
   const party = topology.verticals.find((entry) => entry.id === 'party-registry');
-  const shellUrl = `http://${shellId.replaceAll('-', '')}:${overlay.ports[shellId]}/${shellId}-api`;
-  const partyUrl = new URL(overlay.apis[party.id]);
-  partyUrl.hostname = party.id;
-  assert.ok(contactsSetup.includes(`ONTOS_SHELL_GATEWAY_BASE_URL: '${shellUrl}'`));
-  assert.ok(contactsSetup.includes(`ONTOS_PARTY_REGISTRY_API_BASE_URL: '${partyUrl.href}'`));
+  assert.equal(overlay.ports[party.id], 4102);
+  assert.equal(overlay.apis[party.id], 'http://localhost:4102/party-registry-api');
+  assert.ok(partySetup.includes('ULTRAMODERN_ZEROPS_SERVICE: party-registry'));
+  assert.ok(party.moduleFederation.exposes.includes('./PageContacts'));
 });
 
 test('installed Cloudflare CLI preserves API-only routes when synthesizing the real Party contract', async (context) => {

@@ -3,7 +3,7 @@
   "environment": "stage",
   "approvalReference": "https://github.com/TechsioCZ/ontos/issues/173",
   "approvalStatus": "pending",
-  "gatewayAudiences": ["contacts"],
+  "gatewayAudiences": ["party-registry"],
   "minimumObservationSeconds": 604800,
   "moduleStateVersion": "tenant-module-state-v1",
   "negativeSmokeScenarios": [
@@ -14,7 +14,7 @@
     "wrong_tenant"
   ],
   "policyDataVersion": "protected-entrypoint-policy-v1",
-  "replayMigrationPath": "verticals/contacts/drizzle/20260902144828_sticky_maverick/migration.sql",
+  "replayMigrationPath": "verticals/party-registry/drizzle-contacts/20260902144828_sticky_maverick/migration.sql",
   "spiceDbSchemaPath": "packages/core-runtime/spicedb/bootstrap.yaml",
   "workerOwnershipVersion": "module-manifest-owner-v1"
 }
