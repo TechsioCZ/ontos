@@ -149,6 +149,10 @@ const apiKeyChallenge = HttpEffect.appendPreResponseHandler((_request, response)
     HttpServerResponse.setHeader(response, 'www-authenticate', 'ApiKey realm="ontos-gateway"'),
   ),
 );
+// Responses that carry a freshly issued API-key secret must never be retained by a browser or intermediary cache.
+const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
+  Effect.succeed(HttpServerResponse.setHeader(response, 'cache-control', 'no-store')),
+);
 
 const failGatewayProblem = <Failure extends GatewayContextProblem>(gatewayProblem: Failure) =>
   (gatewayProblem._tag === 'GatewayAuthenticationRequiredProblem'
@@ -1219,6 +1223,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
               ),
             )
             .pipe(
+              Effect.tap(() => noStore),
               Effect.map((result) => ({ ...result, secret: Redacted.value(result.secret) })),
               Effect.catch((error) => failIdentityProblem(identityProblem(error))),
             );
@@ -1294,6 +1299,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
               ),
             )
             .pipe(
+              Effect.tap(() => noStore),
               Effect.map((result) => ({ ...result, secret: Redacted.value(result.secret) })),
               Effect.catch((error) => failIdentityProblem(identityProblem(error))),
             );
@@ -1428,6 +1434,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
               ),
             )
             .pipe(
+              Effect.tap(() => noStore),
               Effect.map((result) => ({ ...result, secret: Redacted.value(result.secret) })),
               Effect.catch((error) => failIdentityProblem(identityProblem(error))),
             );
@@ -1462,6 +1469,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
               ),
             )
             .pipe(
+              Effect.tap(() => noStore),
               Effect.map((result) => ({ ...result, secret: Redacted.value(result.secret) })),
               Effect.catch((error) => failIdentityProblem(identityProblem(error))),
             );
