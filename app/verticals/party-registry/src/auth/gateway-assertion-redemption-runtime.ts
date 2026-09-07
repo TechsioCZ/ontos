@@ -40,13 +40,13 @@ const redeemAssertion = (
   expiredBefore: Date,
   expiresAt: Date,
 ) =>
-  executor.transaction((transaction) =>
-    transaction
-      .delete(gatewayAssertionRedemptions)
-      .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))
-      // oxlint-disable-next-line promise/prefer-await-to-then -- Drizzle transaction callbacks are Promise-based; remove-when: Drizzle accepts Effect transaction programs.
-      .then(() =>
-        transaction
+  executor.transaction(
+    Effect.fn('GatewayAssertionRedemptionRuntime.redeemAssertion')(
+      function* redeemAssertionEffect(transaction) {
+        yield* transaction
+          .delete(gatewayAssertionRedemptions)
+          .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore));
+        return yield* transaction
           .insert(gatewayAssertionRedemptions)
           .values({
             audience: input.audience,
@@ -55,8 +55,9 @@ const redeemAssertion = (
             jti: input.jti,
           })
           .onConflictDoNothing()
-          .returning({ jti: gatewayAssertionRedemptions.jti }),
-      ),
+          .returning({ jti: gatewayAssertionRedemptions.jti });
+      },
+    ),
   );
 
 export const makeGatewayAssertionRedemption = (
@@ -69,10 +70,8 @@ export const makeGatewayAssertionRedemption = (
         DateTime.makeUnsafe(nowEpochMs - GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS * 1000),
       );
       const expiresAt = DateTime.toDateUtc(DateTime.makeUnsafe(input.expiresAtEpochSeconds * 1000));
-      const inserted = yield* Effect.tryPromise({
-        catch: unavailableError,
-        try: () => redeemAssertion(executor, input, expiredBefore, expiresAt),
-      }).pipe(
+      const inserted = yield* redeemAssertion(executor, input, expiredBefore, expiresAt).pipe(
+        Effect.mapError(unavailableError),
         Effect.timeoutOrElse({
           duration: REDEMPTION_TIMEOUT,
           orElse: () => Effect.fail(unavailableError()),
