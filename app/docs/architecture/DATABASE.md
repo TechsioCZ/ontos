@@ -43,10 +43,13 @@ pair only as one cohort and only through the proofs in
 
 Owner conventions on v1:
 
-- Declare relations with `defineRelations(<tables>, (r) => ...)` and construct
-  executors with `drizzle({ client, relations })`. Executor types are
-  `NodePgDatabase<typeof <owner>Relations>`. Relational Queries v1
-  (`relations(...)`, callback `where`) are unavailable.
+- Declare relations with `defineRelations(<tables>, (r) => ...)`. Core and Party
+  construct native executors with `makeWithDefaults({ relations })` from
+  `drizzle-orm/effect-postgres`, supplying `PgClient` and `Reactivity`; their types
+  are `EffectPgDatabase<typeof <owner>Relations>`. The Better Auth integration
+  uses `drizzle({ client, relations })` from `drizzle-orm/node-postgres` and
+  `NodePgDatabase<typeof authRelations>` for its supported adapter. Relational
+  Queries v1 (`relations(...)`, callback `where`) are unavailable.
 - Declare governed tables with `<schema>.table.withRLS(...)` and attach
   `tenantRlsPolicies` or `tenantLegalEntityRlsPolicies` from `@app/core-runtime`.
 - Use `getColumns` instead of the deprecated `getTableColumns`.
