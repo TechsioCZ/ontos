@@ -1087,7 +1087,8 @@ test('governed contribution generators patch owner contracts and lazy adapters a
     assert.match(moduleApiRead, /defineRead\(/u);
     assert.match(moduleApiRead, /legalEntityScope: 'required'/u);
     for (const server of [moduleApiServer, searchServer, reportServer]) {
-      assert.match(server, /verifyOperationPrincipal\(\s*request\.headers\.authorization,/u);
+      assert.match(server, /authenticateOperationPrincipal\(/u);
+      assert.match(server, /Redacted\.make\(request\.headers\.authorization\)/u);
       assert.match(server, /yield\* ReadRuntime/u);
       assert.match(server, /\.runRead\(\{/u);
       assert.match(server, /HttpEffect\.appendPreResponseHandler/u);
@@ -1098,14 +1099,14 @@ test('governed contribution generators patch owner contracts and lazy adapters a
         server,
         /ReadPolicyDenied: \(failure\) => policyProblem\(failure\.httpStatus\)/u,
       );
-      assert.match(server, /Effect\.catchTags\(\{/u);
+      assert.doesNotMatch(server, /ActionPrincipal(?:Missing|Invalid|Expired|Scope)Error/u);
       assert.doesNotMatch(server, /switch \(error\._tag\)|error\._tag ===/u);
       assert.match(server, /problem\.status === 401\s+\?\s+bearerChallenge/u);
       assert.doesNotMatch(server, /tenantId|legalEntityId|principalId|CoreDatabase|from 'pg'/u);
     }
     assert.match(
       operationBoundary,
-      /export const verifyOperationPrincipal = verifyActionPrincipal/u,
+      /export const authenticateOperationPrincipal\s*=\s*makeMicroverticalHttpPrincipalAuthentication/u,
     );
     const searchContract = await readFixtureFile(fixture.root, inventorySearchContractFile);
     const reportContract = await readFixtureFile(
@@ -1454,6 +1455,64 @@ export const ownerCode = true;
   });
 });
 
+test('governed generators reject legacy principal boundaries before writing files', async () => {
+  await withFixture(async (fixture) => {
+    await addInventoryItemResourceType(fixture);
+    await run(fixture, scaffoldCommand.microverticalActionBoundary, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+    ]);
+    const generated = await readFixtureFile(fixture.root, inventoryActionPrincipalFile);
+    const legacy = generated.replace(
+      /const verifyOperationPrincipal =[\s\S]*$/u,
+      'export const verifyOperationPrincipal = verifyActionPrincipal;\n',
+    );
+    assert.doesNotMatch(legacy, /export const authenticateOperationPrincipal/u);
+    await writeFixtureFile(fixture.root, inventoryActionPrincipalFile, legacy);
+    const before = await snapshotTree(fixture.root);
+    const calls: readonly [ScaffoldCommand, readonly string[]][] = [
+      [scaffoldCommand.microverticalActionBoundary, []],
+      [scaffoldCommand.moduleApi, ['--name', fixtureName.resourceDetail]],
+      [
+        scaffoldCommand.searchProvider,
+        ['--name', fixtureName.inventoryItems, scaffoldFlag.resource, 'item'],
+      ],
+      ['report', ['--name', fixtureName.stockLevels, scaffoldFlag.resource, 'item']],
+    ];
+    await Promise.all(
+      calls.map(async ([command, args]) => {
+        await assert.rejects(
+          run(fixture, command, [scaffoldFlag.vertical, inventorySlug, ...args]),
+          /incompatible generated Action boundary:.*export authenticateOperationPrincipal.*provide ActionPrincipalVerifierLive/u,
+        );
+        assert.deepEqual(await snapshotTree(fixture.root), before);
+      }),
+    );
+  });
+});
+
+test('governed generation preserves compatible owner principal adaptations', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, scaffoldCommand.microverticalActionBoundary, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+    ]);
+    const adapted = `${await readFixtureFile(fixture.root, inventoryActionPrincipalFile)}\n// Owner-specific diagnostics remain private to this adapter.\n`;
+    await writeFixtureFile(fixture.root, inventoryActionPrincipalFile, adapted);
+    await run(fixture, scaffoldCommand.microverticalActionBoundary, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+    ]);
+    await run(fixture, scaffoldCommand.moduleApi, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--name',
+      fixtureName.resourceDetail,
+    ]);
+    assert.equal(await readFixtureFile(fixture.root, inventoryActionPrincipalFile), adapted);
+  });
+});
+
 test('generated verifier executes real Shell assertions and overlapping Ed25519 rotation', async () => {
   await withFixture(async (fixture) => {
     await run(fixture, scaffoldCommand.microverticalActionBoundary, [
@@ -1518,7 +1577,8 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
         JSON.parse(await readFile(edgeMetafile, 'utf-8')),
       ).inputs,
     ).join('\n');
-    assert.doesNotMatch(edgeInputs, /core-runtime\/src\/(?:auth|db)|node:(?:crypto|path)|\/pg\//u);
+    assert.match(edgeInputs, /core-runtime\/src\/auth\/gateway-assertion-redemption\.ts/u);
+    assert.doesNotMatch(edgeInputs, /core-runtime\/src\/db|node:(?:crypto|path)|\/pg\//u);
     const generatedModule = Schema.decodeUnknownSync(GeneratedPrincipalModuleSchema)(
       await import(pathToFileURL(path.join(fixture.root, inventoryActionPrincipalFile)).href),
     );
@@ -4770,6 +4830,12 @@ test('all generated files typecheck against the real workspace contracts', async
             '@app/core-runtime': [path.join(appRoot, coreRuntimeIndexFile)],
             '@app/core-runtime/actions/principal-context': [
               path.join(appRoot, 'packages/core-runtime/src/actions/principal-context.ts'),
+            ],
+            '@app/core-runtime/auth/gateway-assertion-redemption': [
+              path.join(appRoot, 'packages/core-runtime/src/auth/gateway-assertion-redemption.ts'),
+            ],
+            '@app/core-runtime/http/principal-authentication': [
+              path.join(appRoot, 'packages/core-runtime/src/http/principal-authentication.ts'),
             ],
             '@app/core-runtime/outbox/worker': [
               path.join(appRoot, 'packages/core-runtime/src/outbox/worker-entrypoint.ts'),

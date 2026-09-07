@@ -83,6 +83,51 @@ test('an audience-bound verifier accepts only its exact topology app ID', async 
   await assert.rejects(verify(billingFixture.token, billingFixture.environment), isScopeError);
 });
 
+test('Bearer scheme matching is case insensitive without changing the signed token', async () => {
+  const fixture = await makeFixture('party-registry');
+  const verifier = bindGatewayPrincipalVerifier('party-registry');
+
+  await Promise.all(
+    ['Bearer', 'bearer', 'BEARER', 'bEaReR'].map(async (scheme) => {
+      const verified = await runEffectTestPromise(
+        verifier.verify(Redacted.make(`${scheme} ${fixture.token}`), {
+          currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+          environment: fixture.environment,
+        }),
+      );
+      assert.deepEqual(verified, principal);
+    }),
+  );
+});
+
+test('case insensitive Bearer matching still rejects malformed authorization headers', async () => {
+  const fixture = await makeFixture('party-registry');
+  const verifier = bindGatewayPrincipalVerifier('party-registry');
+
+  await Promise.all(
+    [
+      ` bearer ${fixture.token}`,
+      `bearer  ${fixture.token}`,
+      `bearer\t${fixture.token}`,
+      `bearer ${fixture.token} `,
+      `bearer ${fixture.token} extra`,
+      'bearer ',
+      `Basic ${fixture.token}`,
+    ].map(
+      async (authorization) =>
+        await assert.rejects(
+          runEffectTestPromise(
+            verifier.verify(Redacted.make(authorization), {
+              currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+              environment: fixture.environment,
+            }),
+          ),
+          isInvalidError,
+        ),
+    ),
+  );
+});
+
 test('empty and malformed audience bindings fail closed as configuration errors', async () => {
   const fixture = await makeFixture('party-registry');
   await Promise.all(

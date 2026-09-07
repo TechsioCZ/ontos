@@ -20,7 +20,7 @@ import {
   partyRegistryApi,
 } from '../shared/api.ts';
 import { partyContactPointDetailRead } from '../src/api/party-contact-point-detail.read.ts';
-import { verifyOperationPrincipal } from './auth/action-principal.ts';
+import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 
 const problemStatus = {
   authentication: 401,
@@ -93,11 +93,6 @@ const internalProblem = () =>
 const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
 );
-type VerificationProblem =
-  | ReturnType<typeof authenticationProblem>
-  | ReturnType<typeof unavailableProblem>;
-const failAuthentication = () =>
-  bearerChallenge.pipe(Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())));
 const readProblem = (error: ReadCoreError) =>
   Match.value(error).pipe(
     Match.tags({
@@ -134,19 +129,12 @@ export const partyContactPointDetailReadApiLive = HttpApiBuilder.group(
           if (correlationId === undefined || correlationId.trim().length === 0) {
             return yield* Effect.fail(invalidProblem());
           }
-          const principal = yield* verifyOperationPrincipal(
+          const principal = yield* authenticateOperationPrincipal(
             Redacted.make(request.headers['authorization']),
-          ).pipe(
-            Effect.catchTags({
-              ActionPrincipalConfigurationError: () =>
-                Effect.fail<VerificationProblem>(unavailableProblem()),
-              ActionPrincipalExpiredError: failAuthentication,
-              ActionPrincipalInvalidError: failAuthentication,
-              ActionPrincipalMissingError: failAuthentication,
-              ActionPrincipalScopeError: failAuthentication,
-              ActionPrincipalUnavailableError: () =>
-                Effect.fail<VerificationProblem>(unavailableProblem()),
-            }),
+            {
+              authentication: authenticationProblem,
+              unavailable: unavailableProblem,
+            },
           );
           const runtime = yield* ReadRuntime;
           return yield* runtime
