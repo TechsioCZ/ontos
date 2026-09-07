@@ -21,6 +21,7 @@ import type {
 import {
   generatedApiGroup,
   generatedProviderIdentities,
+  hasExactGeneratedProviderIdentityTopology,
   hasCompleteGeneratedModuleApiSeam,
   hasGeneratedGovernedClientContract,
   hasGeneratedGovernedServerContract,
@@ -715,6 +716,12 @@ const validatePublishedProviderIdentities = (
       /@ontos-module-id (?<moduleId>[a-z0-9]+(?:\.[a-z0-9]+)*)/u.exec(manifest)?.groups?.moduleId ??
       '';
     const deploymentAppId = state.owners.get(verticalPath) ?? file.split('/')[1] ?? '';
+    if (!hasExactGeneratedProviderIdentityTopology(manifest, registration, moduleId)) {
+      yield* fail(
+        file,
+        'generated search and report clients require the shared client runtime and exact manifest and registration identity topology',
+      );
+    }
     for (const provider of generatedProviderIdentities(manifest, registration, moduleId)) {
       yield* validateGeneratedProviderClient(state.sourceMap, file, deploymentAppId, {
         ...provider,
