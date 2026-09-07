@@ -1,15 +1,15 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 /* eslint-disable anti-slop/no-chained-type-assertions -- Focused harness implements only the mutation insert's Drizzle seam. expires: 2026-12-31. */
+import { DateTime, Effect } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DateTime, Effect } from 'effect';
+import type { OrganizationEngagementProfileRecord } from '../../src/db/engagement-schema.ts';
 import {
   createOrganizationEngagementProfile,
   ensureReferencesBelongToTenant,
   organizationEngagementProfileFromRecord,
 } from '../../src/services/engagement-profile-persistence.service.ts';
-import type { OrganizationEngagementProfileRecord } from '../../src/db/engagement-schema.ts';
 
 const tenantId = 'c1000000-0000-4000-8000-000000000001';
 const refs = {
@@ -41,7 +41,7 @@ const rejectingMutationTransaction = <Failure>(failure: Failure) =>
   // SAFETY: The harness implements exactly the insert/values/returning chain used by create.
   ({
     insert: () => ({
-      values: () => ({ returning: () => Promise.reject(failure) }),
+      values: () => ({ returning: () => Effect.fail(failure) }),
     }),
   }) as unknown as Parameters<typeof createOrganizationEngagementProfile>[0];
 
@@ -120,7 +120,10 @@ test('maps an unrelated uniqueness constraint to the existing persistence fallba
   const failure = await runEffectTestPromise(
     Effect.flip(
       createOrganizationEngagementProfile(
-        rejectingMutationTransaction({ code: '23505', constraint: 'unrelated_table_name_uk' }),
+        rejectingMutationTransaction({
+          code: '23505',
+          constraint: 'contacts_future_internal_integrity_uk',
+        }),
         { ...refs, tenantId },
       ),
     ),

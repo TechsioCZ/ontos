@@ -1,8 +1,8 @@
 // @generated-origin OntOS Codesmith Action Service v1
 import { findPostgresFailure } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import { DateTime, Duration, Effect, Option, Schema } from 'effect';
-import type { CounterpartyRef, PartyRef } from '../../shared/party-registry-references.ts';
+import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import type {
   OrganizationEngagementProfile,
   PersonEngagementProfile,
@@ -11,13 +11,14 @@ import {
   EngagementProfileConflict,
   EngagementProfilePersistenceUnavailable,
 } from '../../shared/domain/engagement-profile.ts';
-import {
-  organizationEngagementProfiles,
-  personEngagementProfiles,
-} from '../db/engagement-schema.ts';
+import type { CounterpartyRef, PartyRef } from '../../shared/party-registry-references.ts';
 import type {
   OrganizationEngagementProfileRecord,
   PersonEngagementProfileRecord,
+} from '../db/engagement-schema.ts';
+import {
+  organizationEngagementProfiles,
+  personEngagementProfiles,
 } from '../db/engagement-schema.ts';
 import type { ContactsTransaction } from '../db/engagement-types.ts';
 
@@ -45,36 +46,28 @@ const unavailable = (cause?: unknown) => {
 };
 
 const uniqueViolationSqlState = ['23', '505'].join('');
-const isEngagementUniquenessFailure = ({
-  code,
-  constraint,
-}: Readonly<{ readonly code: string; readonly constraint?: string }>) =>
-  code === uniqueViolationSqlState &&
-  constraint?.startsWith('contacts_') === true &&
-  constraint.endsWith('_uk');
-const mutationFailure = <Failure>(failure: Failure) =>
-  Option.isSome(findPostgresFailure(failure, isEngagementUniquenessFailure))
+const engagementProfileConflictConstraints = [
+  'contacts_organization_engagement_profiles_tenant_id_uk',
+  'contacts_organization_engagement_profiles_counterparty_uk',
+  'contacts_organization_engagement_profiles_party_uk',
+  'contacts_person_engagement_profiles_tenant_id_uk',
+  'contacts_person_engagement_profiles_party_counterparty_uk',
+  'contacts_person_engagement_profiles_party_only_uk',
+] as const;
+const mutationFailure = (failure: EffectDrizzleQueryError) =>
+  Option.isSome(
+    findPostgresFailure(
+      failure,
+      ({ code, constraint }) =>
+        code === uniqueViolationSqlState &&
+        engagementProfileConflictConstraints.some((approved) => approved === constraint),
+    ),
+  )
     ? new EngagementProfileConflict({
         code: 'contacts_engagement_profile_already_exists',
         reason: 'An engagement profile already exists for these canonical references',
       })
     : unavailable(failure);
-
-const PERSISTENCE_TIMEOUT = Duration.seconds(30);
-const attempt = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: unavailable, try: operation }).pipe(
-    Effect.timeoutOrElse({
-      duration: PERSISTENCE_TIMEOUT,
-      orElse: () => Effect.fail(unavailable()),
-    }),
-  );
-const mutationAttempt = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: mutationFailure, try: operation }).pipe(
-    Effect.timeoutOrElse({
-      duration: PERSISTENCE_TIMEOUT,
-      orElse: () => Effect.fail(unavailable()),
-    }),
-  );
 
 const partyRef = (tenantId: string, resourceId: string): PartyRef => ({
   moduleId: 'party.registry',
@@ -150,16 +143,15 @@ export const createOrganizationEngagementProfile = (
 ) =>
   ensureReferencesBelongToTenant(input.tenantId, input).pipe(
     Effect.andThen(
-      mutationAttempt(() =>
-        transaction
-          .insert(organizationEngagementProfiles)
-          .values({
-            counterpartyResourceId: input.counterpartyRef?.resourceId ?? null,
-            partyResourceId: input.partyRef.resourceId,
-            tenantId: input.tenantId,
-          })
-          .returning(),
-      ),
+      transaction
+        .insert(organizationEngagementProfiles)
+        .values({
+          counterpartyResourceId: input.counterpartyRef?.resourceId ?? null,
+          partyResourceId: input.partyRef.resourceId,
+          tenantId: input.tenantId,
+        })
+        .returning()
+        .pipe(Effect.mapError(mutationFailure)),
     ),
     Effect.flatMap(([row]) =>
       row === undefined
@@ -178,16 +170,15 @@ export const createPersonEngagementProfile = (
 ) =>
   ensureReferencesBelongToTenant(input.tenantId, input).pipe(
     Effect.andThen(
-      mutationAttempt(() =>
-        transaction
-          .insert(personEngagementProfiles)
-          .values({
-            counterpartyResourceId: input.counterpartyRef?.resourceId ?? null,
-            partyResourceId: input.partyRef.resourceId,
-            tenantId: input.tenantId,
-          })
-          .returning(),
-      ),
+      transaction
+        .insert(personEngagementProfiles)
+        .values({
+          counterpartyResourceId: input.counterpartyRef?.resourceId ?? null,
+          partyResourceId: input.partyRef.resourceId,
+          tenantId: input.tenantId,
+        })
+        .returning()
+        .pipe(Effect.mapError(mutationFailure)),
     ),
     Effect.flatMap(([row]) =>
       row === undefined ? Effect.fail(unavailable()) : Effect.succeed(personDto(row)),
@@ -196,12 +187,12 @@ export const createPersonEngagementProfile = (
 
 const transition = Effect.fn('EngagementProfilePersistenceService.transition')(
   function* transitionProfile<Row extends { readonly archivedAt: Date | null }, Value>(
-    loadCurrent: () => PromiseLike<readonly Row[]>,
-    updateCurrent: (now: Date) => PromiseLike<readonly Row[]>,
+    loadCurrent: () => Effect.Effect<readonly Row[], EffectDrizzleQueryError>,
+    updateCurrent: (now: Date) => Effect.Effect<readonly Row[], EffectDrizzleQueryError>,
     requestedState: 'active' | 'archived',
     toDto: (row: Row) => Value,
   ): Effect.fn.Return<LifecycleResult<Value>, EngagementProfilePersistenceUnavailable> {
-    const [current] = yield* attempt(loadCurrent);
+    const [current] = yield* loadCurrent().pipe(Effect.mapError(unavailable));
     if (current === undefined) {
       return { _tag: 'not_found' } as const;
     }
@@ -209,7 +200,7 @@ const transition = Effect.fn('EngagementProfilePersistenceService.transition')(
       return { _tag: 'conflict', value: toDto(current) } as const;
     }
     const now = yield* DateTime.nowAsDate;
-    const [updated] = yield* attempt(() => updateCurrent(now));
+    const [updated] = yield* updateCurrent(now).pipe(Effect.mapError(unavailable));
     if (updated === undefined) {
       return yield* unavailable();
     }
@@ -290,45 +281,45 @@ export const findOrganizationEngagementProfile = (
   tenantId: string,
   profileId: string,
 ) =>
-  attempt(() =>
-    transaction
-      .select()
-      .from(organizationEngagementProfiles)
-      .where(
-        and(
-          eq(organizationEngagementProfiles.tenantId, tenantId),
-          eq(organizationEngagementProfiles.engagementProfileId, profileId),
-        ),
-      )
-      .limit(1),
-  ).pipe(
-    Effect.map(([row]) =>
-      row === undefined
-        ? ({ _tag: 'not_found' } as const)
-        : ({ _tag: 'found', value: organizationEngagementProfileFromRecord(row) } as const),
-    ),
-  );
+  transaction
+    .select()
+    .from(organizationEngagementProfiles)
+    .where(
+      and(
+        eq(organizationEngagementProfiles.tenantId, tenantId),
+        eq(organizationEngagementProfiles.engagementProfileId, profileId),
+      ),
+    )
+    .limit(1)
+    .pipe(
+      Effect.mapError(unavailable),
+      Effect.map(([row]) =>
+        row === undefined
+          ? ({ _tag: 'not_found' } as const)
+          : ({ _tag: 'found', value: organizationEngagementProfileFromRecord(row) } as const),
+      ),
+    );
 
 export const findPersonEngagementProfile = (
   transaction: ScopedTransaction,
   tenantId: string,
   profileId: string,
 ) =>
-  attempt(() =>
-    transaction
-      .select()
-      .from(personEngagementProfiles)
-      .where(
-        and(
-          eq(personEngagementProfiles.tenantId, tenantId),
-          eq(personEngagementProfiles.engagementProfileId, profileId),
-        ),
-      )
-      .limit(1),
-  ).pipe(
-    Effect.map(([row]) =>
-      row === undefined
-        ? ({ _tag: 'not_found' } as const)
-        : ({ _tag: 'found', value: personDto(row) } as const),
-    ),
-  );
+  transaction
+    .select()
+    .from(personEngagementProfiles)
+    .where(
+      and(
+        eq(personEngagementProfiles.tenantId, tenantId),
+        eq(personEngagementProfiles.engagementProfileId, profileId),
+      ),
+    )
+    .limit(1)
+    .pipe(
+      Effect.mapError(unavailable),
+      Effect.map(([row]) =>
+        row === undefined
+          ? ({ _tag: 'not_found' } as const)
+          : ({ _tag: 'found', value: personDto(row) } as const),
+      ),
+    );

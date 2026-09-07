@@ -1,6 +1,8 @@
+import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
+import { Cause, Option, Schema } from 'effect';
+import { SqlError, UniqueViolation } from 'effect/unstable/sql/SqlError';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Option, Schema } from 'effect';
 import {
   DatabaseDriverFailureSchema,
   decodeDatabaseDriverFailure,
@@ -225,4 +227,34 @@ void test('terminates safely when a cause chain contains a cycle', () => {
   cyclic.cause = cyclic;
 
   assert.equal(isDatabaseUnavailableFailure(cyclic), false);
+});
+
+void test('decodes native Drizzle and Effect SQL causes without exposing query data', () => {
+  const constraint = 'principal_auth_bindings_provider_subject_uk';
+  const driver = { code: '23505', constraint, detail: 'private detail' };
+  const sqlError = new SqlError({ reason: new UniqueViolation({ cause: driver, constraint }) });
+  const failure = new EffectDrizzleQueryError({
+    cause: Cause.fail(sqlError),
+    params: ['private parameter'],
+    query: 'private SQL',
+  });
+  assert.deepEqual(Option.getOrThrow(findPostgresFailure(failure)), { code: '23505', constraint });
+  assert.deepEqual(Option.getOrThrow(findPostgresFailure(Cause.die(sqlError))), {
+    code: '23505',
+    constraint,
+  });
+});
+
+void test('walks native mixed Causes in order and skips unrelated failures', () => {
+  const failure = Cause.combine(
+    Cause.fail({ code: '40001' }),
+    Cause.die({ code: '23505', constraint: 'owned_unique' }),
+  );
+  assert.deepEqual(
+    Option.getOrThrow(findPostgresFailure(failure, ({ code }) => code === '23505')),
+    {
+      code: '23505',
+      constraint: 'owned_unique',
+    },
+  );
 });

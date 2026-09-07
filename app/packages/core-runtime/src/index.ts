@@ -116,6 +116,8 @@ export type {
   SafeLegalEntity,
 } from './auth/legal-entity-context.ts';
 export { DatabaseConnectionError } from './db/client.ts';
+export { DEFAULT_DATABASE_POOL_DEADLINES, configureDatabasePool } from './db/pool-configuration.ts';
+export type { DatabasePoolDeadlines } from './db/pool-configuration.ts';
 export { CorePersistenceLive } from './runtime-infrastructure.ts';
 export {
   DatabaseConfig,

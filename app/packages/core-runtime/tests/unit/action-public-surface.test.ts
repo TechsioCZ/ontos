@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import * as publicSurface from '../../src/index.ts';
-import type { ResolvedReadPermissionTarget } from '../../src/index.ts';
 import {
   computeActionRequestHash,
   computeCanonicalValueHash,
 } from '../../src/actions/repository.ts';
+import type { ResolvedReadPermissionTarget } from '../../src/index.ts';
+import * as publicSurface from '../../src/index.ts';
 
 const principal = {
   authMethod: 'session',

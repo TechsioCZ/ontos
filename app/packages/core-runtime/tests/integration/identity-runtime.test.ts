@@ -1,18 +1,34 @@
-import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import test from 'node:test';
+import {
+  makeEffectTestCallback as nativeTestCallback,
+  makeEffectTestCallback,
+} from '@app/core-runtime/testing/effect-runtime';
+
 import { v1 } from '@authzed/authzed-node';
 import { and, eq, inArray } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { DateTime, Effect, Option, Predicate } from 'effect';
+import {
+  DateTime,
+  Effect,
+  Exit as NativeExit,
+  Scope as NativeScope,
+  Option,
+  Predicate,
+} from 'effect';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import test, { after as afterNativeDatabase } from 'node:test';
 import { Pool } from 'pg';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
+import { managedPrincipalsRead } from '../../src/auth/principal-administration-reads.ts';
 import {
   PrincipalManagementRepository,
   principalManagementRepositoryFromTransaction,
 } from '../../src/auth/principal-management.ts';
+import { makeSupportRecoveryPrincipalContextResolver } from '../../src/auth/support-recovery-principal-context.ts';
+import {
+  makeSystemPrincipalContextResolver,
+  registerSystemWorkload,
+} from '../../src/auth/system-principal-context.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import {
   actionInvocations,
@@ -23,7 +39,6 @@ import {
   principals,
   tenants,
 } from '../../src/db/schema.ts';
-import { managedPrincipalsRead } from '../../src/auth/principal-administration-reads.ts';
 import { bindManagedApiKeyAction } from '../../src/modules/actions/bind-managed-api-key.action.ts';
 import { bindSelfApiKeyAction } from '../../src/modules/actions/bind-self-api-key.action.ts';
 import { changePrincipalStatusAction } from '../../src/modules/actions/change-principal-status.action.ts';
@@ -31,28 +46,30 @@ import { createNonHumanPrincipalAction } from '../../src/modules/actions/create-
 import { recordSupportImpersonationAction } from '../../src/modules/actions/record-support-impersonation.action.ts';
 import { setManagedApiKeyBindingStatusAction } from '../../src/modules/actions/set-managed-api-key-binding-status.action.ts';
 import { setSelfApiKeyBindingStatusAction } from '../../src/modules/actions/set-self-api-key-binding-status.action.ts';
-import { makeSupportRecoveryPrincipalContextResolver } from '../../src/auth/support-recovery-principal-context.ts';
-import {
-  makeSystemPrincipalContextResolver,
-  registerSystemWorkload,
-} from '../../src/auth/system-principal-context.ts';
 import {
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
 } from '../../src/operations/context.ts';
-import { makeReadRuntime } from '../../src/reads/runtime.ts';
-import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
-import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
-import { makeContextAccess } from '../../src/permissions/context-access.ts';
 import {
   SPICEDB_CHECK_TIMEOUT_MS,
   createSpiceDbPermissionClient,
 } from '../../src/permissions/client.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
+import { makeContextAccess } from '../../src/permissions/context-access.ts';
 import {
   makeActionPermissionService,
   toSpiceDbActionObjectId,
 } from '../../src/permissions/service.ts';
+import { makeReadRuntime } from '../../src/reads/runtime.ts';
+import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
+import { makeTestDatabaseFromPool } from '../support/database.ts';
+import { runEffectTestSync as runNativeSync } from '../support/effect-runtime.ts';
+import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
+
+const nativeDatabaseScope = runNativeSync(NativeScope.make());
+afterNativeDatabase(
+  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
+);
 
 const withOptionalProperty = <
   Base extends object,
@@ -95,8 +112,12 @@ effectTest(
     const spiceDbConfiguration = yield* loadSpiceDbConfig();
     const adminPool = new Pool({ connectionString: connections.admin.connectionString });
     const runtimePool = new Pool({ connectionString: connections.runtime.connectionString });
-    const admin = drizzle({ client: adminPool, relations: coreRelations });
-    const runtimeDatabase = drizzle({ client: runtimePool, relations: coreRelations });
+    const admin = yield* makeTestDatabaseFromPool(adminPool, coreRelations).pipe(
+      NativeScope.provide(nativeDatabaseScope),
+    );
+    const runtimeDatabase = yield* makeTestDatabaseFromPool(runtimePool, coreRelations).pipe(
+      NativeScope.provide(nativeDatabaseScope),
+    );
     const principalManagementRepository =
       principalManagementRepositoryFromTransaction(runtimeDatabase);
     const runIdentityAction = <Value, Failure>(
@@ -176,26 +197,16 @@ effectTest(
       }),
     ];
     const cleanup = Effect.gen(function* cleanIdentityRuntimeFixtures() {
-      yield* promiseEffect(() =>
-        admin.delete(dataAccessEvents).where(inArray(dataAccessEvents.tenantId, [tenantId])),
-      );
-      yield* promiseEffect(() =>
-        admin.delete(auditEvents).where(inArray(auditEvents.tenantId, [tenantId])),
-      );
-      yield* promiseEffect(() =>
-        admin.delete(actionInvocations).where(inArray(actionInvocations.tenantId, [tenantId])),
-      );
-      yield* promiseEffect(() =>
-        admin
-          .delete(principalAuthBindings)
-          .where(inArray(principalAuthBindings.tenantId, [tenantId, foreignTenantId])),
-      );
-      yield* promiseEffect(() =>
-        admin.delete(principals).where(inArray(principals.tenantId, [tenantId, foreignTenantId])),
-      );
-      yield* promiseEffect(() =>
-        admin.delete(tenants).where(inArray(tenants.tenantId, [tenantId, foreignTenantId])),
-      );
+      yield* admin.delete(dataAccessEvents).where(inArray(dataAccessEvents.tenantId, [tenantId]));
+      yield* admin.delete(auditEvents).where(inArray(auditEvents.tenantId, [tenantId]));
+      yield* admin.delete(actionInvocations).where(inArray(actionInvocations.tenantId, [tenantId]));
+      yield* admin
+        .delete(principalAuthBindings)
+        .where(inArray(principalAuthBindings.tenantId, [tenantId, foreignTenantId]));
+      yield* admin
+        .delete(principals)
+        .where(inArray(principals.tenantId, [tenantId, foreignTenantId]));
+      yield* admin.delete(tenants).where(inArray(tenants.tenantId, [tenantId, foreignTenantId]));
     });
 
     const exercise = Effect.gen(function* exerciseIdentityRuntime() {
@@ -213,78 +224,72 @@ effectTest(
           initialRelationshipsRequest,
         ),
       );
-      yield* promiseEffect(() =>
-        admin.insert(tenants).values([
-          {
-            defaultLocale: 'en',
-            name: 'Identity runtime tenant',
-            slug: `identity-runtime-${tenantId}`,
-            status: 'active',
-            tenantId,
-          },
-          {
-            defaultLocale: 'en',
-            name: 'Foreign identity runtime tenant',
-            slug: `identity-runtime-${foreignTenantId}`,
-            status: 'active',
-            tenantId: foreignTenantId,
-          },
-        ]),
-      );
-      yield* promiseEffect(() =>
-        admin.insert(principals).values([
-          {
-            displayName: 'Identity administrator',
-            kind: 'human',
-            principalId: administratorPrincipalId,
-            status: 'active',
-            tenantId,
-          },
-          {
-            displayName: 'Foreign managed service',
-            kind: 'service',
-            principalId: foreignPrincipalId,
-            status: 'active',
-            tenantId: foreignTenantId,
-          },
-          {
-            displayName: 'Support target',
-            kind: 'human',
-            principalId: supportTargetPrincipalId,
-            status: 'active',
-            tenantId,
-          },
-          {
-            displayName: 'Identity runtime system',
-            kind: 'system',
-            principalId: systemPrincipalId,
-            status: 'active',
-            tenantId,
-          },
-        ]),
-      );
-      yield* promiseEffect(() =>
-        admin.insert(principalAuthBindings).values([
-          {
-            principalAuthBindingId: administratorAuthBindingId,
-            principalId: administratorPrincipalId,
-            provider: 'better_auth',
-            providerSubjectId: providerUserId,
-            status: 'active',
-            subjectType: 'user',
-            tenantId,
-          },
-          {
-            principalAuthBindingId: supportTargetAuthBindingId,
-            principalId: supportTargetPrincipalId,
-            provider: 'better_auth',
-            providerSubjectId: supportTargetUserId,
-            status: 'active',
-            subjectType: 'user',
-            tenantId,
-          },
-        ]),
-      );
+      yield* admin.insert(tenants).values([
+        {
+          defaultLocale: 'en',
+          name: 'Identity runtime tenant',
+          slug: `identity-runtime-${tenantId}`,
+          status: 'active',
+          tenantId,
+        },
+        {
+          defaultLocale: 'en',
+          name: 'Foreign identity runtime tenant',
+          slug: `identity-runtime-${foreignTenantId}`,
+          status: 'active',
+          tenantId: foreignTenantId,
+        },
+      ]);
+      yield* admin.insert(principals).values([
+        {
+          displayName: 'Identity administrator',
+          kind: 'human',
+          principalId: administratorPrincipalId,
+          status: 'active',
+          tenantId,
+        },
+        {
+          displayName: 'Foreign managed service',
+          kind: 'service',
+          principalId: foreignPrincipalId,
+          status: 'active',
+          tenantId: foreignTenantId,
+        },
+        {
+          displayName: 'Support target',
+          kind: 'human',
+          principalId: supportTargetPrincipalId,
+          status: 'active',
+          tenantId,
+        },
+        {
+          displayName: 'Identity runtime system',
+          kind: 'system',
+          principalId: systemPrincipalId,
+          status: 'active',
+          tenantId,
+        },
+      ]);
+      yield* admin.insert(principalAuthBindings).values([
+        {
+          principalAuthBindingId: administratorAuthBindingId,
+          principalId: administratorPrincipalId,
+          provider: 'better_auth',
+          providerSubjectId: providerUserId,
+          status: 'active',
+          subjectType: 'user',
+          tenantId,
+        },
+        {
+          principalAuthBindingId: supportTargetAuthBindingId,
+          principalId: supportTargetPrincipalId,
+          provider: 'better_auth',
+          providerSubjectId: supportTargetUserId,
+          status: 'active',
+          subjectType: 'user',
+          tenantId,
+        },
+      ]);
 
       const created = yield* runIdentityAction(
         actionRuntime.runAction({
@@ -412,12 +417,10 @@ effectTest(
         registration: managedPrincipalsRead,
         transport: { correlationId: randomUUID() },
       });
-      const committed = yield* promiseEffect(() =>
-        admin
-          .select({ actionKey: actionInvocations.actionKey, status: actionInvocations.status })
-          .from(actionInvocations)
-          .where(eq(actionInvocations.tenantId, tenantId)),
-      );
+      const committed = yield* admin
+        .select({ actionKey: actionInvocations.actionKey, status: actionInvocations.status })
+        .from(actionInvocations)
+        .where(eq(actionInvocations.tenantId, tenantId));
       assert.deepEqual(
         [
           ...new Set(
@@ -428,29 +431,22 @@ effectTest(
         ].toSorted(),
         identityActionKeys.filter((actionKey) => !actionKey.includes('support')).toSorted(),
       );
-      const [readEvidence] = yield* promiseEffect(() =>
-        admin
-          .select({ resultCount: dataAccessEvents.resultCount })
-          .from(dataAccessEvents)
-          .where(
-            and(
-              eq(dataAccessEvents.tenantId, tenantId),
-              eq(dataAccessEvents.evidencePolicyKey, 'core.identity.managed-principals.access.v1'),
-            ),
+      const [readEvidence] = yield* admin
+        .select({ resultCount: dataAccessEvents.resultCount })
+        .from(dataAccessEvents)
+        .where(
+          and(
+            eq(dataAccessEvents.tenantId, tenantId),
+            eq(dataAccessEvents.evidencePolicyKey, 'core.identity.managed-principals.access.v1'),
           ),
-      );
+        );
       assert.equal(readEvidence?.resultCount, 1);
-      const [apiKeyReadEvidence] = yield* promiseEffect(() =>
-        admin
-          .select({ authBindingId: dataAccessEvents.authBindingId })
-          .from(dataAccessEvents)
-          .where(
-            and(
-              eq(dataAccessEvents.tenantId, tenantId),
-              eq(dataAccessEvents.authMethod, 'api_key'),
-            ),
-          ),
-      );
+      const [apiKeyReadEvidence] = yield* admin
+        .select({ authBindingId: dataAccessEvents.authBindingId })
+        .from(dataAccessEvents)
+        .where(
+          and(eq(dataAccessEvents.tenantId, tenantId), eq(dataAccessEvents.authMethod, 'api_key')),
+        );
       assert.equal(apiKeyReadEvidence?.authBindingId, selfBinding.authBindingId);
 
       const systemPrincipal = yield* makeSystemPrincipalContextResolver({
@@ -569,23 +565,19 @@ effectTest(
           removeSupportRelationshipRequest,
         ),
       );
-      yield* promiseEffect(() =>
-        admin
-          .update(principalAuthBindings)
-          .set({
-            revokedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-08-09T00:00:00.000Z')),
-            status: 'revoked',
-          })
-          .where(eq(principalAuthBindings.principalAuthBindingId, administratorAuthBindingId)),
-      );
-      yield* promiseEffect(() =>
-        admin
-          .update(principals)
-          .set({ status: 'disabled' })
-          .where(
-            inArray(principals.principalId, [administratorPrincipalId, supportTargetPrincipalId]),
-          ),
-      );
+      yield* admin
+        .update(principalAuthBindings)
+        .set({
+          revokedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-08-09T00:00:00.000Z')),
+          status: 'revoked',
+        })
+        .where(eq(principalAuthBindings.principalAuthBindingId, administratorAuthBindingId));
+      yield* admin
+        .update(principals)
+        .set({ status: 'disabled' })
+        .where(
+          inArray(principals.principalId, [administratorPrincipalId, supportTargetPrincipalId]),
+        );
       const recoveryPrincipal = yield* makeSupportRecoveryPrincipalContextResolver({
         executor: runtimeDatabase,
       }).resolveStoppedImpersonation({
@@ -612,14 +604,12 @@ effectTest(
         }),
       );
       assert.deepEqual(stopped, { checkpoint: 'stopped', recorded: true });
-      const supportAudits = yield* promiseEffect(() =>
-        admin
-          .select({ evidence: auditEvents.evidenceJson })
-          .from(auditEvents)
-          .where(
-            and(eq(auditEvents.tenantId, tenantId), eq(auditEvents.eventType, 'action.executed')),
-          ),
-      );
+      const supportAudits = yield* admin
+        .select({ evidence: auditEvents.evidenceJson })
+        .from(auditEvents)
+        .where(
+          and(eq(auditEvents.tenantId, tenantId), eq(auditEvents.eventType, 'action.executed')),
+        );
       assert.deepEqual(
         supportAudits
           .map(({ evidence }) =>
@@ -631,32 +621,25 @@ effectTest(
           .toSorted(),
         ['requested', 'started', 'stopped'],
       );
-      const supportAccess = yield* promiseEffect(() =>
-        admin
-          .select({ count: dataAccessEvents.resultCount })
-          .from(dataAccessEvents)
-          .where(
-            and(
-              eq(dataAccessEvents.tenantId, tenantId),
-              eq(
-                dataAccessEvents.evidencePolicyKey,
-                'core.identity.record-support-impersonation.access.v1',
-              ),
+      const supportAccess = yield* admin
+        .select({ count: dataAccessEvents.resultCount })
+        .from(dataAccessEvents)
+        .where(
+          and(
+            eq(dataAccessEvents.tenantId, tenantId),
+            eq(
+              dataAccessEvents.evidencePolicyKey,
+              'core.identity.record-support-impersonation.access.v1',
             ),
           ),
-      );
+        );
       assert.equal(supportAccess.length, 6);
-      const succeededIdentityActions = yield* promiseEffect(() =>
-        admin
-          .select({ actionKey: actionInvocations.actionKey })
-          .from(actionInvocations)
-          .where(
-            and(
-              eq(actionInvocations.tenantId, tenantId),
-              eq(actionInvocations.status, 'succeeded'),
-            ),
-          ),
-      );
+      const succeededIdentityActions = yield* admin
+        .select({ actionKey: actionInvocations.actionKey })
+        .from(actionInvocations)
+        .where(
+          and(eq(actionInvocations.tenantId, tenantId), eq(actionInvocations.status, 'succeeded')),
+        );
       assert.deepEqual(
         [...new Set(succeededIdentityActions.map(({ actionKey }) => actionKey))].toSorted(),
         [...identityActionKeys].toSorted(),
@@ -693,6 +676,6 @@ effectTest(
         ).pipe(Effect.orDie),
       ),
     );
-    yield* exercise.pipe(Effect.ensuring(release));
+    yield* exercise.pipe(Effect.ensuring(release.pipe(Effect.orDie)));
   }),
 );

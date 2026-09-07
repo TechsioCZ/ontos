@@ -1,10 +1,10 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
+import { and, asc, eq } from 'drizzle-orm';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { and, asc, eq } from 'drizzle-orm';
-import { DateTime, Effect, Option, Schema } from 'effect';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import {
@@ -17,12 +17,12 @@ import {
   workerCheckpoints,
 } from '../../src/db/schema.ts';
 import type { CoreDatabaseExecutor } from '../../src/db/types.ts';
-import { defineOutboxWorker } from '../../src/outbox/definition.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import type { AnyOutboxWorkerRegistration } from '../../src/outbox/definition.ts';
+import { defineOutboxWorker } from '../../src/outbox/definition.ts';
 import { OutboxClaimLostError } from '../../src/outbox/errors.ts';
-import { makeOutboxRepository } from '../../src/outbox/repository.ts';
 import type { OutboxClaim, OutboxRepositoryService } from '../../src/outbox/repository.ts';
+import { makeOutboxRepository } from '../../src/outbox/repository.ts';
 
 const MessageKeySchema = Schema.String.pipe(Schema.brand('MessageKey'));
 const payloadSchema = Schema.Struct({ messageKey: MessageKeySchema });
@@ -103,13 +103,15 @@ const withDatabase = async <Value>(
 
 const insertTenant = async (database: CoreDatabaseExecutor): Promise<string> => {
   const tenantId = randomUUID();
-  await database.insert(tenants).values({
-    defaultLocale: 'en',
-    name: 'Outbox Runtime Integration',
-    slug: `outbox-runtime-${tenantId}`,
-    status: 'active',
-    tenantId,
-  });
+  await runEffectTestPromise(
+    database.insert(tenants).values({
+      defaultLocale: 'en',
+      name: 'Outbox Runtime Integration',
+      slug: `outbox-runtime-${tenantId}`,
+      status: 'active',
+      tenantId,
+    }),
+  );
   return tenantId;
 };
 
@@ -126,56 +128,76 @@ const insertMessage = async (
   topic = 'producer.message-created',
   messageKey = randomUUID(),
 ) => {
-  const [event] = await database
-    .insert(domainEvents)
-    .values({
-      eventType: topic,
-      payloadJson: { messageKey },
-      producerModuleKey: 'producer',
-      subjectModuleKey: 'producer',
-      subjectResourceId: messageKey,
-      subjectResourceType: 'outbox-test',
-      tenantId,
-    })
-    .returning({
-      domainEventId: domainEvents.domainEventId,
-      tenantSequenceNo: domainEvents.tenantSequenceNo,
-    });
+  const [event] = await runEffectTestPromise(
+    database
+      .insert(domainEvents)
+      .values({
+        eventType: topic,
+        payloadJson: { messageKey },
+        producerModuleKey: 'producer',
+        subjectModuleKey: 'producer',
+        subjectResourceId: messageKey,
+        subjectResourceType: 'outbox-test',
+        tenantId,
+      })
+      .returning({
+        domainEventId: domainEvents.domainEventId,
+        tenantSequenceNo: domainEvents.tenantSequenceNo,
+      }),
+  );
   assert.ok(event);
-  const [message] = await database
-    .insert(outboxMessages)
-    .values({
-      domainEventId: event.domainEventId,
-      payloadJson: { messageKey },
-      producerModuleKey: 'producer',
-      tenantId,
-      topic,
-    })
-    .returning({ messageId: outboxMessages.outboxMessageId });
+  const [message] = await runEffectTestPromise(
+    database
+      .insert(outboxMessages)
+      .values({
+        domainEventId: event.domainEventId,
+        payloadJson: { messageKey },
+        producerModuleKey: 'producer',
+        tenantId,
+        topic,
+      })
+      .returning({ messageId: outboxMessages.outboxMessageId }),
+  );
   assert.ok(message);
   return { ...event, ...message };
 };
 
 const cleanupTenant = async (database: CoreDatabaseExecutor, tenantId: string): Promise<void> => {
-  await database.delete(workerCheckpoints).where(eq(workerCheckpoints.tenantId, tenantId));
-  const messageRows = await database
-    .select({ messageId: outboxMessages.outboxMessageId })
-    .from(outboxMessages)
-    .where(eq(outboxMessages.tenantId, tenantId));
+  await runEffectTestPromise(
+    database.delete(workerCheckpoints).where(eq(workerCheckpoints.tenantId, tenantId)),
+  );
+  const messageRows = await runEffectTestPromise(
+    database
+      .select({ messageId: outboxMessages.outboxMessageId })
+      .from(outboxMessages)
+      .where(eq(outboxMessages.tenantId, tenantId)),
+  );
   await forEachSequential(messageRows, async ({ messageId }) => {
-    const deliveries = await database
-      .select({ deliveryId: outboxDeliveries.outboxDeliveryId })
-      .from(outboxDeliveries)
-      .where(eq(outboxDeliveries.outboxMessageId, messageId));
+    const deliveries = await runEffectTestPromise(
+      database
+        .select({ deliveryId: outboxDeliveries.outboxDeliveryId })
+        .from(outboxDeliveries)
+        .where(eq(outboxDeliveries.outboxMessageId, messageId)),
+    );
     await forEachSequential(deliveries, async ({ deliveryId }) => {
-      await database.delete(outboxAttempts).where(eq(outboxAttempts.outboxDeliveryId, deliveryId));
+      await runEffectTestPromise(
+        database.delete(outboxAttempts).where(eq(outboxAttempts.outboxDeliveryId, deliveryId)),
+      );
     });
-    await database.delete(outboxDeliveries).where(eq(outboxDeliveries.outboxMessageId, messageId));
+    await runEffectTestPromise(
+      database.delete(outboxDeliveries).where(eq(outboxDeliveries.outboxMessageId, messageId)),
+    );
   });
-  await database.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId));
-  await database.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId));
-  await database.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId));
-  await database.delete(tenants).where(eq(tenants.tenantId, tenantId));
+  await runEffectTestPromise(
+    database.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
+  );
+  await runEffectTestPromise(
+    database.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId)),
+  );
+  await runEffectTestPromise(
+    database.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
+  );
+  await runEffectTestPromise(database.delete(tenants).where(eq(tenants.tenantId, tenantId)));
 };
 
 void test('matches zero, one, or multiple exact workers once without historical backfill', async () => {
@@ -203,23 +225,27 @@ void test('matches zero, one, or multiple exact workers once without historical 
         ),
       );
       assert.equal(lateWorkerMatch.deliveriesCreated, 0);
-      const deliveries = await database
-        .select()
-        .from(outboxDeliveries)
-        .innerJoin(
-          outboxMessages,
-          eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId),
-        )
-        .where(eq(outboxMessages.tenantId, tenantId));
+      const deliveries = await runEffectTestPromise(
+        database
+          .select()
+          .from(outboxDeliveries)
+          .innerJoin(
+            outboxMessages,
+            eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId),
+          )
+          .where(eq(outboxMessages.tenantId, tenantId)),
+      );
       assert.equal(deliveries.length, 2);
       assert.deepEqual(deliveries.map((row) => row.outbox_deliveries.workerKey).toSorted(), [
         'consumer.alpha',
         'consumer.beta',
       ]);
-      const messages = await database
-        .select({ matchedAt: outboxMessages.matchedAt })
-        .from(outboxMessages)
-        .where(eq(outboxMessages.tenantId, tenantId));
+      const messages = await runEffectTestPromise(
+        database
+          .select({ matchedAt: outboxMessages.matchedAt })
+          .from(outboxMessages)
+          .where(eq(outboxMessages.tenantId, tenantId)),
+      );
       assert.equal(
         messages.every(({ matchedAt }) => matchedAt !== null),
         true,
@@ -234,12 +260,14 @@ void test('matches the complete subscription catalog before owner-local processe
   await withDatabase(async (database) => {
     const tenantId = await insertTenant(database);
     try {
-      await activateConsumer(database, tenantId);
-      await database.insert(tenantModuleStates).values({
-        moduleKey: 'reporting',
-        state: 'active',
-        tenantId,
-      });
+      await runEffectTestPromise(activateConsumer(database, tenantId));
+      await runEffectTestPromise(
+        database.insert(tenantModuleStates).values({
+          moduleKey: 'reporting',
+          state: 'active',
+          tenantId,
+        }),
+      );
       await insertMessage(database, tenantId);
       const consumerWorker = makeWorker('consumer.local');
       const reportingWorker = makeWorker('reporting.local', {
@@ -283,19 +311,21 @@ void test('gates claims on every non-active consumer state and permits one concu
         Option.getOrNull(await claimNext(repository, [registration], 'runtime-a', claimAt)),
         null,
       );
-      await activateConsumer(database, tenantId, 'inactive');
+      await runEffectTestPromise(activateConsumer(database, tenantId, 'inactive'));
       await forEachSequential(
         ['inactive', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'] as const,
         async (state) => {
-          await database
-            .update(tenantModuleStates)
-            .set({ state })
-            .where(
-              and(
-                eq(tenantModuleStates.tenantId, tenantId),
-                eq(tenantModuleStates.moduleKey, 'consumer'),
+          await runEffectTestPromise(
+            database
+              .update(tenantModuleStates)
+              .set({ state })
+              .where(
+                and(
+                  eq(tenantModuleStates.tenantId, tenantId),
+                  eq(tenantModuleStates.moduleKey, 'consumer'),
+                ),
               ),
-            );
+          );
           assert.equal(
             Option.getOrNull(
               await claimNext(repository, [registration], `runtime-${state}`, claimAt),
@@ -304,15 +334,17 @@ void test('gates claims on every non-active consumer state and permits one concu
           );
         },
       );
-      await database
-        .update(tenantModuleStates)
-        .set({ state: 'active' })
-        .where(
-          and(
-            eq(tenantModuleStates.tenantId, tenantId),
-            eq(tenantModuleStates.moduleKey, 'consumer'),
+      await runEffectTestPromise(
+        database
+          .update(tenantModuleStates)
+          .set({ state: 'active' })
+          .where(
+            and(
+              eq(tenantModuleStates.tenantId, tenantId),
+              eq(tenantModuleStates.moduleKey, 'consumer'),
+            ),
           ),
-        );
+      );
       const claimOptions = await Promise.all([
         claimNext(repository, [registration], 'runtime-a', claimAt),
         claimNext(repository, [registration], 'runtime-b', claimAt),
@@ -321,10 +353,12 @@ void test('gates claims on every non-active consumer state and permits one concu
       assert.equal(claims.filter((candidate) => candidate !== null).length, 1);
       const claimed = claims.find((candidate) => candidate !== null);
       assert.ok(claimed);
-      const [attempt] = await database
-        .select()
-        .from(outboxAttempts)
-        .where(eq(outboxAttempts.outboxDeliveryId, claimed.deliveryId));
+      const [attempt] = await runEffectTestPromise(
+        database
+          .select()
+          .from(outboxAttempts)
+          .where(eq(outboxAttempts.outboxDeliveryId, claimed.deliveryId)),
+      );
       assert.ok(attempt);
       assert.equal(attempt.finishedAt, null);
     } finally {
@@ -337,7 +371,7 @@ void test('reclaims only expired leases, abandons the old attempt, and rejects s
   await withDatabase(async (database) => {
     const tenantId = await insertTenant(database);
     try {
-      await activateConsumer(database, tenantId);
+      await runEffectTestPromise(activateConsumer(database, tenantId));
       await insertMessage(database, tenantId);
       const registration = makeWorker('consumer.lease-proof');
       const repository = makeOutboxRepository(database);
@@ -364,11 +398,13 @@ void test('reclaims only expired leases, abandons the old attempt, and rejects s
         runEffectTestPromise(repository.complete(first, advanceDate(started, 1002))),
         Schema.is(OutboxClaimLostError),
       );
-      const attempts = await database
-        .select()
-        .from(outboxAttempts)
-        .where(eq(outboxAttempts.outboxDeliveryId, first.deliveryId))
-        .orderBy(asc(outboxAttempts.startedAt));
+      const attempts = await runEffectTestPromise(
+        database
+          .select()
+          .from(outboxAttempts)
+          .where(eq(outboxAttempts.outboxDeliveryId, first.deliveryId))
+          .orderBy(asc(outboxAttempts.startedAt)),
+      );
       assert.equal(attempts.length, 2);
       assert.equal(attempts[0]?.errorMessage, 'Outbox Worker lease expired before completion');
       assert.ok(attempts[0]?.finishedAt);
@@ -383,7 +419,7 @@ void test('finishes an abandoned final attempt before dead-lettering its expired
   await withDatabase(async (database) => {
     const tenantId = await insertTenant(database);
     try {
-      await activateConsumer(database, tenantId);
+      await runEffectTestPromise(activateConsumer(database, tenantId));
       await insertMessage(database, tenantId);
       const registration = makeWorker('consumer.final-lease', { maxAttempts: 1 });
       const repository = makeOutboxRepository(database);
@@ -402,14 +438,18 @@ void test('finishes an abandoned final attempt before dead-lettering its expired
         ),
         null,
       );
-      const [delivery] = await database
-        .select()
-        .from(outboxDeliveries)
-        .where(eq(outboxDeliveries.outboxDeliveryId, claim.deliveryId));
-      const [attempt] = await database
-        .select()
-        .from(outboxAttempts)
-        .where(eq(outboxAttempts.outboxDeliveryId, claim.deliveryId));
+      const [delivery] = await runEffectTestPromise(
+        database
+          .select()
+          .from(outboxDeliveries)
+          .where(eq(outboxDeliveries.outboxDeliveryId, claim.deliveryId)),
+      );
+      const [attempt] = await runEffectTestPromise(
+        database
+          .select()
+          .from(outboxAttempts)
+          .where(eq(outboxAttempts.outboxDeliveryId, claim.deliveryId)),
+      );
       assert.equal(delivery?.status, 'dead');
       assert.equal(attempt?.errorMessage, 'Outbox Worker lease expired before completion');
       assert.ok(attempt?.finishedAt);
@@ -423,7 +463,7 @@ void test('finalizes success atomically and advances only through contiguous don
   await withDatabase(async (database) => {
     const tenantId = await insertTenant(database);
     try {
-      await activateConsumer(database, tenantId);
+      await runEffectTestPromise(activateConsumer(database, tenantId));
       const firstMessage = await insertMessage(database, tenantId);
       const secondMessage = await insertMessage(database, tenantId);
       const registration = makeWorker('consumer.checkpoint-proof');
@@ -438,30 +478,30 @@ void test('finalizes success atomically and advances only through contiguous don
       assert.ok(second);
       await runEffectTestPromise(repository.complete(second, advanceDate(now, 1)));
       assert.deepEqual(
-        await database
-          .select()
-          .from(workerCheckpoints)
-          .where(eq(workerCheckpoints.tenantId, tenantId)),
+        await runEffectTestPromise(
+          database.select().from(workerCheckpoints).where(eq(workerCheckpoints.tenantId, tenantId)),
+        ),
         [],
       );
       await runEffectTestPromise(repository.complete(first, advanceDate(now, 2)));
-      const [checkpoint] = await database
-        .select()
-        .from(workerCheckpoints)
-        .where(eq(workerCheckpoints.tenantId, tenantId));
+      const [checkpoint] = await runEffectTestPromise(
+        database.select().from(workerCheckpoints).where(eq(workerCheckpoints.tenantId, tenantId)),
+      );
       assert.ok(checkpoint);
       assert.equal(checkpoint.consumerName, registration.descriptor.workerKey);
       assert.equal(checkpoint.streamKey, 'producer:producer.message-created');
       assert.equal(checkpoint.lastTenantSequenceNo, secondMessage.tenantSequenceNo);
       assert.ok(checkpoint.lastTenantSequenceNo > firstMessage.tenantSequenceNo);
-      const deliveries = await database
-        .select()
-        .from(outboxDeliveries)
-        .innerJoin(
-          outboxMessages,
-          eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId),
-        )
-        .where(eq(outboxMessages.tenantId, tenantId));
+      const deliveries = await runEffectTestPromise(
+        database
+          .select()
+          .from(outboxDeliveries)
+          .innerJoin(
+            outboxMessages,
+            eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId),
+          )
+          .where(eq(outboxMessages.tenantId, tenantId)),
+      );
       assert.equal(
         deliveries.every((row) => row.outbox_deliveries.status === 'done'),
         true,
@@ -480,7 +520,7 @@ void test('schedules bounded retry, dead-letters exhaustion, stores safe errors,
   await withDatabase(async (database) => {
     const tenantId = await insertTenant(database);
     try {
-      await activateConsumer(database, tenantId);
+      await runEffectTestPromise(activateConsumer(database, tenantId));
       await insertMessage(database, tenantId);
       const registration = makeWorker('consumer.retry-proof', { maxAttempts: 2 });
       const repository = makeOutboxRepository(database);
@@ -510,26 +550,29 @@ void test('schedules bounded retry, dead-letters exhaustion, stores safe errors,
         ),
         'dead',
       );
-      const [delivery] = await database
-        .select()
-        .from(outboxDeliveries)
-        .where(eq(outboxDeliveries.outboxDeliveryId, second.deliveryId));
+      const [delivery] = await runEffectTestPromise(
+        database
+          .select()
+          .from(outboxDeliveries)
+          .where(eq(outboxDeliveries.outboxDeliveryId, second.deliveryId)),
+      );
       assert.equal(delivery?.status, 'dead');
       assert.equal(delivery?.attemptsCount, 2);
-      const attempts = await database
-        .select()
-        .from(outboxAttempts)
-        .where(eq(outboxAttempts.outboxDeliveryId, second.deliveryId))
-        .orderBy(asc(outboxAttempts.startedAt));
+      const attempts = await runEffectTestPromise(
+        database
+          .select()
+          .from(outboxAttempts)
+          .where(eq(outboxAttempts.outboxDeliveryId, second.deliveryId))
+          .orderBy(asc(outboxAttempts.startedAt)),
+      );
       assert.deepEqual(
         attempts.map(({ errorMessage }) => errorMessage),
         ['safe retry message', 'terminal safe failure'],
       );
       assert.deepEqual(
-        await database
-          .select()
-          .from(workerCheckpoints)
-          .where(eq(workerCheckpoints.tenantId, tenantId)),
+        await runEffectTestPromise(
+          database.select().from(workerCheckpoints).where(eq(workerCheckpoints.tenantId, tenantId)),
+        ),
         [],
       );
     } finally {

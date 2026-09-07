@@ -1,7 +1,7 @@
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
 import type { partyRelations } from './schema.ts';
 
-export type PartyDatabaseExecutor = NodePgDatabase<typeof partyRelations>;
+export type PartyDatabaseExecutor = EffectPgDatabase<typeof partyRelations>;
 
 type PartyTransactionCallback = Parameters<PartyDatabaseExecutor['transaction']>[0];
 

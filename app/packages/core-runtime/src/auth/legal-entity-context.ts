@@ -144,18 +144,17 @@ export class LegalEntityContext extends Context.Service<
   LegalEntityContextService
 >()('@app/core-runtime/auth/legal-entity-context/LegalEntityContext') {}
 
-type LegalEntityContextRecordPromise = PromiseLike<readonly LegalEntityContextRecord[]>;
-type LegalEntityContextRecordLoadResult =
-  | Effect.Effect<readonly LegalEntityContextRecord[], LegalEntityContextUnavailableError>
-  | LegalEntityContextRecordPromise;
+type LegalEntityContextRecordLoadResult = Effect.Effect<
+  readonly LegalEntityContextRecord[],
+  LegalEntityContextUnavailableError
+>;
 
 interface LegalEntityContextRecordReader<Result extends LegalEntityContextRecordLoadResult> {
   readonly load: (tenantId: string, legalEntityId?: string) => Result;
 }
 
-export type LegalEntityContextRepositoryService = LegalEntityContextRecordReader<
-  Promise<readonly LegalEntityContextRecord[]>
->;
+export type LegalEntityContextRepositoryService =
+  LegalEntityContextRecordReader<LegalEntityContextRecordLoadResult>;
 
 const attachCause = <Failure extends object, FailureCause>(
   failure: Failure,
@@ -173,55 +172,33 @@ const unavailable = <FailureCause>(cause?: FailureCause): LegalEntityContextUnav
 
 const DATABASE_OPERATION_TIMEOUT = Duration.seconds(30);
 
-const promiseLoad = (
-  loaded: LegalEntityContextRecordPromise,
-): Effect.Effect<readonly LegalEntityContextRecord[], LegalEntityContextUnavailableError> =>
-  Effect.tryPromise({
-    catch: unavailable,
-    try: () => loaded,
-  }).pipe(
-    Effect.timeoutOrElse({
-      duration: DATABASE_OPERATION_TIMEOUT,
-      orElse: () => Effect.fail(unavailable()),
-    }),
-  );
-
-const normalizeLoadResult = (
-  loaded: LegalEntityContextRecordLoadResult,
-): Effect.Effect<readonly LegalEntityContextRecord[], LegalEntityContextUnavailableError> =>
-  Effect.isEffect(loaded) ? loaded : promiseLoad(loaded);
-
 const legalEntityContextRepositoryFromDatabase = (database: {
   readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
 }): LegalEntityContextRecordReader<
   Effect.Effect<readonly LegalEntityContextRecord[], LegalEntityContextUnavailableError>
 > => ({
   load: (tenantId, legalEntityId) =>
-    Effect.tryPromise({
-      catch: unavailable,
-      try: () =>
-        database.executor
-          .select({
-            legalEntityId: legalEntities.legalEntityId,
-            legalName: legalEntities.legalName,
-            status: legalEntities.status,
-            tenantId: legalEntities.tenantId,
-          })
-          .from(legalEntities)
-          .where(
-            and(
-              eq(legalEntities.tenantId, tenantId),
-              ...(legalEntityId === undefined
-                ? []
-                : [eq(legalEntities.legalEntityId, legalEntityId)]),
-            ),
-          ),
-    }).pipe(
-      Effect.timeoutOrElse({
-        duration: DATABASE_OPERATION_TIMEOUT,
-        orElse: () => Effect.fail(unavailable()),
-      }),
-    ),
+    database.executor
+      .select({
+        legalEntityId: legalEntities.legalEntityId,
+        legalName: legalEntities.legalName,
+        status: legalEntities.status,
+        tenantId: legalEntities.tenantId,
+      })
+      .from(legalEntities)
+      .where(
+        and(
+          eq(legalEntities.tenantId, tenantId),
+          ...(legalEntityId === undefined ? [] : [eq(legalEntities.legalEntityId, legalEntityId)]),
+        ),
+      )
+      .pipe(
+        Effect.mapError(unavailable),
+        Effect.timeoutOrElse({
+          duration: DATABASE_OPERATION_TIMEOUT,
+          orElse: () => Effect.fail(unavailable()),
+        }),
+      ),
 });
 
 export const legalEntityContextFromRepository = <Result extends LegalEntityContextRecordLoadResult>(
@@ -231,10 +208,7 @@ export const legalEntityContextFromRepository = <Result extends LegalEntityConte
     tenantId: string,
     legalEntityId?: string,
   ): Effect.Effect<readonly LegalEntityContextRecord[], LegalEntityContextUnavailableError> =>
-    Effect.try({
-      catch: unavailable,
-      try: () => repository.load(tenantId, legalEntityId),
-    }).pipe(Effect.flatMap(normalizeLoadResult));
+    repository.load(tenantId, legalEntityId);
 
   return {
     listActiveForTenant: (tenantId) =>

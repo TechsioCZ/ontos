@@ -1,4 +1,4 @@
-import { Option, Predicate, Schema } from 'effect';
+import { Cause, Option, Predicate, Schema } from 'effect';
 
 const PostgresFailureCodeSchema = Schema.Struct({ code: Schema.String });
 const PostgresFailureConstraintSchema = Schema.Struct({ constraint: Schema.String });
@@ -22,32 +22,41 @@ export const findPostgresFailure = (
   input: PostgresFailureInput,
   predicate: PostgresFailurePredicate = () => true,
 ): Option.Option<Readonly<PostgresFailureMetadata>> => {
-  let current = input;
+  const pending: unknown[] = [input];
   const visited = new Set<object>();
 
-  while (Predicate.isObjectKeyword(current) && current !== null && !visited.has(current)) {
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!Predicate.isObjectKeyword(current) || current === null || visited.has(current)) {
+      continue;
+    }
     visited.add(current);
-    const code = decodePostgresFailureCode(current);
-    if (Option.isSome(code)) {
-      const constraint = decodePostgresFailureConstraint(current);
-      const metadata: PostgresFailureMetadata = Option.isSome(constraint)
-        ? { code: code.value.code, constraint: constraint.value.constraint }
-        : { code: code.value.code };
-      const sanitizedMetadata = Object.freeze(metadata);
-      if (predicate(sanitizedMetadata)) {
-        return Option.some(sanitizedMetadata);
+    if (Cause.isCause(current)) {
+      for (const reason of current.reasons.toReversed()) {
+        if (Cause.isFailReason(reason)) {
+          pending.push(reason.error);
+        } else if (Cause.isDieReason(reason)) {
+          pending.push(reason.defect);
+        }
+      }
+    } else {
+      const code = decodePostgresFailureCode(current);
+      if (Option.isSome(code)) {
+        const constraint = decodePostgresFailureConstraint(current);
+        const metadata: PostgresFailureMetadata = Option.isSome(constraint)
+          ? { code: code.value.code, constraint: constraint.value.constraint }
+          : { code: code.value.code };
+        const sanitizedMetadata = Object.freeze(metadata);
+        if (predicate(sanitizedMetadata)) {
+          return Option.some(sanitizedMetadata);
+        }
+      }
+
+      const wrapper = decodeCauseWrapper(current);
+      if (Option.isSome(wrapper)) {
+        pending.push(wrapper.value.cause);
       }
     }
-
-    const wrapper = decodeCauseWrapper(current);
-    if (Option.isNone(wrapper)) {
-      return Option.none();
-    }
-    const nestedCause = wrapper.value.cause;
-    if (!Predicate.isObjectKeyword(nestedCause) || nestedCause === null) {
-      return Option.none();
-    }
-    current = nestedCause;
   }
 
   return Option.none();

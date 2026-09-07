@@ -1,14 +1,14 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
+import { Effect, Option, Schema } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import { decodeTrustedPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import {
   registerSystemWorkload,
   systemPrincipalContextResolverFromRepository,
 } from '../../src/auth/system-principal-context.ts';
-import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
-import { decodeTrustedPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
@@ -19,7 +19,7 @@ const resolverFor = (record: {
   readonly tenantStatus: 'active' | 'suspended';
 }) =>
   systemPrincipalContextResolverFromRepository({
-    load: async () => record,
+    load: () => Effect.succeed(Option.some(record)),
   });
 
 void test('constructs one immutable trusted system context from a branded registration', async () => {

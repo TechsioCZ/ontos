@@ -12,6 +12,7 @@ import type {
   UpdatePartyRelationshipPayload,
 } from '../../shared/domain/relationship-contract.ts';
 import {
+  PartyRelationshipAssertionStateSchema,
   PartyRelationshipCorrectionRequired,
   PartyRelationshipEndpointNotFound,
   PartyRelationshipEndpointTypeMismatch,
@@ -20,7 +21,6 @@ import {
   PartyRelationshipOverlapConflict,
   PartyRelationshipPersistenceUnavailable,
   PartyRelationshipRevisionConflict,
-  PartyRelationshipAssertionStateSchema,
   RelationshipPartyTypeSchema,
   partyRef,
   partyRelationshipRef,
@@ -31,8 +31,8 @@ import {
   decideRelationshipEnd,
   decideRelationshipUpdate,
 } from '../../shared/domain/relationship-temporal.ts';
-import { parties, partyRelationships } from '../db/schema.ts';
 import type { PartyRecord, PartyRelationshipRecord } from '../db/schema.ts';
+import { parties, partyRelationships } from '../db/schema.ts';
 import type { PartyTransaction } from '../db/types.ts';
 import {
   requireCanonicalPartyWriteTarget,
@@ -93,11 +93,6 @@ const mutationFailure = <Failure>(error: Failure): RelationshipMutationError =>
         reason: 'An equivalent Party Relationship overlaps the requested effective period',
       })
     : unavailable(error);
-
-const attempt = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise(operation).pipe(Effect.timeout('30 seconds'), Effect.mapError(unavailable));
-const mutationAttempt = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise(operation).pipe(Effect.timeout('30 seconds'), Effect.mapError(mutationFailure));
 
 const canonicalWriteTarget = (
   transaction: RelationshipScopedTransaction,
@@ -204,16 +199,13 @@ const findEndpoints = (
   fromPartyId: string,
   toPartyId: string,
 ) =>
-  attempt(() =>
-    transaction
-      .select()
-      .from(parties)
-      .where(
-        and(eq(parties.tenantId, tenantId), inArray(parties.partyId, [fromPartyId, toPartyId])),
-      )
-      .orderBy(asc(parties.partyId))
-      .for('update'),
-  );
+  transaction
+    .select()
+    .from(parties)
+    .where(and(eq(parties.tenantId, tenantId), inArray(parties.partyId, [fromPartyId, toPartyId])))
+    .orderBy(asc(parties.partyId))
+    .for('update')
+    .pipe(Effect.mapError(unavailable));
 
 const endpointById = (rows: readonly PartyRecord[], partyId: string) =>
   rows.find((row) => row.partyId === partyId);
@@ -263,45 +255,43 @@ const overlappingRows = (
   validTo: Date | null,
   excludingRelationshipId?: string,
 ) =>
-  attempt(() =>
-    transaction
-      .select()
-      .from(partyRelationships)
-      .where(
-        and(
-          eq(partyRelationships.tenantId, tenantId),
-          eq(partyRelationships.fromPartyId, fromPartyId),
-          eq(partyRelationships.toPartyId, toPartyId),
-          eq(partyRelationships.relationshipType, 'CONTACT_PERSON_OF'),
-          eq(partyRelationships.assertionState, 'ACTIVE'),
-          excludingRelationshipId === undefined
-            ? undefined
-            : ne(partyRelationships.relationshipId, excludingRelationshipId),
-          sql`tstzrange(coalesce(${partyRelationships.validFrom}, '-infinity'::timestamptz), coalesce(${partyRelationships.validTo}, 'infinity'::timestamptz), '[)') && tstzrange(coalesce(${validFrom}, '-infinity'::timestamptz), coalesce(${validTo}, 'infinity'::timestamptz), '[)')`,
-        ),
-      )
-      .orderBy(asc(partyRelationships.validFrom), asc(partyRelationships.relationshipId))
-      .for('update'),
-  );
+  transaction
+    .select()
+    .from(partyRelationships)
+    .where(
+      and(
+        eq(partyRelationships.tenantId, tenantId),
+        eq(partyRelationships.fromPartyId, fromPartyId),
+        eq(partyRelationships.toPartyId, toPartyId),
+        eq(partyRelationships.relationshipType, 'CONTACT_PERSON_OF'),
+        eq(partyRelationships.assertionState, 'ACTIVE'),
+        excludingRelationshipId === undefined
+          ? undefined
+          : ne(partyRelationships.relationshipId, excludingRelationshipId),
+        sql`tstzrange(coalesce(${partyRelationships.validFrom}, '-infinity'::timestamptz), coalesce(${partyRelationships.validTo}, 'infinity'::timestamptz), '[)') && tstzrange(coalesce(${validFrom}, '-infinity'::timestamptz), coalesce(${validTo}, 'infinity'::timestamptz), '[)')`,
+      ),
+    )
+    .orderBy(asc(partyRelationships.validFrom), asc(partyRelationships.relationshipId))
+    .for('update')
+    .pipe(Effect.mapError(unavailable));
 
 const loadLocked = (
   transaction: RelationshipScopedTransaction,
   tenantId: string,
   relationshipId: string,
 ) =>
-  attempt(() =>
-    transaction
-      .select()
-      .from(partyRelationships)
-      .where(
-        and(
-          eq(partyRelationships.tenantId, tenantId),
-          eq(partyRelationships.relationshipId, relationshipId),
-        ),
-      )
-      .limit(1)
-      .for('update'),
-  );
+  transaction
+    .select()
+    .from(partyRelationships)
+    .where(
+      and(
+        eq(partyRelationships.tenantId, tenantId),
+        eq(partyRelationships.relationshipId, relationshipId),
+      ),
+    )
+    .limit(1)
+    .for('update')
+    .pipe(Effect.mapError(unavailable));
 
 const ensureTrustedTenant = (tenantId: string, refTenantId: string) =>
   tenantId === refTenantId
@@ -638,25 +628,24 @@ export const createPartyRelationshipRecord = Effect.fn(
   if (Option.isSome(decided)) {
     return decided.value;
   }
-  const [created] = yield* mutationAttempt(() =>
-    transaction
-      .insert(partyRelationships)
-      .values({
-        acceptedByActionInvocationId: actionInvocationId,
-        acceptedByPrincipalId: principalId,
-        assertionState: 'ACTIVE',
-        fromPartyId: payload.fromPartyRef.resourceId,
-        policyVersion: 'party.relationship.contact-person-of.v1',
-        provenanceMethod: payload.provenance.method,
-        provenanceSource: payload.provenance.source,
-        relationshipType: payload.relationshipType,
-        tenantId,
-        toPartyId: payload.toPartyRef.resourceId,
-        validFrom: requestedFrom,
-        validTo: requestedTo,
-      })
-      .returning(),
-  );
+  const [created] = yield* transaction
+    .insert(partyRelationships)
+    .values({
+      acceptedByActionInvocationId: actionInvocationId,
+      acceptedByPrincipalId: principalId,
+      assertionState: 'ACTIVE',
+      fromPartyId: payload.fromPartyRef.resourceId,
+      policyVersion: 'party.relationship.contact-person-of.v1',
+      provenanceMethod: payload.provenance.method,
+      provenanceSource: payload.provenance.source,
+      relationshipType: payload.relationshipType,
+      tenantId,
+      toPartyId: payload.toPartyRef.resourceId,
+      validFrom: requestedFrom,
+      validTo: requestedTo,
+    })
+    .returning()
+    .pipe(Effect.mapError(mutationFailure));
   if (created === undefined) {
     return yield* unavailable();
   }
@@ -737,26 +726,25 @@ export const updatePartyRelationshipRecord = Effect.fn(
     payload,
     principalId,
   });
-  const [updated] = yield* mutationAttempt(() =>
-    transaction
-      .update(partyRelationships)
-      .set({
-        ...endEvidence,
-        provenanceMethod: payload.provenance.method,
-        provenanceSource: payload.provenance.source,
-        revision: current.revision + 1,
-        validFrom: nextValidFrom,
-        validTo: nextValidTo,
-      })
-      .where(
-        and(
-          eq(partyRelationships.tenantId, tenantId),
-          eq(partyRelationships.relationshipId, current.relationshipId),
-          eq(partyRelationships.revision, current.revision),
-        ),
-      )
-      .returning(),
-  );
+  const [updated] = yield* transaction
+    .update(partyRelationships)
+    .set({
+      ...endEvidence,
+      provenanceMethod: payload.provenance.method,
+      provenanceSource: payload.provenance.source,
+      revision: current.revision + 1,
+      validFrom: nextValidFrom,
+      validTo: nextValidTo,
+    })
+    .where(
+      and(
+        eq(partyRelationships.tenantId, tenantId),
+        eq(partyRelationships.relationshipId, current.relationshipId),
+        eq(partyRelationships.revision, current.revision),
+      ),
+    )
+    .returning()
+    .pipe(Effect.mapError(mutationFailure));
   if (updated === undefined) {
     return yield* new PartyRelationshipRevisionConflict({
       actualRevision: current.revision + 1,
@@ -822,28 +810,27 @@ export const endPartyRelationshipRecord = Effect.fn(
     } as const;
   }
   const effectiveAt = dateFromIso(payload.effectiveAt);
-  const [updated] = yield* mutationAttempt(() =>
-    transaction
-      .update(partyRelationships)
-      .set({
-        endedByActionInvocationId: actionInvocationId,
-        endedByPrincipalId: principalId,
-        endedRecordedAt: now,
-        endProvenanceMethod: payload.provenance.method,
-        endProvenanceSource: payload.provenance.source,
-        endReason: payload.reason ?? null,
-        revision: current.revision + 1,
-        validTo: effectiveAt,
-      })
-      .where(
-        and(
-          eq(partyRelationships.tenantId, tenantId),
-          eq(partyRelationships.relationshipId, current.relationshipId),
-          eq(partyRelationships.revision, current.revision),
-        ),
-      )
-      .returning(),
-  );
+  const [updated] = yield* transaction
+    .update(partyRelationships)
+    .set({
+      endedByActionInvocationId: actionInvocationId,
+      endedByPrincipalId: principalId,
+      endedRecordedAt: now,
+      endProvenanceMethod: payload.provenance.method,
+      endProvenanceSource: payload.provenance.source,
+      endReason: payload.reason ?? null,
+      revision: current.revision + 1,
+      validTo: effectiveAt,
+    })
+    .where(
+      and(
+        eq(partyRelationships.tenantId, tenantId),
+        eq(partyRelationships.relationshipId, current.relationshipId),
+        eq(partyRelationships.revision, current.revision),
+      ),
+    )
+    .returning()
+    .pipe(Effect.mapError(mutationFailure));
   if (updated === undefined) {
     return yield* new PartyRelationshipRevisionConflict({
       actualRevision: current.revision + 1,
@@ -866,18 +853,17 @@ export const findPartyRelationshipRecord = Effect.fn(
   tenantId: string,
   relationshipId: string,
 ) {
-  const [row] = yield* attempt(() =>
-    transaction
-      .select()
-      .from(partyRelationships)
-      .where(
-        and(
-          eq(partyRelationships.tenantId, tenantId),
-          eq(partyRelationships.relationshipId, relationshipId),
-        ),
-      )
-      .limit(1),
-  );
+  const [row] = yield* transaction
+    .select()
+    .from(partyRelationships)
+    .where(
+      and(
+        eq(partyRelationships.tenantId, tenantId),
+        eq(partyRelationships.relationshipId, relationshipId),
+      ),
+    )
+    .limit(1)
+    .pipe(Effect.mapError(unavailable));
   if (row === undefined) {
     return null;
   }
