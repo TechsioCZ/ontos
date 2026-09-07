@@ -8,7 +8,6 @@ import {
 import type {
   GatewayContextClientError,
   GatewayContextClientOptions,
-  OperationGatewayAttempt as SharedOperationGatewayAttempt,
   OperationGatewayIssuer as SharedOperationGatewayIssuer,
 } from '@app/shared-contracts';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
@@ -54,21 +53,11 @@ export type OperationGatewayIssuer = SharedOperationGatewayIssuer<
   typeof ACTION_GATEWAY_AUDIENCE,
   GatewayContextClientError
 >;
-export type OperationGatewayAttempt<Success, Failure> = SharedOperationGatewayAttempt<
-  Success,
-  Failure
->;
-
-// oxlint-disable-next-line sonarjs/redundant-type-aliases -- Required action-oriented compatibility export; expires: 2027-03-31.
-export type ActionGatewayIssuer = OperationGatewayIssuer;
-export type ActionGatewayAttempt<Success, Failure> = OperationGatewayAttempt<Success, Failure>;
 
 export const makeOperationGateway = (acquire: OperationGatewayIssuer = issueGatewayContext) =>
   makeSharedOperationGateway(ACTION_GATEWAY_AUDIENCE, acquire);
 
-export const makeActionGateway = makeOperationGateway;
 export const operationGateway = makeOperationGateway();
-export const actionGateway = operationGateway;
 
 export const { deriveAresCorrectionReviewHandoffs, prefillPartyCandidateFromAres } =
   AresApplication;
@@ -216,7 +205,7 @@ export type AresApplyOutcome<Failure> =
 
 export interface AresApplyOptions {
   readonly baseUrl?: string | URL;
-  readonly gateway?: ReturnType<typeof makeActionGateway>;
+  readonly gateway?: ReturnType<typeof makeOperationGateway>;
   readonly gatewayContext?: GatewayContextClientOptions;
   /** Test/host adapter; production defaults are the generated, authorized public Reads. */
   readonly reads?: AresApplyReads;
@@ -405,7 +394,7 @@ const invokeSelection = <Failure>(
   selection: ExecutableSelection,
   evidence: AresAppliedEvidence,
   invoker: PartyRegistryStandardActionInvoker<Failure>,
-  gateway: ReturnType<typeof makeActionGateway>,
+  gateway: ReturnType<typeof makeOperationGateway>,
   options: GatewayContextClientOptions,
   commandOptions: AresActionInvocationOptions,
 ): Effect.Effect<AresAppliedAction, Failure | GatewayContextClientError> =>
@@ -496,7 +485,7 @@ export const applyAresObservationWithActions = Effect.fn(
     }
     const supplied = yield* validateRequest(request);
     yield* validateSelectedValues(request, supplied);
-    const gateway = options.gateway ?? actionGateway;
+    const gateway = options.gateway ?? operationGateway;
     const reads = options.reads ?? (yield* loadDefaultReads());
     const clientOptions = options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl };
     const loadedObservation = yield* gateway.invoke(

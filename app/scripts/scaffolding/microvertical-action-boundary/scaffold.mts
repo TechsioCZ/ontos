@@ -160,7 +160,6 @@ import {
 } from '@app/shared-contracts';
 import type {
   GatewayContextClientError,
-  OperationGatewayAttempt as SharedOperationGatewayAttempt,
   OperationGatewayIssuer as SharedOperationGatewayIssuer,
 } from '@app/shared-contracts';
 
@@ -170,21 +169,11 @@ export type OperationGatewayIssuer = SharedOperationGatewayIssuer<
   typeof ACTION_GATEWAY_AUDIENCE,
   GatewayContextClientError
 >;
-export type OperationGatewayAttempt<Success, Failure> = SharedOperationGatewayAttempt<
-  Success,
-  Failure
->;
-
-// oxlint-disable-next-line sonarjs/redundant-type-aliases -- Required action-oriented compatibility export; expires: 2027-03-31.
-export type ActionGatewayIssuer = OperationGatewayIssuer;
-export type ActionGatewayAttempt<Success, Failure> = OperationGatewayAttempt<Success, Failure>;
 
 export const makeOperationGateway = (acquire: OperationGatewayIssuer = issueGatewayContext) =>
   makeSharedOperationGateway(ACTION_GATEWAY_AUDIENCE, acquire);
 
-export const makeActionGateway = makeOperationGateway;
 export const operationGateway = makeOperationGateway();
-export const actionGateway = operationGateway;
 `;
 
 export const planActionBoundaryScaffold = (
@@ -237,7 +226,7 @@ export const planActionBoundaryScaffold = (
     );
     const clientMutation = yield* createOrAcceptOwnedMutation(clientPath, renderClient(vertical), [
       `ACTION_GATEWAY_AUDIENCE = '${vertical.appId}'`,
-      'makeActionGateway',
+      'makeOperationGateway',
     ]);
     const redemptionMutation = yield* createOrAcceptOwnedMutation(
       redemptionPath,
