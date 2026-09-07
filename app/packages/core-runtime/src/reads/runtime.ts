@@ -1,6 +1,6 @@
 /* oxlint-disable sonarjs/no-duplicate-string -- Existing compatibility boundary; expires: 2026-12-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Cause, Exit, Context, Effect, Layer, Schema } from 'effect';
 import { CoreDatabase } from '../db/client.ts';
 import { CoreTransactionBridgeFailure, runCoreTransaction } from '../db/transaction-bridge.ts';
 import {
@@ -728,32 +728,45 @@ const readRuntimeFromDependencies = <
           : transactionFailure,
       ),
     );
-    return yield* transactionResult.pipe(
-      Effect.tapErrorTag('ReadPermissionDenied', () =>
-        persistReadEvidence(
-          database.executor,
-          withOptionalProperty(
-            {
-              accessKind: input.registration.descriptor.accessKind,
-              captureMode: input.registration.descriptor.evidencePolicy.captureMode,
-              outcome: 'denied',
-              outcomeCode: 'read_permission_denied',
-              outcomeStage: 'authz',
-              policyKey: input.registration.descriptor.evidencePolicy.policyKey,
-            },
-            queryHash !== undefined,
-            'queryHash',
-            queryHash,
-            {
-              readKey: input.registration.descriptor.readKey,
-              resultCount: 0,
-              scope,
-              servingModuleKey: input.registration.descriptor.owningModuleKey,
-              ...permissionTargetMetadata,
-            },
-          ),
+    const transactionExit = yield* Effect.exit(transactionResult);
+    if (Exit.isSuccess(transactionExit)) {
+      return transactionExit.value;
+    }
+    const { cause } = transactionExit;
+    if (
+      !cause.reasons.some(
+        (reason) => Cause.isFailReason(reason) && Schema.is(ReadPermissionDenied)(reason.error),
+      )
+    ) {
+      return yield* Effect.failCause(cause);
+    }
+    const evidenceExit = yield* Effect.exit(
+      persistReadEvidence(
+        database.executor,
+        withOptionalProperty(
+          {
+            accessKind: input.registration.descriptor.accessKind,
+            captureMode: input.registration.descriptor.evidencePolicy.captureMode,
+            outcome: 'denied',
+            outcomeCode: 'read_permission_denied',
+            outcomeStage: 'authz',
+            policyKey: input.registration.descriptor.evidencePolicy.policyKey,
+          },
+          queryHash !== undefined,
+          'queryHash',
+          queryHash,
+          {
+            readKey: input.registration.descriptor.readKey,
+            resultCount: 0,
+            scope,
+            servingModuleKey: input.registration.descriptor.owningModuleKey,
+            ...permissionTargetMetadata,
+          },
         ),
       ),
+    );
+    return yield* Effect.failCause(
+      Exit.isFailure(evidenceExit) ? Cause.combine(evidenceExit.cause, cause) : cause,
     );
   });
 
