@@ -1,6 +1,6 @@
 import { NodePath } from '@effect/platform-node';
 import type { GeneratorCore } from '@modern-js/codesmith';
-import { Effect, FileSystem, flow, Path, Predicate, Result, Schema } from 'effect';
+import { Effect, FileSystem, flow, Option, Path, Predicate, Result, Schema } from 'effect';
 import { format } from 'oxfmt';
 import ultraciteOxfmt from 'ultracite/oxfmt';
 import { scaffoldingRuntime } from '../scaffolding-runtime.mts';
@@ -1208,17 +1208,14 @@ export const discoverOntosModule: (
   scaffoldingRuntime.runPromise,
 );
 
-export const createMutationEffect = (
+const formatGeneratedMutationContent = (
   filePath: string,
   content: string,
-): Effect.Effect<Mutation, ScaffoldFailure, FileSystem.FileSystem> =>
-  Effect.gen(function* createMutationProgram() {
-    if (yield* pathExistsEffect(filePath)) {
-      return yield* scaffoldFailure(`refusing to overwrite existing business file: ${filePath}`);
-    }
+): Effect.Effect<string, ScaffoldFailure> =>
+  Effect.gen(function* formatGeneratedMutationContentProgram() {
     const extension = nodePath.extname(filePath);
     if (extension !== '.ts' && extension !== '.tsx') {
-      return { content, kind: 'create', path: filePath };
+      return content;
     }
     const formatted = yield* Effect.tryPromise({
       catch: (cause) => scaffoldFailure(`failed to format generated source ${filePath}`, cause),
@@ -1232,7 +1229,48 @@ export const createMutationEffect = (
           .join('; ')}`,
       );
     }
-    return { content: formatted.code, kind: 'create', path: filePath };
+    return formatted.code;
+  });
+
+export const createMutationEffect = (
+  filePath: string,
+  content: string,
+): Effect.Effect<Mutation, ScaffoldFailure, FileSystem.FileSystem> =>
+  Effect.gen(function* createMutationProgram() {
+    if (yield* pathExistsEffect(filePath)) {
+      return yield* scaffoldFailure(`refusing to overwrite existing business file: ${filePath}`);
+    }
+    return {
+      content: yield* formatGeneratedMutationContent(filePath, content),
+      kind: 'create',
+      path: filePath,
+    };
+  });
+
+export const createOrAcceptGeneratedMutationEffect = (
+  filePath: string,
+  content: string,
+  acceptsCurrent: (current: string) => boolean = () => false,
+): Effect.Effect<Option.Option<Mutation>, ScaffoldFailure, FileSystem.FileSystem> =>
+  Effect.gen(function* createOrAcceptGeneratedMutationProgram() {
+    if (!(yield* pathExistsEffect(filePath))) {
+      return Option.some(yield* createMutationEffect(filePath, content));
+    }
+    const fileSystem = yield* FileSystem.FileSystem;
+    const [current, expected] = yield* Effect.all([
+      fileSystem
+        .readFileString(filePath)
+        .pipe(
+          Effect.mapError((cause) =>
+            scaffoldFailure(`failed to read generated business file ${filePath}`, cause),
+          ),
+        ),
+      formatGeneratedMutationContent(filePath, content),
+    ]);
+    if (current === expected || acceptsCurrent(current)) {
+      return Option.none();
+    }
+    return yield* scaffoldFailure(`refusing to overwrite existing business file: ${filePath}`);
   });
 
 export const createMutation: (filePath: string, content: string) => Promise<Mutation> = flow(
