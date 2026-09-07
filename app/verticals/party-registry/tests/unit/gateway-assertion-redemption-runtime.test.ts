@@ -2,7 +2,7 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Cause, Clock, Effect, Exit, Stream } from 'effect';
+import { Cause, Clock, Effect, Exit, Schema, Stream } from 'effect';
 import { TestClock } from 'effect/testing';
 import { Reactivity } from 'effect/unstable/reactivity';
 import type { Connection } from 'effect/unstable/sql/SqlConnection';
@@ -74,7 +74,10 @@ for (const settlement of ['COMMIT', 'ROLLBACK']) {
           .consume(assertion)
           .pipe(Effect.provideService(Clock.Clock, fixture.clock), Effect.flip);
         assert.equal(failure._tag, 'GatewayAssertionRedemptionUnavailableError');
-        assert.doesNotMatch(JSON.stringify(failure), /private fixture/u);
+        const serializedFailure = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
+          failure,
+        );
+        assert.doesNotMatch(serializedFailure, /private fixture/u);
         assert.ok(statements.includes(settlement));
       }).pipe(Effect.scoped),
     ));
