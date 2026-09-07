@@ -210,6 +210,8 @@ required evidence, and governance approval exist; do not weaken that gate in doc
 
 ## Validation
 
+For nonblocking unused-code, duplication, and complexity reports, see [Quality audits](docs/quality-audit.md). Run `mise exec -- pnpm quality:audit` from this directory.
+
 Run focused tests first. Before completion, run the required task commands and the repository gate:
 
 ```sh

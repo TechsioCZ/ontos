@@ -1,0 +1,17 @@
+{
+  "mode": "weak",
+  "minTokens": 100,
+  "minLines": 10,
+  "format": [
+    "javascript",
+    "jsx",
+    "tsx",
+    "typescript"
+  ],
+  "reporters": [
+    "json"
+  ],
+  "absolute": true,
+  "maxSize": "10mb",
+  "silent": true
+}
