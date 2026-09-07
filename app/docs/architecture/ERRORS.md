@@ -120,6 +120,19 @@ Every error response must contain a Problem Details body whose schema is declare
 
 Add structured extension members only when clients need them to recover, such as safe field issues, a retry hint, or a stable domain reason code. Keep those extensions typed in Effect Schema.
 
+Contract modules construct these schemas with the browser-safe `makeProblemDetailsSchema` and
+`makeRetryableProblemDetailsSchema` helpers from `@app/shared-contracts/problem-details`. The
+dedicated package entrypoint has no owner-local handler, environment, JOSE, database, or runtime
+dependency. The helper couples the literal body status, HttpApi status annotation, and
+`application/problem+json` representation. The retryable constructor deliberately adds only
+`retryable: true`; other safe recovery data must be supplied as concrete Effect Schema fields.
+Reserved Problem Details fields, arbitrary records, `Schema.Unknown`, and `Schema.Any` are not
+extension points.
+
+These helpers are transport-contract infrastructure, not a catalog of business errors. Every
+contract still chooses its endpoint-specific tag, status, typed extensions, and visibly ordered
+error collection. Do not derive universal tags or endpoint semantics from status codes.
+
 ## Generated Client Contract
 
 Every generated BFF client operation is an Effect interface:

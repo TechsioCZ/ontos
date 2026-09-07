@@ -20,7 +20,7 @@ import { PartyIdSchema } from '../../shared/domain/identity-contracts.ts';
 import {
   AresApplySelectionInvalid,
   applyAresObservationWithActions as applyAresObservation,
-  makeActionGateway,
+  makeOperationGateway,
 } from '../../src/api/action-gateway.ts';
 import type {
   AresApplyRequest,
@@ -180,7 +180,7 @@ const makeInvoker = (
   };
 };
 
-const gateway = makeActionGateway(() =>
+const gateway = makeOperationGateway(() =>
   Effect.succeed({ expiresAt: 1_788_430_000, token: 'signed-gateway-token' }),
 );
 
@@ -592,7 +592,7 @@ test('every governed read and selected Action receives fresh audience-scoped aut
   const tokens: string[] = [];
   const calls: string[] = [];
   const delegate = makeReads();
-  const issued = makeActionGateway(() => {
+  const issued = makeOperationGateway(() => {
     const token = `token-${tokens.length + 1}`;
     tokens.push(token);
     return Effect.succeed({ expiresAt: 1_788_430_000, token });

@@ -87,8 +87,8 @@ interface GeneratedPrincipalModule {
   ) => Effect.Effect<TrustedPrincipalContext, { readonly _tag: GeneratedPrincipalErrorTag }>;
 }
 
-interface GeneratedActionGatewayModule {
-  readonly makeActionGateway: (
+interface GeneratedOperationGatewayModule {
+  readonly makeOperationGateway: (
     acquire: (payload: { readonly audience: string }) => Effect.Effect<{ readonly token: string }>,
   ) => {
     readonly invoke: <Success>(
@@ -103,9 +103,9 @@ const GeneratedPrincipalModuleSchema = Schema.Struct({
       Predicate.isFunction(value),
   ),
 });
-const GeneratedActionGatewayModuleSchema = Schema.Struct({
-  makeActionGateway: Schema.declare<GeneratedActionGatewayModule['makeActionGateway']>(
-    (value): value is GeneratedActionGatewayModule['makeActionGateway'] =>
+const GeneratedOperationGatewayModuleSchema = Schema.Struct({
+  makeOperationGateway: Schema.declare<GeneratedOperationGatewayModule['makeOperationGateway']>(
+    (value): value is GeneratedOperationGatewayModule['makeOperationGateway'] =>
       Predicate.isFunction(value),
   ),
 });
@@ -262,6 +262,18 @@ const inventorySearchProviderFile =
   'verticals/inventory-stock/src/search/inventory-items.provider.ts';
 const inventorySearchContractFile =
   'verticals/inventory-stock/shared/apis/inventory-items-search.ts';
+const inventoryModuleApiContractFile = 'verticals/inventory-stock/shared/apis/resource-detail.ts';
+const inventoryModuleApiReadFile = 'verticals/inventory-stock/src/api/resource-detail.read.ts';
+const inventoryModuleApiClientFile = 'verticals/inventory-stock/src/api/resource-detail-client.ts';
+const inventoryModuleApiServerFile = 'verticals/inventory-stock/api/resource-detail-read-server.ts';
+const inventorySearchClientFile =
+  'verticals/inventory-stock/src/api/inventory-items-search-client.ts';
+const inventorySearchServerFile = 'verticals/inventory-stock/api/inventory-items-search-server.ts';
+const inventoryReportProviderFile =
+  'verticals/inventory-stock/src/reports/stock-levels.provider.ts';
+const inventoryReportContractFile = 'verticals/inventory-stock/shared/apis/stock-levels-report.ts';
+const inventoryReportClientFile = 'verticals/inventory-stock/src/api/stock-levels-report-client.ts';
+const inventoryReportServerFile = 'verticals/inventory-stock/api/stock-levels-report-server.ts';
 const inventoryActionPrincipalFile = 'verticals/inventory-stock/api/auth/action-principal.ts';
 const inventoryActionGatewayFile = 'verticals/inventory-stock/src/api/action-gateway.ts';
 const inventoryPackageFile = 'verticals/inventory-stock/package.json';
@@ -727,6 +739,17 @@ test('search-provider access updates only generated access metadata and fails at
     assert.match(provider, /kind: 'tenant', permission: 'read_party_identity'/u);
     assert.match(contract, /includeArchived: Schema\.optionalKey\(Schema\.Boolean\)/u);
 
+    const beforeProviderRerun = await snapshotTree(fixture.root);
+    await run(fixture, scaffoldCommand.searchProvider, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--name',
+      fixtureName.inventoryItems,
+      scaffoldFlag.resource,
+      'item',
+    ]);
+    assert.deepEqual(await snapshotTree(fixture.root), beforeProviderRerun);
+
     const providerPath = path.join(fixture.root, inventorySearchProviderFile);
     await writeFile(
       providerPath,
@@ -845,13 +868,14 @@ test('generated read clients fetch mounted owner URLs and support separately dep
         '--input-type=module',
         '--eval',
         `
-      import { Effect } from 'effect';
+      import { Effect, Match, Result } from 'effect';
       import { FetchHttpClient } from 'effect/unstable/http';
       import { runEffectTestPromise } from '${pathToFileURL(path.join(appRoot, 'packages/core-runtime/src/testing/effect-runtime.ts')).href}';
       import { executeResourceDetail, executeResourceDetailWithAuthorization } from './verticals/inventory-stock/src/api/resource-detail-client.ts';
       import { loadInventoryItemsClient, loadInventoryItemsClientWithAuthorization } from './verticals/inventory-stock/src/api/inventory-items-search-client.ts';
       import { loadStockLevelsClient, loadStockLevelsClientWithAuthorization } from './verticals/inventory-stock/src/api/stock-levels-report-client.ts';
       const calls = [];
+      let gatewayAttempts = 0;
       const cases = [
         [executeResourceDetailWithAuthorization, {}, { ok: true }, executeResourceDetail],
         [loadInventoryItemsClientWithAuthorization, { query: 'chair' }, [], loadInventoryItemsClient],
@@ -874,20 +898,91 @@ test('generated read clients fetch mounted owner URLs and support separately dep
       for (const [, payload, response, invoke] of cases) {
         await runEffectTestPromise(invoke(payload, 'correlation-proof', { baseUrl: 'https://inventory.example.test/custom/inventory-stock-api' }).pipe(Effect.provideService(FetchHttpClient.Fetch, async (url, init) => {
           if (String(url) === 'https://shell.example.test/shell-super-app-api/auth/gateway-context') {
+            gatewayAttempts += 1;
             return Response.json({ expiresAt: 2_000_000_000, token: 'proof' });
           }
           calls.push({ url: String(url), method: init.method, authorization: new Headers(init.headers).get('authorization'), correlationId: new Headers(init.headers).get('x-correlation-id') });
           return Response.json(response);
         })));
       }
-      console.log(JSON.stringify(calls));
+      const generatedProblem = {
+        _tag: 'ResourceDetailUnavailableProblem',
+        detail: 'Temporarily unavailable.',
+        retryable: true,
+        status: 503,
+        title: 'Unavailable',
+        type: 'urn:ontos:test:generated-problem',
+      };
+      const generatedFailure = await runEffectTestPromise(
+        executeResourceDetailWithAuthorization(
+          {},
+          'Bearer proof',
+          'correlation-proof',
+          { baseUrl: 'https://inventory.example.test/custom/inventory-stock-api' },
+        ).pipe(
+          Effect.result,
+          Effect.provideService(FetchHttpClient.Fetch, async () =>
+            Response.json(generatedProblem, {
+              headers: { 'content-type': 'application/problem+json' },
+              status: 503,
+            }),
+          ),
+        ),
+      );
+      if (!Result.isFailure(generatedFailure)) throw new Error('Expected generated client failure');
+      const preservesProblemDetails = Match.value(generatedFailure.failure).pipe(
+        Match.tag('ResourceDetailUnavailableProblem', ({ status, retryable }) =>
+          status === generatedProblem.status && retryable === true,
+        ),
+        Match.orElse(() => false),
+      );
+      if (!preservesProblemDetails) {
+        throw new Error('Generated client did not preserve the concrete Problem Details error');
+      }
+      let endpointRequestsAfterGatewayFailure = 0;
+      const gatewayFailure = await runEffectTestPromise(
+        executeResourceDetail({}, 'failed-gateway-correlation', {
+          baseUrl: 'https://inventory.example.test/custom/inventory-stock-api',
+        }).pipe(
+          Effect.provideService(FetchHttpClient.Fetch, async (url) => {
+            if (String(url) === 'https://shell.example.test/shell-super-app-api/auth/gateway-context') {
+              gatewayAttempts += 1;
+              return Response.json(
+                {
+                  _tag: 'GatewayUnavailableProblem',
+                  detail: 'Gateway unavailable for generated-client proof.',
+                  retryable: true,
+                  status: 503,
+                  title: 'Gateway unavailable',
+                  type: 'https://ontos.dev/problems/gateway-unavailable',
+                },
+                { status: 503 },
+              );
+            }
+            endpointRequestsAfterGatewayFailure += 1;
+            return Response.json({ ok: true });
+          }),
+          Effect.flip,
+        ),
+      );
+      console.log(JSON.stringify({ calls, endpointRequestsAfterGatewayFailure, gatewayAttempts, gatewayFailureTag: gatewayFailure._tag }));
     `,
       ],
       { cwd: fixture.root, encoding: 'utf-8' },
     );
     assert.equal(result.status, 0, result.stderr || result.error?.message);
+    const proof = Schema.decodeUnknownSync(
+      Schema.fromJsonString(
+        Schema.Struct({
+          calls: Schema.Array(Schema.Record(Schema.String, Schema.String)),
+          endpointRequestsAfterGatewayFailure: Schema.Number,
+          gatewayAttempts: Schema.Number,
+          gatewayFailureTag: Schema.String,
+        }),
+      ),
+    )(result.stdout);
     assert.deepEqual(
-      JSON.parse(result.stdout),
+      proof.calls,
       [
         'https://inventory.example.test/custom/inventory-stock-api/reads/resource-detail',
         'https://inventory.example.test/custom/inventory-stock-api/inventory.stock/search/inventory-items',
@@ -905,6 +1000,9 @@ test('generated read clients fetch mounted owner URLs and support separately dep
         url,
       })),
     );
+    assert.equal(proof.gatewayAttempts, 4);
+    assert.equal(proof.gatewayFailureTag, 'GatewayUnavailableProblem');
+    assert.equal(proof.endpointRequestsAfterGatewayFailure, 0);
   });
 });
 
@@ -972,18 +1070,13 @@ test('governed contribution generators patch owner contracts and lazy adapters a
       fixture.root,
       'verticals/inventory-stock/src/api/inventory-items-search-client.ts',
     );
-    const reportClient = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/src/api/stock-levels-report-client.ts',
-    );
-    const moduleApiClient = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/src/api/resource-detail-client.ts',
-    );
-    const moduleApiContract = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/shared/apis/resource-detail.ts',
-    );
+    const reportClient = await readFixtureFile(fixture.root, inventoryReportClientFile);
+    assert.match(searchClient, /export interface InventoryItemsClientOptions/u);
+    assert.doesNotMatch(searchClient, /export interface InventoryItemsSearchClientOptions/u);
+    assert.match(reportClient, /export interface StockLevelsClientOptions/u);
+    assert.doesNotMatch(reportClient, /export interface StockLevelsReportClientOptions/u);
+    const moduleApiClient = await readFixtureFile(fixture.root, inventoryModuleApiClientFile);
+    const moduleApiContract = await readFixtureFile(fixture.root, inventoryModuleApiContractFile);
     const secondModuleApiContract = await readFixtureFile(
       fixture.root,
       'verticals/inventory-stock/shared/apis/resource-history.ts',
@@ -993,29 +1086,14 @@ test('governed contribution generators patch owner contracts and lazy adapters a
       'verticals/inventory-stock/src/api/resource-history-client.ts',
     );
     const searchProvider = await readFixtureFile(fixture.root, inventorySearchProviderFile);
-    const reportProvider = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/src/reports/stock-levels.provider.ts',
-    );
-    const moduleApiRead = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/src/api/resource-detail.read.ts',
-    );
-    const searchServer = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/api/inventory-items-search-server.ts',
-    );
-    const reportServer = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/api/stock-levels-report-server.ts',
-    );
-    const moduleApiServer = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/api/resource-detail-read-server.ts',
-    );
+    const reportProvider = await readFixtureFile(fixture.root, inventoryReportProviderFile);
+    const moduleApiRead = await readFixtureFile(fixture.root, inventoryModuleApiReadFile);
+    const searchServer = await readFixtureFile(fixture.root, inventorySearchServerFile);
+    const reportServer = await readFixtureFile(fixture.root, inventoryReportServerFile);
+    const moduleApiServer = await readFixtureFile(fixture.root, inventoryModuleApiServerFile);
     const operationBoundary = await readFixtureFile(fixture.root, inventoryActionPrincipalFile);
-    assert.match(searchClient, /makeEffectHttpApiClient\(InventoryItemsSearchApi, \{/u);
-    assert.match(reportClient, /makeEffectHttpApiClient\(StockLevelsReportApi, \{/u);
+    assert.match(searchClient, /api: InventoryItemsSearchApi,/u);
+    assert.match(reportClient, /api: StockLevelsReportApi,/u);
     assert.match(
       moduleApiContract,
       /headers: \{\},\s+params: \{\},\s+payload: ResourceDetailRequestSchema,\s+query: \{\}/u,
@@ -1028,17 +1106,18 @@ test('governed contribution generators patch owner contracts and lazy adapters a
     assert.match(secondModuleApiContract, /HttpApiGroup\.make\('resourceHistory'\)/u);
     assert.match(secondModuleApiClient, /client\.resourceHistory\.execute\(/u);
     for (const client of [moduleApiClient, searchClient, reportClient]) {
-      assert.match(client, /Context\.Reference</u);
-      assert.match(client, /Effect\.provideService\(/u);
-      assert.match(
-        client,
-        /prependUrl\(\s*request,\s*\(baseUrl \?\? '\/inventory-stock-api'\)\.toString\(\)/u,
-      );
-      assert.match(client, /operationGateway\.invoke\(\(authorization\) =>/u);
+      assert.match(client, /from '@app\/shared-contracts\/client-runtime'/u);
+      assert.match(client, /return makeEffectBffClient\(/u);
+      assert.match(client, /defaultApiPrefix: '\/inventory-stock-api'/u);
+      assert.match(client, /operationGateway\.invoke\(\(credential\) =>/u);
       assert.match(client, /WithAuthorization/u);
       assert.match(
         client,
-        /setHeaders\(\{\s+authorization,\s+'x-correlation-id': correlationId,?\s+\}\)/u,
+        /authorization: Redacted\.value\(credential\),\s+'x-correlation-id': requestCorrelation/u,
+      );
+      assert.doesNotMatch(
+        client,
+        /makeEffectHttpApiClient|Context\.Reference|HttpClientRequest|HttpClient\.mapRequest/u,
       );
     }
     assert.doesNotMatch(searchClient, /\.provider\.ts|import\(/u);
@@ -1053,7 +1132,8 @@ test('governed contribution generators patch owner contracts and lazy adapters a
     assert.match(moduleApiRead, /defineRead\(/u);
     assert.match(moduleApiRead, /legalEntityScope: 'required'/u);
     for (const server of [moduleApiServer, searchServer, reportServer]) {
-      assert.match(server, /verifyOperationPrincipal\(\s*request\.headers\.authorization,/u);
+      assert.match(server, /authenticateOperationPrincipal\(/u);
+      assert.match(server, /Redacted\.make\(request\.headers\.authorization\)/u);
       assert.match(server, /yield\* ReadRuntime/u);
       assert.match(server, /\.runRead\(\{/u);
       assert.match(server, /HttpEffect\.appendPreResponseHandler/u);
@@ -1064,25 +1144,119 @@ test('governed contribution generators patch owner contracts and lazy adapters a
         server,
         /ReadPolicyDenied: \(failure\) => policyProblem\(failure\.httpStatus\)/u,
       );
-      assert.match(server, /Effect\.catchTags\(\{/u);
+      assert.doesNotMatch(server, /ActionPrincipal(?:Missing|Invalid|Expired|Scope)Error/u);
       assert.doesNotMatch(server, /switch \(error\._tag\)|error\._tag ===/u);
       assert.match(server, /problem\.status === 401\s+\?\s+bearerChallenge/u);
       assert.doesNotMatch(server, /tenantId|legalEntityId|principalId|CoreDatabase|from 'pg'/u);
     }
     assert.match(
       operationBoundary,
-      /export const verifyOperationPrincipal = verifyActionPrincipal/u,
+      /export const authenticateOperationPrincipal\s*=\s*makeMicroverticalHttpPrincipalAuthentication/u,
     );
     const searchContract = await readFixtureFile(fixture.root, inventorySearchContractFile);
+    const reportContract = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/shared/apis/stock-levels-report.ts',
+    );
+    for (const contract of [moduleApiContract, searchContract, reportContract]) {
+      assert.match(
+        contract,
+        /import \{\s*makeProblemDetailsSchema,\s*makeRetryableProblemDetailsSchema,?\s*\} from '@app\/shared-contracts\/problem-details';/u,
+      );
+      assert.match(contract, /makeProblemDetailsSchema\([^)]*,\s*409,?\s*\)/u);
+      assert.match(contract, /makeRetryableProblemDetailsSchema\([^)]*,\s*503,?\s*\)/u);
+      assert.doesNotMatch(contract, /application\/problem\+json|HttpApiSchema/u);
+    }
     assert.match(
       searchContract,
       /HttpApiEndpoint\.post\('execute', '\/inventory\.stock\/search\/inventory-items'/u,
     );
     assert.doesNotMatch(searchContract, /tenantId|legalEntityId|principalId/u);
     assert.match(searchContract, /PolicyConflictProblem/u);
-    assert.match(searchContract, /Schema\.Literal\(409\)/u);
+    assert.match(
+      searchContract,
+      /makeProblemDetailsSchema\(\s*'InventoryItemsProviderPolicyConflictProblem',\s*409,?\s*\)/u,
+    );
+
+    const packageJson = decodeFixturePackage(
+      await readFixtureFile(fixture.root, inventoryPackageFile),
+    );
+    assert.equal(packageJson.dependencies['@app/shared-contracts'], workspaceVersion);
+
+    const adaptedGeneratedArtifacts = [
+      [
+        inventoryModuleApiContractFile,
+        'export const ResourceDetailOwnerExtensionSchema = Schema.Struct({ note: Schema.String });',
+      ],
+      [
+        inventoryModuleApiReadFile,
+        'export const resourceDetailOwnerProjection = (value: string) => value;',
+      ],
+      [inventoryModuleApiClientFile, '// Owner-maintained client documentation.'],
+      [inventoryModuleApiServerFile, "const resourceDetailOwnerMetric = 'resource-detail';"],
+      [
+        inventorySearchProviderFile,
+        'export const inventoryItemsOwnerRanking = (score: number) => score;',
+      ],
+      [
+        inventorySearchContractFile,
+        'export const InventoryItemsOwnerFilterSchema = Schema.Struct({ tag: Schema.String });',
+      ],
+      [inventorySearchClientFile, '// Owner-maintained search client documentation.'],
+      [inventorySearchServerFile, "const inventoryItemsOwnerMetric = 'inventory-items';"],
+      [
+        inventoryReportProviderFile,
+        'export const stockLevelsOwnerProjection = (column: string) => column;',
+      ],
+      [
+        inventoryReportContractFile,
+        'export const StockLevelsOwnerColumnSchema = Schema.Struct({ column: Schema.String });',
+      ],
+      [inventoryReportClientFile, '// Owner-maintained report client documentation.'],
+      [inventoryReportServerFile, "const stockLevelsOwnerMetric = 'stock-levels';"],
+    ] as const;
+    await Promise.all(
+      adaptedGeneratedArtifacts.map(async ([relativePath, ownerAddition]) => {
+        const generated = await readFixtureFile(fixture.root, relativePath);
+        await writeFixtureFile(fixture.root, relativePath, `${generated}\n${ownerAddition}\n`);
+      }),
+    );
+
+    const adaptedManifest = await readFixtureFile(fixture.root, inventoryManifestFile);
+    assert.match(adaptedManifest, /dimensions: \[\]/u);
+    assert.match(adaptedManifest, /label: 'Stock Levels'/u);
+    await writeFixtureFile(
+      fixture.root,
+      inventoryManifestFile,
+      adaptedManifest
+        .replace('dimensions: []', "dimensions: ['warehouse']")
+        .replace("label: 'Stock Levels'", "label: 'Warehouse stock'"),
+    );
 
     const beforeRepeat = await snapshotTree(fixture.root);
+    await run(fixture, scaffoldCommand.moduleApi, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--name',
+      fixtureName.resourceDetail,
+    ]);
+    await run(fixture, scaffoldCommand.searchProvider, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--name',
+      fixtureName.inventoryItems,
+      scaffoldFlag.resource,
+      'item',
+    ]);
+    await run(fixture, 'report', [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--name',
+      fixtureName.stockLevels,
+      scaffoldFlag.resource,
+      'item',
+    ]);
+    assert.deepEqual(await snapshotTree(fixture.root), beforeRepeat);
     await assert.rejects(
       run(fixture, scaffoldCommand.publicComponent, [
         scaffoldFlag.vertical,
@@ -1142,6 +1316,291 @@ void ignored;
       /exposes object is missing/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), beforeUnpatchable);
+  });
+});
+
+test('governed contribution reruns cannot be spoofed by comments or corrupt owner slots', async () => {
+  await withFixture(async (fixture) => {
+    const scaffoldArguments = [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--name',
+      fixtureName.resourceDetail,
+    ] as const;
+    await run(fixture, scaffoldCommand.moduleApi, scaffoldArguments);
+    const apiContract = await readFixtureFile(fixture.root, inventoryModuleApiContractFile);
+    const assertInvalidApiContractRerunRejected = async (
+      invalidApiContract: string,
+    ): Promise<void> => {
+      await writeFixtureFile(fixture.root, inventoryModuleApiContractFile, invalidApiContract);
+      const beforeInvalidContractRerun = await snapshotTree(fixture.root);
+      await assert.rejects(
+        run(fixture, scaffoldCommand.moduleApi, scaffoldArguments),
+        /refusing to overwrite existing business file/u,
+      );
+      assert.deepEqual(await snapshotTree(fixture.root), beforeInvalidContractRerun);
+    };
+    await assertInvalidApiContractRerunRejected(
+      apiContract.replace('/reads/resource-detail', '/reads/wrong'),
+    );
+    await assertInvalidApiContractRerunRejected(
+      apiContract.replace(
+        "HttpApiEndpoint.post('execute', '/reads/resource-detail', {",
+        "HttpApiEndpoint.post('wrong', '/reads/resource-detail', {",
+      ),
+    );
+    await assertInvalidApiContractRerunRejected(
+      apiContract.replace(
+        /\.add\(\n {2}HttpApiGroup\.make\('resourceDetail'\)\.add\([\s\S]*?\n {2}\),\n\);\n$/u,
+        ".add(HttpApiGroup.make('resourceDetail'));\n",
+      ),
+    );
+    await writeFixtureFile(fixture.root, inventoryModuleApiContractFile, apiContract);
+    const manifest = await readFixtureFile(fixture.root, inventoryManifestFile);
+    const ownerImport = "import { ResourceDetailApi } from './shared/apis/resource-detail.ts';";
+    await writeFixtureFile(
+      fixture.root,
+      inventoryManifestFile,
+      `${manifest.replace(ownerImport, '')}\n/* ${ownerImport} */\n`,
+    );
+    await run(fixture, scaffoldCommand.moduleApi, scaffoldArguments);
+    const repairedManifest = await readFixtureFile(fixture.root, inventoryManifestFile);
+    assert.equal(repairedManifest.split(/\r?\n/u).filter((line) => line === ownerImport).length, 1);
+
+    const registration = await readFixtureFile(fixture.root, inventoryRegistrationFile);
+    const entry = "'resource-detail': () => import('./src/api/resource-detail-client.ts'),";
+    const corrupted = registration.replace(entry, `${entry}\n${entry}`);
+    await writeFixtureFile(fixture.root, inventoryRegistrationFile, corrupted);
+    const beforeRejectedRerun = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, scaffoldCommand.moduleApi, scaffoldArguments),
+      /generated export already exists|generated owner slot/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeRejectedRerun);
+
+    await writeFixtureFile(fixture.root, inventoryRegistrationFile, registration);
+    await writeFixtureFile(
+      fixture.root,
+      inventoryRegistrationFile,
+      registration.replace(entry, "'resource-detail': () => import('./src/api/evil-client.ts'),"),
+    );
+    const beforeWrongBinding = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, scaffoldCommand.moduleApi, scaffoldArguments),
+      /generated owner slot contains mismatched identity/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeWrongBinding);
+
+    const wrongSlotRegistration = registration
+      .replace(`${entry}\n`, '')
+      .replace(
+        '    // </generated-module-registration-search>',
+        `    ${entry}\n    // </generated-module-registration-search>`,
+      );
+    await writeFixtureFile(fixture.root, inventoryRegistrationFile, wrongSlotRegistration);
+    const beforeWrongSlot = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, scaffoldCommand.moduleApi, scaffoldArguments),
+      /generated owner slot contains mismatched identity/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeWrongSlot);
+
+    await writeFixtureFile(
+      fixture.root,
+      inventoryRegistrationFile,
+      registration.replace(
+        entry,
+        "'unrelated': () => import('./src/api/unrelated-client.ts') /* 'resource-detail': spoof */,",
+      ),
+    );
+    await run(fixture, scaffoldCommand.moduleApi, scaffoldArguments);
+    const commentSafeRegistration = await readFixtureFile(fixture.root, inventoryRegistrationFile);
+    assert.equal(commentSafeRegistration.split(entry).length - 1, 1);
+
+    await writeFixtureFile(
+      fixture.root,
+      inventoryManifestFile,
+      repairedManifest.replace(
+        ownerImport,
+        "import { ResourceDetailApi } from './shared/apis/evil.ts';",
+      ),
+    );
+    const beforeWrongImport = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, scaffoldCommand.moduleApi, scaffoldArguments),
+      /generated owner import binding conflicts/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeWrongImport);
+  });
+});
+
+test('adapted governed artifacts require executable owner identity instead of comments or strings', async () => {
+  await withFixture(async (fixture) => {
+    const assertSpoofsRejected = async (
+      spoofs: readonly (readonly [string, string])[],
+      command: Parameters<typeof run>[1],
+      commandArguments: readonly string[],
+    ): Promise<void> => {
+      const [spoof, ...remaining] = spoofs;
+      if (spoof === undefined) {
+        return;
+      }
+      const [file, identity] = spoof;
+      const current = await readFixtureFile(fixture.root, file);
+      const removedIdentity = 'const removedIdentity = undefined;';
+      await writeFixtureFile(
+        fixture.root,
+        file,
+        `${current.replace(identity, removedIdentity)}\n/* ${identity} */\nconst identitySpoof = ${JSON.stringify(identity)};\n`,
+      );
+      const before = await snapshotTree(fixture.root);
+      await assert.rejects(
+        run(fixture, command, commandArguments),
+        /refusing to overwrite existing business file/u,
+      );
+      assert.deepEqual(await snapshotTree(fixture.root), before);
+      await writeFixtureFile(fixture.root, file, current);
+      await assertSpoofsRejected(remaining, command, commandArguments);
+    };
+    await addInventoryItemResourceType(fixture);
+    const moduleArguments = [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--name',
+      fixtureName.resourceDetail,
+    ] as const;
+    await run(fixture, scaffoldCommand.moduleApi, moduleArguments);
+    const moduleSpoofs = [
+      [
+        inventoryModuleApiContractFile,
+        "export const ResourceDetailApi = HttpApi.make('ResourceDetailApi')",
+      ],
+      [inventoryModuleApiReadFile, 'export const resourceDetailRead = defineRead('],
+      [
+        inventoryModuleApiServerFile,
+        'export const resourceDetailReadApiLive = HttpApiBuilder.group(',
+      ],
+    ] as const;
+    await assertSpoofsRejected(moduleSpoofs, scaffoldCommand.moduleApi, moduleArguments);
+
+    const assertAdaptationRejected = async (
+      file: string,
+      adapt: (source: string) => string,
+    ): Promise<void> => {
+      const current = await readFixtureFile(fixture.root, file);
+      await writeFixtureFile(fixture.root, file, adapt(current));
+      const before = await snapshotTree(fixture.root);
+      await assert.rejects(
+        run(fixture, scaffoldCommand.moduleApi, moduleArguments),
+        /refusing to overwrite existing business file/u,
+      );
+      assert.deepEqual(await snapshotTree(fixture.root), before);
+      await writeFixtureFile(fixture.root, file, current);
+    };
+    await assertAdaptationRejected(
+      inventoryModuleApiContractFile,
+      (source) =>
+        `${source.replace(
+          "export const ResourceDetailApi = HttpApi.make('ResourceDetailApi')",
+          "namespace Decoy { export const ResourceDetailApi = HttpApi.make('ResourceDetailApi')",
+        )}\n}`,
+    );
+    await assertAdaptationRejected(inventoryActionGatewayFile, (source) =>
+      source.replace(
+        'export const operationGateway = makeOperationGateway();',
+        "namespace Decoy { export const operationGateway = makeOperationGateway(); }\nconst spoof = 'export const operationGateway = actionGateway';",
+      ),
+    );
+    await assertAdaptationRejected(
+      inventoryModuleApiServerFile,
+      (source) =>
+        `${source.replace(
+          'yield* authenticateOperationPrincipal(',
+          'yield* unverifiedPrincipal(',
+        )}\nconst unverifiedPrincipal = authenticateOperationPrincipal;`,
+    );
+    await assertAdaptationRejected(
+      inventoryModuleApiServerFile,
+      (source) =>
+        `${source.replace('yield* ReadRuntime', 'yield* OtherRuntime')}\nvoid ReadRuntime;`,
+    );
+    await assertAdaptationRejected(
+      inventoryModuleApiServerFile,
+      (source) => `${source.replace('.runRead({', '.unsafeRead({')}\nconst spoof = '.runRead({';`,
+    );
+
+    const searchArguments = [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--name',
+      fixtureName.inventoryItems,
+      scaffoldFlag.resource,
+      'item',
+    ] as const;
+    await run(fixture, scaffoldCommand.searchProvider, searchArguments);
+    const providerSpoofs = [
+      [inventorySearchProviderFile, 'export const inventoryItemsRead = defineRead('],
+      [
+        inventorySearchContractFile,
+        "export const InventoryItemsSearchApi = HttpApi.make('InventoryItemsSearchApi')",
+      ],
+      [inventorySearchServerFile, 'export const inventoryItemsReadApiLive = HttpApiBuilder.group('],
+    ] as const;
+    await assertSpoofsRejected(providerSpoofs, scaffoldCommand.searchProvider, searchArguments);
+  });
+});
+
+test('governed client generation rejects an incompatible shared runtime dependency atomically', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, scaffoldCommand.microverticalActionBoundary, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+    ]);
+    const packagePath = path.join(fixture.root, inventoryPackageFile);
+    const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
+    await writeFile(
+      packagePath,
+      json({
+        ...packageJson,
+        dependencies: {
+          ...packageJson.dependencies,
+          '@app/shared-contracts': '^1.0.0',
+        },
+      }),
+      'utf-8',
+    );
+    const before = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, scaffoldCommand.moduleApi, [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--name',
+        fixtureName.resourceDetail,
+      ]),
+      /incompatible @app\/shared-contracts dependency/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), before);
+  });
+});
+
+test('governed client generation restores its missing owner-local operation gateway', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, scaffoldCommand.microverticalActionBoundary, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+    ]);
+    await rm(path.join(fixture.root, inventoryActionGatewayFile));
+
+    await run(fixture, scaffoldCommand.moduleApi, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--name',
+      fixtureName.resourceDetail,
+    ]);
+
+    const gateway = await readFixtureFile(fixture.root, inventoryActionGatewayFile);
+    assert.match(gateway, /@ontos-action-boundary-owner inventory-stock/u);
+    assert.match(gateway, /export const operationGateway = makeOperationGateway\(\)/u);
   });
 });
 
@@ -1351,7 +1810,18 @@ test('generates one immutable Action identity boundary and exact direct dependen
       server,
       /createLocalJWKSet|decodeProtectedHeader|jwtVerify|PublicVerificationKeySchema/u,
     );
-    assert.match(client, /acquire\(\{ audience: ACTION_GATEWAY_AUDIENCE \}/u);
+    assert.match(client, /makeOperationGateway as makeSharedOperationGateway/u);
+    assert.match(client, /makeSharedOperationGateway\(ACTION_GATEWAY_AUDIENCE, acquire\)/u);
+    assert.match(client, /export const operationGateway = makeOperationGateway\(\)/u);
+    assert.doesNotMatch(
+      client,
+      /ActionGatewayIssuer|ActionGatewayAttempt|makeActionGateway|\bactionGateway\b/u,
+    );
+    assert.doesNotMatch(client, /Effect\.flatMap|Bearer \$\{|acquire\(\{ audience/u);
+    assert.doesNotMatch(
+      client,
+      /api\/auth\/action-principal|gateway-assertion-redemption|GatewayContextProtectedHeader|verticals\//u,
+    );
     assert.doesNotMatch(client, /localStorage|sessionStorage/u);
     assert.match(server, /verifyAndRedeem/u);
     assert.match(redemption, /GatewayAssertionRedemptionUnavailableError/u);
@@ -1401,6 +1871,64 @@ export const ownerCode = true;
       /refusing to overwrite existing business file/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), before);
+  });
+});
+
+test('governed generators reject legacy principal boundaries before writing files', async () => {
+  await withFixture(async (fixture) => {
+    await addInventoryItemResourceType(fixture);
+    await run(fixture, scaffoldCommand.microverticalActionBoundary, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+    ]);
+    const generated = await readFixtureFile(fixture.root, inventoryActionPrincipalFile);
+    const legacy = generated.replace(
+      /const verifyOperationPrincipal =[\s\S]*$/u,
+      'export const verifyOperationPrincipal = verifyActionPrincipal;\n',
+    );
+    assert.doesNotMatch(legacy, /export const authenticateOperationPrincipal/u);
+    await writeFixtureFile(fixture.root, inventoryActionPrincipalFile, legacy);
+    const before = await snapshotTree(fixture.root);
+    const calls: readonly [ScaffoldCommand, readonly string[]][] = [
+      [scaffoldCommand.microverticalActionBoundary, []],
+      [scaffoldCommand.moduleApi, ['--name', fixtureName.resourceDetail]],
+      [
+        scaffoldCommand.searchProvider,
+        ['--name', fixtureName.inventoryItems, scaffoldFlag.resource, 'item'],
+      ],
+      ['report', ['--name', fixtureName.stockLevels, scaffoldFlag.resource, 'item']],
+    ];
+    await Promise.all(
+      calls.map(async ([command, args]) => {
+        await assert.rejects(
+          run(fixture, command, [scaffoldFlag.vertical, inventorySlug, ...args]),
+          /incompatible generated Action boundary:.*export authenticateOperationPrincipal.*provide ActionPrincipalVerifierLive|refusing to overwrite existing business file: operation boundary/u,
+        );
+        assert.deepEqual(await snapshotTree(fixture.root), before);
+      }),
+    );
+  });
+});
+
+test('governed generation preserves compatible owner principal adaptations', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, scaffoldCommand.microverticalActionBoundary, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+    ]);
+    const adapted = `${await readFixtureFile(fixture.root, inventoryActionPrincipalFile)}\n// Owner-specific diagnostics remain private to this adapter.\n`;
+    await writeFixtureFile(fixture.root, inventoryActionPrincipalFile, adapted);
+    await run(fixture, scaffoldCommand.microverticalActionBoundary, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+    ]);
+    await run(fixture, scaffoldCommand.moduleApi, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--name',
+      fixtureName.resourceDetail,
+    ]);
+    assert.equal(await readFixtureFile(fixture.root, inventoryActionPrincipalFile), adapted);
   });
 });
 
@@ -1468,7 +1996,8 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
         JSON.parse(await readFile(edgeMetafile, 'utf-8')),
       ).inputs,
     ).join('\n');
-    assert.doesNotMatch(edgeInputs, /core-runtime\/src\/(?:auth|db)|node:(?:crypto|path)|\/pg\//u);
+    assert.match(edgeInputs, /core-runtime\/src\/auth\/gateway-assertion-redemption\.ts/u);
+    assert.doesNotMatch(edgeInputs, /core-runtime\/src\/db|node:(?:crypto|path)|\/pg\//u);
     const generatedModule = Schema.decodeUnknownSync(GeneratedPrincipalModuleSchema)(
       await import(pathToFileURL(path.join(fixture.root, inventoryActionPrincipalFile)).href),
     );
@@ -1478,7 +2007,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
           .href
       ),
     );
-    const generatedClientModule = Schema.decodeUnknownSync(GeneratedActionGatewayModuleSchema)(
+    const generatedClientModule = Schema.decodeUnknownSync(GeneratedOperationGatewayModuleSchema)(
       await import(pathToFileURL(path.join(fixture.root, inventoryActionGatewayFile)).href),
     );
     const current = await makeGatewayKey('current');
@@ -1716,7 +2245,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
     let acquisitions = 0;
     const authorizations: string[] = [];
     const idempotencyKey = 'caller-owned-idempotency-key';
-    const actionGateway = generatedClientModule.makeActionGateway(({ audience }) => {
+    const operationGateway = generatedClientModule.makeOperationGateway(({ audience }) => {
       acquisitions += 1;
       assert.equal(audience, inventorySlug);
       return Effect.succeed({ token: `attempt-${acquisitions}` });
@@ -1725,8 +2254,8 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
       authorizations.push(authorization);
       return Effect.succeed(idempotencyKey);
     };
-    assert.equal(await runEffectTestPromise(actionGateway.invoke(attempt)), idempotencyKey);
-    assert.equal(await runEffectTestPromise(actionGateway.invoke(attempt)), idempotencyKey);
+    assert.equal(await runEffectTestPromise(operationGateway.invoke(attempt)), idempotencyKey);
+    assert.equal(await runEffectTestPromise(operationGateway.invoke(attempt)), idempotencyKey);
     assert.deepEqual(authorizations, ['Bearer attempt-1', 'Bearer attempt-2']);
 
     const actionApi = HttpApi.make('generatedActionIdentityFixture').add(
@@ -4532,18 +5061,18 @@ test('every generated TypeScript file is already formatter-stable', async () => 
       'verticals/inventory-stock/src/federation/page-orders.tsx',
       inventoryActionPrincipalFile,
       inventoryActionGatewayFile,
-      'verticals/inventory-stock/shared/apis/resource-detail.ts',
-      'verticals/inventory-stock/src/api/resource-detail.read.ts',
-      'verticals/inventory-stock/src/api/resource-detail-client.ts',
-      'verticals/inventory-stock/api/resource-detail-read-server.ts',
+      inventoryModuleApiContractFile,
+      inventoryModuleApiReadFile,
+      inventoryModuleApiClientFile,
+      inventoryModuleApiServerFile,
       inventorySearchContractFile,
       inventorySearchProviderFile,
-      'verticals/inventory-stock/src/api/inventory-items-search-client.ts',
-      'verticals/inventory-stock/api/inventory-items-search-server.ts',
-      'verticals/inventory-stock/shared/apis/stock-levels-report.ts',
-      'verticals/inventory-stock/src/reports/stock-levels.provider.ts',
-      'verticals/inventory-stock/src/api/stock-levels-report-client.ts',
-      'verticals/inventory-stock/api/stock-levels-report-server.ts',
+      inventorySearchClientFile,
+      inventorySearchServerFile,
+      inventoryReportContractFile,
+      inventoryReportProviderFile,
+      inventoryReportClientFile,
+      inventoryReportServerFile,
     ];
 
     await Promise.all(
@@ -4721,6 +5250,12 @@ test('all generated files typecheck against the real workspace contracts', async
             '@app/core-runtime/actions/principal-context': [
               path.join(appRoot, 'packages/core-runtime/src/actions/principal-context.ts'),
             ],
+            '@app/core-runtime/auth/gateway-assertion-redemption': [
+              path.join(appRoot, 'packages/core-runtime/src/auth/gateway-assertion-redemption.ts'),
+            ],
+            '@app/core-runtime/http/principal-authentication': [
+              path.join(appRoot, 'packages/core-runtime/src/http/principal-authentication.ts'),
+            ],
             '@app/core-runtime/outbox/worker': [
               path.join(appRoot, 'packages/core-runtime/src/outbox/worker-entrypoint.ts'),
             ],
@@ -4729,6 +5264,12 @@ test('all generated files typecheck against the real workspace contracts', async
             ],
             '@app/inventory-stock/outbox/*': ['./verticals/inventory-stock/shared/outbox/*.ts'],
             '@app/shared-contracts': [path.join(appRoot, 'packages/shared-contracts/src/index.ts')],
+            '@app/shared-contracts/client-runtime': [
+              path.join(appRoot, 'packages/shared-contracts/src/client-runtime.ts'),
+            ],
+            '@app/shared-contracts/problem-details': [
+              path.join(appRoot, 'packages/shared-contracts/src/problem-details.ts'),
+            ],
           },
           resolveJsonModule: true,
           skipLibCheck: true,

@@ -1,8 +1,9 @@
+// @effect-diagnostics asyncFunction:off -- Node test callbacks bridge the Effect contracts under test; expires: 2027-03-31.
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
-import { Schema } from 'effect';
+import { Schema, SchemaAST } from 'effect';
 import {
   ApiKeyGatewayHeadersSchema,
   GatewayContextApiGroup,
@@ -10,7 +11,9 @@ import {
   GatewayContextProtectedHeaderSchema,
   GatewayContextRequestSchema,
   GatewayContextResponseSchema,
+  GatewayRateLimitedProblemSchema,
   GatewayTrustedPrincipalContextSchema,
+  GatewayUnavailableProblemSchema,
   decodeGatewayContextClaims,
 } from '../../src/gateway-context.ts';
 
@@ -20,6 +23,13 @@ const endpointStatuses = (
   [...endpoint.error]
     .map((schema) => schema.ast.annotations?.['httpApiStatus'])
     .toSorted((left, right) => Number(left) - Number(right));
+
+const problemTag = (schema: Schema.Top): SchemaAST.LiteralValue => {
+  assert.ok(SchemaAST.isObjects(schema.ast));
+  const tag = schema.ast.propertySignatures.find(({ name }) => name === '_tag')?.type;
+  assert.ok(tag !== undefined && SchemaAST.isLiteral(tag));
+  return tag.literal;
+};
 
 const principal = {
   authBindingId: '70000000-0000-4000-8000-000000000001',
@@ -149,4 +159,46 @@ void test('publishes the exact API-key credential boundary and failure statuses'
     endpointStatuses(GatewayContextApiGroup.endpoints.issueApiKeyGatewayContext),
     [400, 401, 403, 429, 500, 503],
   );
+});
+
+void test('preserves migrated gateway Problem Details shapes and ordered endpoint membership', () => {
+  const rateLimited = {
+    _tag: 'GatewayRateLimitedProblem',
+    detail: 'Retry after the published delay.',
+    retryAfterSeconds: 30,
+    status: 429,
+    title: 'Gateway rate limited',
+    type: 'https://ontos.dev/problems/gateway-rate-limited',
+  } as const;
+  const unavailable = {
+    _tag: 'GatewayUnavailableProblem',
+    detail: 'The gateway is temporarily unavailable.',
+    retryable: true,
+    status: 503,
+    title: 'Gateway unavailable',
+    type: 'https://ontos.dev/problems/gateway-unavailable',
+  } as const;
+  assert.deepEqual(
+    Schema.decodeUnknownSync(GatewayRateLimitedProblemSchema)(rateLimited),
+    rateLimited,
+  );
+  assert.deepEqual(
+    Schema.decodeUnknownSync(GatewayUnavailableProblemSchema)(unavailable),
+    unavailable,
+  );
+  assert.throws(() =>
+    Schema.decodeUnknownSync(GatewayRateLimitedProblemSchema, { onExcessProperty: 'error' })({
+      ...rateLimited,
+      internalDiagnostic: 'must-not-pass',
+    }),
+  );
+  const actual = [...GatewayContextApiGroup.endpoints.issueApiKeyGatewayContext.error];
+  assert.deepEqual(actual.map(problemTag), [
+    'GatewayAuthenticationRequiredProblem',
+    'GatewayAudienceInvalidProblem',
+    'GatewayForbiddenProblem',
+    'GatewayRateLimitedProblem',
+    'GatewayUnavailableProblem',
+    'GatewayInternalProblem',
+  ]);
 });
