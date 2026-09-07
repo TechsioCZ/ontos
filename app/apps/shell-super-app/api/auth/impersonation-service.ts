@@ -13,7 +13,6 @@ import {
   SupportRecoveryPrincipalContextResolver,
 } from '@app/core-runtime';
 import { APIError, betterAuth } from 'better-auth';
-import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { parseCookies, SECURE_COOKIE_PREFIX } from 'better-auth/cookies';
 import { constantTimeEqual, makeSignature } from 'better-auth/crypto';
 import { admin } from 'better-auth/plugins';
@@ -36,8 +35,8 @@ import { Cookies } from 'effect/unstable/http';
 import { AuthConfig } from './config.ts';
 import type { AuthConfigValue } from './config.ts';
 import { AuthDatabase } from './db/client.ts';
-import { authDatabaseSchema, session, supportImpersonationRecovery } from './db/schema.ts';
-import type { AuthDatabaseExecutor } from './db/types.ts';
+import { session, supportImpersonationRecovery } from './db/schema.ts';
+import type { AuthDatabaseExecutor, BetterAuthDatabaseAdapter } from './db/types.ts';
 import { AuthenticationInternalError, AuthenticationUnavailableError } from './errors.ts';
 import type { AuthenticationRuntimeError } from './errors.ts';
 import { AuthenticationService } from './service.ts';
@@ -113,20 +112,14 @@ const mapProviderError = <Failure>(error: Failure) =>
 
 const IMPERSONATION_IO_TIMEOUT = '10 seconds';
 const timeoutFailure = () => unavailable('Support impersonation dependency timed out');
+const impersonationTimeout = Effect.timeoutOrElse({
+  duration: IMPERSONATION_IO_TIMEOUT,
+  orElse: () => Effect.fail(timeoutFailure()),
+});
 const providerOperation = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: mapProviderError, try: () => operation() }).pipe(
-    Effect.timeoutOrElse({
-      duration: IMPERSONATION_IO_TIMEOUT,
-      orElse: () => Effect.fail(timeoutFailure()),
-    }),
-  );
-const databaseOperation = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: unavailable, try: () => operation() }).pipe(
-    Effect.timeoutOrElse({
-      duration: IMPERSONATION_IO_TIMEOUT,
-      orElse: () => Effect.fail(timeoutFailure()),
-    }),
-  );
+  Effect.tryPromise({ catch: mapProviderError, try: operation }).pipe(impersonationTimeout);
+const databasePolicy = <Value, Failure>(operation: Effect.Effect<Value, Failure>) =>
+  operation.pipe(Effect.mapError(unavailable), impersonationTimeout);
 
 export interface SupportProviderSession {
   readonly activeTenantId?: null | string | undefined;
@@ -176,7 +169,7 @@ export interface SupportAuthProvider {
 
 export const makeSupportAuthProvider = (
   configuration: AuthConfigValue,
-  database: AuthDatabaseExecutor,
+  databaseAdapter: BetterAuthDatabaseAdapter,
 ): SupportAuthProvider =>
   betterAuth({
     advanced: {
@@ -188,11 +181,7 @@ export const makeSupportAuthProvider = (
       useSecureCookies: configuration.secureCookies,
     },
     baseURL: configuration.baseUrl,
-    database: drizzleAdapter(database, {
-      provider: 'pg',
-      schema: authDatabaseSchema,
-      transaction: true,
-    }),
+    database: databaseAdapter,
     logger: { disabled: true },
     plugins: [
       admin({
@@ -220,21 +209,19 @@ export const makeSupportImpersonationStore = (
   database: AuthDatabaseExecutor,
 ): SupportImpersonationStore => ({
   deleteRecovery: (impersonationSessionId) =>
-    databaseOperation(() =>
+    databasePolicy(
       database
         .delete(supportImpersonationRecovery)
         .where(eq(supportImpersonationRecovery.impersonationSessionId, impersonationSessionId)),
     ).pipe(Effect.asVoid),
   deleteSession: (sessionId) =>
-    databaseOperation(() => database.delete(session).where(eq(session.id, sessionId))).pipe(
-      Effect.asVoid,
-    ),
+    databasePolicy(database.delete(session).where(eq(session.id, sessionId))).pipe(Effect.asVoid),
   insertRecovery: (recovery) =>
-    databaseOperation(() =>
+    databasePolicy(
       database.insert(supportImpersonationRecovery).values(recovery).onConflictDoNothing(),
     ).pipe(Effect.asVoid),
   loadExpiredRecovery: (sessionToken) =>
-    databaseOperation(() =>
+    databasePolicy(
       database
         .select({
           actionId: session.impersonationActionId,
@@ -278,7 +265,7 @@ export const makeSupportImpersonationStore = (
       }),
     ),
   loadOriginalSession: (sessionToken) =>
-    databaseOperation(() =>
+    databasePolicy(
       database
         .select({ expiresAt: session.expiresAt, id: session.id })
         .from(session)
@@ -286,7 +273,7 @@ export const makeSupportImpersonationStore = (
         .limit(1),
     ).pipe(Effect.map(([loaded]) => Option.fromNullishOr(loaded))),
   loadRecoveries: (originalSessionId) =>
-    databaseOperation(() =>
+    databasePolicy(
       database
         .select()
         .from(supportImpersonationRecovery)
@@ -294,7 +281,7 @@ export const makeSupportImpersonationStore = (
         .orderBy(asc(supportImpersonationRecovery.createdAt)),
     ),
   updateImpersonationSession: (sessionId, metadata) =>
-    databaseOperation(() =>
+    databasePolicy(
       database
         .update(session)
         .set({
@@ -359,18 +346,20 @@ const decodeSignedCookie = Effect.fn('decodeSignedCookie')(function* decodeSigne
   }
   const value = encoded.slice(0, separator);
   const signature = encoded.slice(separator + 1);
-  const expected = yield* databaseOperation(
-    makeSignature.bind(undefined, value, Redacted.value(secret)),
-  );
+  const expected = yield* Effect.tryPromise({
+    catch: unavailable,
+    try: makeSignature.bind(undefined, value, Redacted.value(secret)),
+  }).pipe(impersonationTimeout);
   return constantTimeEqual(signature, expected) ? Option.some(value) : Option.none();
 });
 const encodeSignedCookie = Effect.fn('encodeSignedCookie')(function* encodeSignedCookieEffect(
   value: string,
   secret: Redacted.Redacted,
 ) {
-  const signature = yield* databaseOperation(
-    makeSignature.bind(undefined, value, Redacted.value(secret)),
-  );
+  const signature = yield* Effect.tryPromise({
+    catch: unavailable,
+    try: makeSignature.bind(undefined, value, Redacted.value(secret)),
+  }).pipe(impersonationTimeout);
   return `${value}.${signature}`;
 });
 
@@ -869,7 +858,7 @@ export const SupportImpersonationServiceLive = Layer.effect(
       Context.add(SupportRecoveryPrincipalContextResolver, supportRecoveryPrincipal),
       Context.add(
         SupportAuthProviderService,
-        makeSupportAuthProvider(configuration, database.executor),
+        makeSupportAuthProvider(configuration, database.adapter),
       ),
       Context.add(
         SupportImpersonationStoreService,

@@ -1,6 +1,5 @@
 import { apiKey } from '@better-auth/api-key';
 import { APIError, betterAuth } from 'better-auth';
-import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { and, asc, eq, lte, sql } from 'drizzle-orm';
 import {
   Brand,
@@ -15,10 +14,8 @@ import {
   Schema,
 } from 'effect';
 import { AuthConfig } from './config.ts';
-import type { AuthConfigValue } from './config.ts';
 import { AuthDatabase } from './db/client.ts';
-import { apikey, authDatabaseSchema } from './db/schema.ts';
-import type { AuthDatabaseExecutor } from './db/types.ts';
+import { apikey } from './db/schema.ts';
 
 const withOptionalProperty = <
   Base extends object,
@@ -262,56 +259,46 @@ const apiKeyExternalTimeout = Effect.timeoutOrElse({
   orElse: () => Effect.fail(unavailable('The API key provider operation timed out')),
 });
 
-export const makeApiKeyService = (
-  configuration: AuthConfigValue,
-  database: AuthDatabaseExecutor,
-): ApiKeyServiceContract => {
+export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeService() {
+  const configuration = yield* AuthConfig;
+  const { adapter: databaseAdapter, executor: database } = yield* AuthDatabase;
   const auth = betterAuth({
     baseURL: configuration.baseUrl,
-    database: drizzleAdapter(database, {
-      provider: 'pg',
-      schema: authDatabaseSchema,
-      transaction: true,
-    }),
+    database: databaseAdapter,
     logger: { disabled: true },
     plugins: [apiKey({ enableMetadata: true, enableSessionForAPIKeys: false, references: 'user' })],
     secret: configuration.secret,
     trustedOrigins: [...configuration.trustedOrigins],
   });
   const metadata = (keyId: string) =>
-    Effect.tryPromise({
-      catch: unavailable,
-      try: () =>
-        database
-          .select({
-            createdAt: apikey.createdAt,
-            enabled: apikey.enabled,
-            expiresAt: apikey.expiresAt,
-            id: apikey.id,
-            name: apikey.name,
-            start: apikey.start,
-          })
-          .from(apikey)
-          .where(eq(apikey.id, keyId))
-          .limit(1),
-    }).pipe(
-      apiKeyExternalTimeout,
-      Effect.flatMap(([record]) =>
-        record === undefined ? Effect.fail(inconsistent()) : Effect.succeed(toSafe(record)),
-      ),
-    );
+    database
+      .select({
+        createdAt: apikey.createdAt,
+        enabled: apikey.enabled,
+        expiresAt: apikey.expiresAt,
+        id: apikey.id,
+        name: apikey.name,
+        start: apikey.start,
+      })
+      .from(apikey)
+      .where(eq(apikey.id, keyId))
+      .limit(1)
+      .pipe(
+        Effect.mapError(unavailable),
+        apiKeyExternalTimeout,
+        Effect.flatMap(([record]) =>
+          record === undefined ? Effect.fail(inconsistent()) : Effect.succeed(toSafe(record)),
+        ),
+      );
   const service: ApiKeyServiceContract = {
     clearPendingCleanup: (keyId) =>
       DateTime.nowAsDate.pipe(
         Effect.flatMap((updatedAt) =>
-          Effect.tryPromise({
-            catch: unavailable,
-            try: () =>
-              database
-                .update(apikey)
-                .set({ metadata: null, updatedAt })
-                .where(eq(apikey.id, keyId)),
-          }).pipe(apiKeyExternalTimeout),
+          database
+            .update(apikey)
+            .set({ metadata: null, updatedAt })
+            .where(eq(apikey.id, keyId))
+            .pipe(Effect.mapError(unavailable), apiKeyExternalTimeout),
         ),
         Effect.asVoid,
       ),
@@ -353,27 +340,24 @@ export const makeApiKeyService = (
       const encodedScope = yield* Schema.encodeEffect(PendingBindingScopeJson)(
         pendingBindingScope(input),
       ).pipe(Effect.mapError(unavailable));
-      const records = yield* Effect.tryPromise({
-        catch: unavailable,
-        try: () =>
-          database
-            .select({
-              createdAt: apikey.createdAt,
-              metadata: apikey.metadata,
-              providerKeyId: apikey.id,
-            })
-            .from(apikey)
-            .where(
-              and(
-                lte(apikey.createdAt, staleBefore),
-                // Better Auth stores metadata as text, so Drizzle's typed predicates cannot
-                // express this order-insensitive JSON containment check without a JSONB cast.
-                sql`${apikey.metadata}::jsonb @> ${encodedScope}::jsonb`,
-              ),
-            )
-            .orderBy(asc(apikey.createdAt), asc(apikey.id))
-            .limit(PENDING_CLEANUP_BATCH_SIZE + 1),
-      }).pipe(apiKeyExternalTimeout);
+      const records = yield* database
+        .select({
+          createdAt: apikey.createdAt,
+          metadata: apikey.metadata,
+          providerKeyId: apikey.id,
+        })
+        .from(apikey)
+        .where(
+          and(
+            lte(apikey.createdAt, staleBefore),
+            // Better Auth stores metadata as text, so Drizzle's typed predicates cannot
+            // express this order-insensitive JSON containment check without a JSONB cast.
+            sql`${apikey.metadata}::jsonb @> ${encodedScope}::jsonb`,
+          ),
+        )
+        .orderBy(asc(apikey.createdAt), asc(apikey.id))
+        .limit(PENDING_CLEANUP_BATCH_SIZE + 1)
+        .pipe(Effect.mapError(unavailable), apiKeyExternalTimeout);
       const providerKeyIds = classifyPendingApiKeyCleanup(
         records.slice(0, PENDING_CLEANUP_BATCH_SIZE),
         {
@@ -391,22 +375,19 @@ export const makeApiKeyService = (
     setEnabled: (keyId, enabled) =>
       DateTime.nowAsDate.pipe(
         Effect.flatMap((updatedAt) =>
-          Effect.tryPromise({
-            catch: unavailable,
-            try: () =>
-              database
-                .update(apikey)
-                .set({ enabled, updatedAt })
-                .where(eq(apikey.id, keyId))
-                .returning({
-                  createdAt: apikey.createdAt,
-                  enabled: apikey.enabled,
-                  expiresAt: apikey.expiresAt,
-                  id: apikey.id,
-                  name: apikey.name,
-                  start: apikey.start,
-                }),
-          }).pipe(apiKeyExternalTimeout),
+          database
+            .update(apikey)
+            .set({ enabled, updatedAt })
+            .where(eq(apikey.id, keyId))
+            .returning({
+              createdAt: apikey.createdAt,
+              enabled: apikey.enabled,
+              expiresAt: apikey.expiresAt,
+              id: apikey.id,
+              name: apikey.name,
+              start: apikey.start,
+            })
+            .pipe(Effect.mapError(unavailable), apiKeyExternalTimeout),
         ),
         Effect.flatMap(([updated]) =>
           updated === undefined
@@ -438,13 +419,6 @@ export const makeApiKeyService = (
       ),
   };
   return Object.freeze(service);
-};
+});
 
-export const ApiKeyServiceLive = Layer.effect(
-  ApiKeyService,
-  Effect.gen(function* apiKeyServiceLive() {
-    const configuration = yield* AuthConfig;
-    const database = yield* AuthDatabase;
-    return makeApiKeyService(configuration, database.executor);
-  }),
-);
+export const ApiKeyServiceLive = Layer.effect(ApiKeyService, makeApiKeyService());

@@ -53,10 +53,12 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
         'verticals/*/api/index.ts',
         'packages/core-runtime/src/outbox/process.ts',
         'packages/core-runtime/src/db/client.ts',
+        'apps/shell-super-app/api/auth/db/client.ts',
         'verticals/party-registry/src/db/client.ts',
         'packages/core-runtime/src/testing/actions.ts',
         // This CLI composes administrative Auth/Core database Layers for local initialization.
         'scripts/initialize-local-development.mts',
+        'apps/shell-super-app/scripts/bootstrap-stage-demo.mts',
       ],
     },
   ],

@@ -1,4 +1,6 @@
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import type { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
+import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
 import type { authRelations } from './schema.ts';
 
-export type AuthDatabaseExecutor = NodePgDatabase<typeof authRelations>;
+export type AuthDatabaseExecutor = EffectPgDatabase<typeof authRelations>;
+export type BetterAuthDatabaseAdapter = ReturnType<typeof drizzleAdapter>;
