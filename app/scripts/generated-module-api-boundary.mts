@@ -554,6 +554,139 @@ const slotIsInsideObjectProperty = (
   return containers.length === 1;
 };
 
+const defaultExportExpression = (source: string): string | undefined =>
+  assignedExpression(source, /^\s*export default\s+/mu);
+
+const returnedEffectBffDefinition = (source: string): string | undefined => {
+  const structure = maskNonCode(source);
+  const returnedCalls = [
+    ...structure.matchAll(/\breturn\s+(?:defineEffectBff|assembleEffectBffRuntime)\(/gu),
+  ];
+  if (returnedCalls.length !== 1 || returnedCalls[0]?.index === undefined) {
+    return undefined;
+  }
+  const callStart =
+    returnedCalls[0].index +
+    returnedCalls[0][0].search(/(?:defineEffectBff|assembleEffectBffRuntime)\(/u);
+  const opening = structure.indexOf('(', callStart);
+  const closing = matchingDelimiterEnd(structure, opening, '(', ')');
+  if (closing === undefined) {
+    return undefined;
+  }
+  return objectArgument(
+    source.slice(callStart, closing + 1),
+    /^(?:defineEffectBff|assembleEffectBffRuntime)\(/u,
+  );
+};
+
+const exportedRuntimeFactory = (source: string): SourceRange | undefined => {
+  const exported = defaultExportExpression(source);
+  if (exported === undefined || !/^[A-Za-z][A-Za-z0-9]*$/u.test(exported)) {
+    return undefined;
+  }
+  const runtimeInitializer = assignedExpression(
+    source,
+    new RegExp(`const ${escapeRegExp(exported)}\\s*=\\s*`, 'u'),
+  );
+  const factory = /^(?<factory>make[A-Za-z][A-Za-z0-9]*ApiRuntime)\(/u.exec(
+    runtimeInitializer ?? '',
+  )?.groups?.factory;
+  const factoryExpression =
+    factory === undefined
+      ? undefined
+      : assignedExpressionRange(
+          source,
+          new RegExp(`export const ${escapeRegExp(factory)}\\s*=\\s*`, 'u'),
+        );
+  return factoryExpression === undefined ||
+    runtimeInitializer === undefined ||
+    !isWholeCallExpression(
+      runtimeInitializer,
+      new RegExp(`^${escapeRegExp(factory ?? '')}\\(`, 'u'),
+    )
+    ? undefined
+    : factoryExpression;
+};
+
+const effectBffDefinition = (source: string): string | undefined => {
+  const exported = defaultExportExpression(source);
+  if (exported === undefined) {
+    return undefined;
+  }
+  if (/^(?:defineEffectBff|assembleEffectBffRuntime)\(/u.test(exported)) {
+    return isWholeCallExpression(exported, /^(?:defineEffectBff|assembleEffectBffRuntime)\(/u)
+      ? objectArgument(exported, /^(?:defineEffectBff|assembleEffectBffRuntime)\(/u)
+      : undefined;
+  }
+  if (!/^[A-Za-z][A-Za-z0-9]*$/u.test(exported)) {
+    return undefined;
+  }
+  const factory = exportedRuntimeFactory(source);
+  return factory === undefined ? undefined : returnedEffectBffDefinition(factory.value);
+};
+
+const hasExactValueImport = (source: string, value: string, modulePath: string): boolean => {
+  const code = maskComments(source);
+  const imports = [
+    ...source.matchAll(
+      new RegExp(
+        `^\\s*import\\s*\\{(?<values>[^}]*)\\}\\s*from\\s*'${escapeRegExp(modulePath)}';`,
+        'gmu',
+      ),
+    ),
+  ].filter(
+    (candidate) => candidate.index !== undefined && isTopLevelCodePosition(source, candidate.index),
+  );
+  const importedValues = imports.flatMap((candidate) =>
+    (candidate.groups?.values ?? '').split(',').map((entry) => entry.trim()),
+  );
+  return (
+    imports.length === 1 &&
+    importedValues.filter((candidate) => candidate === value).length === 1 &&
+    !matches(
+      code,
+      new RegExp(`\\b(?:class|const|function|let|var)\\s+${escapeRegExp(value)}\\b`, 'u'),
+    )
+  );
+};
+
+const slotIsMountedByAssembler = (
+  source: string,
+  runtimeSource: string,
+  layerName: string,
+  expectedApi: string,
+): boolean => {
+  const definition = effectBffDefinition(source);
+  if (
+    definition === undefined ||
+    definition.includes('...') ||
+    objectPropertyValue(definition, 'api') !== expectedApi ||
+    !hasExactlyOne(maskNonCode(source), /\bassembleEffectBffRuntime\(/gu) ||
+    !hasExactValueImport(
+      source,
+      'assembleEffectBffRuntime',
+      '@app/shared-contracts/server/effect-bff-runtime',
+    )
+  ) {
+    return false;
+  }
+  const handlers = objectPropertyValue(definition, 'handlers');
+  if (handlers === layerName) {
+    return true;
+  }
+  if (handlers === undefined || !/^[A-Za-z][A-Za-z0-9]*$/u.test(handlers)) {
+    return false;
+  }
+  const resolved = assignedExpression(
+    runtimeSource,
+    new RegExp(`const ${escapeRegExp(handlers)}\\s*=\\s*`, 'u'),
+  );
+  return (
+    resolved !== undefined &&
+    isWholeCallExpression(resolved, new RegExp(`^${escapeRegExp(layerName)}\\.pipe\\(`, 'u'))
+  );
+};
+
 // eslint-disable-next-line complexity -- Mount validation traces the generated slot through its aggregate, runtime, and exported BFF root.
 const slotIsInsideMountedLayer = (
   source: string,
@@ -592,17 +725,19 @@ const slotIsInsideMountedLayer = (
   if (closing === undefined || closing <= slot.markerEnd) {
     return false;
   }
-  const runtimeSource = code.slice(closing);
+  const runtimeSource = code.slice(closing + 1);
+  if (slotIsMountedByAssembler(source, runtimeSource, layerName, expectedApi)) {
+    return true;
+  }
   const runtimeDeclaration =
     /const\s+(?<name>[A-Za-z][A-Za-z0-9]*)\s*=\s*HttpApiBuilder\.layer\(/u.exec(runtimeSource);
   const runtimeName = runtimeDeclaration?.groups?.name;
   const runtimeStart =
-    runtimeDeclaration?.index === undefined ? -1 : closing + runtimeDeclaration.index;
+    runtimeDeclaration?.index === undefined ? -1 : closing + 1 + runtimeDeclaration.index;
   const runtimeEnd =
     runtimeStart === -1 ? -1 : code.indexOf('satisfies EffectRuntimeLayer', runtimeStart);
   const runtimeSlice =
     runtimeStart === -1 || runtimeEnd === -1 ? '' : code.slice(runtimeStart, runtimeEnd);
-  // eslint-disable-next-line no-use-before-define -- Runtime tracing and definition parsing are mutually recursive helpers evaluated only after module initialization.
   const definition = effectBffDefinition(source);
   return (
     runtimeName !== undefined &&
@@ -682,70 +817,6 @@ const governedSharedApiRoot = (source: string): SourceRange | undefined => {
 
 const hasGovernedSharedApiRoot = (source: string): boolean =>
   governedSharedApiRoot(source) !== undefined;
-
-const defaultExportExpression = (source: string): string | undefined =>
-  assignedExpression(source, /^\s*export default\s+/mu);
-
-const returnedEffectBffDefinition = (source: string): string | undefined => {
-  const structure = maskNonCode(source);
-  const returnedCalls = [...structure.matchAll(/\breturn\s+defineEffectBff\(/gu)];
-  if (returnedCalls.length !== 1 || returnedCalls[0]?.index === undefined) {
-    return undefined;
-  }
-  const callStart = structure.indexOf('defineEffectBff(', returnedCalls[0].index);
-  const opening = structure.indexOf('(', callStart);
-  const closing = matchingDelimiterEnd(structure, opening, '(', ')');
-  if (closing === undefined) {
-    return undefined;
-  }
-  return objectArgument(source.slice(callStart, closing + 1), /^defineEffectBff\(/u);
-};
-
-const exportedRuntimeFactory = (source: string): SourceRange | undefined => {
-  const exported = defaultExportExpression(source);
-  if (exported === undefined || !/^[A-Za-z][A-Za-z0-9]*$/u.test(exported)) {
-    return undefined;
-  }
-  const runtimeInitializer = assignedExpression(
-    source,
-    new RegExp(`const ${escapeRegExp(exported)}\\s*=\\s*`, 'u'),
-  );
-  const factory = /^(?<factory>make[A-Za-z][A-Za-z0-9]*ApiRuntime)\(/u.exec(
-    runtimeInitializer ?? '',
-  )?.groups?.factory;
-  const factoryExpression =
-    factory === undefined
-      ? undefined
-      : assignedExpressionRange(
-          source,
-          new RegExp(`export const ${escapeRegExp(factory)}\\s*=\\s*`, 'u'),
-        );
-  return factoryExpression === undefined ||
-    runtimeInitializer === undefined ||
-    !isWholeCallExpression(
-      runtimeInitializer,
-      new RegExp(`^${escapeRegExp(factory ?? '')}\\(`, 'u'),
-    )
-    ? undefined
-    : factoryExpression;
-};
-
-const effectBffDefinition = (source: string): string | undefined => {
-  const exported = defaultExportExpression(source);
-  if (exported === undefined) {
-    return undefined;
-  }
-  if (exported.startsWith('defineEffectBff(')) {
-    return isWholeCallExpression(exported, /^defineEffectBff\(/u)
-      ? objectArgument(exported, /^defineEffectBff\(/u)
-      : undefined;
-  }
-  if (!/^[A-Za-z][A-Za-z0-9]*$/u.test(exported)) {
-    return undefined;
-  }
-  const factory = exportedRuntimeFactory(source);
-  return factory === undefined ? undefined : returnedEffectBffDefinition(factory.value);
-};
 
 const hasInjectedGovernedReadRuntime = (source: string): boolean => {
   const factory = exportedRuntimeFactory(source);
@@ -930,31 +1001,6 @@ const contributionReadDirectory = (kind: GovernedReadKind): string => {
     return 'api';
   }
   return kind === REPORT_KIND ? 'reports' : 'search';
-};
-
-const hasExactValueImport = (source: string, value: string, modulePath: string): boolean => {
-  const code = maskComments(source);
-  const imports = [
-    ...source.matchAll(
-      new RegExp(
-        `^\\s*import\\s*\\{(?<values>[^}]*)\\}\\s*from\\s*'${escapeRegExp(modulePath)}';`,
-        'gmu',
-      ),
-    ),
-  ].filter(
-    (candidate) => candidate.index !== undefined && isTopLevelCodePosition(source, candidate.index),
-  );
-  const importedValues = imports.flatMap((candidate) =>
-    (candidate.groups?.values ?? '').split(',').map((entry) => entry.trim()),
-  );
-  return (
-    imports.length === 1 &&
-    importedValues.filter((candidate) => candidate === value).length === 1 &&
-    !matches(
-      code,
-      new RegExp(`\\b(?:class|const|function|let|var)\\s+${escapeRegExp(value)}\\b`, 'u'),
-    )
-  );
 };
 
 // eslint-disable-next-line complexity -- Read validation binds the complete generated descriptor and owner identity.
@@ -1276,7 +1322,6 @@ const hasServerContract = (
   );
 };
 
-// eslint-disable-next-line complexity -- Problem schema validation binds every required public Problem Details field and annotation.
 const hasProblemSchemaContract = (
   source: string,
   schema: string,
@@ -1287,49 +1332,16 @@ const hasProblemSchemaContract = (
     source,
     new RegExp(`export const ${escapeRegExp(schema)}\\s*=\\s*`, 'u'),
   );
-  const fields =
-    expression === undefined
-      ? undefined
-      : objectArgument(expression, /^Schema\.TaggedStruct\(/u, 1);
-  const structure = expression === undefined ? '' : maskNonCode(expression, true);
-  const taggedOpening = structure.indexOf('(');
-  const taggedClosing =
-    taggedOpening === -1 ? undefined : matchingDelimiterEnd(structure, taggedOpening, '(', ')');
-  const pipeStart = taggedClosing === undefined ? -1 : structure.indexOf('.pipe(', taggedClosing);
-  const pipe =
-    pipeStart === -1 || expression === undefined ? undefined : expression.slice(pipeStart);
-  const statusField = objectProperty(fields ?? '', 'status');
-  const problemStatusHelpers = [
-    ...maskNonCode(source, true).matchAll(
-      /const\s+problemStatus\s*=\s*<const\s+Status\s+extends\s+number>\(status:\s*Status\)\s*=>\s*Schema\.Literal\(status\)\.pipe\(Schema\.withConstructorDefault\(Effect\.succeed\(status\)\)\);/gu,
-    ),
-  ].filter(
-    (candidate) => candidate.index !== undefined && isTopLevelCodePosition(source, candidate.index),
-  );
-  const expectedRetryable =
-    'Schema.Literal(true).pipe(Schema.withConstructorDefault(Effect.succeed(true)))';
-  const encoding = callArgument(pipe ?? '', /^\.pipe\(/u);
-  const encodingExpression =
-    encoding !== undefined && /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(encoding)
-      ? assignedExpression(source, new RegExp(`const ${escapeRegExp(encoding)}\\s*=\\s*`, 'u'))
-      : encoding;
-  const encodingOptions = objectArgument(encodingExpression ?? '', /^HttpApiSchema\.asJson\(/u);
+  const factory = retryable ? 'makeRetryableProblemDetailsSchema' : 'makeProblemDetailsSchema';
+  const call = new RegExp(`^${factory}\\(`, 'u');
   return (
     expression !== undefined &&
-    fields !== undefined &&
-    pipe !== undefined &&
-    isWholeCallExpression(pipe, /^\.pipe\(/u) &&
-    (statusField === `Schema.Literal(${String(status)})` ||
-      (statusField === `problemStatus(${String(status)})` && problemStatusHelpers.length === 1)) &&
-    (retryable
-      ? [expectedRetryable, 'Schema.Literal(true)'].includes(
-          objectProperty(fields, 'retryable') ?? '',
-        )
-      : objectProperty(fields, 'retryable') === undefined) &&
-    encodingExpression !== undefined &&
-    isWholeCallExpression(encodingExpression, /^HttpApiSchema\.asJson\(/u) &&
-    objectProperty(encodingOptions ?? '', 'contentType') === "'application/problem+json'" &&
-    callArgument(pipe, /^\.pipe\(/u, 1) === `HttpApiSchema.status(${String(status)})`
+    hasExactValueImport(source, factory, '@app/shared-contracts/problem-details') &&
+    isWholeCallExpression(expression, call) &&
+    callArgument(expression, call) === `'${schema.replace(/Schema$/u, '')}'` &&
+    callArgument(expression, call, 1) === String(status) &&
+    ['', undefined].includes(callArgument(expression, call, 2)) &&
+    callArgument(expression, call, 3) === undefined
   );
 };
 
@@ -1411,11 +1423,9 @@ const hasHttpContract = (
   return (
     options !== undefined &&
     !options.includes('...') &&
-    hasExactValueImport(source, 'Schema', 'effect') &&
     hasExactValueImport(source, 'HttpApi', HTTP_API_CONTRACT_MODULE) &&
     hasExactValueImport(source, 'HttpApiEndpoint', HTTP_API_CONTRACT_MODULE) &&
     hasExactValueImport(source, 'HttpApiGroup', HTTP_API_CONTRACT_MODULE) &&
-    hasExactValueImport(source, 'HttpApiSchema', HTTP_API_CONTRACT_MODULE) &&
     problems.every((problem, index) =>
       hasProblemSchemaContract(source, problem, problemStatuses[index] ?? -1, index === 6),
     ) &&

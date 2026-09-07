@@ -77,7 +77,7 @@ const governedProblemDefinitions = (stem: string): string =>
   )
     .map(
       ([suffix, status, retryable]) =>
-        `export const ${stem}${suffix}ProblemSchema = Schema.TaggedStruct('${stem}${suffix}Problem', { detail: Schema.String, ${retryable ? 'retryable: Schema.Literal(true), ' : ''}status: Schema.Literal(${String(status)}), title: Schema.String, type: Schema.String }).pipe(HttpApiSchema.asJson({ contentType: 'application/problem+json' }), HttpApiSchema.status(${String(status)}));`,
+        `export const ${stem}${suffix}ProblemSchema = ${retryable ? 'makeRetryableProblemDetailsSchema' : 'makeProblemDetailsSchema'}('${stem}${suffix}Problem', ${String(status)});`,
     )
     .join('\n');
 const governedProblems = (stem: string): string => `const problems = {
@@ -206,7 +206,8 @@ export const governedHttpApi = api;`,
     root,
     `${vertical}/shared/apis/stock-list.ts`,
     `${header}import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 ${governedProblemDefinitions('StockList')}
 export const StockListApi = HttpApi.make('StockListApi').add(
   HttpApiGroup.make('stockList').add(
@@ -369,7 +370,8 @@ export const manifest = {
           root,
           `${vertical}/shared/apis/${contract}.ts`,
           `${contributionHeader}import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 ${governedProblemDefinitions(`${type}Provider`)}
 export const ${apiValue} = HttpApi.make('${apiValue}').add(
   HttpApiGroup.make('${group}').add(
@@ -603,7 +605,10 @@ export const StockListApi = HttpApi.make('StockListApi');
     await write(
       root,
       contractPath,
-      validContract.replace('HttpApiSchema.status(401)', 'HttpApiSchema.status(500)'),
+      validContract.replace(
+        "'StockListAuthenticationProblem', 401",
+        "'StockListAuthenticationProblem', 500",
+      ),
     );
     await assert.rejects(
       checkModuleEntrypointBoundaries(root),
@@ -622,8 +627,8 @@ export const StockListApi = HttpApi.make('StockListApi');
       root,
       contractPath,
       validContract.replace(
-        "contentType: 'application/problem+json'",
-        "contentType: 'application/json'",
+        "'@app/shared-contracts/problem-details'",
+        "'./counterfeit-problem-details.ts'",
       ),
     );
     await assert.rejects(

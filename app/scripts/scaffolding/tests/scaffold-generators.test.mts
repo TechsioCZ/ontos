@@ -76,6 +76,10 @@ const test = (name: string, handler: () => void | Promise<void>): void => {
 const isGeneratedPrincipalError = (tag: GeneratedPrincipalErrorTag) =>
   Schema.is(Schema.Struct({ _tag: Schema.Literal(tag) }));
 
+const sharedContractsPackagePath = 'packages/shared-contracts';
+const sharedContractsNodeModulePath = 'node_modules/@app/shared-contracts';
+const partyGovernedContractPath = 'verticals/party-registry/shared/api.ts';
+
 interface FixtureVertical {
   readonly appId: string;
   readonly mfBoundaryId: string;
@@ -866,8 +870,8 @@ test('generated read clients fetch mounted owner URLs and support separately dep
     await mkdir(path.join(fixture.root, 'node_modules/@app'), { recursive: true });
     await mkdir(path.join(fixture.root, 'node_modules/@modern-js'), { recursive: true });
     await symlink(
-      path.join(appRoot, 'packages/shared-contracts'),
-      path.join(fixture.root, 'node_modules/@app/shared-contracts'),
+      path.join(appRoot, sharedContractsPackagePath),
+      path.join(fixture.root, sharedContractsNodeModulePath),
       'dir',
     );
     await symlink(
@@ -984,10 +988,7 @@ test('generated read clients fetch mounted owner URLs and support separately dep
 });
 
 test('the migrated Party governed API slot accepts future generated additions', async () => {
-  const source = await readFile(
-    path.join(appRoot, 'verticals/party-registry/shared/api.ts'),
-    'utf-8',
-  );
+  const source = await readFile(path.join(appRoot, partyGovernedContractPath), 'utf-8');
   const next = insertSortedSlot(
     source,
     GOVERNED_HTTP_API_ADDITION_SLOT_START,
@@ -1212,6 +1213,11 @@ test('governed contribution generators patch owner contracts and lazy adapters a
     await symlink(
       path.join(appRoot, 'packages/core-runtime'),
       path.join(fixture.root, 'node_modules/@app/core-runtime'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, sharedContractsPackagePath),
+      path.join(fixture.root, sharedContractsNodeModulePath),
       'dir',
     );
     await symlink(
@@ -1985,8 +1991,8 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
       'dir',
     );
     await symlink(
-      path.join(appRoot, 'packages/shared-contracts'),
-      path.join(fixture.root, 'node_modules/@app/shared-contracts'),
+      path.join(appRoot, sharedContractsPackagePath),
+      path.join(fixture.root, sharedContractsNodeModulePath),
       'dir',
     );
     await symlink(
@@ -5418,10 +5424,7 @@ test('Action identity boundary rejects an owned file without the authentication 
 });
 
 test('typed injected governed runtime stays bound to the exported owner composition', async () => {
-  const shared = await readFile(
-    path.join(appRoot, 'verticals/party-registry/shared/api.ts'),
-    'utf-8',
-  );
+  const shared = await readFile(path.join(appRoot, partyGovernedContractPath), 'utf-8');
   const handler = await readFile(
     path.join(appRoot, 'verticals/party-registry/api/index.ts'),
     'utf-8',
@@ -5440,17 +5443,14 @@ test('typed injected governed runtime stays bound to the exported owner composit
   assert.equal(
     hasValidGovernedHttpCompositionRoot(
       shared,
-      handler.replace('Layer.provide(apiHandlersLive)', 'Layer.provide(Layer.empty)'),
+      handler.replace('handlers: resolvedApiHandlersLive', 'handlers: Layer.empty'),
     ),
     false,
   );
   assert.equal(
     hasValidGovernedHttpCompositionRoot(
       shared,
-      handler.replace(
-        'return defineEffectBff({ api: partyRegistryApi, layer });',
-        'return defineEffectBff({ api: unrelatedApi, layer });',
-      ),
+      handler.replace('api: partyRegistryApi,', 'api: unrelatedApi,'),
     ),
     false,
   );
@@ -5461,4 +5461,26 @@ test('typed injected governed runtime stays bound to the exported owner composit
     ),
     false,
   );
+});
+
+test('assembled governed runtime rejects disconnected handler pipelines and counterfeit assemblers', async () => {
+  const shared = await readFile(path.join(appRoot, partyGovernedContractPath), 'utf-8');
+  const handler = await readFile(
+    path.join(appRoot, 'verticals/party-registry/api/index.ts'),
+    'utf-8',
+  );
+  for (const [before, after] of [
+    [
+      'const resolvedApiHandlersLive = apiHandlersLive.pipe(',
+      'const resolvedApiHandlersLive = unrelatedHandlers.pipe(',
+    ],
+    ["'@app/shared-contracts/server/effect-bff-runtime'", "'./counterfeit-assembler.ts'"],
+    ['handlers: resolvedApiHandlersLive,', 'handlers: unrelatedHandlers,'],
+  ] as const) {
+    assert.ok(handler.includes(before));
+    assert.equal(
+      hasValidGovernedHttpCompositionRoot(shared, handler.replace(before, after)),
+      false,
+    );
+  }
 });

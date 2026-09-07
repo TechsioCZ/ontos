@@ -2431,3 +2431,39 @@ globalThis.fetch = async input => {
   assert.equal(report.results[0].appId, 'party-registry');
   assert.ok(report.results[0].assertions.every((entry) => entry.status === 'pass'));
 });
+
+void test('proves generated Layer bindings and API aliases without accepting unused neighbors', () => {
+  const contractSource = `${fixtureApiModuleSource}
+export const governedHttpApi = fixtureApi;
+export const unusedApi = {};
+`;
+  const source = `
+import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+import { HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
+import { Layer as GovernedReadLayer } from 'effect';
+import { fixtureApi, governedHttpApi } from '${generatedSharedApiImport}';
+const group = HttpApiBuilder.group(governedHttpApi, 'fixture', (handlers) => handlers.handle('reachable', () => undefined));
+const handlers = Layer.mergeAll(group.pipe(GovernedReadLayer.provide(Layer.empty)));
+export default assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
+`;
+  const resolveImport = (specifier: string) =>
+    specifier === generatedSharedApiImport
+      ? {
+          id: 'owner/shared/api.ts',
+          resolveImport: unexpectedTopologyImport,
+          source: contractSource,
+        }
+      : unexpectedTopologyImport(specifier);
+  assert.equal(strictEffectRuntimeTopologyViolation(source, resolveImport), undefined);
+  for (const [before, after] of [
+    ["from 'effect'", "from './counterfeit-layer.ts'"],
+    ['fixtureApi, governedHttpApi', 'fixtureApi, unusedApi as governedHttpApi'],
+    ['const handlers =', 'const GovernedReadLayer = {}; const handlers ='],
+  ] as const) {
+    assert.ok(source.includes(before));
+    assert.notEqual(
+      strictEffectRuntimeTopologyViolation(source.replace(before, after), resolveImport),
+      undefined,
+    );
+  }
+});
