@@ -113,6 +113,11 @@ const linkRuntimeDependencies = async (root: string): Promise<void> => {
       'dir',
     ),
     symlink(
+      path.join(appRoot, 'packages/gateway-principal-verifier'),
+      path.join(root, 'node_modules/@app/gateway-principal-verifier'),
+      'dir',
+    ),
+    symlink(
       path.join(appRoot, 'apps/shell-super-app/node_modules/@modern-js/plugin-bff'),
       path.join(root, 'node_modules/@modern-js/plugin-bff'),
       'dir',
