@@ -74,9 +74,10 @@ test('attach contracts accept only public Party Registry refs', () => {
   }
 });
 
-test('public engagement mutations preserve the request trace header at the HTTP boundary', async () => {
+test('public engagement mutations preserve owner request context at the HTTP boundary', async () => {
   const requests: Request[] = [];
   const timestamp = '2026-09-07T00:00:00.000Z';
+  const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
   const fakeFetch: typeof fetch = async (input, init) => {
     const request = new Request(input, init);
     requests.push(request);
@@ -108,15 +109,27 @@ test('public engagement mutations preserve the request trace header at the HTTP 
         correlationId: 'engagement-correlation',
         gateway: { baseUrl: 'https://party.example' },
         idempotencyKey: 'attach-engagement',
+        locale: 'cs',
         traceId: 'engagement-trace',
+        traceparent,
       },
     ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch)),
   );
 
   const mutationRequest = requests.find(({ url }) => url.includes('/contacts/engagement/'));
   assert.ok(mutationRequest);
+  assert.equal(mutationRequest.headers.get('accept-language'), 'cs');
   assert.equal(mutationRequest.headers.get('x-trace-id'), 'engagement-trace');
+  assert.equal(mutationRequest.headers.get('traceparent'), traceparent);
   assert.equal(mutationRequest.headers.get('x-correlation-id'), 'engagement-correlation');
+  assert.equal(
+    mutationRequest.headers.get('x-operation-id'),
+    engagementProfileOperationContexts.attachOrganizationEngagement.operationId,
+  );
+  assert.deepEqual(
+    JSON.parse(mutationRequest.headers.get('x-modernjs-bff-operation-context') ?? ''),
+    engagementProfileOperationContexts.attachOrganizationEngagement,
+  );
 });
 
 test('public Party Registry engagement API does not expose legacy identity operations', async () => {
