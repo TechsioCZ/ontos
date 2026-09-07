@@ -7070,6 +7070,7 @@ assert(
   'Gateway principal verification must remain a server-only shared package entrypoint with the complete algorithm',
 );
 const gatewayContractSource = readText('packages/shared-contracts/src/gateway-context.ts');
+const problemDetailsContractSource = readText('packages/shared-contracts/src/problem-details.ts');
 assert(
   gatewayContractSource.includes('GATEWAY_ASSERTION_VERSION = 1') &&
     gatewayContractSource.includes('GATEWAY_ASSERTION_TTL_SECONDS = 300') &&
@@ -7077,7 +7078,8 @@ assert(
     gatewayContractSource.includes("HttpApiEndpoint.post('issueGatewayContext'") &&
     gatewayContractSource.includes("alg: Schema.Literal('EdDSA')") &&
     gatewayContractSource.includes("from '@app/core-runtime/actions/principal-context'") &&
-    gatewayContractSource.includes("contentType: 'application/problem+json'"),
+    gatewayContractSource.includes('makeProblemDetailsSchema') &&
+    problemDetailsContractSource.includes("contentType: 'application/problem+json'"),
   'Shared contracts must retain the versioned generic EdDSA gateway assertion protocol',
 );
 const installedVerticalSource = readText(

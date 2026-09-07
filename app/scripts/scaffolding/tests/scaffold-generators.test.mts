@@ -848,7 +848,7 @@ void test('generated read clients fetch mounted owner URLs and support separatel
         '--input-type=module',
         '--eval',
         `
-      import { Effect } from 'effect';
+      import { Effect, Match, Result } from 'effect';
       import { FetchHttpClient } from 'effect/unstable/http';
       import { runEffectTestPromise } from '${pathToFileURL(path.join(appRoot, 'packages/core-runtime/src/testing/effect-runtime.ts')).href}';
       import { executeResourceDetail, executeResourceDetailWithAuthorization } from './verticals/inventory-stock/src/api/resource-detail-client.ts';
@@ -882,6 +882,40 @@ void test('generated read clients fetch mounted owner URLs and support separatel
           calls.push({ url: String(url), method: init.method, authorization: new Headers(init.headers).get('authorization'), correlationId: new Headers(init.headers).get('x-correlation-id') });
           return Response.json(response);
         })));
+      }
+      const generatedProblem = {
+        _tag: 'ResourceDetailUnavailableProblem',
+        detail: 'Temporarily unavailable.',
+        retryable: true,
+        status: 503,
+        title: 'Unavailable',
+        type: 'urn:ontos:test:generated-problem',
+      };
+      const generatedFailure = await runEffectTestPromise(
+        executeResourceDetailWithAuthorization(
+          {},
+          'Bearer proof',
+          'correlation-proof',
+          { baseUrl: 'https://inventory.example.test/custom/inventory-stock-api' },
+        ).pipe(
+          Effect.result,
+          Effect.provideService(FetchHttpClient.Fetch, async () =>
+            Response.json(generatedProblem, {
+              headers: { 'content-type': 'application/problem+json' },
+              status: 503,
+            }),
+          ),
+        ),
+      );
+      if (!Result.isFailure(generatedFailure)) throw new Error('Expected generated client failure');
+      const preservesProblemDetails = Match.value(generatedFailure.failure).pipe(
+        Match.tag('ResourceDetailUnavailableProblem', ({ status, retryable }) =>
+          status === generatedProblem.status && retryable === true,
+        ),
+        Match.orElse(() => false),
+      );
+      if (!preservesProblemDetails) {
+        throw new Error('Generated client did not preserve the concrete Problem Details error');
       }
       console.log(JSON.stringify(calls));
     `,
@@ -1078,13 +1112,29 @@ void test('governed contribution generators patch owner contracts and lazy adapt
       /export const authenticateOperationPrincipal\s*=\s*makeMicroverticalHttpPrincipalAuthentication/u,
     );
     const searchContract = await readFixtureFile(fixture.root, inventorySearchContractFile);
+    const reportContract = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/shared/apis/stock-levels-report.ts',
+    );
+    for (const contract of [moduleApiContract, searchContract, reportContract]) {
+      assert.match(
+        contract,
+        /import \{\s*makeProblemDetailsSchema,\s*makeRetryableProblemDetailsSchema,?\s*\} from '@app\/shared-contracts\/problem-details';/u,
+      );
+      assert.match(contract, /makeProblemDetailsSchema\([^)]*,\s*409,?\s*\)/u);
+      assert.match(contract, /makeRetryableProblemDetailsSchema\([^)]*,\s*503,?\s*\)/u);
+      assert.doesNotMatch(contract, /application\/problem\+json|HttpApiSchema/u);
+    }
     assert.match(
       searchContract,
       /HttpApiEndpoint\.post\('execute', '\/inventory\.stock\/search\/inventory-items'/u,
     );
     assert.doesNotMatch(searchContract, /tenantId|legalEntityId|principalId/u);
     assert.match(searchContract, /PolicyConflictProblem/u);
-    assert.match(searchContract, /Schema\.Literal\(409\)/u);
+    assert.match(
+      searchContract,
+      /makeProblemDetailsSchema\(\s*'InventoryItemsProviderPolicyConflictProblem',\s*409,?\s*\)/u,
+    );
 
     const beforeRepeat = await snapshotTree(fixture.root);
     await assert.rejects(
@@ -4801,6 +4851,9 @@ void test('all generated files typecheck against the real workspace contracts', 
             ],
             '@app/inventory-stock/outbox/*': ['./verticals/inventory-stock/shared/outbox/*.ts'],
             '@app/shared-contracts': [path.join(appRoot, 'packages/shared-contracts/src/index.ts')],
+            '@app/shared-contracts/problem-details': [
+              path.join(appRoot, 'packages/shared-contracts/src/problem-details.ts'),
+            ],
           },
           resolveJsonModule: true,
           skipLibCheck: true,

@@ -3,7 +3,7 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
-import { Effect, Schema, Predicate } from 'effect';
+import { Effect, Schema, SchemaAST, Predicate } from 'effect';
 import { getReadHandler } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import {
   AresLookupApi,
@@ -12,6 +12,8 @@ import {
   AresLookupInternalProblemSchema,
   AresLookupInvalidProblemSchema,
   AresLookupNotFoundProblemSchema,
+  AresLookupPolicyConflictProblemSchema,
+  AresLookupPolicyProblemSchema,
   AresLookupRequestSchema,
   AresLookupResponseSchema,
   AresLookupUnavailableProblemSchema,
@@ -46,6 +48,13 @@ const evidenceWire = {
     registeredAddress: null,
   },
 } as const;
+
+const problemTag = (schema: Schema.Top): SchemaAST.LiteralValue => {
+  assert.ok(SchemaAST.isObjects(schema.ast));
+  const tag = schema.ast.propertySignatures.find(({ name }) => name === '_tag')?.type;
+  assert.ok(tag !== undefined && SchemaAST.isLiteral(tag));
+  return tag.literal;
+};
 const evidence = Schema.decodeUnknownSync(AresLookupResponseSchema)(evidenceWire);
 
 const scope = Object.freeze({
@@ -160,6 +169,8 @@ void test('publishes safe status-matched Problem Details and no provider payload
     [AresLookupAuthenticationProblemSchema, 'AresLookupAuthenticationProblem', 401],
     [AresLookupForbiddenProblemSchema, 'AresLookupForbiddenProblem', 403],
     [AresLookupNotFoundProblemSchema, 'AresLookupNotFoundProblem', 404],
+    [AresLookupPolicyConflictProblemSchema, 'AresLookupPolicyConflictProblem', 409],
+    [AresLookupPolicyProblemSchema, 'AresLookupPolicyProblem', 422],
     [AresLookupUnavailableProblemSchema, 'AresLookupUnavailableProblem', 503],
     [AresLookupInternalProblemSchema, 'AresLookupInternalProblem', 500],
   ] as const;
@@ -182,7 +193,21 @@ void test('publishes safe status-matched Problem Details and no provider payload
             type: 'https://ontos.dev/problems/test',
           };
     assert.equal(Schema.decodeUnknownSync(schema)(fixture).status, status);
+    assert.deepEqual(schema.ast.annotations?.['~httpApiEncoding'], {
+      _tag: 'Json',
+      contentType: 'application/problem+json',
+    });
   }
+  assert.deepEqual([...AresLookupApi.groups.aresLookup.endpoints.execute.error].map(problemTag), [
+    'AresLookupInvalidProblem',
+    'AresLookupAuthenticationProblem',
+    'AresLookupForbiddenProblem',
+    'AresLookupNotFoundProblem',
+    'AresLookupPolicyConflictProblem',
+    'AresLookupPolicyProblem',
+    'AresLookupUnavailableProblem',
+    'AresLookupInternalProblem',
+  ]);
   assert.deepEqual(Schema.decodeUnknownSync(AresLookupRequestSchema)({ ico: '48039101' }), {
     ico: '48039101',
   });
