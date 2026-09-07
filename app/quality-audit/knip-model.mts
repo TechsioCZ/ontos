@@ -52,12 +52,24 @@ class KnipModelError extends Schema.TaggedError<KnipModelError>()('KnipModelErro
   reason: Schema.String,
 }) {}
 
+const unprovenResolver = { kind: 'resolver-unproven' } as const;
+
 export const KnipModelEvidenceSchema = Schema.Struct({
   anchor: Schema.optional(Schema.String),
   column: Schema.optional(Schema.Number),
-  kind: Schema.Literals(['entry', 'file', 'dependency', 'export', 'resolver', 'compiler-option']),
+  kind: Schema.Literals([
+    'entry',
+    'file',
+    'dependency',
+    'export',
+    'resolver',
+    unprovenResolver.kind,
+    'compiler-option',
+  ]),
   line: Schema.Number,
   owningManifest: Schema.optional(Schema.String),
+  producerManifest: Schema.optional(Schema.String),
+  producerResolved: Schema.optional(Schema.String),
   reason: Schema.String,
   resolved: Schema.optional(Schema.String),
   source: Schema.String,
@@ -1018,15 +1030,33 @@ const resolveInstalledDependency = (dependency: string, anchor: string): string 
   }
 };
 
-const matchesProducerTarget = Effect.fn('QualityAudit.matchesProducerTarget')(
-  function* matchProducerTarget(fact: KnipModelEvidence, manifest: string) {
+const classifyProducerTarget = Effect.fn('QualityAudit.classifyProducerTarget')(
+  function* classifyProducer(fact: KnipModelEvidence, manifest: string) {
     const fs = yield* FileSystem.FileSystem;
     const resolved = resolveInstalledDependency(fact.target, manifest);
     if (resolved === undefined || fact.resolved === undefined) {
-      return false;
+      return {
+        ...fact,
+        ...unprovenResolver,
+        producerManifest: manifest,
+        reason: `${fact.reason}; declaring producer could not resolve the exact target`,
+      };
     }
-    const paths = yield* Effect.all([fs.realPath(resolved), fs.realPath(fact.resolved)]);
-    return paths[0] === paths[1];
+    const [producerResolved, selectedResolved] = yield* Effect.all([
+      fs.realPath(resolved),
+      fs.realPath(fact.resolved),
+    ]);
+    if (producerResolved !== selectedResolved) {
+      return {
+        ...fact,
+        ...unprovenResolver,
+        producerManifest: manifest,
+        producerResolved,
+        reason: `${fact.reason}; declaring producer ${manifest} resolves a different canonical target ${producerResolved}; selected target ${selectedResolved}`,
+        resolved: selectedResolved,
+      };
+    }
+    return { ...fact, owningManifest: manifest };
   },
 );
 
@@ -1037,22 +1067,25 @@ const proveVendorDependency = Effect.fn('QualityAudit.proveVendorDependency')(fu
   if (!owner.manifest.includes('/node_modules/')) {
     return null;
   }
+  let unproven: KnipModelEvidence | null = null;
   for (const dependency of Object.keys(owner.declared.dependencies ?? {})) {
     const resolved = resolveInstalledDependency(dependency, owner.manifest);
     const producer = resolved === undefined ? null : yield* nearestPackage(resolved);
-    if (
-      producer !== null &&
-      Object.hasOwn(producer.declared.dependencies ?? {}, fact.target) &&
-      (yield* matchesProducerTarget(fact, producer.manifest))
-    ) {
-      return {
-        ...fact,
-        owningManifest: producer.manifest,
-        reason: `${fact.reason}; dependency ownership ${owner.declared.name} -> ${producer.declared.name} -> ${fact.target}`,
-      };
+    if (producer !== null && Object.hasOwn(producer.declared.dependencies ?? {}, fact.target)) {
+      const proof = yield* classifyProducerTarget(
+        {
+          ...fact,
+          reason: `${fact.reason}; dependency ownership ${owner.declared.name} -> ${producer.declared.name} -> ${fact.target}`,
+        },
+        producer.manifest,
+      );
+      if (proof.kind === 'resolver') {
+        return proof;
+      }
+      unproven = proof;
     }
   }
-  return null;
+  return unproven;
 });
 
 const proveResolverOwnership = Effect.fn('QualityAudit.proveResolverOwnership')(
@@ -1068,7 +1101,14 @@ const proveResolverOwnership = Effect.fn('QualityAudit.proveResolverOwnership')(
     if (Object.hasOwn(dependencies, fact.target)) {
       return { ...fact, owningManifest: owner.manifest };
     }
-    return yield* proveVendorDependency(fact, owner);
+    const producerProof = yield* proveVendorDependency(fact, owner);
+    return (
+      producerProof ?? {
+        ...fact,
+        ...unprovenResolver,
+        reason: `${fact.reason}; anchor package ${owner.manifest} does not declare ${fact.target}, and no producer selecting the same target was proven`,
+      }
+    );
   },
 );
 

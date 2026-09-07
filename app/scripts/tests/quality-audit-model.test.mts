@@ -9,7 +9,6 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -19,6 +18,8 @@ import { runQualityAudit } from '../quality-audit.mts';
 import { runEffectTestPromise } from '../../packages/core-runtime/src/testing/effect-runtime.ts';
 import { buildKnipModel, KnipConfigSchema } from '../../quality-audit/knip-model.mts';
 
+const rspackPackageName = '@rspack/core';
+const fixtureModuleSource = 'module.exports = {};';
 const packageFile = 'package.json';
 const requirePrelude = [
   "import { createRequire } from 'node:module';",
@@ -76,9 +77,25 @@ const fixture = async () => {
       "void import('./resolver.ts'); void import('./direct.ts'); void import('./own-resolver.ts');",
     ].join('\n'),
   );
-  const resolverAnchor = createRequire(import.meta.url).resolve('@modern-js/app-tools/config', {
-    paths: [path.join(appRoot, 'verticals/party-registry')],
-  });
+  const resolverOwner = '.resolver-fixture/node_modules/owner';
+  const resolverTarget = `${resolverOwner}/node_modules/@rspack/core`;
+  write(
+    root,
+    `${resolverOwner}/package.json`,
+    await stringify({
+      dependencies: { [rspackPackageName]: '1.0.0' },
+      main: 'index.js',
+      name: 'fixture-owner',
+    }),
+  );
+  write(root, `${resolverOwner}/index.js`, fixtureModuleSource);
+  write(
+    root,
+    `${resolverTarget}/package.json`,
+    await stringify({ main: 'index.js', name: rspackPackageName }),
+  );
+  write(root, `${resolverTarget}/index.js`, fixtureModuleSource);
+  const resolverAnchor = path.join(root, resolverOwner, 'index.js');
   write(
     root,
     resolverFile,
@@ -255,7 +272,7 @@ await test('real pinned Knip models exact consumers and preserves neighboring fi
         (item) =>
           item.kind === 'resolver' &&
           item.source === resolverFile &&
-          item.target === '@rspack/core' &&
+          item.target === rspackPackageName &&
           item.line === 3 &&
           item.column === 17 &&
           item.resolved !== undefined,
@@ -376,7 +393,7 @@ await test('runner calibrates only the proven resolver record and retains the di
       raw.issues.some(
         (issue) =>
           issue.file === directFile &&
-          issue.unlisted.some((entry) => entry.name === '@rspack/core'),
+          issue.unlisted.some((entry) => entry.name === rspackPackageName),
       ),
     );
   } finally {
@@ -407,7 +424,7 @@ await test('vendor ownership rejects a different installed copy and accepts the 
           `${directory}/package.json`,
           await stringify({ dependencies, main: 'index.js', name }),
         );
-        write(root, `${directory}/index.js`, 'module.exports = {};');
+        write(root, `${directory}/index.js`, fixtureModuleSource);
       }),
     );
     write(
@@ -433,6 +450,17 @@ await test('vendor ownership rejects a different installed copy and accepts the 
         (item) => item.kind === 'resolver' && item.target === 'target',
       ),
     );
+    const mismatch = differentCopies.evidence.find(
+      (item) => item.kind === 'resolver-unproven' && item.target === 'target',
+    );
+    assert.ok(mismatch !== undefined);
+    assert.equal(mismatch.producerManifest, path.join(root, producer, packageFile));
+    assert.equal(
+      mismatch.producerResolved,
+      realpathSync(path.join(root, producerTarget, 'index.js')),
+    );
+    assert.equal(mismatch.resolved, realpathSync(path.join(root, ownerTarget, 'index.js')));
+    assert.match(mismatch.reason, /different canonical target/u);
     const run = await runPinnedKnip(root, consumerPath, differentCopies);
     assert.equal(run.status, 1, run.stderr);
     const report = Schema.decodeUnknownSync(Schema.fromJsonString(ReportSchema))(run.stdout);
