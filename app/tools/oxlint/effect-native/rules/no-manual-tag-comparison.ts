@@ -918,15 +918,22 @@ export const rule = defineRule({
           'doesNotMatch',
         ]);
         if (assertionMethods.has(method)) {
-          const compared = [...node.arguments];
+          let compared = node.arguments.slice(0, 2);
           let subject = receiver === null ? null : unwrap(receiver);
           while (subject?.type === 'MemberExpression')
             subject = unwrap(subject.object as ESTree.Node);
-          if (subject?.type === 'CallExpression') compared.push(...subject.arguments);
-          for (const argument of compared) {
+          if (subject?.type === 'CallExpression')
+            compared = [...subject.arguments.slice(0, 1), ...node.arguments.slice(0, 1)];
+          for (const [index, argument] of compared.entries()) {
             if (argument.type === 'SpreadElement') continue;
             const reference = comparedTag(argument);
             if (reference === null) continue;
+            const other = compared[index === 0 ? 1 : 0];
+            if (other !== undefined && other.type !== 'SpreadElement') {
+              const literal = asStringLiteral(other);
+              if (literal !== null && exempt.has(literal)) continue;
+              if (containerIsAdtOnly(other)) continue;
+            }
             if (suppressed(node)) return;
             context.report({
               node,

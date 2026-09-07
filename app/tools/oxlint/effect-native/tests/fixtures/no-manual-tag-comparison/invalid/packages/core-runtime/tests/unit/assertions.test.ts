@@ -1,4 +1,4 @@
-// expect-count: 12
+// expect-count: 13
 import assert, { strictEqual as equal } from 'node:assert/strict';
 import { expect } from '@rstest/core';
 assert.equal(error._tag, 'Missing');
@@ -9,7 +9,8 @@ assert.deepEqual(tags, ['Missing']);
 expect(error._tag).toBe('Missing');
 expect(error._tag).not.toEqual('Missing');
 expect(error._tag).resolves.toStrictEqual('Missing');
-assert.equal(option._tag, 'Some');
+assert.equal(error._tag, 'Missing', 'Some');
+expect(error._tag).toBe('Missing', 'Some');
 assert.equal(guard && failure._tag, 'Missing');
 
 equal(error._tag, 'Missing');
