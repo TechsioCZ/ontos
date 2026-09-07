@@ -21,7 +21,7 @@ const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
 const uuid = Schema.String.check(Schema.isUUID());
 const LegalEntityIdSchema = uuid.pipe(Schema.brand('LegalEntityId'));
 const epochSeconds = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
-const gatewayAudience = nonEmptyString.check(
+export const GatewayAudienceSchema = nonEmptyString.check(
   Schema.makeFilter((value) =>
     /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u.test(value)
       ? undefined
@@ -44,7 +44,7 @@ export type GatewayContextProtectedHeader = Schema.Schema.Type<
 >;
 
 export const GatewayContextClaimsSchema = Schema.Struct({
-  aud: gatewayAudience,
+  aud: GatewayAudienceSchema,
   exp: epochSeconds,
   iat: epochSeconds,
   iss: nonEmptyString,
@@ -80,7 +80,7 @@ export const decodeGatewayContextProtectedHeader = Schema.decodeUnknownEffect(
 );
 
 export const GatewayContextRequestSchema = Schema.Struct({
-  audience: gatewayAudience,
+  audience: GatewayAudienceSchema,
   legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
 });
 export type GatewayContextRequest = typeof GatewayContextRequestSchema.Encoded;
