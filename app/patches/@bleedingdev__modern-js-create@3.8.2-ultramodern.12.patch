@@ -1,3 +1,365 @@
+diff --git a/dist/cjs/ultramodern-workspace/api/client.cjs b/dist/cjs/ultramodern-workspace/api/client.cjs
+index c1f8e3b7cd7d7f446cb1e4170d2b7e3dda6a8bcf..36f746d9a854e2ac5105a6f67ec034f570e77460 100644
+--- a/dist/cjs/ultramodern-workspace/api/client.cjs
++++ b/dist/cjs/ultramodern-workspace/api/client.cjs
+@@ -151,7 +151,7 @@ export const ${readinessName} = (
+     operationContext:
+       options.operationContext ?? ${groupName}OperationContexts.readiness,
+   }).pipe(
+-    Effect.flatMap(client => client.${groupName}.readiness({})),
++    Effect.flatMap(client => client.foundation.readiness({})),
+   );
+ 
+ export const ${getName} = (
+diff --git a/dist/cjs/ultramodern-workspace/api/service.cjs b/dist/cjs/ultramodern-workspace/api/service.cjs
+index 4f317bc245a5724c238421862cffeb4ed2a42603..ffb0f2701615b26f0e85dfc4816731458b01ecf8 100644
+--- a/dist/cjs/ultramodern-workspace/api/service.cjs
++++ b/dist/cjs/ultramodern-workspace/api/service.cjs
+@@ -37,12 +37,13 @@ const external_naming_cjs_namespaceObject = require("../naming.cjs");
+ const external_checkout_cart_cjs_namespaceObject = require("./checkout-cart.cjs");
+ const external_names_cjs_namespaceObject = require("./names.cjs");
+ const external_rpc_cjs_namespaceObject = require("./rpc.cjs");
+-function createApiServiceEntry(service, contractImportPath) {
++function createApiServiceEntry(scope, service, contractImportPath) {
+     if ((service.api?.protocol ?? 'rest') === 'rpc') return (0, external_rpc_cjs_namespaceObject.createRpcApiServiceEntry)(service);
+     const apiExport = (0, external_names_cjs_namespaceObject.verticalApiExport)(service);
+     const groupName = (0, external_names_cjs_namespaceObject.verticalApiGroupName)(service);
+     const notFoundErrorExport = (0, external_names_cjs_namespaceObject.verticalApiNotFoundErrorExport)(service);
+     const stem = (0, external_descriptors_cjs_namespaceObject.resolveApiStem)(service);
++    const sharedContractsPackage = (0, external_naming_cjs_namespaceObject.packageName)(scope, 'shared-contracts');
+     return `import {
+   defineEffectBff,
+   Effect,
+@@ -54,6 +55,7 @@ import type {
+   EffectBffRuntime,
+   EffectRuntimeLayer,
+ } from '@modern-js/plugin-bff/effect-edge';
++import { microVerticalOperationAttributes } from '${sharedContractsPackage}';
+ import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
+ import {
+   ${apiExport},
+@@ -61,7 +63,6 @@ import {
+ } from '${contractImportPath}';
+ import type {
+   ${notFoundErrorExport},
+-  OperationContext,
+ } from '${contractImportPath}';
+ 
+ const ${groupName}Items = [
+@@ -73,15 +74,29 @@ const ${groupName}Items = [
+ ];
+ ${(0, external_checkout_cart_cjs_namespaceObject.createCheckoutCartServerState)(service)}
+ 
+-const operationAttributes = (operationContext: OperationContext) => ({
+-    'modernjs.operation.id': operationContext.operationId,
+-    'modernjs.operation.method': operationContext.method,
+-    'modernjs.operation.route': operationContext.routePath,
+-    'modernjs.operation.source': operationContext.source,
+-    ...(typeof operationContext.traceId === 'string'
+-      ? { 'modernjs.trace.id': operationContext.traceId }
+-      : {}),
+-  });
++const ${groupName}ReadinessLayer = HttpApiBuilder.group(
++  ${apiExport},
++  'foundation',
++  handlers =>
++    handlers.handle('readiness', () =>
++      Effect.succeed({
++        checks: {
++          api: 'ready' as const,
++          moduleFederation: 'ready' as const,
++          ssr: 'ready' as const,
++          translations: 'ready' as const,
++        },
++        marker: ultramodernApiMarker,
++        status: 'ready' as const,
++        versionSkew: 'none' as const,
++      }).pipe(
++        Effect.withSpan('ultramodern.api.${groupName}.readiness', {
++          attributes: microVerticalOperationAttributes(${groupName}OperationContexts.readiness),
++          kind: 'server',
++        }),
++      ),
++    ),
++);
+ 
+ const ${groupName}Layer = HttpApiBuilder.group(
+   ${apiExport},
+@@ -96,25 +111,7 @@ const ${groupName}Layer = HttpApiBuilder.group(
+               : ${groupName}Items,
+         }).pipe(
+           Effect.withSpan('ultramodern.api.${groupName}.list', {
+-            attributes: operationAttributes(${groupName}OperationContexts.list),
+-            kind: 'server',
+-          }),
+-        ),
+-      )
+-      .handle('readiness', () =>
+-        Effect.succeed({
+-          checks: {
+-            api: 'ready' as const,
+-            moduleFederation: 'ready' as const,
+-            ssr: 'ready' as const,
+-            translations: 'ready' as const,
+-          },
+-          marker: ultramodernApiMarker,
+-          status: 'ready' as const,
+-          versionSkew: 'none' as const,
+-        }).pipe(
+-          Effect.withSpan('ultramodern.api.${groupName}.readiness', {
+-            attributes: operationAttributes(${groupName}OperationContexts.readiness),
++            attributes: microVerticalOperationAttributes(${groupName}OperationContexts.list),
+             kind: 'server',
+           }),
+         ),
+@@ -134,7 +131,7 @@ const ${groupName}Layer = HttpApiBuilder.group(
+ 
+         return result.pipe(
+             Effect.withSpan('ultramodern.api.${groupName}.get', {
+-              attributes: operationAttributes(${groupName}OperationContexts.get),
++              attributes: microVerticalOperationAttributes(${groupName}OperationContexts.get),
+               kind: 'server',
+             }),
+           );
+@@ -151,7 +148,7 @@ const ${groupName}Layer = HttpApiBuilder.group(
+           },
+         }).pipe(
+           Effect.withSpan('ultramodern.api.${groupName}.create', {
+-            attributes: operationAttributes(${groupName}OperationContexts.create),
++            attributes: microVerticalOperationAttributes(${groupName}OperationContexts.create),
+             kind: 'server',
+           }),
+         ),
+@@ -159,7 +156,7 @@ const ${groupName}Layer = HttpApiBuilder.group(
+ );
+ 
+ const layer = HttpApiBuilder.layer(${apiExport}).pipe(
+-  Layer.provide(${groupName}Layer),
++  Layer.provide(Layer.mergeAll(${groupName}Layer, ${groupName}ReadinessLayer)),
+ ) satisfies EffectRuntimeLayer;
+ const apiRuntime: EffectBffDefinition<typeof ${apiExport}, EffectRuntimeLayer> &
+   EffectBffRuntime<typeof ${apiExport}, EffectRuntimeLayer> = defineEffectBff({
+diff --git a/dist/cjs/ultramodern-workspace/api/shared.cjs b/dist/cjs/ultramodern-workspace/api/shared.cjs
+index f43d84d2bad20f7721a429d0649f1c36fe57e3bf..cb7d53996f471b9ab207e2be04faa36b9ac66e92 100644
+--- a/dist/cjs/ultramodern-workspace/api/shared.cjs
++++ b/dist/cjs/ultramodern-workspace/api/shared.cjs
+@@ -35,7 +35,8 @@ const external_fs_io_cjs_namespaceObject = require("../fs-io.cjs");
+ const external_naming_cjs_namespaceObject = require("../naming.cjs");
+ const external_checkout_cart_cjs_namespaceObject = require("./checkout-cart.cjs");
+ const external_names_cjs_namespaceObject = require("./names.cjs");
+-function createSharedApiImports() {
++function createSharedApiImports(scope) {
++    const sharedContractsPackage = (0, external_naming_cjs_namespaceObject.packageName)(scope, 'shared-contracts');
+     return `import {
+   HttpApi,
+   HttpApiEndpoint,
+@@ -43,6 +44,16 @@ function createSharedApiImports() {
+   HttpApiSchema,
+   Schema,
+ } from '@modern-js/plugin-bff/effect-client';
++import {
++  MicroVerticalBuildMarkerSchema,
++  MicroVerticalReadinessSchema,
++  createMicroVerticalOperationContext,
++} from '${sharedContractsPackage}';
++import type {
++  MicroVerticalBuildMarker,
++  MicroVerticalOperationContext,
++  MicroVerticalReadiness,
++} from '${sharedContractsPackage}';
+ `;
+ }
+ function createSharedApiContract(service) {
+@@ -66,30 +77,26 @@ function createSharedApiContract(service) {
+     const apiPrefix = (0, external_descriptors_cjs_namespaceObject.resolveApiPrefix)(service);
+     const checkoutCartSharedSchemas = (0, external_checkout_cart_cjs_namespaceObject.createCheckoutCartSharedSchemas)(service);
+     const checkoutCartSharedSchemaSection = '' === checkoutCartSharedSchemas ? '' : `${checkoutCartSharedSchemas}\n`;
+-    const createOperationContext = `  create: {
++    const createOperationContext = `  create: createMicroVerticalOperationContext({
+     method: 'POST',
+     operationId: '${apiName}:${groupName}:create',
+     routePath: '/${stem}',
+-    source: 'generated-client',
+-  },`;
+-    const getOperationContext = `  get: {
++  }),`;
++    const getOperationContext = `  get: createMicroVerticalOperationContext({
+     method: 'GET',
+     operationId: '${apiName}:${groupName}:get',
+     routePath: '/${stem}/:id',
+-    source: 'generated-client',
+-  },`;
+-    const listOperationContext = `  list: {
++  }),`;
++    const listOperationContext = `  list: createMicroVerticalOperationContext({
+     method: 'GET',
+     operationId: '${apiName}:${groupName}:list',
+     routePath: '/${stem}',
+-    source: 'generated-client',
+-  },`;
+-    const readinessOperationContext = `  readiness: {
++  }),`;
++    const readinessOperationContext = `  readiness: createMicroVerticalOperationContext({
+     method: 'GET',
+     operationId: '${apiName}:${groupName}:readiness',
+     routePath: '/${stem}/readiness',
+-    source: 'generated-client',
+-  },`;
++  }),`;
+     const checkoutCartOperationContextTemplate = (0, external_checkout_cart_cjs_namespaceObject.createCheckoutCartOperationContexts)(service);
+     const operationContextEntries = '' === checkoutCartOperationContextTemplate ? [
+         createOperationContext,
+@@ -102,17 +109,7 @@ function createSharedApiContract(service) {
+         listOperationContext,
+         readinessOperationContext
+     }).trim();
+-    return `export interface ${markerType} {
+-  readonly appId: string;
+-  readonly build: string;
+-  readonly buildMarker: string;
+-  readonly deployProfile: string;
+-  readonly packageName: string;
+-  readonly sourceRevision: string;
+-  readonly surface: string;
+-  readonly unitId: string;
+-  readonly version: string;
+-}
++    return `export type ${markerType} = MicroVerticalBuildMarker;
+ 
+ export interface ${itemType} {
+   readonly id: string;
+@@ -120,17 +117,7 @@ export interface ${itemType} {
+   readonly title: string;
+ }
+ 
+-export interface ${readinessType} {
+-  readonly checks: {
+-    readonly api: 'ready';
+-    readonly moduleFederation: 'ready';
+-    readonly ssr: 'ready';
+-    readonly translations: 'ready';
+-  };
+-  readonly marker: ${markerType};
+-  readonly status: 'ready';
+-  readonly versionSkew: 'none';
+-}
++export type ${readinessType} = MicroVerticalReadiness;
+ 
+ export interface ${createPayloadType} {
+   readonly title: string;
+@@ -149,17 +136,8 @@ export interface ${notFoundErrorExport} {
+   readonly id: string;
+ }
+ 
+-export const ${markerSchemaExport}: Schema.Codec<${markerType}> = Schema.Struct({
+-  appId: Schema.String,
+-  build: Schema.String,
+-  buildMarker: Schema.String,
+-  deployProfile: Schema.String,
+-  packageName: Schema.String,
+-  sourceRevision: Schema.String,
+-  surface: Schema.String,
+-  unitId: Schema.String,
+-  version: Schema.String,
+-});
++export const ${markerSchemaExport}: Schema.Codec<${markerType}> =
++  MicroVerticalBuildMarkerSchema;
+ 
+ export const ${schemaExport}: Schema.Codec<${itemType}> = Schema.Struct({
+   id: Schema.String,
+@@ -167,17 +145,8 @@ export const ${schemaExport}: Schema.Codec<${itemType}> = Schema.Struct({
+   title: Schema.String,
+ });
+ 
+-export const ${readinessSchemaExport}: Schema.Codec<${readinessType}> = Schema.Struct({
+-  checks: Schema.Struct({
+-    api: Schema.Literal('ready'),
+-    moduleFederation: Schema.Literal('ready'),
+-    ssr: Schema.Literal('ready'),
+-    translations: Schema.Literal('ready'),
+-  }),
+-  marker: ${markerSchemaExport},
+-  status: Schema.Literal('ready'),
+-  versionSkew: Schema.Literal('none'),
+-});
++export const ${readinessSchemaExport}: Schema.Codec<${readinessType}> =
++  MicroVerticalReadinessSchema;
+ 
+ export const ${createPayloadSchemaExport}: Schema.Codec<${createPayloadType}> = Schema.Struct({
+   title: Schema.String,
+@@ -189,38 +158,31 @@ ${checkoutCartSharedSchemaSection}export const ${notFoundSchemaExport}: Schema.C
+   HttpApiSchema.status(404),
+ );
+ 
+-export interface OperationContext {
+-  method: string;
+-  operationId: string;
+-  routePath: string;
+-  source:
+-    | 'client'
+-    | 'server'
+-    | 'generated-client'
+-    | 'effect-adapter'
+-    | 'data-platform'
+-    | 'unknown';
+-  traceId?: string;
+-}
++export type OperationContext = MicroVerticalOperationContext;
+ 
+-export const ${apiExport} = HttpApi.make('${apiName}').add(
+-  HttpApiGroup.make('${groupName}')
+-    .add(
+-      HttpApiEndpoint.get('list', '/${stem}', {
+-        query: {
+-          limit: Schema.optional(Schema.FiniteFromString),
+-        },
+-        success: Schema.Struct({
+-          items: Schema.Array(${schemaExport}),
++export const ${groupName}FoundationApi = HttpApi.make('${apiName}Foundation').add(
++  HttpApiGroup.make('foundation').add(
++    HttpApiEndpoint.get('readiness', '/${stem}/readiness', {
++      success: ${readinessSchemaExport},
++    }),
++  ),
++);
++
++export const ${apiExport} = HttpApi.make('${apiName}')
++  .addHttpApi(${groupName}FoundationApi)
++  .add(
++    HttpApiGroup.make('${groupName}')
++      .add(
++        HttpApiEndpoint.get('list', '/${stem}', {
++          query: {
++            limit: Schema.optional(Schema.FiniteFromString),
++          },
++          success: Schema.Struct({
++            items: Schema.Array(${schemaExport}),
++          }),
+         }),
+-      }),
+-    )
+-    .add(
+-      HttpApiEndpoint.get('readiness', '/${stem}/readiness', {
+-        success: ${readinessSchemaExport},
+-      }),
+-    )
+-    .add(
++      )
++      .add(
+       HttpApiEndpoint.get('get', '/${stem}/:id', {
+         error: ${notFoundSchemaExport},
+         params: {
+@@ -251,8 +213,8 @@ ${(0, external_checkout_cart_cjs_namespaceObject.createCheckoutCartApiContractFi
+ } as const;
+ `;
+ }
+-function createSharedApi(service) {
+-    return `${createSharedApiImports()}
++function createSharedApi(scope, service) {
++    return `${createSharedApiImports(scope)}
+ ${createSharedApiContract(service)}`;
+ }
+ exports.createSharedApi = __webpack_exports__.createSharedApi;
 diff --git a/dist/cjs/ultramodern-workspace/demo-components.cjs b/dist/cjs/ultramodern-workspace/demo-components.cjs
 index 3724fd0b7b14671fba0cb1c46e25719c5e2e03b7..f58815fbb93eea409b3341583b96e682e2c6e783 100644
 --- a/dist/cjs/ultramodern-workspace/demo-components.cjs
@@ -5,7 +367,7 @@ index 3724fd0b7b14671fba0cb1c46e25719c5e2e03b7..f58815fbb93eea409b3341583b96e682
 @@ -308,13 +308,13 @@ function createLayout(appId) {
      return `import { Outlet } from '@modern-js/plugin-tanstack/runtime';
  import './index.css';
-
+ 
 -export default function Layout() {
 -  return (
 -    <div data-app-id="${appId}">
@@ -105,7 +467,7 @@ index 45a7179587e8ab49d1828ba05d25241acad5db82..3fcaa7833e9a1f1b3917470796a6ea34
      }
 @@ -81,7 +79,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
  });
-
+ 
  ` : '';
 -    const localisedUrlsEntry = emitsUi ? '            localisedUrls: ultramodernLocalisedUrls as Record<string, Record<string, string>>,\n' : '';
 +    const localisedUrlsEntry = emitsUi ? '            localisedUrls,\n' : '';
@@ -305,7 +667,7 @@ index 45a7179587e8ab49d1828ba05d25241acad5db82..3fcaa7833e9a1f1b3917470796a6ea34
  import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
 +import * as Schema from 'effect/Schema';
  import { dependencies } from './package.json';
-
+ 
  const require = createRequire(import.meta.url);
 -const bffVersion = (
 -  require('@modern-js/plugin-bff/package.json') as { version: string }
@@ -318,7 +680,7 @@ index 45a7179587e8ab49d1828ba05d25241acad5db82..3fcaa7833e9a1f1b3917470796a6ea34
 +  Schema.decodeUnknownSync(PackageVersionSchema)(require(specifier)).version;
 +const bffVersion = packageVersion('@modern-js/plugin-bff/package.json');
 +const effectVersion = packageVersion('effect/package.json');
-
+ 
  const moduleFederationConfig: Parameters<
    typeof createModuleFederationConfig
 diff --git a/dist/cjs/ultramodern-workspace/module-federation/reexport-module.cjs b/dist/cjs/ultramodern-workspace/module-federation/reexport-module.cjs
@@ -327,7 +689,7 @@ index ef811e6023d5790d8d0bb388455f3b59e9a25707..69a2929c4a71799340a5838d8b52cbed
 +++ b/dist/cjs/ultramodern-workspace/module-federation/reexport-module.cjs
 @@ -47,14 +47,24 @@ function createUltramodernBuildModule(scope, app) {
  declare const ULTRAMODERN_SOURCE_REVISION: string;
-
+ 
  const ultramodernGeneratedBuildArtifact = ${JSON.stringify((0, universal_namespaceObject.createUltramodernBuildArtifact)(record), null, 2)} as const;
 -const ultramodernBuildMarker =
 -  typeof ULTRAMODERN_BUILD_MARKER === 'string'
@@ -358,6 +720,20 @@ index ef811e6023d5790d8d0bb388455f3b59e9a25707..69a2929c4a71799340a5838d8b52cbed
  const ultramodernBuildArtifact = {
    ...ultramodernGeneratedBuildArtifact,
    deliveryUnit: {
+diff --git a/dist/cjs/ultramodern-workspace/package-json.cjs b/dist/cjs/ultramodern-workspace/package-json.cjs
+index 312a3b3c5caa8c007906c22f589972928efa71e6..8feaf01dad9d0bfd557c0536906c291bde834e44 100644
+--- a/dist/cjs/ultramodern-workspace/package-json.cjs
++++ b/dist/cjs/ultramodern-workspace/package-json.cjs
+@@ -231,6 +231,9 @@ function createSharedPackage(scope, id, description) {
+             '@effect/tsgo': external_policy_cjs_namespaceObject.ULTRAMODERN_PACKAGE_PINS.appDevDependencies["@effect/tsgo"]
+         }
+     };
++    if ('shared-contracts' === id) packageJson.dependencies = {
++        effect: external_policy_cjs_namespaceObject.ULTRAMODERN_PACKAGE_PINS.bffEffectDependencies.effect
++    };
+     if ('shared-design-tokens' === id) packageJson.exports = {
+         ...packageJson.exports,
+         './tokens.css': './src/tokens.css'
 diff --git a/dist/cjs/ultramodern-workspace/workspace-script-plan.cjs b/dist/cjs/ultramodern-workspace/workspace-script-plan.cjs
 index 95812d7b858909ac118b28bdba1dc3845576f60a..005679b4802826a50820613417c7732db03ec7b5 100644
 --- a/dist/cjs/ultramodern-workspace/workspace-script-plan.cjs
@@ -371,6 +747,427 @@ index 95812d7b858909ac118b28bdba1dc3845576f60a..005679b4802826a50820613417c7732d
          check: `pnpm format:check && pnpm lint && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness${bridgeCheck}`
      };
  }
+diff --git a/dist/cjs/ultramodern-workspace/workspace-scripts.cjs b/dist/cjs/ultramodern-workspace/workspace-scripts.cjs
+index ef3fe2506e5d6b91a398b32d394666c50c46d006..35d20063ec68f2e3789f8a197f4d0c65a62c81c8 100644
+--- a/dist/cjs/ultramodern-workspace/workspace-scripts.cjs
++++ b/dist/cjs/ultramodern-workspace/workspace-scripts.cjs
+@@ -162,6 +162,9 @@ function createWorkspaceI18nBoundaryValidationScript() {
+ function createWorkspaceApiBoundaryValidationScript() {
+     return (0, external_fs_io_cjs_namespaceObject.readFileTemplate)("workspace-scripts/check-ultramodern-api-boundaries.mts");
+ }
++function createMicroVerticalApiBaselineBoundaryScript() {
++    return (0, external_fs_io_cjs_namespaceObject.readFileTemplate)("workspace-scripts/microvertical-api-baseline-boundary.mts");
++}
+ function createPerformanceReadinessConfigScript() {
+     return (0, external_fs_io_cjs_namespaceObject.readFileTemplate)("workspace-scripts/ultramodern-performance-readiness.config.mjs");
+ }
+@@ -176,6 +179,7 @@ function writeGeneratedWorkspaceScripts(targetDir, scope, enableTailwind, remote
+     const hasBackendSurface = remotes.some(external_descriptors_cjs_namespaceObject.appHasApi);
+     writeWorkspaceOwnedMtsScript(targetDir, 'check-ultramodern-i18n-boundaries', createWorkspaceI18nBoundaryValidationScript());
+     writeWorkspaceOwnedMtsScript(targetDir, 'check-ultramodern-api-boundaries', createWorkspaceApiBoundaryValidationScript());
++    writeWorkspaceOwnedMtsScript(targetDir, 'microvertical-api-baseline-boundary', createMicroVerticalApiBaselineBoundaryScript());
+     if (!shellOnly) {
+         (0, external_fs_io_cjs_namespaceObject.writeFileReplacing)(targetDir, "scripts/materialize-zerops-runtime.mjs", createZeropsRuntimeMaterializationScript());
+         writeWorkspaceOwnedMtsScript(targetDir, 'proof-workerd-ssr', createWorkerdSsrProofScript());
+@@ -208,6 +212,10 @@ function migratedWorkspaceScriptArtifacts(options) {
+             content: createWorkspaceApiBoundaryValidationScript(),
+             legacyPath: "scripts/check-ultramodern-api-boundaries.mjs"
+         },
++        {
++            relativePath: "scripts/microvertical-api-baseline-boundary.mts",
++            content: createMicroVerticalApiBaselineBoundaryScript()
++        },
+         {
+             relativePath: "scripts/ultramodern-performance-readiness.config.mjs",
+             content: createPerformanceReadinessConfigScript()
+@@ -239,6 +247,7 @@ function migratedWorkspaceScriptArtifacts(options) {
+ const migratedWorkspaceScriptBasenames = [
+     'check-ultramodern-i18n-boundaries',
+     'check-ultramodern-api-boundaries',
++    'microvertical-api-baseline-boundary',
+     'bootstrap-agent-skills',
+     'setup-agent-reference-repos',
+     'proof-workerd-ssr',
+diff --git a/dist/cjs/ultramodern-workspace/write-app.cjs b/dist/cjs/ultramodern-workspace/write-app.cjs
+index 4d8e88f28808effaedd34499a6a4aaf635f2f6e2..e666674ccb8ad5bbcc630ca77aece74d27e939fd 100644
+--- a/dist/cjs/ultramodern-workspace/write-app.cjs
++++ b/dist/cjs/ultramodern-workspace/write-app.cjs
+@@ -122,8 +122,8 @@ function writeAppApiAndRemoteExposeFiles({ targetDir, scope, resolvedApp, emitsU
+     if ((0, external_descriptors_cjs_namespaceObject.appHasApi)(resolvedApp)) {
+         const rpcProtocol = 'rpc' === (0, external_descriptors_cjs_namespaceObject.resolveApiProtocol)(resolvedApp);
+         if (rpcProtocol) (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/shared/rpc.ts`, (0, rpc_cjs_namespaceObject.createRpcContractFile)(resolvedApp));
+-        else (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/shared/api.ts`, (0, external_api_cjs_namespaceObject.createSharedApi)(resolvedApp));
+-        (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/api/index.ts`, (0, external_api_cjs_namespaceObject.createApiServiceEntry)(resolvedApp, rpcProtocol ? '../shared/rpc.ts' : '../shared/api.ts'));
++        else (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/shared/api.ts`, (0, external_api_cjs_namespaceObject.createSharedApi)(scope, resolvedApp));
++        (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/api/index.ts`, (0, external_api_cjs_namespaceObject.createApiServiceEntry)(scope, resolvedApp, rpcProtocol ? '../shared/rpc.ts' : '../shared/api.ts'));
+         (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/api/backend-federation.ts`, (0, external_backend_federation_cjs_namespaceObject.createBackendFederationContractFile)(resolvedApp));
+         (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/api/effect-api.ts`, (0, external_api_cjs_namespaceObject.createBackendEffectApiExpose)(scope, resolvedApp));
+         if (rpcProtocol) (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/src/api/${resolvedApp.api.stem}-rpc-client.ts`, (0, rpc_cjs_namespaceObject.createRpcClientFile)(resolvedApp));
+diff --git a/dist/esm/ultramodern-workspace/api/client.js b/dist/esm/ultramodern-workspace/api/client.js
+index 254d58c84d5ba27b142539059961de4abb4749ab..7ac63ef2b979028a220cbfa2154562a78528d49e 100644
+--- a/dist/esm/ultramodern-workspace/api/client.js
++++ b/dist/esm/ultramodern-workspace/api/client.js
+@@ -118,7 +118,7 @@ export const ${readinessName} = (
+     operationContext:
+       options.operationContext ?? ${groupName}OperationContexts.readiness,
+   }).pipe(
+-    Effect.flatMap(client => client.${groupName}.readiness({})),
++    Effect.flatMap(client => client.foundation.readiness({})),
+   );
+ 
+ export const ${getName} = (
+diff --git a/dist/esm/ultramodern-workspace/api/service.js b/dist/esm/ultramodern-workspace/api/service.js
+index 92e2c050f9b499571236d28f6bb0c6fffc085e47..b564359f09672d33ecd5e99c71f29de24a50317e 100644
+--- a/dist/esm/ultramodern-workspace/api/service.js
++++ b/dist/esm/ultramodern-workspace/api/service.js
+@@ -4,12 +4,13 @@ import { packageName } from "../naming.js";
+ import { createCheckoutCartServerHandlers, createCheckoutCartServerState } from "./checkout-cart.js";
+ import { verticalApiExport, verticalApiGroupName, verticalApiNotFoundErrorExport } from "./names.js";
+ import { createRpcApiServiceEntry, rpcPath, verticalRpcContractExport, verticalRpcGroupExport } from "./rpc.js";
+-function createApiServiceEntry(service, contractImportPath) {
++function createApiServiceEntry(scope, service, contractImportPath) {
+     if ((service.api?.protocol ?? 'rest') === 'rpc') return createRpcApiServiceEntry(service);
+     const apiExport = verticalApiExport(service);
+     const groupName = verticalApiGroupName(service);
+     const notFoundErrorExport = verticalApiNotFoundErrorExport(service);
+     const stem = resolveApiStem(service);
++    const sharedContractsPackage = packageName(scope, 'shared-contracts');
+     return `import {
+   defineEffectBff,
+   Effect,
+@@ -21,6 +22,7 @@ import type {
+   EffectBffRuntime,
+   EffectRuntimeLayer,
+ } from '@modern-js/plugin-bff/effect-edge';
++import { microVerticalOperationAttributes } from '${sharedContractsPackage}';
+ import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
+ import {
+   ${apiExport},
+@@ -28,7 +30,6 @@ import {
+ } from '${contractImportPath}';
+ import type {
+   ${notFoundErrorExport},
+-  OperationContext,
+ } from '${contractImportPath}';
+ 
+ const ${groupName}Items = [
+@@ -40,15 +41,29 @@ const ${groupName}Items = [
+ ];
+ ${createCheckoutCartServerState(service)}
+ 
+-const operationAttributes = (operationContext: OperationContext) => ({
+-    'modernjs.operation.id': operationContext.operationId,
+-    'modernjs.operation.method': operationContext.method,
+-    'modernjs.operation.route': operationContext.routePath,
+-    'modernjs.operation.source': operationContext.source,
+-    ...(typeof operationContext.traceId === 'string'
+-      ? { 'modernjs.trace.id': operationContext.traceId }
+-      : {}),
+-  });
++const ${groupName}ReadinessLayer = HttpApiBuilder.group(
++  ${apiExport},
++  'foundation',
++  handlers =>
++    handlers.handle('readiness', () =>
++      Effect.succeed({
++        checks: {
++          api: 'ready' as const,
++          moduleFederation: 'ready' as const,
++          ssr: 'ready' as const,
++          translations: 'ready' as const,
++        },
++        marker: ultramodernApiMarker,
++        status: 'ready' as const,
++        versionSkew: 'none' as const,
++      }).pipe(
++        Effect.withSpan('ultramodern.api.${groupName}.readiness', {
++          attributes: microVerticalOperationAttributes(${groupName}OperationContexts.readiness),
++          kind: 'server',
++        }),
++      ),
++    ),
++);
+ 
+ const ${groupName}Layer = HttpApiBuilder.group(
+   ${apiExport},
+@@ -63,25 +78,7 @@ const ${groupName}Layer = HttpApiBuilder.group(
+               : ${groupName}Items,
+         }).pipe(
+           Effect.withSpan('ultramodern.api.${groupName}.list', {
+-            attributes: operationAttributes(${groupName}OperationContexts.list),
+-            kind: 'server',
+-          }),
+-        ),
+-      )
+-      .handle('readiness', () =>
+-        Effect.succeed({
+-          checks: {
+-            api: 'ready' as const,
+-            moduleFederation: 'ready' as const,
+-            ssr: 'ready' as const,
+-            translations: 'ready' as const,
+-          },
+-          marker: ultramodernApiMarker,
+-          status: 'ready' as const,
+-          versionSkew: 'none' as const,
+-        }).pipe(
+-          Effect.withSpan('ultramodern.api.${groupName}.readiness', {
+-            attributes: operationAttributes(${groupName}OperationContexts.readiness),
++            attributes: microVerticalOperationAttributes(${groupName}OperationContexts.list),
+             kind: 'server',
+           }),
+         ),
+@@ -101,7 +98,7 @@ const ${groupName}Layer = HttpApiBuilder.group(
+ 
+         return result.pipe(
+             Effect.withSpan('ultramodern.api.${groupName}.get', {
+-              attributes: operationAttributes(${groupName}OperationContexts.get),
++              attributes: microVerticalOperationAttributes(${groupName}OperationContexts.get),
+               kind: 'server',
+             }),
+           );
+@@ -118,7 +115,7 @@ const ${groupName}Layer = HttpApiBuilder.group(
+           },
+         }).pipe(
+           Effect.withSpan('ultramodern.api.${groupName}.create', {
+-            attributes: operationAttributes(${groupName}OperationContexts.create),
++            attributes: microVerticalOperationAttributes(${groupName}OperationContexts.create),
+             kind: 'server',
+           }),
+         ),
+@@ -126,7 +123,7 @@ const ${groupName}Layer = HttpApiBuilder.group(
+ );
+ 
+ const layer = HttpApiBuilder.layer(${apiExport}).pipe(
+-  Layer.provide(${groupName}Layer),
++  Layer.provide(Layer.mergeAll(${groupName}Layer, ${groupName}ReadinessLayer)),
+ ) satisfies EffectRuntimeLayer;
+ const apiRuntime: EffectBffDefinition<typeof ${apiExport}, EffectRuntimeLayer> &
+   EffectBffRuntime<typeof ${apiExport}, EffectRuntimeLayer> = defineEffectBff({
+diff --git a/dist/esm/ultramodern-workspace/api/shared.js b/dist/esm/ultramodern-workspace/api/shared.js
+index a01a243a186a98d9b48fbc420d8b74a8e3b0095e..3e99a71932122d02acffeacbea0ff99454a768a4 100644
+--- a/dist/esm/ultramodern-workspace/api/shared.js
++++ b/dist/esm/ultramodern-workspace/api/shared.js
+@@ -1,9 +1,10 @@
+ import { resolveApiPrefix, resolveApiStem } from "../descriptors.js";
+ import { renderTemplate } from "../fs-io.js";
+-import { toPascalCase } from "../naming.js";
++import { packageName, toPascalCase } from "../naming.js";
+ import { createCheckoutCartApiContractFields, createCheckoutCartEndpointDefinitions, createCheckoutCartOperationContexts, createCheckoutCartSharedSchemas } from "./checkout-cart.js";
+ import { verticalApiCreatePayloadSchemaExport, verticalApiExport, verticalApiGroupName, verticalApiMarkerSchemaExport, verticalApiName, verticalApiNotFoundErrorExport, verticalApiNotFoundSchemaExport, verticalApiReadinessSchemaExport, verticalApiSchemaExport } from "./names.js";
+-function createSharedApiImports() {
++function createSharedApiImports(scope) {
++    const sharedContractsPackage = packageName(scope, 'shared-contracts');
+     return `import {
+   HttpApi,
+   HttpApiEndpoint,
+@@ -11,6 +12,16 @@ function createSharedApiImports() {
+   HttpApiSchema,
+   Schema,
+ } from '@modern-js/plugin-bff/effect-client';
++import {
++  MicroVerticalBuildMarkerSchema,
++  MicroVerticalReadinessSchema,
++  createMicroVerticalOperationContext,
++} from '${sharedContractsPackage}';
++import type {
++  MicroVerticalBuildMarker,
++  MicroVerticalOperationContext,
++  MicroVerticalReadiness,
++} from '${sharedContractsPackage}';
+ `;
+ }
+ function createSharedApiContract(service) {
+@@ -34,30 +45,26 @@ function createSharedApiContract(service) {
+     const apiPrefix = resolveApiPrefix(service);
+     const checkoutCartSharedSchemas = createCheckoutCartSharedSchemas(service);
+     const checkoutCartSharedSchemaSection = '' === checkoutCartSharedSchemas ? '' : `${checkoutCartSharedSchemas}\n`;
+-    const createOperationContext = `  create: {
++    const createOperationContext = `  create: createMicroVerticalOperationContext({
+     method: 'POST',
+     operationId: '${apiName}:${groupName}:create',
+     routePath: '/${stem}',
+-    source: 'generated-client',
+-  },`;
+-    const getOperationContext = `  get: {
++  }),`;
++    const getOperationContext = `  get: createMicroVerticalOperationContext({
+     method: 'GET',
+     operationId: '${apiName}:${groupName}:get',
+     routePath: '/${stem}/:id',
+-    source: 'generated-client',
+-  },`;
+-    const listOperationContext = `  list: {
++  }),`;
++    const listOperationContext = `  list: createMicroVerticalOperationContext({
+     method: 'GET',
+     operationId: '${apiName}:${groupName}:list',
+     routePath: '/${stem}',
+-    source: 'generated-client',
+-  },`;
+-    const readinessOperationContext = `  readiness: {
++  }),`;
++    const readinessOperationContext = `  readiness: createMicroVerticalOperationContext({
+     method: 'GET',
+     operationId: '${apiName}:${groupName}:readiness',
+     routePath: '/${stem}/readiness',
+-    source: 'generated-client',
+-  },`;
++  }),`;
+     const checkoutCartOperationContextTemplate = createCheckoutCartOperationContexts(service);
+     const operationContextEntries = '' === checkoutCartOperationContextTemplate ? [
+         createOperationContext,
+@@ -70,17 +77,7 @@ function createSharedApiContract(service) {
+         listOperationContext,
+         readinessOperationContext
+     }).trim();
+-    return `export interface ${markerType} {
+-  readonly appId: string;
+-  readonly build: string;
+-  readonly buildMarker: string;
+-  readonly deployProfile: string;
+-  readonly packageName: string;
+-  readonly sourceRevision: string;
+-  readonly surface: string;
+-  readonly unitId: string;
+-  readonly version: string;
+-}
++    return `export type ${markerType} = MicroVerticalBuildMarker;
+ 
+ export interface ${itemType} {
+   readonly id: string;
+@@ -88,17 +85,7 @@ export interface ${itemType} {
+   readonly title: string;
+ }
+ 
+-export interface ${readinessType} {
+-  readonly checks: {
+-    readonly api: 'ready';
+-    readonly moduleFederation: 'ready';
+-    readonly ssr: 'ready';
+-    readonly translations: 'ready';
+-  };
+-  readonly marker: ${markerType};
+-  readonly status: 'ready';
+-  readonly versionSkew: 'none';
+-}
++export type ${readinessType} = MicroVerticalReadiness;
+ 
+ export interface ${createPayloadType} {
+   readonly title: string;
+@@ -117,17 +104,8 @@ export interface ${notFoundErrorExport} {
+   readonly id: string;
+ }
+ 
+-export const ${markerSchemaExport}: Schema.Codec<${markerType}> = Schema.Struct({
+-  appId: Schema.String,
+-  build: Schema.String,
+-  buildMarker: Schema.String,
+-  deployProfile: Schema.String,
+-  packageName: Schema.String,
+-  sourceRevision: Schema.String,
+-  surface: Schema.String,
+-  unitId: Schema.String,
+-  version: Schema.String,
+-});
++export const ${markerSchemaExport}: Schema.Codec<${markerType}> =
++  MicroVerticalBuildMarkerSchema;
+ 
+ export const ${schemaExport}: Schema.Codec<${itemType}> = Schema.Struct({
+   id: Schema.String,
+@@ -135,17 +113,8 @@ export const ${schemaExport}: Schema.Codec<${itemType}> = Schema.Struct({
+   title: Schema.String,
+ });
+ 
+-export const ${readinessSchemaExport}: Schema.Codec<${readinessType}> = Schema.Struct({
+-  checks: Schema.Struct({
+-    api: Schema.Literal('ready'),
+-    moduleFederation: Schema.Literal('ready'),
+-    ssr: Schema.Literal('ready'),
+-    translations: Schema.Literal('ready'),
+-  }),
+-  marker: ${markerSchemaExport},
+-  status: Schema.Literal('ready'),
+-  versionSkew: Schema.Literal('none'),
+-});
++export const ${readinessSchemaExport}: Schema.Codec<${readinessType}> =
++  MicroVerticalReadinessSchema;
+ 
+ export const ${createPayloadSchemaExport}: Schema.Codec<${createPayloadType}> = Schema.Struct({
+   title: Schema.String,
+@@ -157,38 +126,31 @@ ${checkoutCartSharedSchemaSection}export const ${notFoundSchemaExport}: Schema.C
+   HttpApiSchema.status(404),
+ );
+ 
+-export interface OperationContext {
+-  method: string;
+-  operationId: string;
+-  routePath: string;
+-  source:
+-    | 'client'
+-    | 'server'
+-    | 'generated-client'
+-    | 'effect-adapter'
+-    | 'data-platform'
+-    | 'unknown';
+-  traceId?: string;
+-}
++export type OperationContext = MicroVerticalOperationContext;
+ 
+-export const ${apiExport} = HttpApi.make('${apiName}').add(
+-  HttpApiGroup.make('${groupName}')
+-    .add(
+-      HttpApiEndpoint.get('list', '/${stem}', {
+-        query: {
+-          limit: Schema.optional(Schema.FiniteFromString),
+-        },
+-        success: Schema.Struct({
+-          items: Schema.Array(${schemaExport}),
++export const ${groupName}FoundationApi = HttpApi.make('${apiName}Foundation').add(
++  HttpApiGroup.make('foundation').add(
++    HttpApiEndpoint.get('readiness', '/${stem}/readiness', {
++      success: ${readinessSchemaExport},
++    }),
++  ),
++);
++
++export const ${apiExport} = HttpApi.make('${apiName}')
++  .addHttpApi(${groupName}FoundationApi)
++  .add(
++    HttpApiGroup.make('${groupName}')
++      .add(
++        HttpApiEndpoint.get('list', '/${stem}', {
++          query: {
++            limit: Schema.optional(Schema.FiniteFromString),
++          },
++          success: Schema.Struct({
++            items: Schema.Array(${schemaExport}),
++          }),
+         }),
+-      }),
+-    )
+-    .add(
+-      HttpApiEndpoint.get('readiness', '/${stem}/readiness', {
+-        success: ${readinessSchemaExport},
+-      }),
+-    )
+-    .add(
++      )
++      .add(
+       HttpApiEndpoint.get('get', '/${stem}/:id', {
+         error: ${notFoundSchemaExport},
+         params: {
+@@ -219,8 +181,8 @@ ${createCheckoutCartApiContractFields(service)}  ownerId: '${service.id}',
+ } as const;
+ `;
+ }
+-function createSharedApi(service) {
+-    return `${createSharedApiImports()}
++function createSharedApi(scope, service) {
++    return `${createSharedApiImports(scope)}
+ ${createSharedApiContract(service)}`;
+ }
+ export { createSharedApi };
 diff --git a/dist/esm/ultramodern-workspace/demo-components.js b/dist/esm/ultramodern-workspace/demo-components.js
 index 4baf232ad01064de66c3dcf8b913a99b4754e5ce..3b5ff3fbf21fdd396bd0a230457798e07a6603fd 100644
 --- a/dist/esm/ultramodern-workspace/demo-components.js
@@ -378,7 +1175,7 @@ index 4baf232ad01064de66c3dcf8b913a99b4754e5ce..3b5ff3fbf21fdd396bd0a230457798e0
 @@ -266,13 +266,13 @@ function createLayout(appId) {
      return `import { Outlet } from '@modern-js/plugin-tanstack/runtime';
  import './index.css';
-
+ 
 -export default function Layout() {
 -  return (
 -    <div data-app-id="${appId}">
@@ -476,7 +1273,7 @@ index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..eb3e2e74650a06d7130b77594239ef8b
      }
 @@ -46,7 +44,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
  });
-
+ 
  ` : '';
 -    const localisedUrlsEntry = emitsUi ? '            localisedUrls: ultramodernLocalisedUrls as Record<string, Record<string, string>>,\n' : '';
 +    const localisedUrlsEntry = emitsUi ? '            localisedUrls,\n' : '';
@@ -676,7 +1473,7 @@ index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..eb3e2e74650a06d7130b77594239ef8b
  import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
 +import * as Schema from 'effect/Schema';
  import { dependencies } from './package.json';
-
+ 
  const require = createRequire(import.meta.url);
 -const bffVersion = (
 -  require('@modern-js/plugin-bff/package.json') as { version: string }
@@ -689,7 +1486,7 @@ index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..eb3e2e74650a06d7130b77594239ef8b
 +  Schema.decodeUnknownSync(PackageVersionSchema)(require(specifier)).version;
 +const bffVersion = packageVersion('@modern-js/plugin-bff/package.json');
 +const effectVersion = packageVersion('effect/package.json');
-
+ 
  const moduleFederationConfig: Parameters<
    typeof createModuleFederationConfig
 diff --git a/dist/esm/ultramodern-workspace/module-federation/reexport-module.js b/dist/esm/ultramodern-workspace/module-federation/reexport-module.js
@@ -698,7 +1495,7 @@ index 1e2bef1edab5bff011cc1913b7746c39312ca90b..d8b5407100b33140151d7044abbcf828
 +++ b/dist/esm/ultramodern-workspace/module-federation/reexport-module.js
 @@ -13,14 +13,24 @@ function createUltramodernBuildModule(scope, app) {
  declare const ULTRAMODERN_SOURCE_REVISION: string;
-
+ 
  const ultramodernGeneratedBuildArtifact = ${JSON.stringify(createUltramodernBuildArtifact(record), null, 2)} as const;
 -const ultramodernBuildMarker =
 -  typeof ULTRAMODERN_BUILD_MARKER === 'string'
@@ -729,6 +1526,20 @@ index 1e2bef1edab5bff011cc1913b7746c39312ca90b..d8b5407100b33140151d7044abbcf828
  const ultramodernBuildArtifact = {
    ...ultramodernGeneratedBuildArtifact,
    deliveryUnit: {
+diff --git a/dist/esm/ultramodern-workspace/package-json.js b/dist/esm/ultramodern-workspace/package-json.js
+index d97db9c90294bd70a94d5ccc10296a0079cd014e..eaa3b773b9cd64dad69af8087184b58a79e99714 100644
+--- a/dist/esm/ultramodern-workspace/package-json.js
++++ b/dist/esm/ultramodern-workspace/package-json.js
+@@ -188,6 +188,9 @@ function createSharedPackage(scope, id, description) {
+             '@effect/tsgo': ULTRAMODERN_PACKAGE_PINS.appDevDependencies["@effect/tsgo"]
+         }
+     };
++    if ('shared-contracts' === id) packageJson.dependencies = {
++        effect: ULTRAMODERN_PACKAGE_PINS.bffEffectDependencies.effect
++    };
+     if ('shared-design-tokens' === id) packageJson.exports = {
+         ...packageJson.exports,
+         './tokens.css': './src/tokens.css'
 diff --git a/dist/esm/ultramodern-workspace/workspace-script-plan.js b/dist/esm/ultramodern-workspace/workspace-script-plan.js
 index 683e43743c53e41b163455e8c8138929a44480c2..2d082066f2c5f5b489ec69d9fd7faa4dad5a8ce6 100644
 --- a/dist/esm/ultramodern-workspace/workspace-script-plan.js
@@ -742,6 +1553,428 @@ index 683e43743c53e41b163455e8c8138929a44480c2..2d082066f2c5f5b489ec69d9fd7faa4d
          check: `pnpm format:check && pnpm lint && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness${bridgeCheck}`
      };
  }
+diff --git a/dist/esm/ultramodern-workspace/workspace-scripts.js b/dist/esm/ultramodern-workspace/workspace-scripts.js
+index ce720ef74bd8b5c9a09d29d87db247834d54121e..b31c1beef859c3374dea6b6473d97d2ab5eaef91 100644
+--- a/dist/esm/ultramodern-workspace/workspace-scripts.js
++++ b/dist/esm/ultramodern-workspace/workspace-scripts.js
+@@ -115,6 +115,9 @@ function createWorkspaceI18nBoundaryValidationScript() {
+ function createWorkspaceApiBoundaryValidationScript() {
+     return external_fs_io_js_readFileTemplate("workspace-scripts/check-ultramodern-api-boundaries.mts");
+ }
++function createMicroVerticalApiBaselineBoundaryScript() {
++    return external_fs_io_js_readFileTemplate("workspace-scripts/microvertical-api-baseline-boundary.mts");
++}
+ function createPerformanceReadinessConfigScript() {
+     return external_fs_io_js_readFileTemplate("workspace-scripts/ultramodern-performance-readiness.config.mjs");
+ }
+@@ -129,6 +132,7 @@ function writeGeneratedWorkspaceScripts(targetDir, scope, enableTailwind, remote
+     const hasBackendSurface = remotes.some(appHasApi);
+     writeWorkspaceOwnedMtsScript(targetDir, 'check-ultramodern-i18n-boundaries', createWorkspaceI18nBoundaryValidationScript());
+     writeWorkspaceOwnedMtsScript(targetDir, 'check-ultramodern-api-boundaries', createWorkspaceApiBoundaryValidationScript());
++    writeWorkspaceOwnedMtsScript(targetDir, 'microvertical-api-baseline-boundary', createMicroVerticalApiBaselineBoundaryScript());
+     if (!shellOnly) {
+         writeFileReplacing(targetDir, "scripts/materialize-zerops-runtime.mjs", createZeropsRuntimeMaterializationScript());
+         writeWorkspaceOwnedMtsScript(targetDir, 'proof-workerd-ssr', createWorkerdSsrProofScript());
+@@ -161,6 +165,10 @@ function migratedWorkspaceScriptArtifacts(options) {
+             content: createWorkspaceApiBoundaryValidationScript(),
+             legacyPath: "scripts/check-ultramodern-api-boundaries.mjs"
+         },
++        {
++            relativePath: "scripts/microvertical-api-baseline-boundary.mts",
++            content: createMicroVerticalApiBaselineBoundaryScript()
++        },
+         {
+             relativePath: "scripts/ultramodern-performance-readiness.config.mjs",
+             content: createPerformanceReadinessConfigScript()
+@@ -192,6 +200,7 @@ function migratedWorkspaceScriptArtifacts(options) {
+ const migratedWorkspaceScriptBasenames = [
+     'check-ultramodern-i18n-boundaries',
+     'check-ultramodern-api-boundaries',
++    'microvertical-api-baseline-boundary',
+     'bootstrap-agent-skills',
+     'setup-agent-reference-repos',
+     'proof-workerd-ssr',
+diff --git a/dist/esm/ultramodern-workspace/write-app.js b/dist/esm/ultramodern-workspace/write-app.js
+index 15a02949f43f418dd305a50e9c2edebd7f7db907..b99e450abba5a47f2cc0c768425b4d5c484ce3ed 100644
+--- a/dist/esm/ultramodern-workspace/write-app.js
++++ b/dist/esm/ultramodern-workspace/write-app.js
+@@ -88,8 +88,8 @@ function writeAppRouteAndShellFiles({ targetDir, scope, resolvedApp, emitsUi, re
+ function writeAppApiAndRemoteExposeFiles({ targetDir, scope, resolvedApp, emitsUi, writeAppFile }) {
+     if (appHasApi(resolvedApp)) {
+         const rpcProtocol = 'rpc' === resolveApiProtocol(resolvedApp);
+-        rpcProtocol ? writeFile(targetDir, `${resolvedApp.directory}/shared/rpc.ts`, createRpcContractFile(resolvedApp)) : writeFile(targetDir, `${resolvedApp.directory}/shared/api.ts`, createSharedApi(resolvedApp));
+-        writeFile(targetDir, `${resolvedApp.directory}/api/index.ts`, createApiServiceEntry(resolvedApp, rpcProtocol ? '../shared/rpc.ts' : '../shared/api.ts'));
++        rpcProtocol ? writeFile(targetDir, `${resolvedApp.directory}/shared/rpc.ts`, createRpcContractFile(resolvedApp)) : writeFile(targetDir, `${resolvedApp.directory}/shared/api.ts`, createSharedApi(scope, resolvedApp));
++        writeFile(targetDir, `${resolvedApp.directory}/api/index.ts`, createApiServiceEntry(scope, resolvedApp, rpcProtocol ? '../shared/rpc.ts' : '../shared/api.ts'));
+         writeFile(targetDir, `${resolvedApp.directory}/api/backend-federation.ts`, createBackendFederationContractFile(resolvedApp));
+         writeFile(targetDir, `${resolvedApp.directory}/api/effect-api.ts`, createBackendEffectApiExpose(scope, resolvedApp));
+         rpcProtocol ? writeFile(targetDir, `${resolvedApp.directory}/src/api/${resolvedApp.api.stem}-rpc-client.ts`, createRpcClientFile(resolvedApp)) : writeFile(targetDir, `${resolvedApp.directory}/src/api/${resolvedApp.api.stem}-client.ts`, createApiClient(resolvedApp, '../../shared/api'));
+diff --git a/dist/esm-node/ultramodern-workspace/api/client.js b/dist/esm-node/ultramodern-workspace/api/client.js
+index 8016fe8802c9d52562473063de93081154d5175c..7ab89bf22dd14a0a72f20725edc8c739e848ffb8 100644
+--- a/dist/esm-node/ultramodern-workspace/api/client.js
++++ b/dist/esm-node/ultramodern-workspace/api/client.js
+@@ -119,7 +119,7 @@ export const ${readinessName} = (
+     operationContext:
+       options.operationContext ?? ${groupName}OperationContexts.readiness,
+   }).pipe(
+-    Effect.flatMap(client => client.${groupName}.readiness({})),
++    Effect.flatMap(client => client.foundation.readiness({})),
+   );
+ 
+ export const ${getName} = (
+diff --git a/dist/esm-node/ultramodern-workspace/api/service.js b/dist/esm-node/ultramodern-workspace/api/service.js
+index d07b951c8c0dd4f3c55779073c1b7922c9dd1a7c..25c35817fc81a1e83599862dd16b9c1296e521b4 100644
+--- a/dist/esm-node/ultramodern-workspace/api/service.js
++++ b/dist/esm-node/ultramodern-workspace/api/service.js
+@@ -5,12 +5,13 @@ import { packageName } from "../naming.js";
+ import { createCheckoutCartServerHandlers, createCheckoutCartServerState } from "./checkout-cart.js";
+ import { verticalApiExport, verticalApiGroupName, verticalApiNotFoundErrorExport } from "./names.js";
+ import { createRpcApiServiceEntry, rpcPath, verticalRpcContractExport, verticalRpcGroupExport } from "./rpc.js";
+-function createApiServiceEntry(service, contractImportPath) {
++function createApiServiceEntry(scope, service, contractImportPath) {
+     if ((service.api?.protocol ?? 'rest') === 'rpc') return createRpcApiServiceEntry(service);
+     const apiExport = verticalApiExport(service);
+     const groupName = verticalApiGroupName(service);
+     const notFoundErrorExport = verticalApiNotFoundErrorExport(service);
+     const stem = resolveApiStem(service);
++    const sharedContractsPackage = packageName(scope, 'shared-contracts');
+     return `import {
+   defineEffectBff,
+   Effect,
+@@ -22,6 +23,7 @@ import type {
+   EffectBffRuntime,
+   EffectRuntimeLayer,
+ } from '@modern-js/plugin-bff/effect-edge';
++import { microVerticalOperationAttributes } from '${sharedContractsPackage}';
+ import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
+ import {
+   ${apiExport},
+@@ -29,7 +31,6 @@ import {
+ } from '${contractImportPath}';
+ import type {
+   ${notFoundErrorExport},
+-  OperationContext,
+ } from '${contractImportPath}';
+ 
+ const ${groupName}Items = [
+@@ -41,15 +42,29 @@ const ${groupName}Items = [
+ ];
+ ${createCheckoutCartServerState(service)}
+ 
+-const operationAttributes = (operationContext: OperationContext) => ({
+-    'modernjs.operation.id': operationContext.operationId,
+-    'modernjs.operation.method': operationContext.method,
+-    'modernjs.operation.route': operationContext.routePath,
+-    'modernjs.operation.source': operationContext.source,
+-    ...(typeof operationContext.traceId === 'string'
+-      ? { 'modernjs.trace.id': operationContext.traceId }
+-      : {}),
+-  });
++const ${groupName}ReadinessLayer = HttpApiBuilder.group(
++  ${apiExport},
++  'foundation',
++  handlers =>
++    handlers.handle('readiness', () =>
++      Effect.succeed({
++        checks: {
++          api: 'ready' as const,
++          moduleFederation: 'ready' as const,
++          ssr: 'ready' as const,
++          translations: 'ready' as const,
++        },
++        marker: ultramodernApiMarker,
++        status: 'ready' as const,
++        versionSkew: 'none' as const,
++      }).pipe(
++        Effect.withSpan('ultramodern.api.${groupName}.readiness', {
++          attributes: microVerticalOperationAttributes(${groupName}OperationContexts.readiness),
++          kind: 'server',
++        }),
++      ),
++    ),
++);
+ 
+ const ${groupName}Layer = HttpApiBuilder.group(
+   ${apiExport},
+@@ -64,25 +79,7 @@ const ${groupName}Layer = HttpApiBuilder.group(
+               : ${groupName}Items,
+         }).pipe(
+           Effect.withSpan('ultramodern.api.${groupName}.list', {
+-            attributes: operationAttributes(${groupName}OperationContexts.list),
+-            kind: 'server',
+-          }),
+-        ),
+-      )
+-      .handle('readiness', () =>
+-        Effect.succeed({
+-          checks: {
+-            api: 'ready' as const,
+-            moduleFederation: 'ready' as const,
+-            ssr: 'ready' as const,
+-            translations: 'ready' as const,
+-          },
+-          marker: ultramodernApiMarker,
+-          status: 'ready' as const,
+-          versionSkew: 'none' as const,
+-        }).pipe(
+-          Effect.withSpan('ultramodern.api.${groupName}.readiness', {
+-            attributes: operationAttributes(${groupName}OperationContexts.readiness),
++            attributes: microVerticalOperationAttributes(${groupName}OperationContexts.list),
+             kind: 'server',
+           }),
+         ),
+@@ -102,7 +99,7 @@ const ${groupName}Layer = HttpApiBuilder.group(
+ 
+         return result.pipe(
+             Effect.withSpan('ultramodern.api.${groupName}.get', {
+-              attributes: operationAttributes(${groupName}OperationContexts.get),
++              attributes: microVerticalOperationAttributes(${groupName}OperationContexts.get),
+               kind: 'server',
+             }),
+           );
+@@ -119,7 +116,7 @@ const ${groupName}Layer = HttpApiBuilder.group(
+           },
+         }).pipe(
+           Effect.withSpan('ultramodern.api.${groupName}.create', {
+-            attributes: operationAttributes(${groupName}OperationContexts.create),
++            attributes: microVerticalOperationAttributes(${groupName}OperationContexts.create),
+             kind: 'server',
+           }),
+         ),
+@@ -127,7 +124,7 @@ const ${groupName}Layer = HttpApiBuilder.group(
+ );
+ 
+ const layer = HttpApiBuilder.layer(${apiExport}).pipe(
+-  Layer.provide(${groupName}Layer),
++  Layer.provide(Layer.mergeAll(${groupName}Layer, ${groupName}ReadinessLayer)),
+ ) satisfies EffectRuntimeLayer;
+ const apiRuntime: EffectBffDefinition<typeof ${apiExport}, EffectRuntimeLayer> &
+   EffectBffRuntime<typeof ${apiExport}, EffectRuntimeLayer> = defineEffectBff({
+diff --git a/dist/esm-node/ultramodern-workspace/api/shared.js b/dist/esm-node/ultramodern-workspace/api/shared.js
+index 0fa68d1a008de027e7859edfb45c09a540ae8fbd..22c904fc55f5d1773b9e913bc4d2822fc6a30aef 100644
+--- a/dist/esm-node/ultramodern-workspace/api/shared.js
++++ b/dist/esm-node/ultramodern-workspace/api/shared.js
+@@ -1,10 +1,11 @@
+ import "node:module";
+ import { resolveApiPrefix, resolveApiStem } from "../descriptors.js";
+ import { renderTemplate } from "../fs-io.js";
+-import { toPascalCase } from "../naming.js";
++import { packageName, toPascalCase } from "../naming.js";
+ import { createCheckoutCartApiContractFields, createCheckoutCartEndpointDefinitions, createCheckoutCartOperationContexts, createCheckoutCartSharedSchemas } from "./checkout-cart.js";
+ import { verticalApiCreatePayloadSchemaExport, verticalApiExport, verticalApiGroupName, verticalApiMarkerSchemaExport, verticalApiName, verticalApiNotFoundErrorExport, verticalApiNotFoundSchemaExport, verticalApiReadinessSchemaExport, verticalApiSchemaExport } from "./names.js";
+-function createSharedApiImports() {
++function createSharedApiImports(scope) {
++    const sharedContractsPackage = packageName(scope, 'shared-contracts');
+     return `import {
+   HttpApi,
+   HttpApiEndpoint,
+@@ -12,6 +13,16 @@ function createSharedApiImports() {
+   HttpApiSchema,
+   Schema,
+ } from '@modern-js/plugin-bff/effect-client';
++import {
++  MicroVerticalBuildMarkerSchema,
++  MicroVerticalReadinessSchema,
++  createMicroVerticalOperationContext,
++} from '${sharedContractsPackage}';
++import type {
++  MicroVerticalBuildMarker,
++  MicroVerticalOperationContext,
++  MicroVerticalReadiness,
++} from '${sharedContractsPackage}';
+ `;
+ }
+ function createSharedApiContract(service) {
+@@ -35,30 +46,26 @@ function createSharedApiContract(service) {
+     const apiPrefix = resolveApiPrefix(service);
+     const checkoutCartSharedSchemas = createCheckoutCartSharedSchemas(service);
+     const checkoutCartSharedSchemaSection = '' === checkoutCartSharedSchemas ? '' : `${checkoutCartSharedSchemas}\n`;
+-    const createOperationContext = `  create: {
++    const createOperationContext = `  create: createMicroVerticalOperationContext({
+     method: 'POST',
+     operationId: '${apiName}:${groupName}:create',
+     routePath: '/${stem}',
+-    source: 'generated-client',
+-  },`;
+-    const getOperationContext = `  get: {
++  }),`;
++    const getOperationContext = `  get: createMicroVerticalOperationContext({
+     method: 'GET',
+     operationId: '${apiName}:${groupName}:get',
+     routePath: '/${stem}/:id',
+-    source: 'generated-client',
+-  },`;
+-    const listOperationContext = `  list: {
++  }),`;
++    const listOperationContext = `  list: createMicroVerticalOperationContext({
+     method: 'GET',
+     operationId: '${apiName}:${groupName}:list',
+     routePath: '/${stem}',
+-    source: 'generated-client',
+-  },`;
+-    const readinessOperationContext = `  readiness: {
++  }),`;
++    const readinessOperationContext = `  readiness: createMicroVerticalOperationContext({
+     method: 'GET',
+     operationId: '${apiName}:${groupName}:readiness',
+     routePath: '/${stem}/readiness',
+-    source: 'generated-client',
+-  },`;
++  }),`;
+     const checkoutCartOperationContextTemplate = createCheckoutCartOperationContexts(service);
+     const operationContextEntries = '' === checkoutCartOperationContextTemplate ? [
+         createOperationContext,
+@@ -71,17 +78,7 @@ function createSharedApiContract(service) {
+         listOperationContext,
+         readinessOperationContext
+     }).trim();
+-    return `export interface ${markerType} {
+-  readonly appId: string;
+-  readonly build: string;
+-  readonly buildMarker: string;
+-  readonly deployProfile: string;
+-  readonly packageName: string;
+-  readonly sourceRevision: string;
+-  readonly surface: string;
+-  readonly unitId: string;
+-  readonly version: string;
+-}
++    return `export type ${markerType} = MicroVerticalBuildMarker;
+ 
+ export interface ${itemType} {
+   readonly id: string;
+@@ -89,17 +86,7 @@ export interface ${itemType} {
+   readonly title: string;
+ }
+ 
+-export interface ${readinessType} {
+-  readonly checks: {
+-    readonly api: 'ready';
+-    readonly moduleFederation: 'ready';
+-    readonly ssr: 'ready';
+-    readonly translations: 'ready';
+-  };
+-  readonly marker: ${markerType};
+-  readonly status: 'ready';
+-  readonly versionSkew: 'none';
+-}
++export type ${readinessType} = MicroVerticalReadiness;
+ 
+ export interface ${createPayloadType} {
+   readonly title: string;
+@@ -118,17 +105,8 @@ export interface ${notFoundErrorExport} {
+   readonly id: string;
+ }
+ 
+-export const ${markerSchemaExport}: Schema.Codec<${markerType}> = Schema.Struct({
+-  appId: Schema.String,
+-  build: Schema.String,
+-  buildMarker: Schema.String,
+-  deployProfile: Schema.String,
+-  packageName: Schema.String,
+-  sourceRevision: Schema.String,
+-  surface: Schema.String,
+-  unitId: Schema.String,
+-  version: Schema.String,
+-});
++export const ${markerSchemaExport}: Schema.Codec<${markerType}> =
++  MicroVerticalBuildMarkerSchema;
+ 
+ export const ${schemaExport}: Schema.Codec<${itemType}> = Schema.Struct({
+   id: Schema.String,
+@@ -136,17 +114,8 @@ export const ${schemaExport}: Schema.Codec<${itemType}> = Schema.Struct({
+   title: Schema.String,
+ });
+ 
+-export const ${readinessSchemaExport}: Schema.Codec<${readinessType}> = Schema.Struct({
+-  checks: Schema.Struct({
+-    api: Schema.Literal('ready'),
+-    moduleFederation: Schema.Literal('ready'),
+-    ssr: Schema.Literal('ready'),
+-    translations: Schema.Literal('ready'),
+-  }),
+-  marker: ${markerSchemaExport},
+-  status: Schema.Literal('ready'),
+-  versionSkew: Schema.Literal('none'),
+-});
++export const ${readinessSchemaExport}: Schema.Codec<${readinessType}> =
++  MicroVerticalReadinessSchema;
+ 
+ export const ${createPayloadSchemaExport}: Schema.Codec<${createPayloadType}> = Schema.Struct({
+   title: Schema.String,
+@@ -158,38 +127,31 @@ ${checkoutCartSharedSchemaSection}export const ${notFoundSchemaExport}: Schema.C
+   HttpApiSchema.status(404),
+ );
+ 
+-export interface OperationContext {
+-  method: string;
+-  operationId: string;
+-  routePath: string;
+-  source:
+-    | 'client'
+-    | 'server'
+-    | 'generated-client'
+-    | 'effect-adapter'
+-    | 'data-platform'
+-    | 'unknown';
+-  traceId?: string;
+-}
++export type OperationContext = MicroVerticalOperationContext;
+ 
+-export const ${apiExport} = HttpApi.make('${apiName}').add(
+-  HttpApiGroup.make('${groupName}')
+-    .add(
+-      HttpApiEndpoint.get('list', '/${stem}', {
+-        query: {
+-          limit: Schema.optional(Schema.FiniteFromString),
+-        },
+-        success: Schema.Struct({
+-          items: Schema.Array(${schemaExport}),
++export const ${groupName}FoundationApi = HttpApi.make('${apiName}Foundation').add(
++  HttpApiGroup.make('foundation').add(
++    HttpApiEndpoint.get('readiness', '/${stem}/readiness', {
++      success: ${readinessSchemaExport},
++    }),
++  ),
++);
++
++export const ${apiExport} = HttpApi.make('${apiName}')
++  .addHttpApi(${groupName}FoundationApi)
++  .add(
++    HttpApiGroup.make('${groupName}')
++      .add(
++        HttpApiEndpoint.get('list', '/${stem}', {
++          query: {
++            limit: Schema.optional(Schema.FiniteFromString),
++          },
++          success: Schema.Struct({
++            items: Schema.Array(${schemaExport}),
++          }),
+         }),
+-      }),
+-    )
+-    .add(
+-      HttpApiEndpoint.get('readiness', '/${stem}/readiness', {
+-        success: ${readinessSchemaExport},
+-      }),
+-    )
+-    .add(
++      )
++      .add(
+       HttpApiEndpoint.get('get', '/${stem}/:id', {
+         error: ${notFoundSchemaExport},
+         params: {
+@@ -220,8 +182,8 @@ ${createCheckoutCartApiContractFields(service)}  ownerId: '${service.id}',
+ } as const;
+ `;
+ }
+-function createSharedApi(service) {
+-    return `${createSharedApiImports()}
++function createSharedApi(scope, service) {
++    return `${createSharedApiImports(scope)}
+ ${createSharedApiContract(service)}`;
+ }
+ export { createSharedApi };
 diff --git a/dist/esm-node/ultramodern-workspace/demo-components.js b/dist/esm-node/ultramodern-workspace/demo-components.js
 index 503564abb6a3ea1be8e3c209197f55ef49b6209f..d0e7878f9d82d9fe8996ed1987eee2f9c12a0862 100644
 --- a/dist/esm-node/ultramodern-workspace/demo-components.js
@@ -749,7 +1982,7 @@ index 503564abb6a3ea1be8e3c209197f55ef49b6209f..d0e7878f9d82d9fe8996ed1987eee2f9
 @@ -267,13 +267,13 @@ function createLayout(appId) {
      return `import { Outlet } from '@modern-js/plugin-tanstack/runtime';
  import './index.css';
-
+ 
 -export default function Layout() {
 -  return (
 -    <div data-app-id="${appId}">
@@ -848,7 +2081,7 @@ index 5956501f8ec070d086690b2be4096c40c0c249c0..6ac78eac22d08322d0546fc25bcd5c64
      }
 @@ -47,7 +45,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
  });
-
+ 
  ` : '';
 -    const localisedUrlsEntry = emitsUi ? '            localisedUrls: ultramodernLocalisedUrls as Record<string, Record<string, string>>,\n' : '';
 +    const localisedUrlsEntry = emitsUi ? '            localisedUrls,\n' : '';
@@ -1048,7 +2281,7 @@ index 5956501f8ec070d086690b2be4096c40c0c249c0..6ac78eac22d08322d0546fc25bcd5c64
  import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
 +import * as Schema from 'effect/Schema';
  import { dependencies } from './package.json';
-
+ 
  const require = createRequire(import.meta.url);
 -const bffVersion = (
 -  require('@modern-js/plugin-bff/package.json') as { version: string }
@@ -1061,7 +2294,7 @@ index 5956501f8ec070d086690b2be4096c40c0c249c0..6ac78eac22d08322d0546fc25bcd5c64
 +  Schema.decodeUnknownSync(PackageVersionSchema)(require(specifier)).version;
 +const bffVersion = packageVersion('@modern-js/plugin-bff/package.json');
 +const effectVersion = packageVersion('effect/package.json');
-
+ 
  const moduleFederationConfig: Parameters<
    typeof createModuleFederationConfig
 diff --git a/dist/esm-node/ultramodern-workspace/module-federation/reexport-module.js b/dist/esm-node/ultramodern-workspace/module-federation/reexport-module.js
@@ -1070,7 +2303,7 @@ index be7c63e9f560d2f31a3ee28d4047d700a51b2abb..74714165cdb59faf8158bee5779a5432
 +++ b/dist/esm-node/ultramodern-workspace/module-federation/reexport-module.js
 @@ -14,14 +14,24 @@ function createUltramodernBuildModule(scope, app) {
  declare const ULTRAMODERN_SOURCE_REVISION: string;
-
+ 
  const ultramodernGeneratedBuildArtifact = ${JSON.stringify(createUltramodernBuildArtifact(record), null, 2)} as const;
 -const ultramodernBuildMarker =
 -  typeof ULTRAMODERN_BUILD_MARKER === 'string'
@@ -1101,6 +2334,20 @@ index be7c63e9f560d2f31a3ee28d4047d700a51b2abb..74714165cdb59faf8158bee5779a5432
  const ultramodernBuildArtifact = {
    ...ultramodernGeneratedBuildArtifact,
    deliveryUnit: {
+diff --git a/dist/esm-node/ultramodern-workspace/package-json.js b/dist/esm-node/ultramodern-workspace/package-json.js
+index f901de089342afc1a1462696799a58e5821fe68e..b8fb7055786a9ae4def9a992d2f19ecce8d7aa92 100644
+--- a/dist/esm-node/ultramodern-workspace/package-json.js
++++ b/dist/esm-node/ultramodern-workspace/package-json.js
+@@ -189,6 +189,9 @@ function createSharedPackage(scope, id, description) {
+             '@effect/tsgo': ULTRAMODERN_PACKAGE_PINS.appDevDependencies["@effect/tsgo"]
+         }
+     };
++    if ('shared-contracts' === id) packageJson.dependencies = {
++        effect: ULTRAMODERN_PACKAGE_PINS.bffEffectDependencies.effect
++    };
+     if ('shared-design-tokens' === id) packageJson.exports = {
+         ...packageJson.exports,
+         './tokens.css': './src/tokens.css'
 diff --git a/dist/esm-node/ultramodern-workspace/workspace-script-plan.js b/dist/esm-node/ultramodern-workspace/workspace-script-plan.js
 index d5c918d9687cc706d40994e9526d3639624b4acd..f64f423af3cfcc62459c9a6919d63760eca271b8 100644
 --- a/dist/esm-node/ultramodern-workspace/workspace-script-plan.js
@@ -1114,6 +2361,84 @@ index d5c918d9687cc706d40994e9526d3639624b4acd..f64f423af3cfcc62459c9a6919d63760
          check: `pnpm format:check && pnpm lint && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness${bridgeCheck}`
      };
  }
+diff --git a/dist/esm-node/ultramodern-workspace/workspace-scripts.js b/dist/esm-node/ultramodern-workspace/workspace-scripts.js
+index 7854e7fa839cccd828c491664fdd2c3b2ca0365f..f4b1fe155da8c0a624014374769fb3b32f891395 100644
+--- a/dist/esm-node/ultramodern-workspace/workspace-scripts.js
++++ b/dist/esm-node/ultramodern-workspace/workspace-scripts.js
+@@ -116,6 +116,9 @@ function createWorkspaceI18nBoundaryValidationScript() {
+ function createWorkspaceApiBoundaryValidationScript() {
+     return external_fs_io_js_readFileTemplate("workspace-scripts/check-ultramodern-api-boundaries.mts");
+ }
++function createMicroVerticalApiBaselineBoundaryScript() {
++    return external_fs_io_js_readFileTemplate("workspace-scripts/microvertical-api-baseline-boundary.mts");
++}
+ function createPerformanceReadinessConfigScript() {
+     return external_fs_io_js_readFileTemplate("workspace-scripts/ultramodern-performance-readiness.config.mjs");
+ }
+@@ -130,6 +133,7 @@ function writeGeneratedWorkspaceScripts(targetDir, scope, enableTailwind, remote
+     const hasBackendSurface = remotes.some(appHasApi);
+     writeWorkspaceOwnedMtsScript(targetDir, 'check-ultramodern-i18n-boundaries', createWorkspaceI18nBoundaryValidationScript());
+     writeWorkspaceOwnedMtsScript(targetDir, 'check-ultramodern-api-boundaries', createWorkspaceApiBoundaryValidationScript());
++    writeWorkspaceOwnedMtsScript(targetDir, 'microvertical-api-baseline-boundary', createMicroVerticalApiBaselineBoundaryScript());
+     if (!shellOnly) {
+         writeFileReplacing(targetDir, "scripts/materialize-zerops-runtime.mjs", createZeropsRuntimeMaterializationScript());
+         writeWorkspaceOwnedMtsScript(targetDir, 'proof-workerd-ssr', createWorkerdSsrProofScript());
+@@ -162,6 +166,10 @@ function migratedWorkspaceScriptArtifacts(options) {
+             content: createWorkspaceApiBoundaryValidationScript(),
+             legacyPath: "scripts/check-ultramodern-api-boundaries.mjs"
+         },
++        {
++            relativePath: "scripts/microvertical-api-baseline-boundary.mts",
++            content: createMicroVerticalApiBaselineBoundaryScript()
++        },
+         {
+             relativePath: "scripts/ultramodern-performance-readiness.config.mjs",
+             content: createPerformanceReadinessConfigScript()
+@@ -193,6 +201,7 @@ function migratedWorkspaceScriptArtifacts(options) {
+ const migratedWorkspaceScriptBasenames = [
+     'check-ultramodern-i18n-boundaries',
+     'check-ultramodern-api-boundaries',
++    'microvertical-api-baseline-boundary',
+     'bootstrap-agent-skills',
+     'setup-agent-reference-repos',
+     'proof-workerd-ssr',
+diff --git a/dist/esm-node/ultramodern-workspace/write-app.js b/dist/esm-node/ultramodern-workspace/write-app.js
+index 60cc1188ac1f6174f7c5c1bdfe62d8d04e44735f..7d3744fac4dcd0675c8dc03ca2d8e7a1658589d8 100644
+--- a/dist/esm-node/ultramodern-workspace/write-app.js
++++ b/dist/esm-node/ultramodern-workspace/write-app.js
+@@ -89,8 +89,8 @@ function writeAppRouteAndShellFiles({ targetDir, scope, resolvedApp, emitsUi, re
+ function writeAppApiAndRemoteExposeFiles({ targetDir, scope, resolvedApp, emitsUi, writeAppFile }) {
+     if (appHasApi(resolvedApp)) {
+         const rpcProtocol = 'rpc' === resolveApiProtocol(resolvedApp);
+-        rpcProtocol ? writeFile(targetDir, `${resolvedApp.directory}/shared/rpc.ts`, createRpcContractFile(resolvedApp)) : writeFile(targetDir, `${resolvedApp.directory}/shared/api.ts`, createSharedApi(resolvedApp));
+-        writeFile(targetDir, `${resolvedApp.directory}/api/index.ts`, createApiServiceEntry(resolvedApp, rpcProtocol ? '../shared/rpc.ts' : '../shared/api.ts'));
++        rpcProtocol ? writeFile(targetDir, `${resolvedApp.directory}/shared/rpc.ts`, createRpcContractFile(resolvedApp)) : writeFile(targetDir, `${resolvedApp.directory}/shared/api.ts`, createSharedApi(scope, resolvedApp));
++        writeFile(targetDir, `${resolvedApp.directory}/api/index.ts`, createApiServiceEntry(scope, resolvedApp, rpcProtocol ? '../shared/rpc.ts' : '../shared/api.ts'));
+         writeFile(targetDir, `${resolvedApp.directory}/api/backend-federation.ts`, createBackendFederationContractFile(resolvedApp));
+         writeFile(targetDir, `${resolvedApp.directory}/api/effect-api.ts`, createBackendEffectApiExpose(scope, resolvedApp));
+         rpcProtocol ? writeFile(targetDir, `${resolvedApp.directory}/src/api/${resolvedApp.api.stem}-rpc-client.ts`, createRpcClientFile(resolvedApp)) : writeFile(targetDir, `${resolvedApp.directory}/src/api/${resolvedApp.api.stem}-client.ts`, createApiClient(resolvedApp, '../../shared/api'));
+diff --git a/dist/types/ultramodern-workspace/api/service.d.ts b/dist/types/ultramodern-workspace/api/service.d.ts
+index 9b19b2a86a647711488079af713bbd2bcecf5b4b..b8726a46f462b48db088b2490fe275ca40aa3aab 100644
+--- a/dist/types/ultramodern-workspace/api/service.d.ts
++++ b/dist/types/ultramodern-workspace/api/service.d.ts
+@@ -1,5 +1,5 @@
+ import type { WorkspaceApi, WorkspaceApp } from '../types';
+-export declare function createApiServiceEntry(service: {
++export declare function createApiServiceEntry(scope: string, service: {
+     id: string;
+     api?: WorkspaceApi;
+ }, contractImportPath: string): string;
+diff --git a/dist/types/ultramodern-workspace/api/shared.d.ts b/dist/types/ultramodern-workspace/api/shared.d.ts
+index a8b289156a5953672cff6d5668725e836d179b03..d2961869c6ec8be12954f671f8d1a5231db57e03 100644
+--- a/dist/types/ultramodern-workspace/api/shared.d.ts
++++ b/dist/types/ultramodern-workspace/api/shared.d.ts
+@@ -1,5 +1,5 @@
+ import type { WorkspaceApi } from '../types';
+-export declare function createSharedApi(service: {
++export declare function createSharedApi(scope: string, service: {
+     id: string;
+     api?: WorkspaceApi;
+ }): string;
 diff --git a/dist/types/ultramodern-workspace/mf-validation/constants.d.ts b/dist/types/ultramodern-workspace/mf-validation/constants.d.ts
 index ebbc5176bacfd3790c8f01c8000e258ad348ce00..2d9e878b3f30650b0ca3e7b78d8c63de31f1489d 100644
 --- a/dist/types/ultramodern-workspace/mf-validation/constants.d.ts
@@ -1125,8 +2450,117 @@ index ebbc5176bacfd3790c8f01c8000e258ad348ce00..2d9e878b3f30650b0ca3e7b78d8c63de
  export declare const generatedMetadataPaths: string[];
  export declare const defaultAppRootDirs: string[];
  export declare const skippedScanDirs: Set<string>;
+diff --git a/templates/packages/shared-contracts-index.ts b/templates/packages/shared-contracts-index.ts
+index 198beb018e1d6985953748cea5000448f381abe5..7d2acb37a8058c1c7b94c1df033d34e72d8a5e2e 100644
+--- a/templates/packages/shared-contracts-index.ts
++++ b/templates/packages/shared-contracts-index.ts
+@@ -1,3 +1,104 @@
++import { Schema } from 'effect';
++
++const MicroVerticalAppIdSchema = Schema.String.pipe(
++  Schema.brand('MicroVerticalAppId'),
++  Schema.decodeTo(Schema.String),
++);
++const MicroVerticalUnitIdSchema = Schema.String.pipe(
++  Schema.brand('MicroVerticalUnitId'),
++  Schema.decodeTo(Schema.String),
++);
++const MicroVerticalOperationIdSchema = Schema.String.pipe(
++  Schema.brand('MicroVerticalOperationId'),
++  Schema.decodeTo(Schema.String),
++);
++const MicroVerticalTraceIdSchema = Schema.String.pipe(
++  Schema.brand('MicroVerticalTraceId'),
++  Schema.decodeTo(Schema.String),
++);
++
++export const MicroVerticalBuildMarkerSchema = Schema.Struct({
++  appId: MicroVerticalAppIdSchema,
++  build: Schema.String,
++  buildMarker: Schema.String,
++  deployProfile: Schema.String,
++  packageName: Schema.String,
++  sourceRevision: Schema.String,
++  surface: Schema.String,
++  unitId: MicroVerticalUnitIdSchema,
++  version: Schema.String,
++});
++export type MicroVerticalBuildMarker =
++  typeof MicroVerticalBuildMarkerSchema.Type;
++
++export const MicroVerticalReadinessSchema = Schema.Struct({
++  checks: Schema.Struct({
++    api: Schema.Literal('ready'),
++    moduleFederation: Schema.Literal('ready'),
++    ssr: Schema.Literal('ready'),
++    translations: Schema.Literal('ready'),
++  }),
++  marker: MicroVerticalBuildMarkerSchema,
++  status: Schema.Literal('ready'),
++  versionSkew: Schema.Literal('none'),
++});
++export type MicroVerticalReadiness = typeof MicroVerticalReadinessSchema.Type;
++
++export const MicroVerticalOperationSourceSchema = Schema.Literals([
++  'client',
++  'server',
++  'generated-client',
++  'effect-adapter',
++  'data-platform',
++  'unknown',
++]);
++export type MicroVerticalOperationSource =
++  typeof MicroVerticalOperationSourceSchema.Type;
++
++export const MicroVerticalOperationContextSchema = Schema.Struct({
++  method: Schema.String,
++  operationId: MicroVerticalOperationIdSchema,
++  routePath: Schema.String,
++  source: MicroVerticalOperationSourceSchema,
++  traceId: Schema.optionalKey(MicroVerticalTraceIdSchema),
++});
++export type MicroVerticalOperationContext =
++  typeof MicroVerticalOperationContextSchema.Type;
++
++export const createMicroVerticalOperationContext = <
++  const Method extends string,
++  const OperationId extends string,
++  const RoutePath extends string,
++>(input: {
++  readonly method: Method;
++  readonly operationId: OperationId;
++  readonly routePath: RoutePath;
++  // eslint-disable-next-line effect-native/no-threaded-correlation-parameter -- This pure browser-safe contract deliberately carries optional trace metadata; it does not perform ambient request work.
++  readonly traceId?: string;
++}): Readonly<typeof input & { source: 'generated-client' }> => {
++  const context = {
++    method: input.method,
++    operationId: input.operationId,
++    routePath: input.routePath,
++    source: 'generated-client' as const,
++  };
++  return input.traceId === undefined ? context : { ...context, traceId: input.traceId };
++};
++
++export const microVerticalOperationAttributes = (
++  operationContext: MicroVerticalOperationContext,
++) => {
++  const attributes = {
++    'modernjs.operation.id': operationContext.operationId,
++    'modernjs.operation.method': operationContext.method,
++    'modernjs.operation.route': operationContext.routePath,
++    'modernjs.operation.source': operationContext.source,
++  };
++  return operationContext.traceId === undefined
++    ? attributes
++    : { ...attributes, 'modernjs.trace.id': operationContext.traceId };
++};
++
+ export type UltramodernPublicSitemapChangeFrequency =
+   | 'always'
+   | 'hourly'
 diff --git a/templates/workspace/apps/modern.config.ts.handlebars b/templates/workspace/apps/modern.config.ts.handlebars
-index 2144abc7232f756a7d824e18bd90ce881e0dadc2..5df3764b126e9774ca832dbc6bd5ccd72db0f61e 100644
+index 2144abc7232f756a7d824e18bd90ce881e0dadc2..000ece862905b277cc002c7437ce3746da48d75e 100644
 --- a/templates/workspace/apps/modern.config.ts.handlebars
 +++ b/templates/workspace/apps/modern.config.ts.handlebars
 @@ -1,25 +1,60 @@
@@ -1221,7 +2655,7 @@ index 2144abc7232f756a7d824e18bd90ce881e0dadc2..5df3764b126e9774ca832dbc6bd5ccd7
  const buildOutputRoot = cloudflareDeployEnabled ? 'dist-cloudflare' : 'dist';
  const buildTempDirectory = `node_modules/.modern-js-${appId}-${buildTarget}`;
 @@ -52,7 +87,7 @@ const buildCacheDirectory = `node_modules/.cache/rspack-${appId}-${buildTarget}`
-
+ 
  if (
    cloudflareDeployEnabled &&
 -  getBuildConfigEnvironment('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') === 'true' &&
@@ -1232,7 +2666,7 @@ index 2144abc7232f756a7d824e18bd90ce881e0dadc2..5df3764b126e9774ca832dbc6bd5ccd7
 @@ -62,23 +97,26 @@ if (
    );
  }
-
+ 
 +const whenEnabled = <Configuration>(enabled: boolean, configuration: Configuration) =>
 +  enabled ? configuration : undefined;
 +
@@ -1329,6 +2763,850 @@ index 2144abc7232f756a7d824e18bd90ce881e0dadc2..5df3764b126e9774ca832dbc6bd5ccd7
      {
        appId,
        deliveryUnit: {
+diff --git a/templates/workspace/verticals/server/checkout-cart-handlers.ts.handlebars b/templates/workspace/verticals/server/checkout-cart-handlers.ts.handlebars
+index 881ed1c31b29fa7a6db8da25bdf95fe23aefb84b..b8e360c82fcb543c4afccc994503277c20782690 100644
+--- a/templates/workspace/verticals/server/checkout-cart-handlers.ts.handlebars
++++ b/templates/workspace/verticals/server/checkout-cart-handlers.ts.handlebars
+@@ -2,7 +2,7 @@
+       .handle('getCart', () =>
+         Effect.sync(() => createCheckoutCartSnapshot()).pipe(
+           Effect.withSpan('ultramodern.api.{{value0}}.checkout.getCart', {
+-            attributes: operationAttributes({{value1}}OperationContexts.getCart),
++            attributes: microVerticalOperationAttributes({{value1}}OperationContexts.getCart),
+             kind: 'server',
+           }),
+         ),
+@@ -20,7 +20,7 @@
+           return createCheckoutCartSnapshot();
+         }).pipe(
+           Effect.withSpan('ultramodern.api.{{value2}}.checkout.addCartItem', {
+-            attributes: operationAttributes({{value3}}OperationContexts.addCartItem),
++            attributes: microVerticalOperationAttributes({{value3}}OperationContexts.addCartItem),
+             kind: 'server',
+           }),
+         ),
+@@ -31,7 +31,7 @@
+           return createCheckoutCartSnapshot();
+         }).pipe(
+           Effect.withSpan('ultramodern.api.{{value4}}.checkout.removeCartItem', {
+-            attributes: operationAttributes({{value5}}OperationContexts.removeCartItem),
++            attributes: microVerticalOperationAttributes({{value5}}OperationContexts.removeCartItem),
+             kind: 'server',
+           }),
+         ),
+@@ -42,7 +42,7 @@
+           return createCheckoutCartSnapshot();
+         }).pipe(
+           Effect.withSpan('ultramodern.api.{{value6}}.checkout.clearCart', {
+-            attributes: operationAttributes({{value7}}OperationContexts.clearCart),
++            attributes: microVerticalOperationAttributes({{value7}}OperationContexts.clearCart),
+             kind: 'server',
+           }),
+         ),
+diff --git a/templates/workspace/verticals/shared/api.checkout-cart-operation-contexts.ts.handlebars b/templates/workspace/verticals/shared/api.checkout-cart-operation-contexts.ts.handlebars
+index 04820fd4264e7df2d2fa5c803df181e3e1401a34..3eb4b2387a43ba4a163f93b3dc309df37b9bdd14 100644
+--- a/templates/workspace/verticals/shared/api.checkout-cart-operation-contexts.ts.handlebars
++++ b/templates/workspace/verticals/shared/api.checkout-cart-operation-contexts.ts.handlebars
+@@ -1,29 +1,25 @@
+ 
+-  addCartItem: {
++  addCartItem: createMicroVerticalOperationContext({
+     method: 'POST',
+     operationId: '{{value0}}:{{value1}}:addCartItem',
+     routePath: '/checkout/cart/items',
+-    source: 'generated-client',
+-  },
+-  clearCart: {
++  }),
++  clearCart: createMicroVerticalOperationContext({
+     method: 'POST',
+     operationId: '{{value2}}:{{value3}}:clearCart',
+     routePath: '/checkout/cart/clear',
+-    source: 'generated-client',
+-  },
++  }),
+ {{createOperationContext}}
+ {{getOperationContext}}
+-  getCart: {
++  getCart: createMicroVerticalOperationContext({
+     method: 'GET',
+     operationId: '{{value4}}:{{value5}}:getCart',
+     routePath: '/checkout/cart',
+-    source: 'generated-client',
+-  },
++  }),
+ {{listOperationContext}}
+ {{readinessOperationContext}}
+-  removeCartItem: {
++  removeCartItem: createMicroVerticalOperationContext({
+     method: 'POST',
+     operationId: '{{value6}}:{{value7}}:removeCartItem',
+     routePath: '/checkout/cart/remove',
+-    source: 'generated-client',
+-  },
++  }),
+diff --git a/templates/workspace-scripts/check-ultramodern-api-boundaries.mts b/templates/workspace-scripts/check-ultramodern-api-boundaries.mts
+index d606a2265cb438d32a612cfdd6ebb9561529d4f5..9b380e7fddacd38b76013de8a02ab542d1741a0e 100644
+--- a/templates/workspace-scripts/check-ultramodern-api-boundaries.mts
++++ b/templates/workspace-scripts/check-ultramodern-api-boundaries.mts
+@@ -1,6 +1,10 @@
+ #!/usr/bin/env node
+ import fs from 'node:fs';
+ import path from 'node:path';
++import {
++  configuredMicroVerticalApiStem,
++  microVerticalApiBaselineViolation,
++} from './microvertical-api-baseline-boundary.mts';
+ 
+ const workspaceRoot = process.env.ULTRAMODERN_WORKSPACE_ROOT ?? process.cwd();
+ const failures = [];
+@@ -182,6 +186,9 @@ for (const file of textFiles) {
+ }
+ 
+ const verticalDirectories = listDirectories('verticals');
++const topology = exists('topology/reference-topology.json')
++  ? JSON.parse(readText('topology/reference-topology.json'))
++  : { verticals: [] };
+ const shellClient = 'apps/shell-super-app/src/api/vertical-clients.ts';
+ if (exists('apps/shell-super-app') && verticalDirectories.length > 0) {
+   assert(exists(shellClient), `${shellClient} must aggregate vertical API clients.`);
+@@ -300,6 +307,48 @@ function assertApiSurface(appPath) {
+       /\bSchema\./u,
+       'must use Schema for request, response and error shapes.',
+     );
++    if (appPath.startsWith('verticals/')) {
++      const apiStem = configuredMicroVerticalApiStem(
++        appPath,
++        topology.verticals ?? [],
++      );
++      const vertical = (topology.verticals ?? []).find(
++        candidate => (candidate.path ?? `verticals/${candidate.id}`) === appPath,
++      );
++      assert(
++        apiStem !== undefined,
++        `${sharedApi}: topology must declare a root-relative readiness endpoint.`,
++      );
++      assert(
++        vertical !== undefined,
++        `${sharedApi}: topology must declare this MicroVertical owner.`,
++      );
++      if (apiStem !== undefined && vertical !== undefined) {
++        const sharedContractsPackage = JSON.parse(
++          readText('packages/shared-contracts/package.json'),
++        ).name;
++        const violation = microVerticalApiBaselineViolation(
++          apiStem,
++          path.join(workspaceRoot, sharedApi),
++          {
++            additionalPaths:
++              apiStem === 'checkout'
++                ? { checkoutCartPath: `${vertical.api?.basePath}/cart` }
++                : {},
++            apiPrefix: vertical.api?.bff?.prefix,
++            basePath: vertical.api?.basePath,
++            effectClientPackage: '@modern-js/plugin-bff/effect-client',
++            ownerId: vertical.id,
++            readinessPath: `${vertical.api?.basePath}/readiness`,
++            sharedContractsPackage,
++          },
++        );
++        assert(
++          violation === undefined,
++          `${sharedApi}: ${violation ?? 'invalid MicroVertical API baseline'}.`,
++        );
++      }
++    }
+   }
+ 
+   if (exists(modernConfig)) {
+@@ -373,7 +422,6 @@ if (exists('package.json')) {
+ }
+ 
+ if (exists('topology/reference-topology.json')) {
+-  const topology = JSON.parse(readText('topology/reference-topology.json'));
+   for (const vertical of topology.verticals ?? []) {
+     if (vertical.api?.runtime === 'effect') {
+       assert(
+diff --git a/templates/workspace-scripts/microvertical-api-baseline-boundary.mts b/templates/workspace-scripts/microvertical-api-baseline-boundary.mts
+new file mode 100644
+index 0000000000000000000000000000000000000000..654b081d089f3dd1980b477aa657dc8c70bf8209
+--- /dev/null
++++ b/templates/workspace-scripts/microvertical-api-baseline-boundary.mts
+@@ -0,0 +1,674 @@
++import {
++  isAsExpression,
++  isCallExpression,
++  isIdentifier,
++  isImportDeclaration,
++  isNamedImports,
++  isNumericLiteral,
++  isObjectLiteralExpression,
++  isParenthesizedExpression,
++  isPropertyAccessExpression,
++  isPropertyAssignment,
++  isSatisfiesExpression,
++  isSpreadAssignment,
++  isStringLiteralLikeNode,
++  isVariableStatement,
++  NodeFlags,
++  SyntaxKind,
++} from '@typescript/native/unstable/ast';
++import type {
++  CallExpression,
++  Expression,
++  Node,
++  ObjectLiteralElementLike,
++  ObjectLiteralExpression,
++  PropertyAssignment,
++  SourceFile,
++  VariableDeclaration,
++} from '@typescript/native/unstable/ast';
++import { API as TypeScriptApi } from '@typescript/native/unstable/sync';
++
++const camelCaseStem = (stem: string): string =>
++  stem.replaceAll(/-(?<letter>[a-z0-9])/gu, (_match, letter: string) => letter.toUpperCase());
++
++const pascalCaseStem = (stem: string): string => {
++  const camelStem = camelCaseStem(stem);
++  return `${camelStem.slice(0, 1).toUpperCase()}${camelStem.slice(1)}`;
++};
++
++const identifierName = (node: Node | undefined): string | undefined =>
++  node !== undefined && isIdentifier(node) ? node.text : undefined;
++
++const propertyName = (node: Node | undefined): string | undefined => {
++  if (
++    node !== undefined &&
++    (isIdentifier(node) || isStringLiteralLikeNode(node) || isNumericLiteral(node))
++  ) {
++    return node.text;
++  }
++  return undefined;
++};
++
++const accessPath = (node: Expression): readonly string[] | undefined => {
++  if (isIdentifier(node)) {
++    return [node.text];
++  }
++  if (isPropertyAccessExpression(node)) {
++    const parent = accessPath(node.expression);
++    return parent === undefined ? undefined : [...parent, node.name.text];
++  }
++  return undefined;
++};
++
++const isAccessPath = (node: Expression, expected: readonly string[]): boolean =>
++  accessPath(node)?.join('.') === expected.join('.');
++
++const unwrapExpression = (expression: Expression): Expression => {
++  let current = expression;
++  while (
++    isAsExpression(current) ||
++    isParenthesizedExpression(current) ||
++    isSatisfiesExpression(current)
++  ) {
++    current = current.expression;
++  }
++  return current;
++};
++
++const stringLiteral = (expression: Expression | undefined): string | undefined => {
++  if (expression === undefined) {
++    return undefined;
++  }
++  const unwrapped = unwrapExpression(expression);
++  return isStringLiteralLikeNode(unwrapped) ? unwrapped.text : undefined;
++};
++
++const numericLiteral = (expression: Expression | undefined): number | undefined => {
++  if (expression === undefined) {
++    return undefined;
++  }
++  const unwrapped = unwrapExpression(expression);
++  return isNumericLiteral(unwrapped) ? Number(unwrapped.text) : undefined;
++};
++
++const callExpression = (
++  expression: Expression | undefined,
++  callee: readonly string[],
++): CallExpression | undefined => {
++  if (expression === undefined) {
++    return undefined;
++  }
++  const unwrapped = unwrapExpression(expression);
++  return isCallExpression(unwrapped) && isAccessPath(unwrapped.expression, callee)
++    ? unwrapped
++    : undefined;
++};
++
++const exportedConst = (sourceFile: SourceFile, name: string): VariableDeclaration | undefined => {
++  for (const statement of sourceFile.statements) {
++    if (
++      !isVariableStatement(statement) ||
++      !(
++        statement.modifiers?.some((modifier) => modifier.kind === SyntaxKind.ExportKeyword) ?? false
++      ) ||
++      statement.declarationList.flags !== NodeFlags.Const
++    ) {
++      continue;
++    }
++    const declarations = statement.declarationList.declarations.filter(
++      (declaration) => identifierName(declaration.name) === name,
++    );
++    if (declarations.length === 1) {
++      return declarations[0];
++    }
++  }
++  return undefined;
++};
++
++const localConst = (sourceFile: SourceFile, name: string): VariableDeclaration | undefined => {
++  for (const statement of sourceFile.statements) {
++    if (!isVariableStatement(statement) || statement.declarationList.flags !== NodeFlags.Const) {
++      continue;
++    }
++    const declarations = statement.declarationList.declarations.filter(
++      (declaration) => identifierName(declaration.name) === name,
++    );
++    if (declarations.length === 1) {
++      return declarations[0];
++    }
++  }
++  return undefined;
++};
++
++const objectLiteral = (expression: Expression | undefined): ObjectLiteralExpression | undefined => {
++  if (expression === undefined) {
++    return undefined;
++  }
++  const unwrapped = unwrapExpression(expression);
++  return isObjectLiteralExpression(unwrapped) ? unwrapped : undefined;
++};
++
++const propertyAssignments = (
++  properties: readonly ObjectLiteralElementLike[],
++): ReadonlyMap<string, PropertyAssignment> | undefined => {
++  const assignments = new Map<string, PropertyAssignment>();
++  for (const property of properties) {
++    if (!isPropertyAssignment(property)) {
++      return undefined;
++    }
++    const name = propertyName(property.name);
++    if (name === undefined || assignments.has(name)) {
++      return undefined;
++    }
++    assignments.set(name, property);
++  }
++  return assignments;
++};
++
++interface SharedSchemaObject {
++  readonly assignments: ReadonlyMap<string, PropertyAssignment>;
++  readonly identity: boolean;
++}
++
++const sharedSchemaObject = (
++  declaration: VariableDeclaration | undefined,
++  sharedSchemaName: string,
++  protectedFields: readonly string[],
++): SharedSchemaObject | undefined => {
++  if (declaration?.initializer === undefined) {
++    return undefined;
++  }
++  const initializer = unwrapExpression(declaration.initializer);
++  if (isIdentifier(initializer) && initializer.text === sharedSchemaName) {
++    return { assignments: new Map(), identity: true };
++  }
++  const struct = callExpression(initializer, ['Schema', 'Struct']);
++  const schemaObject = objectLiteral(struct?.arguments[0]);
++  if (struct?.arguments.length !== 1 || schemaObject === undefined) {
++    return undefined;
++  }
++  const sharedSpreads = schemaObject.properties.filter(
++    (property) =>
++      isSpreadAssignment(property) &&
++      isAccessPath(property.expression, [sharedSchemaName, 'fields']),
++  );
++  const nonSpreadProperties = schemaObject.properties.filter(
++    (property) => !isSpreadAssignment(property),
++  );
++  const assignments = propertyAssignments(nonSpreadProperties);
++  if (
++    sharedSpreads.length !== 1 ||
++    schemaObject.properties.some(
++      (property) => isSpreadAssignment(property) && property !== sharedSpreads[0],
++    ) ||
++    assignments === undefined ||
++    protectedFields.some((field) => assignments.has(field))
++  ) {
++    return undefined;
++  }
++  return { assignments, identity: false };
++};
++
++interface DirectCallChain {
++  readonly base: CallExpression;
++  readonly methods: readonly {
++    readonly arguments: readonly Expression[];
++    readonly name: string;
++  }[];
++}
++
++const directCallChain = (expression: Expression | undefined): DirectCallChain | undefined => {
++  if (expression === undefined) {
++    return undefined;
++  }
++  let current = unwrapExpression(expression);
++  const methods: { readonly arguments: readonly Expression[]; readonly name: string }[] = [];
++  while (
++    isCallExpression(current) &&
++    isPropertyAccessExpression(current.expression) &&
++    !isIdentifier(current.expression.expression)
++  ) {
++    methods.unshift({ arguments: current.arguments, name: current.expression.name.text });
++    current = unwrapExpression(current.expression.expression);
++  }
++  if (!isCallExpression(current)) {
++    return undefined;
++  }
++  return { base: current, methods };
++};
++
++const exactCall = (
++  expression: Expression | undefined,
++  callee: readonly string[],
++  argumentCount: number,
++): CallExpression | undefined => {
++  const call = callExpression(expression, callee);
++  return call?.arguments.length === argumentCount ? call : undefined;
++};
++
++const brandedStringSchemaIsExact = (
++  declaration: VariableDeclaration | undefined,
++  brand: string,
++): boolean => {
++  const initializer = declaration?.initializer;
++  if (initializer === undefined) {
++    return false;
++  }
++  const pipeCall = unwrapExpression(initializer);
++  if (
++    !isCallExpression(pipeCall) ||
++    !isPropertyAccessExpression(pipeCall.expression) ||
++    pipeCall.expression.name.text !== 'pipe' ||
++    !isAccessPath(pipeCall.expression.expression, ['Schema', 'String']) ||
++    pipeCall.arguments.length !== 1
++  ) {
++    return false;
++  }
++  const brandCall = exactCall(pipeCall.arguments[0], ['Schema', 'brand'], 1);
++  return stringLiteral(brandCall?.arguments[0]) === brand;
++};
++
++const importsExactBindings = (
++  sourceFile: SourceFile,
++  expectedPackage: string,
++  expectedBindings: readonly string[],
++): boolean => {
++  const required = new Set(expectedBindings);
++  for (const statement of sourceFile.statements) {
++    if (
++      !isImportDeclaration(statement) ||
++      stringLiteral(statement.moduleSpecifier) !== expectedPackage ||
++      statement.importClause?.getText().trimStart().startsWith('type ') === true ||
++      statement.importClause?.namedBindings === undefined ||
++      !isNamedImports(statement.importClause.namedBindings)
++    ) {
++      continue;
++    }
++    for (const element of statement.importClause.namedBindings.elements) {
++      if (
++        !element.isTypeOnly &&
++        element.propertyName === undefined &&
++        required.has(element.name.text)
++      ) {
++        required.delete(element.name.text);
++      }
++    }
++  }
++  return required.size === 0;
++};
++
++const importsSharedBaselinePrimitives = (
++  sourceFile: SourceFile,
++  expectedPackage: string,
++): boolean =>
++  importsExactBindings(sourceFile, expectedPackage, [
++    'MicroVerticalBuildMarkerSchema',
++    'MicroVerticalReadinessSchema',
++    'createMicroVerticalOperationContext',
++  ]);
++
++// oxlint-disable-next-line complexity -- The AST shape is intentionally validated fail-closed in one expression. expires: 2026-12-31.
++const foundationIsExact = (
++  declaration: VariableDeclaration | undefined,
++  stem: string,
++  readinessSchemaName: string,
++): boolean => {
++  const chain = directCallChain(declaration?.initializer);
++  const expectedApiNames = new Set([
++    `${pascalCaseStem(stem)}FoundationApi`,
++    `${pascalCaseStem(stem)}ApiFoundation`,
++  ]);
++  if (
++    chain === undefined ||
++    !isAccessPath(chain.base.expression, ['HttpApi', 'make']) ||
++    chain.base.arguments.length !== 1 ||
++    !expectedApiNames.has(stringLiteral(chain.base.arguments[0]) ?? '') ||
++    chain.methods.length !== 1 ||
++    chain.methods[0]?.name !== 'add' ||
++    chain.methods[0].arguments.length !== 1
++  ) {
++    return false;
++  }
++  const groupChain = directCallChain(chain.methods[0].arguments[0]);
++  if (
++    groupChain === undefined ||
++    !isAccessPath(groupChain.base.expression, ['HttpApiGroup', 'make']) ||
++    groupChain.base.arguments.length !== 1 ||
++    stringLiteral(groupChain.base.arguments[0]) !== 'foundation' ||
++    groupChain.methods.length !== 1 ||
++    groupChain.methods[0]?.name !== 'add' ||
++    groupChain.methods[0].arguments.length !== 1
++  ) {
++    return false;
++  }
++  const endpoint = exactCall(groupChain.methods[0].arguments[0], ['HttpApiEndpoint', 'get'], 3);
++  const endpointOptions = objectLiteral(endpoint?.arguments[2]);
++  const endpointProperties =
++    endpointOptions === undefined ? undefined : propertyAssignments(endpointOptions.properties);
++  return (
++    endpoint !== undefined &&
++    stringLiteral(endpoint.arguments[0]) === 'readiness' &&
++    stringLiteral(endpoint.arguments[1]) === `/${stem}/readiness` &&
++    endpointProperties?.size === 1 &&
++    identifierName(endpointProperties.get('success')?.initializer) === readinessSchemaName
++  );
++};
++
++const rootComposesFoundation = (
++  declaration: VariableDeclaration | undefined,
++  stem: string,
++  foundationName: string,
++): boolean => {
++  const chain = directCallChain(declaration?.initializer);
++  const first = chain?.methods[0];
++  return (
++    chain !== undefined &&
++    isAccessPath(chain.base.expression, ['HttpApi', 'make']) &&
++    chain.base.arguments.length === 1 &&
++    stringLiteral(chain.base.arguments[0]) === `${pascalCaseStem(stem)}Api` &&
++    chain.methods.length > 0 &&
++    chain.methods.every(
++      (method) =>
++        (method.name === 'add' || method.name === 'addHttpApi') && method.arguments.length === 1,
++    ) &&
++    first?.name === 'addHttpApi' &&
++    identifierName(first.arguments[0]) === foundationName
++  );
++};
++
++// oxlint-disable-next-line complexity -- One fail-closed predicate ties each generated operation identity to its method and route. expires: 2026-12-31.
++const operationContextIsConstructed = (
++  property: PropertyAssignment,
++  stem: string,
++  propertyKey: string,
++): boolean => {
++  const constructorCall = exactCall(
++    property.initializer,
++    ['createMicroVerticalOperationContext'],
++    1,
++  );
++  const input = objectLiteral(constructorCall?.arguments[0]);
++  const fields = input === undefined ? undefined : propertyAssignments(input.properties);
++  const method = stringLiteral(fields?.get('method')?.initializer);
++  const operationId = stringLiteral(fields?.get('operationId')?.initializer);
++  const routePath = stringLiteral(fields?.get('routePath')?.initializer);
++  if (
++    fields?.size !== 3 ||
++    method === undefined ||
++    operationId === undefined ||
++    routePath === undefined ||
++    !/^[A-Z]+$/u.test(method) ||
++    !/^\/(?!.*(?:^|\/)\.\.?\/)[^\s?#]*$/u.test(routePath)
++  ) {
++    return false;
++  }
++  const apiName = `${pascalCaseStem(stem)}Api`;
++  if (propertyKey !== 'readiness') {
++    const generatedOperation = new Map([
++      ['addCartItem', { method: 'POST', routePath: `/${stem}/cart/items` }],
++      ['clearCart', { method: 'POST', routePath: `/${stem}/cart/clear` }],
++      ['create', { method: 'POST', routePath: `/${stem}` }],
++      ['get', { method: 'GET', routePath: `/${stem}/:id` }],
++      ['getCart', { method: 'GET', routePath: `/${stem}/cart` }],
++      ['list', { method: 'GET', routePath: `/${stem}` }],
++      ['removeCartItem', { method: 'POST', routePath: `/${stem}/cart/remove` }],
++    ]).get(propertyKey);
++    return (
++      operationId === `${apiName}:${routePath}` ||
++      (operationId === `${apiName}:${camelCaseStem(stem)}:${propertyKey}` &&
++        generatedOperation?.method === method &&
++        generatedOperation.routePath === routePath)
++    );
++  }
++  return (
++    method === 'GET' &&
++    routePath === `/${stem}/readiness` &&
++    (operationId === `${apiName}:/${stem}/readiness` ||
++      operationId === `${apiName}:${camelCaseStem(stem)}:readiness`)
++  );
++};
++
++const operationMapIsConnected = (
++  declaration: VariableDeclaration | undefined,
++  stem: string,
++): boolean => {
++  const map = objectLiteral(declaration?.initializer);
++  const properties = map === undefined ? undefined : propertyAssignments(map.properties);
++  return (
++    properties !== undefined &&
++    properties.has('readiness') &&
++    [...properties].every(([key, property]) => operationContextIsConstructed(property, stem, key))
++  );
++};
++
++const constAssertionObject = (
++  declaration: VariableDeclaration | undefined,
++): ObjectLiteralExpression | undefined => {
++  const initializer = declaration?.initializer;
++  if (
++    initializer === undefined ||
++    !isAsExpression(initializer) ||
++    initializer.type.getText() !== 'const'
++  ) {
++    return undefined;
++  }
++  return objectLiteral(initializer.expression);
++};
++
++const metadataIsExact = (
++  declaration: VariableDeclaration | undefined,
++  expectation: MicroVerticalApiBaselineExpectation,
++): boolean => {
++  const object = constAssertionObject(declaration);
++  const fields = object === undefined ? undefined : propertyAssignments(object.properties);
++  const expectedFields = new Map([
++    ['apiPrefix', expectation.apiPrefix],
++    ['basePath', expectation.basePath],
++    ['ownerId', expectation.ownerId],
++    ['readinessPath', expectation.readinessPath],
++    ...Object.entries(expectation.additionalPaths),
++  ]);
++  if (
++    fields === undefined ||
++    fields.size !== expectedFields.size ||
++    [...expectedFields].some(
++      ([field, value]) => stringLiteral(fields.get(field)?.initializer) !== value,
++    )
++  ) {
++    return false;
++  }
++  return (
++    stringLiteral(fields.get('apiPrefix')?.initializer) === expectation.apiPrefix &&
++    stringLiteral(fields.get('basePath')?.initializer) === expectation.basePath &&
++    stringLiteral(fields.get('ownerId')?.initializer) === expectation.ownerId &&
++    stringLiteral(fields.get('readinessPath')?.initializer) === expectation.readinessPath
++  );
++};
++
++const markerSchemaIsShared = (
++  sourceFile: SourceFile,
++  declaration: VariableDeclaration | undefined,
++): boolean => {
++  const schema = sharedSchemaObject(declaration, 'MicroVerticalBuildMarkerSchema', [
++    'build',
++    'buildMarker',
++    'deployProfile',
++    'packageName',
++    'sourceRevision',
++    'surface',
++    'version',
++  ]);
++  if (schema === undefined || schema.identity) {
++    return schema?.identity === true;
++  }
++  if (
++    [...schema.assignments.keys()].some(
++      (field) => !['appId', 'kind', 'schemaVersion', 'unitId'].includes(field),
++    ) ||
++    (schema.assignments.has('appId') &&
++      (identifierName(schema.assignments.get('appId')?.initializer) !== 'AppIdSchema' ||
++        !brandedStringSchemaIsExact(localConst(sourceFile, 'AppIdSchema'), 'AppId'))) ||
++    (schema.assignments.has('unitId') &&
++      (identifierName(schema.assignments.get('unitId')?.initializer) !== 'UnitIdSchema' ||
++        !brandedStringSchemaIsExact(localConst(sourceFile, 'UnitIdSchema'), 'UnitId')))
++  ) {
++    return false;
++  }
++  const kind = exactCall(schema.assignments.get('kind')?.initializer, ['Schema', 'Literal'], 1);
++  const schemaVersion = exactCall(
++    schema.assignments.get('schemaVersion')?.initializer,
++    ['Schema', 'Literal'],
++    1,
++  );
++  return (
++    (!schema.assignments.has('kind') ||
++      stringLiteral(kind?.arguments[0]) === 'microvertical-delivery-unit') &&
++    (!schema.assignments.has('schemaVersion') || numericLiteral(schemaVersion?.arguments[0]) === 1)
++  );
++};
++
++const readinessSchemaIsShared = (
++  declaration: VariableDeclaration | undefined,
++  markerSchemaName: string,
++  ownerMarkerIsIdentity: boolean,
++): boolean => {
++  const schema = sharedSchemaObject(declaration, 'MicroVerticalReadinessSchema', [
++    'checks',
++    'status',
++    'versionSkew',
++  ]);
++  return (
++    schema !== undefined &&
++    ((schema.identity && ownerMarkerIsIdentity) ||
++      (schema.assignments.size === 1 &&
++        identifierName(schema.assignments.get('marker')?.initializer) === markerSchemaName))
++  );
++};
++
++const declarationIsIdentifier = (
++  declaration: VariableDeclaration | undefined,
++  identifier: string,
++): boolean =>
++  declaration?.initializer !== undefined &&
++  identifierName(unwrapExpression(declaration.initializer)) === identifier;
++
++const validateParsedContract = (
++  sourceFile: SourceFile,
++  stem: string,
++  expectation: MicroVerticalApiBaselineExpectation,
++): string | undefined => {
++  const exportStem = camelCaseStem(stem);
++  const foundationName = `${exportStem}FoundationApi`;
++  const markerSchemaName = `${exportStem}MarkerSchema`;
++  const readinessSchemaName = `${exportStem}ReadinessSchema`;
++  const markerDeclaration = exportedConst(sourceFile, markerSchemaName);
++  if (
++    !importsExactBindings(sourceFile, expectation.effectClientPackage, [
++      'HttpApi',
++      'HttpApiEndpoint',
++      'HttpApiGroup',
++      'Schema',
++    ])
++  ) {
++    return 'MicroVertical root contract must import exact Effect API primitives from the framework client package';
++  }
++  if (!importsSharedBaselinePrimitives(sourceFile, expectation.sharedContractsPackage)) {
++    return 'MicroVertical root contract must import exact baseline primitives from the shared contracts package';
++  }
++  if (!markerSchemaIsShared(sourceFile, markerDeclaration)) {
++    return 'MicroVertical root contract must consume the shared build marker schema without overriding shared fields';
++  }
++  if (
++    !readinessSchemaIsShared(
++      exportedConst(sourceFile, readinessSchemaName),
++      markerSchemaName,
++      declarationIsIdentifier(markerDeclaration, 'MicroVerticalBuildMarkerSchema'),
++    )
++  ) {
++    return 'MicroVertical readiness schema must consume the shared readiness schema without overriding shared fields';
++  }
++  if (!foundationIsExact(exportedConst(sourceFile, foundationName), stem, readinessSchemaName)) {
++    return 'MicroVertical readiness foundation API must directly compose its exact readiness endpoint and foundation identity';
++  }
++  if (
++    !rootComposesFoundation(exportedConst(sourceFile, `${exportStem}Api`), stem, foundationName)
++  ) {
++    return 'MicroVertical root API must explicitly compose its readiness foundation API';
++  }
++  if (!operationMapIsConnected(exportedConst(sourceFile, `${exportStem}OperationContexts`), stem)) {
++    return 'MicroVertical operation map must construct every operation with the shared context constructor';
++  }
++  if (!metadataIsExact(exportedConst(sourceFile, `${exportStem}ApiContract`), expectation)) {
++    return 'MicroVertical root contract must keep exact owner and API path metadata without forbidden fields';
++  }
++  return undefined;
++};
++
++const parseAndValidate = (
++  stem: string,
++  filePath: string,
++  expectation: MicroVerticalApiBaselineExpectation,
++): string | undefined => {
++  const compiler = new TypeScriptApi();
++  try {
++    const snapshot = compiler.updateSnapshot({ openFiles: [filePath] });
++    const project = snapshot.getDefaultProjectForFile(filePath);
++    const sourceFile = project?.program.getSourceFile(filePath);
++    if (
++      sourceFile === undefined ||
++      (project?.program.getSyntacticDiagnostics(filePath).length ?? 1) > 0 ||
++      (project?.program.getBindDiagnostics(filePath).length ?? 1) > 0
++    ) {
++      return 'MicroVertical root contract must be valid TypeScript syntax';
++    }
++    return validateParsedContract(sourceFile, stem, expectation);
++  } finally {
++    compiler.close();
++  }
++};
++
++export interface MicroVerticalApiBaselineExpectation {
++  readonly additionalPaths: Readonly<Record<string, string>>;
++  readonly apiPrefix: string;
++  readonly basePath: string;
++  readonly effectClientPackage: string;
++  readonly ownerId: string;
++  readonly readinessPath: string;
++  readonly sharedContractsPackage: string;
++}
++
++export interface MicroVerticalTopologyEntry {
++  readonly api?: { readonly readiness?: { readonly endpoint?: string } };
++  readonly id: string;
++  readonly path?: string;
++}
++
++export const configuredMicroVerticalApiStem = (
++  verticalPath: string,
++  verticals: readonly MicroVerticalTopologyEntry[],
++): string | undefined => {
++  const topologyVertical = verticals.find(
++    (vertical) => (vertical.path ?? `verticals/${vertical.id}`) === verticalPath,
++  );
++  const endpoint = topologyVertical?.api?.readiness?.endpoint;
++  return endpoint?.match(/^\/(?<stem>[a-z0-9]+(?:-[a-z0-9]+)*)\/readiness$/u)?.groups?.stem;
++};
++
++export const microVerticalApiBaselineViolation = (
++  stem: string,
++  filePath: string,
++  expectation?: MicroVerticalApiBaselineExpectation,
++): string | undefined =>
++  parseAndValidate(
++    stem,
++    filePath,
++    expectation ?? {
++      additionalPaths: {},
++      apiPrefix: `/${stem}-api`,
++      basePath: `/${stem}-api/${stem}`,
++      effectClientPackage: '@modern-js/plugin-bff/effect-client',
++      ownerId: stem,
++      readinessPath: `/${stem}-api/${stem}/readiness`,
++      sharedContractsPackage: '@app/shared-contracts',
++    },
++  );
 diff --git a/templates/workspace-scripts/proof-cloudflare-version.mjs b/templates/workspace-scripts/proof-cloudflare-version.mjs
 index e26615204dea65bcd0562ea04229cb51659da4af..b06de806dbe48cee148ffbf97fbc65c1cb4196d7 100644
 --- a/templates/workspace-scripts/proof-cloudflare-version.mjs
@@ -1342,7 +3620,7 @@ index e26615204dea65bcd0562ea04229cb51659da4af..b06de806dbe48cee148ffbf97fbc65c1
      jsonSmokeChecks,
    };
  }
-
+ 
  function createBuildMarker(scope, app) {
 +  if (app.deliveryUnit !== undefined) {
 +    assert(
@@ -1356,7 +3634,7 @@ index e26615204dea65bcd0562ea04229cb51659da4af..b06de806dbe48cee148ffbf97fbc65c1
      .update(`${scope}:${app.packageSuffix}:${app.id}:0.1.0`)
 @@ -135,22 +144,23 @@ function createBuildMarker(scope, app) {
  }
-
+ 
  function createDeliveryUnit(packageScope, app) {
 -  const unitId = `${packageScope}/${app.domain ?? app.id}`;
 +  const unitId = app.deliveryUnit?.unitId ?? `${packageScope}/${app.domain ?? app.id}`;
@@ -1368,7 +3646,7 @@ index e26615204dea65bcd0562ea04229cb51659da4af..b06de806dbe48cee148ffbf97fbc65c1
 -    sourceRevision: 'workspace',
 +    sourceRevision,
    };
-
+ 
    return {
      schemaVersion: 1,
      kind: 'microvertical-delivery-unit',
@@ -1384,7 +3662,7 @@ index e26615204dea65bcd0562ea04229cb51659da4af..b06de806dbe48cee148ffbf97fbc65c1
        ui: { ...identity, surface: 'ui' },
        api: { ...identity, surface: 'api' },
 @@ -257,12 +267,11 @@ function createPublicSurface() {
-
+ 
  function createCloudflareRoutes(app) {
    return {
 -    ssr: '/en',
@@ -1406,7 +3684,7 @@ index fb7872e47d2d2844aafe7577783a01df393d6563..6b01d7f41d9fcbaebb07411ba4c91d2d
 @@ -696,7 +696,7 @@ async function validateSsrEvidence(evidence, app, publicUrl, routes) {
    const qualityGates = cloudflare?.qualityGates ?? {};
    const budgets = qualityGates.budgets ?? {};
-
+ 
 -  const ssrRoute = routes.ssr ?? '/en';
 +  const ssrRoute = routes.ssr;
    const ssr = await fetchText(joinUrl(publicUrl, ssrRoute));
@@ -1415,7 +3693,7 @@ index fb7872e47d2d2844aafe7577783a01df393d6563..6b01d7f41d9fcbaebb07411ba4c91d2d
 @@ -864,7 +864,7 @@ async function validateI18nEvidence(evidence, app, publicUrl, routes) {
    const qualityGates = app.deploy?.cloudflare?.qualityGates ?? {};
    const budgets = qualityGates.budgets ?? {};
-
+ 
 -  const localeRoute = routes.locale ?? `/locales/en/${app.i18n?.namespace}.json`;
 +  const localeRoute = routes.locale;
    const locale = await fetchText(joinUrl(publicUrl, localeRoute));
@@ -1424,7 +3702,7 @@ index fb7872e47d2d2844aafe7577783a01df393d6563..6b01d7f41d9fcbaebb07411ba4c91d2d
 @@ -1048,10 +1048,22 @@ async function validateApp(app, publicUrl) {
    const routes = app.deploy?.cloudflare?.routes ?? {};
    const evidence = createAppEvidence(app, publicUrl);
-
+ 
 -  const ssr = await validateSsrEvidence(evidence, app, publicUrl, routes);
 -  await validateRenderedAssetEvidence(evidence, app, publicUrl, ssr);
 +  if (routes.ssr !== undefined) {

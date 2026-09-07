@@ -2,6 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type { ExecFileSyncOptionsWithStringEncoding } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -12,8 +13,15 @@ import type { TestContext } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { Predicate, Schema } from 'effect';
+import type { Effect as EffectType } from 'effect/Effect';
 import { transform } from 'esbuild';
 import { format } from 'oxfmt';
+import { MicroVerticalReadinessSchema } from '../../packages/shared-contracts/src/microvertical-api-baseline.ts';
+import {
+  configuredMicroVerticalApiStem,
+  microVerticalApiBaselineViolation as microVerticalApiBaselineViolationForFile,
+} from '../microvertical-api-baseline-boundary.mts';
+import type { MicroVerticalApiBaselineExpectation } from '../microvertical-api-baseline-boundary.mts';
 
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 const partyId = 'party-registry';
@@ -24,8 +32,46 @@ const apiSmokePath = '/api-smoke';
 const compiledUiAssetPath = 'static/js/index.js';
 const ssrBundlePath = 'bundles/index.js';
 const apiBundlePath = 'api/index.js';
+const apiEntryPath = 'api/index.ts';
 const routesManifestFile = 'routes-manifest.json';
 const mfManifestFile = 'mf-manifest.json';
+const generatedProofScope = 'generated-proof';
+const generatedClientContractImport = '../../shared/api.ts';
+const generatedSharedApiModule = 'api/shared';
+const generatedSharedContractsPackage = '@generated-proof/shared-contracts';
+const effectClientPackage = '@modern-js/plugin-bff/effect-client';
+const generatedBaselineTemplateEntry = 'src/index.ts';
+const topologyReferencePath = 'topology/reference-topology.json';
+const checkoutId = 'checkout';
+const checkoutApiPrefix = '/checkout-api';
+const inventoryStockId = 'inventory-stock';
+const warehouseItemsApiStem = 'warehouse-items';
+const partyReadinessMetadataLine =
+  "  readinessPath: '/party-registry-api/party-registry/readiness',";
+
+const microVerticalApiBaselineViolation = (
+  stem: string,
+  source: string,
+  expectation?: Partial<MicroVerticalApiBaselineExpectation>,
+): string | undefined => {
+  const fixture = mkdtempSync(path.join(os.tmpdir(), 'ontos-microvertical-api-test-'));
+  const contractPath = path.join(fixture, 'api.ts');
+  try {
+    writeFileSync(contractPath, source);
+    return microVerticalApiBaselineViolationForFile(stem, contractPath, {
+      additionalPaths: {},
+      apiPrefix: `/${stem}-api`,
+      basePath: `/${stem}-api/${stem}`,
+      effectClientPackage,
+      ownerId: stem,
+      readinessPath: `/${stem}-api/${stem}/readiness`,
+      sharedContractsPackage: '@app/shared-contracts',
+      ...expectation,
+    });
+  } finally {
+    rmSync(fixture, { force: true, recursive: true });
+  }
+};
 
 const generatorRoot = await realpath(path.join(workspaceRoot, 'node_modules/@modern-js/create'));
 const require = createRequire(import.meta.url);
@@ -77,6 +123,11 @@ interface ReleaseFramework {
 }
 
 interface WorkspaceAppFixture {
+  readonly api?: {
+    readonly prefix: string;
+    readonly protocol?: string;
+    readonly stem: string;
+  };
   readonly exposes: Readonly<Record<string, string>>;
   readonly id: typeof AppIdSchema.Type;
 }
@@ -85,6 +136,32 @@ type CreateLayout = (appId: typeof AppIdSchema.Type) => string;
 type CreateAppModernConfig = (applicationRoot: string, app: WorkspaceAppFixture) => string;
 type CreateBackendModuleFederationConfig = (app: WorkspaceAppFixture) => string;
 type CreateUltramodernBuildModule = (applicationRoot: string, app: WorkspaceAppFixture) => string;
+type CreateSharedApi = (scope: string, app: WorkspaceAppFixture) => string;
+type CreateApiClient = (app: WorkspaceAppFixture, contractImportPath: string) => string;
+type CreateApiServiceEntry = (
+  scope: string,
+  app: WorkspaceAppFixture,
+  contractImportPath: string,
+) => string;
+interface GeneratedWorkspaceScriptArtifact {
+  readonly content: string;
+  readonly relativePath: string;
+}
+type MigratedWorkspaceScriptArtifacts = (options: {
+  readonly hasBackendSurface: boolean;
+  readonly shellOnly: boolean;
+}) => readonly GeneratedWorkspaceScriptArtifact[];
+interface GeneratedHttpHandler {
+  readonly dispose: () => Promise<void>;
+  readonly handler: (request: Request) => Promise<Response>;
+}
+type CreateGeneratedHttpHandler = () => GeneratedHttpHandler;
+type GeneratedReadiness = typeof MicroVerticalReadinessSchema.Type;
+type GeneratedReadinessEffect = EffectType<GeneratedReadiness>;
+type GetGeneratedReadiness = (options?: {
+  readonly baseUrl?: string | URL;
+}) => GeneratedReadinessEffect;
+type RunGeneratedEffect = (effect: GeneratedReadinessEffect) => Promise<GeneratedReadiness>;
 type ValidateCloudflareApp = (
   app: ApiOnlyAppFixture,
   applicationPublicUrl: string,
@@ -162,6 +239,13 @@ const ReleaseFrameworkModuleSchema = Schema.Struct({
     callable<ReleaseFramework['verifyNodeReleaseEnvelopeStaging']>(),
 });
 const WorkspaceAppFixtureSchema = Schema.Struct({
+  api: Schema.optionalKey(
+    Schema.Struct({
+      prefix: Schema.String,
+      protocol: Schema.optionalKey(Schema.String),
+      stem: Schema.String,
+    }),
+  ),
   exposes: Schema.Record(Schema.String, Schema.String),
   id: AppIdSchema,
 });
@@ -175,6 +259,17 @@ const FederationConfigModuleSchema = Schema.Struct({
 });
 const BuildModuleGeneratorSchema = Schema.Struct({
   createUltramodernBuildModule: callable<CreateUltramodernBuildModule>(),
+});
+const SharedApiGeneratorSchema = Schema.Struct({ createSharedApi: callable<CreateSharedApi>() });
+const ApiClientGeneratorSchema = Schema.Struct({ createApiClient: callable<CreateApiClient>() });
+const ApiServiceGeneratorSchema = Schema.Struct({
+  createApiServiceEntry: callable<CreateApiServiceEntry>(),
+});
+const WorkspaceScriptsGeneratorSchema = Schema.Struct({
+  migratedWorkspaceScriptArtifacts: callable<MigratedWorkspaceScriptArtifacts>(),
+});
+const GeneratedApiRuntimeModuleSchema = Schema.Struct({
+  default: Schema.Struct({ createHandler: callable<CreateGeneratedHttpHandler>() }),
 });
 const CloudflareEvidenceSchema = Schema.Struct({
   assertions: Schema.Array(Schema.Struct({ status: Schema.String, type: Schema.String })),
@@ -565,7 +660,7 @@ void test('compiled Party CORS reader uses the nonlocal DefinePlugin origin with
   const shellOrigin = 'https://operations.example.test';
   const globalVars = await evaluatePartyBuildGlobalVars(shellOrigin);
   const partyRoot = path.join(workspaceRoot, 'verticals/party-registry');
-  const source = await readFile(path.join(partyRoot, 'api/index.ts'), 'utf-8');
+  const source = await readFile(path.join(partyRoot, apiEntryPath), 'utf-8');
   const reader =
     /(?<reader>declare const ULTRAMODERN_SHELL_ORIGIN[\s\S]+?const shellOrigin = readShellOrigin\(\);)/u.exec(
       source,
@@ -708,6 +803,881 @@ void test('all published scaffold formats retain lint-safe Party infrastructure 
         }),
       );
     }),
+  );
+});
+
+void test('all published scaffold formats generate the shared MicroVertical API baseline', async () => {
+  await Promise.all(
+    ['esm', 'esm-node', 'cjs'].map(async (moduleFormat) => {
+      const extension = moduleFormat === 'cjs' ? 'cjs' : 'js';
+      const generatorModulePath = (name: string): string =>
+        path.join(generatorRoot, `dist/${moduleFormat}/ultramodern-workspace/${name}.${extension}`);
+      const descriptorPath = generatorModulePath('descriptors');
+      const sharedApiPath = generatorModulePath(generatedSharedApiModule);
+      const clientPath = generatorModulePath('api/client');
+      const servicePath = generatorModulePath('api/service');
+      const descriptorSource: unknown =
+        moduleFormat === 'cjs'
+          ? require(descriptorPath)
+          : await import(pathToFileURL(descriptorPath).href);
+      const sharedApiSource: unknown =
+        moduleFormat === 'cjs'
+          ? require(sharedApiPath)
+          : await import(pathToFileURL(sharedApiPath).href);
+      const clientSource: unknown =
+        moduleFormat === 'cjs' ? require(clientPath) : await import(pathToFileURL(clientPath).href);
+      const serviceSource: unknown =
+        moduleFormat === 'cjs'
+          ? require(servicePath)
+          : await import(pathToFileURL(servicePath).href);
+      const descriptorModule = Schema.decodeUnknownSync(DescriptorModuleSchema)(descriptorSource);
+      const sharedApiModule = Schema.decodeUnknownSync(SharedApiGeneratorSchema)(sharedApiSource);
+      const clientModule = Schema.decodeUnknownSync(ApiClientGeneratorSchema)(clientSource);
+      const serviceModule = Schema.decodeUnknownSync(ApiServiceGeneratorSchema)(serviceSource);
+      const descriptor: unknown = descriptorModule.createVerticalDescriptor(inventoryStockId, 4103);
+      Schema.asserts(WorkspaceAppFixtureSchema, descriptor);
+      const app = { ...descriptor, exposes: {} };
+      const contract = sharedApiModule.createSharedApi(generatedProofScope, app);
+      const client = clientModule.createApiClient(app, generatedClientContractImport);
+      const service = serviceModule.createApiServiceEntry(
+        generatedProofScope,
+        app,
+        '../shared/api.ts',
+      );
+
+      assert.match(contract, /MicroVerticalBuildMarkerSchema/u, moduleFormat);
+      assert.match(contract, /MicroVerticalReadinessSchema/u, moduleFormat);
+      assert.match(contract, /createMicroVerticalOperationContext/u, moduleFormat);
+      assert.match(contract, /@generated-proof\/shared-contracts/u, moduleFormat);
+      assert.doesNotMatch(contract, /export interface OperationContext/u, moduleFormat);
+      assert.match(client, /client\.foundation\.readiness\(\{\}\)/u, moduleFormat);
+      assert.doesNotMatch(client, /client\.inventoryStock\.readiness/u, moduleFormat);
+      assert.match(service, /microVerticalOperationAttributes/u, moduleFormat);
+      assert.match(service, /@generated-proof\/shared-contracts/u, moduleFormat);
+      assert.doesNotMatch(service, /const operationAttributes/u, moduleFormat);
+      const generatedBaselineExpectation = {
+        additionalPaths: {},
+        apiPrefix: `/${inventoryStockId}-api`,
+        basePath: `/${inventoryStockId}-api/${inventoryStockId}`,
+        effectClientPackage,
+        ownerId: inventoryStockId,
+        readinessPath: `/${inventoryStockId}-api/${inventoryStockId}/readiness`,
+        sharedContractsPackage: generatedSharedContractsPackage,
+      } as const;
+      assert.equal(
+        microVerticalApiBaselineViolation(inventoryStockId, contract, generatedBaselineExpectation),
+        undefined,
+      );
+
+      const customStemApp = {
+        ...app,
+        api: { ...app.api, prefix: '/warehouse-api', stem: warehouseItemsApiStem },
+      };
+      const customStemContract = sharedApiModule.createSharedApi(
+        generatedProofScope,
+        customStemApp,
+      );
+      assert.equal(
+        microVerticalApiBaselineViolation(warehouseItemsApiStem, customStemContract, {
+          ...generatedBaselineExpectation,
+          apiPrefix: '/warehouse-api',
+          basePath: `/warehouse-api/${warehouseItemsApiStem}`,
+          readinessPath: `/warehouse-api/${warehouseItemsApiStem}/readiness`,
+        }),
+        undefined,
+      );
+
+      const checkoutDescriptor: unknown = descriptorModule.createVerticalDescriptor(
+        checkoutId,
+        4105,
+      );
+      Schema.asserts(WorkspaceAppFixtureSchema, checkoutDescriptor);
+      const checkoutContract = sharedApiModule.createSharedApi(generatedProofScope, {
+        ...checkoutDescriptor,
+        exposes: {},
+      });
+      const checkoutClient = clientModule.createApiClient(
+        checkoutDescriptor,
+        generatedClientContractImport,
+      );
+      assert.equal(
+        microVerticalApiBaselineViolation(checkoutId, checkoutContract, {
+          additionalPaths: {
+            checkoutCartPath: '/checkout-api/checkout/cart',
+          },
+          ownerId: checkoutId,
+          sharedContractsPackage: generatedSharedContractsPackage,
+        }),
+        undefined,
+        `${moduleFormat} checkout cart operations must retain baseline validation`,
+      );
+      assert.match(checkoutClient, /client\.foundation\.readiness\(\{\}\)/u, moduleFormat);
+      assert.doesNotMatch(checkoutClient, /client\.checkout\.readiness/u, moduleFormat);
+    }),
+  );
+});
+
+void test('all published scaffold formats emit the executable AST baseline validator', async (context) => {
+  const scratchRoot = path.join(workspaceRoot, 'packages/shared-contracts/.scratch');
+  await mkdir(scratchRoot, { recursive: true });
+  const proofRoot = await mkdtemp(path.join(scratchRoot, 'generated-baseline-validator-proof-'));
+  context.after(async (): Promise<void> => {
+    await rm(proofRoot, { force: true, recursive: true });
+  });
+  const expectedHelper = await readFile(
+    path.join(workspaceRoot, 'scripts/microvertical-api-baseline-boundary.mts'),
+    'utf-8',
+  );
+
+  await Promise.all(
+    ['esm', 'esm-node', 'cjs'].map(async (moduleFormat) => {
+      const extension = moduleFormat === 'cjs' ? 'cjs' : 'js';
+      const modulePath = path.join(
+        generatorRoot,
+        `dist/${moduleFormat}/ultramodern-workspace/workspace-scripts.${extension}`,
+      );
+      const moduleSource: unknown =
+        moduleFormat === 'cjs' ? require(modulePath) : await import(pathToFileURL(modulePath).href);
+      const generator = Schema.decodeUnknownSync(WorkspaceScriptsGeneratorSchema)(moduleSource);
+      const artifacts = generator.migratedWorkspaceScriptArtifacts({
+        hasBackendSurface: true,
+        shellOnly: false,
+      });
+      const helper = artifacts.find(
+        ({ relativePath }) => relativePath === 'scripts/microvertical-api-baseline-boundary.mts',
+      );
+      const checker = artifacts.find(
+        ({ relativePath }) => relativePath === 'scripts/check-ultramodern-api-boundaries.mts',
+      );
+      assert.ok(helper, `${moduleFormat} must emit the AST baseline helper`);
+      assert.ok(checker, `${moduleFormat} must emit the API checker`);
+      assert.equal(
+        await normalizedGeneratedSource('microvertical-api-baseline-boundary.mts', helper.content),
+        await normalizedGeneratedSource('microvertical-api-baseline-boundary.mts', expectedHelper),
+        `${moduleFormat} must emit the exact repository validator`,
+      );
+      const formatRoot = path.join(proofRoot, moduleFormat);
+      await writeText(formatRoot, helper.relativePath, helper.content);
+      await writeText(formatRoot, checker.relativePath, checker.content);
+      assert.match(checker.content, /microVerticalApiBaselineViolation/u);
+      assert.match(
+        runNode([path.join(formatRoot, checker.relativePath)], {
+          env: { ULTRAMODERN_WORKSPACE_ROOT: workspaceRoot },
+        }),
+        /UltraModern API boundary check passed/u,
+        moduleFormat,
+      );
+
+      const generatorModulePath = (name: string): string =>
+        path.join(generatorRoot, `dist/${moduleFormat}/ultramodern-workspace/${name}.${extension}`);
+      const descriptorSource: unknown =
+        moduleFormat === 'cjs'
+          ? require(generatorModulePath('descriptors'))
+          : await import(pathToFileURL(generatorModulePath('descriptors')).href);
+      const sharedApiSource: unknown =
+        moduleFormat === 'cjs'
+          ? require(generatorModulePath(generatedSharedApiModule))
+          : await import(pathToFileURL(generatorModulePath(generatedSharedApiModule)).href);
+      const descriptorModule = Schema.decodeUnknownSync(DescriptorModuleSchema)(descriptorSource);
+      const sharedApiModule = Schema.decodeUnknownSync(SharedApiGeneratorSchema)(sharedApiSource);
+      const checkoutDescriptor = descriptorModule.createVerticalDescriptor('shopping', 4105);
+      const checkoutStemDescriptor = {
+        ...checkoutDescriptor,
+        api: { prefix: checkoutApiPrefix, stem: checkoutId },
+        exposes: {},
+      };
+      const checkoutWorkspace = path.join(formatRoot, 'checkout-workspace');
+      await writeText(
+        checkoutWorkspace,
+        'verticals/shopping/shared/api.ts',
+        sharedApiModule.createSharedApi(generatedProofScope, checkoutStemDescriptor),
+      );
+      await writeText(
+        checkoutWorkspace,
+        'verticals/shopping/api/index.ts',
+        `import { HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';
+import { Layer } from 'effect';
+import { checkoutApi } from '../shared/api.ts';
+export const runtime = defineEffectBff(checkoutApi, HttpApiBuilder, Layer);
+`,
+      );
+      await writeText(
+        checkoutWorkspace,
+        'verticals/shopping/src/api/checkout-client.ts',
+        'export const checkoutClient = true;\n',
+      );
+      await writeText(
+        checkoutWorkspace,
+        'verticals/shopping/modern.config.ts',
+        `export default {
+  bff: {
+    runtimeFramework: 'effect',
+    effect: { entry: './api/index', strictEffectApproach: true },
+  },
+};
+`,
+      );
+      await writeJson(checkoutWorkspace, 'verticals/shopping/package.json', {
+        exports: {
+          './api': './shared/api.ts',
+          './api/client': './src/api/checkout-client.ts',
+        },
+      });
+      await writeJson(checkoutWorkspace, 'packages/shared-contracts/package.json', {
+        name: generatedSharedContractsPackage,
+      });
+      await writeJson(checkoutWorkspace, topologyReferencePath, {
+        verticals: [
+          {
+            api: {
+              basePath: '/checkout-api/checkout',
+              bff: { prefix: checkoutApiPrefix, strictEffectApproach: true },
+              readiness: { endpoint: '/checkout/readiness' },
+              runtime: 'effect',
+              serverEntry: 'verticals/shopping/api/index.ts',
+            },
+            id: 'shopping',
+            path: 'verticals/shopping',
+          },
+        ],
+      });
+      assert.match(
+        runNode([path.join(formatRoot, checker.relativePath)], {
+          env: { ULTRAMODERN_WORKSPACE_ROOT: checkoutWorkspace },
+        }),
+        /UltraModern API boundary check passed/u,
+        `${moduleFormat} checkout workspace`,
+      );
+    }),
+  );
+});
+
+void test('two generated MicroVertical root contracts execute invariant readiness endpoints', async (context) => {
+  const proofRoot = await mkdtemp(
+    path.join(workspaceRoot, `verticals/${partyId}/.generated-api-baseline-`),
+  );
+  context.after(async (): Promise<void> => {
+    await rm(proofRoot, { force: true, recursive: true });
+  });
+  const descriptorSource: unknown = await import(
+    pathToFileURL(path.join(generatorRoot, 'dist/esm-node/ultramodern-workspace/descriptors.js'))
+      .href
+  );
+  const sharedApiSource: unknown = await import(
+    pathToFileURL(path.join(generatorRoot, 'dist/esm-node/ultramodern-workspace/api/shared.js'))
+      .href
+  );
+  const apiServiceSource: unknown = await import(
+    pathToFileURL(path.join(generatorRoot, 'dist/esm-node/ultramodern-workspace/api/service.js'))
+      .href
+  );
+  const apiClientSource: unknown = await import(
+    pathToFileURL(path.join(generatorRoot, 'dist/esm-node/ultramodern-workspace/api/client.js'))
+      .href
+  );
+  const descriptorModule = Schema.decodeUnknownSync(DescriptorModuleSchema)(descriptorSource);
+  const sharedApiModule = Schema.decodeUnknownSync(SharedApiGeneratorSchema)(sharedApiSource);
+  const apiServiceModule = Schema.decodeUnknownSync(ApiServiceGeneratorSchema)(apiServiceSource);
+  const apiClientModule = Schema.decodeUnknownSync(ApiClientGeneratorSchema)(apiClientSource);
+  const fixtures = [
+    {
+      id: inventoryStockId,
+      port: 4103,
+      prefix: '/inventory-stock-api',
+      readinessExport: 'getInventoryStockReadiness',
+      stem: inventoryStockId,
+    },
+    {
+      id: 'order-management',
+      port: 4104,
+      prefix: '/order-management-api',
+      readinessExport: 'getOrderManagementReadiness',
+      stem: 'order-management',
+    },
+    {
+      id: 'shopping',
+      port: 4105,
+      prefix: checkoutApiPrefix,
+      readinessExport: 'getCheckoutReadiness',
+      stem: checkoutId,
+    },
+  ] as const;
+
+  const generatedProofs = await Promise.all(
+    fixtures.map(async (fixture) => {
+      const descriptor: unknown = descriptorModule.createVerticalDescriptor(
+        fixture.id,
+        fixture.port,
+      );
+      Schema.asserts(WorkspaceAppFixtureSchema, descriptor);
+      assert.ok(descriptor.api);
+      const generatedDescriptor = {
+        ...descriptor,
+        api: { ...descriptor.api, prefix: fixture.prefix, stem: fixture.stem },
+        exposes: {},
+      };
+      const contract = sharedApiModule.createSharedApi('app', generatedDescriptor);
+      const basePath = `${fixture.prefix}/${fixture.stem}`;
+      assert.equal(
+        microVerticalApiBaselineViolation(fixture.stem, contract, {
+          additionalPaths:
+            fixture.stem === checkoutId ? { checkoutCartPath: `${basePath}/cart` } : {},
+          apiPrefix: fixture.prefix,
+          basePath,
+          effectClientPackage,
+          ownerId: fixture.id,
+          readinessPath: `${basePath}/readiness`,
+          sharedContractsPackage: '@app/shared-contracts',
+        }),
+        undefined,
+      );
+      const ownerRoot = path.join(proofRoot, fixture.id);
+      await writeText(ownerRoot, 'shared/api.ts', contract);
+      await writeText(
+        ownerRoot,
+        'shared/ultramodern-build.ts',
+        `export const ultramodernApiMarker = {
+  appId: '${fixture.id}',
+  build: '${fixture.id}-build',
+  buildMarker: '${fixture.id}-build',
+  deployProfile: 'cloudflare-ssr-mf-effect-v1',
+  kind: 'microvertical-delivery-unit',
+  packageName: '@app/${fixture.id}',
+  schemaVersion: 1,
+  sourceRevision: 'revision-123',
+  surface: 'api',
+  unitId: 'app/${fixture.id}',
+  version: '0.1.0',
+} as const;
+`,
+      );
+      await writeText(
+        ownerRoot,
+        apiEntryPath,
+        apiServiceModule.createApiServiceEntry('app', generatedDescriptor, '../shared/api.ts'),
+      );
+      const clientEntryPath = `src/api/${fixture.id}-client.ts`;
+      await writeText(
+        ownerRoot,
+        clientEntryPath,
+        apiClientModule.createApiClient(generatedDescriptor, generatedClientContractImport),
+      );
+      await writeJson(ownerRoot, 'package.json', { type: 'module' });
+      await writeJson(ownerRoot, 'tsconfig.json', {
+        compilerOptions: {
+          allowImportingTsExtensions: true,
+          module: 'NodeNext',
+          moduleResolution: 'NodeNext',
+          noEmit: true,
+          skipLibCheck: true,
+          strict: true,
+          target: 'ES2023',
+        },
+        include: ['api/**/*.ts', 'shared/**/*.ts', 'src/**/*.ts'],
+      });
+      runNode(
+        [
+          path.join(workspaceRoot, 'node_modules/@typescript/native-preview/bin/tsc'),
+          '-p',
+          ownerRoot,
+        ],
+        { cwd: workspaceRoot },
+      );
+      const generatedModuleSource: unknown = await import(
+        pathToFileURL(path.join(ownerRoot, apiEntryPath)).href
+      );
+      const generatedClientSource: unknown = await import(
+        pathToFileURL(path.join(ownerRoot, clientEntryPath)).href
+      );
+      const generatedModule = Schema.decodeUnknownSync(GeneratedApiRuntimeModuleSchema)(
+        generatedModuleSource,
+      );
+      const generatedClient = Schema.decodeUnknownSync(
+        Schema.Record(Schema.String, Schema.Unknown),
+      )(generatedClientSource);
+      const getReadiness = Schema.decodeUnknownSync(callable<GetGeneratedReadiness>())(
+        generatedClient[fixture.readinessExport],
+      );
+      const runEffectRequest = Schema.decodeUnknownSync(callable<RunGeneratedEffect>())(
+        generatedClient.runEffectRequest,
+      );
+      return { fixture, generatedModule, getReadiness, runEffectRequest };
+    }),
+  );
+  const handlers = new Map<string, GeneratedHttpHandler>(
+    generatedProofs.map(({ fixture, generatedModule }) => [
+      fixture.stem,
+      generatedModule.default.createHandler(),
+    ]),
+  );
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    const stem = new URL(request.url).pathname.split('/').find((segment) => segment.length > 0);
+    const handler = stem === undefined ? undefined : handlers.get(stem);
+    return handler === undefined
+      ? new Response(undefined, { status: 503 })
+      : await handler.handler(request);
+  };
+  let readinessValues: (typeof MicroVerticalReadinessSchema.Type)[];
+  try {
+    readinessValues = await Promise.all(
+      generatedProofs.map(async ({ fixture, getReadiness, runEffectRequest }) => {
+        const handler = handlers.get(fixture.stem);
+        assert.ok(handler);
+        const directResponse = await handler.handler(
+          new Request(`http://localhost/${fixture.stem}/readiness`),
+        );
+        assert.equal(directResponse.status, 200);
+        const directReadiness = Schema.decodeUnknownSync(MicroVerticalReadinessSchema)(
+          await directResponse.json(),
+        );
+        const clientReadiness = Schema.decodeUnknownSync(MicroVerticalReadinessSchema)(
+          await runEffectRequest(getReadiness({ baseUrl: 'http://localhost' })),
+        );
+        assert.deepEqual(clientReadiness, directReadiness);
+        return clientReadiness;
+      }),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    await Promise.all([...handlers.values()].map(async (handler) => await handler.dispose()));
+  }
+
+  assert.notEqual(readinessValues[0]?.marker.appId, readinessValues[1]?.marker.appId);
+  assert.equal('kind' in (readinessValues[0]?.marker ?? {}), false);
+  assert.equal('schemaVersion' in (readinessValues[0]?.marker ?? {}), false);
+  assert.deepEqual(readinessValues[0]?.checks, readinessValues[1]?.checks);
+  assert.equal(readinessValues[0]?.status, readinessValues[1]?.status);
+  assert.equal(readinessValues[0]?.versionSkew, readinessValues[1]?.versionSkew);
+});
+
+void test('generated shared-contracts baseline template is lint-clean and type-safe', async (context) => {
+  const scratchRoot = path.join(workspaceRoot, 'packages/shared-contracts/.scratch');
+  await mkdir(scratchRoot, { recursive: true });
+  const proofRoot = await mkdtemp(path.join(scratchRoot, 'generated-baseline-template-proof-'));
+  context.after(async (): Promise<void> => {
+    await rm(proofRoot, { force: true, recursive: true });
+  });
+  const templateSource = await readFile(
+    path.join(generatorRoot, 'templates/packages/shared-contracts-index.ts'),
+    'utf-8',
+  );
+  const baselineEnd = templateSource.indexOf('export type UltramodernPublicSitemapChangeFrequency');
+  assert.notEqual(baselineEnd, -1);
+  const generatedSource = templateSource.slice(0, baselineEnd);
+  await writeText(proofRoot, generatedBaselineTemplateEntry, generatedSource);
+  await writeJson(proofRoot, 'tsconfig.json', {
+    compilerOptions: {
+      module: 'NodeNext',
+      moduleResolution: 'NodeNext',
+      noEmit: true,
+      skipLibCheck: true,
+      strict: true,
+      target: 'ES2022',
+    },
+    include: [generatedBaselineTemplateEntry],
+  });
+  const generatedFile = path.join(proofRoot, generatedBaselineTemplateEntry);
+  runNode([path.join(workspaceRoot, 'node_modules/oxlint/bin/oxlint'), generatedFile], {
+    cwd: workspaceRoot,
+  });
+  runNode(
+    [path.join(workspaceRoot, 'node_modules/@typescript/native-preview/bin/tsc'), '-p', proofRoot],
+    { cwd: workspaceRoot },
+  );
+});
+
+// oxlint-disable-next-line complexity -- This table-driven adversarial test keeps every fail-closed mutation visible. expires: 2026-12-31.
+void test('static validation rejects a MicroVertical root contract without readiness baseline', async () => {
+  const contract = await readFile(
+    path.join(workspaceRoot, `verticals/${partyId}/shared/api.ts`),
+    'utf-8',
+  );
+  assert.equal(microVerticalApiBaselineViolation(partyId, contract), undefined);
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace("HttpApiEndpoint.get('readiness'", "HttpApiEndpoint.get('health'"),
+    ) ?? '',
+    /exact readiness endpoint/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace('...MicroVerticalReadinessSchema.fields,', '...Schema.Unknown.fields,'),
+    ) ?? '',
+    /shared readiness schema/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace(
+        'success: partyRegistryReadinessSchema',
+        'success: Schema.String /* success: partyRegistryReadinessSchema */',
+      ),
+    ) ?? '',
+    /exact readiness endpoint/u,
+  );
+  const readinessEndpointDecoy =
+    "HttpApiEndpoint.get('readiness', '/party-registry/readiness', { success: partyRegistryReadinessSchema })";
+  const foundationComposition = '.addHttpApi(partyRegistryFoundationApi)';
+  const sharedBaselineImport = `import {
+  MicroVerticalBuildMarkerSchema,
+  MicroVerticalReadinessSchema,
+  createMicroVerticalOperationContext,
+} from '@app/shared-contracts';`;
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace("from '@app/shared-contracts';", "from '@app/copied-contracts';"),
+    ) ?? '',
+    /import exact baseline primitives from the shared contracts package/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace(
+        "from '@modern-js/plugin-bff/effect-client';",
+        "from '@evil/fake-effect-client';",
+      ),
+    ) ?? '',
+    /import exact Effect API primitives from the framework client package/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace(
+        sharedBaselineImport,
+        `const MicroVerticalBuildMarkerSchema = Schema.Struct({ copied: Schema.String });
+const MicroVerticalReadinessSchema = Schema.Struct({ copied: Schema.String });
+const createMicroVerticalOperationContext = <Value>(value: Value): Value => value;`,
+      ),
+    ) ?? '',
+    /import exact baseline primitives from the shared contracts package/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract
+        .replace("HttpApiEndpoint.get('readiness'", "HttpApiEndpoint.get('health'")
+        .replace(
+          "HttpApi.make('PartyRegistryFoundationApi')",
+          `HttpApi.make("${readinessEndpointDecoy}")`,
+        ),
+    ) ?? '',
+    /exact readiness endpoint/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(partyId, contract.replace(foundationComposition, '')) ?? '',
+    /explicitly compose its readiness foundation API/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace(
+        foundationComposition,
+        `${foundationComposition}
+  .pipe(() => HttpApi.make('DiscardedPartyRegistryApi'))`,
+      ),
+    ) ?? '',
+    /explicitly compose its readiness foundation API/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace(
+        `  ),
+);`,
+        `  ),
+).pipe(() => HttpApi.make('DiscardedPartyRegistryFoundationApi'));`,
+      ),
+    ) ?? '',
+    /directly compose its exact readiness endpoint/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract
+        .replace(foundationComposition, '')
+        .replace(
+          "HttpApi.make('PartyRegistryApi')",
+          "HttpApi.make('.addHttpApi(partyRegistryFoundationApi)')",
+        ),
+    ) ?? '',
+    /explicitly compose its readiness foundation API/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract
+        .replaceAll('partyRegistryFoundationApi', 'renamedFoundationApi')
+        .replace('.addHttpApi(renamedFoundationApi)', ''),
+    ) ?? '',
+    /directly compose its exact readiness endpoint/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace('...MicroVerticalBuildMarkerSchema.fields,', 'build: Schema.String,'),
+    ) ?? '',
+    /shared build marker schema/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace(
+        `export const partyRegistryReadinessSchema = Schema.Struct({
+  ...MicroVerticalReadinessSchema.fields,
+  marker: partyRegistryMarkerSchema,
+});`,
+        `export const partyRegistryReadinessSchema = (
+  MicroVerticalReadinessSchema,
+  Schema.Struct({ marker: partyRegistryMarkerSchema, status: Schema.String })
+);`,
+      ),
+    ) ?? '',
+    /consume the shared readiness schema/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace(
+        `export const partyRegistryReadinessSchema = Schema.Struct({
+  ...MicroVerticalReadinessSchema.fields,
+  marker: partyRegistryMarkerSchema,
+});`,
+        'export const partyRegistryReadinessSchema = MicroVerticalReadinessSchema;',
+      ),
+    ) ?? '',
+    /consume the shared readiness schema/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace(
+        `export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
+  .addHttpApi(partyRegistryFoundationApi)`,
+        `export const partyRegistryApi = HttpApi.make('PartyRegistryApi').pipe(
+  (api) => (api.addHttpApi(partyRegistryFoundationApi), api),
+)`,
+      ),
+    ) ?? '',
+    /explicitly compose its readiness foundation API/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      `${contract.replace(
+        'export const partyRegistryApi =',
+        'export const partyRegistryApiDecoy =',
+      )}\nexport const partyRegistryApi = HttpApi.make('PartyRegistryApi');\n`,
+    ) ?? '',
+    /explicitly compose its readiness foundation API/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      `${contract.replace(
+        'export const partyRegistryFoundationApi =',
+        'export const partyRegistryFoundationApiDecoy =',
+      )}\nexport const partyRegistryFoundationApi = HttpApi.make('PartyRegistryFoundationApi');\n`,
+    ) ?? '',
+    /exact readiness endpoint/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      `${contract.replace(
+        'export const partyRegistryApiContract =',
+        'export const partyRegistryApiContractDecoy =',
+      )}\nexport const partyRegistryApiContract = { ownerId: 'party-registry' };\n`,
+    ) ?? '',
+    /exact owner and API path metadata/u,
+  );
+
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace(
+        '...MicroVerticalBuildMarkerSchema.fields,',
+        '...MicroVerticalBuildMarkerSchema.fields,\n  build: Schema.Number,',
+      ),
+    ) ?? '',
+    /without overriding shared fields/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace(
+        "const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));",
+        'const AppIdSchema = Schema.Number;',
+      ),
+    ) ?? '',
+    /shared build marker schema/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace(
+        '...MicroVerticalReadinessSchema.fields,',
+        '...MicroVerticalReadinessSchema.fields,\n  status: Schema.String,',
+      ),
+    ) ?? '',
+    /without overriding shared fields/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace("HttpApiGroup.make('foundation')", "HttpApiGroup.make('not-foundation')"),
+    ) ?? '',
+    /exact readiness endpoint and foundation identity/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace("HttpApi.make('PartyRegistryApi')", "HttpApi.make('WrongApi')"),
+    ) ?? '',
+    /explicitly compose its readiness foundation API/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace(
+        'export const partyRegistryOperationContexts =',
+        'export const renamedOperationContexts =',
+      ),
+    ) ?? '',
+    /construct every operation with the shared context constructor/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace(
+        "operationId: 'PartyRegistryApi:/reads/ares-lookup'",
+        "operationId: 'WrongApi:unrelated'",
+      ),
+    ) ?? '',
+    /construct every operation with the shared context constructor/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      contract.replace("routePath: '/reads/ares-lookup'", "routePath: '/not-an-endpoint'"),
+    ) ?? '',
+    /construct every operation with the shared context constructor/u,
+  );
+  assert.match(
+    microVerticalApiBaselineViolation(
+      partyId,
+      `${contract.replace(
+        `readiness: createMicroVerticalOperationContext({
+    method: 'GET',
+    operationId: 'PartyRegistryApi:/party-registry/readiness',
+    routePath: '/party-registry/readiness',
+  }),`,
+        `readiness: {
+    method: 'GET',
+    operationId: 'PartyRegistryApi:/party-registry/readiness',
+    routePath: '/party-registry/readiness',
+  },`,
+      )}
+createMicroVerticalOperationContext({
+  method: 'GET',
+  operationId: 'PartyRegistryApi:/party-registry/readiness',
+  routePath: '/party-registry/readiness',
+});
+`,
+    ) ?? '',
+    /construct every operation with the shared context constructor/u,
+  );
+
+  for (const [label, mutated] of [
+    ['missing apiPrefix', contract.replace("  apiPrefix: '/party-registry-api',\n", '')],
+    [
+      'missing basePath',
+      contract.replace("  basePath: '/party-registry-api/party-registry',\n", ''),
+    ],
+    ['missing ownerId', contract.replace("  ownerId: 'party-registry',\n", '')],
+    [
+      'wrong apiPrefix',
+      contract.replace("apiPrefix: '/party-registry-api'", "apiPrefix: '/evil-api'"),
+    ],
+    [
+      'wrong basePath',
+      contract.replace(
+        "basePath: '/party-registry-api/party-registry'",
+        "basePath: '/party-registry-api/evil'",
+      ),
+    ],
+    ['wrong ownerId', contract.replace("ownerId: 'party-registry'", "ownerId: 'evil-owner'")],
+    [
+      'wrong readinessPath',
+      contract.replace(
+        "readinessPath: '/party-registry-api/party-registry/readiness'",
+        "readinessPath: '/evil-prefix/party-registry/readiness'",
+      ),
+    ],
+    [
+      'coordinated topology drift',
+      contract
+        .replace("apiPrefix: '/party-registry-api'", "apiPrefix: '/evil-api'")
+        .replace(
+          "basePath: '/party-registry-api/party-registry'",
+          "basePath: '/evil-api/party-registry'",
+        )
+        .replace(
+          "readinessPath: '/party-registry-api/party-registry/readiness'",
+          "readinessPath: '/evil-api/party-registry/readiness'",
+        ),
+    ],
+    [
+      'forbidden credential metadata',
+      contract.replace(
+        partyReadinessMetadataLine,
+        `${partyReadinessMetadataLine}\n  credential: 'secret',`,
+      ),
+    ],
+    [
+      'forbidden credential path metadata',
+      contract.replace(
+        partyReadinessMetadataLine,
+        `${partyReadinessMetadataLine}\n  credentialPath: '/party-registry-api/party-registry/secret',`,
+      ),
+    ],
+    [
+      'unknown path metadata',
+      contract.replace(
+        partyReadinessMetadataLine,
+        `${partyReadinessMetadataLine}\n  unknownPath: '/party-registry-api/party-registry/unknown',`,
+      ),
+    ],
+    [
+      'spread metadata',
+      contract.replace(
+        'export const partyRegistryApiContract = {',
+        'const copiedMetadata = {};\nexport const partyRegistryApiContract = {\n  ...copiedMetadata,',
+      ),
+    ],
+  ] as const) {
+    assert.match(
+      microVerticalApiBaselineViolation(partyId, mutated) ?? '',
+      /exact owner and API path metadata/u,
+      label,
+    );
+  }
+});
+
+void test('MicroVertical baseline validation resolves an API stem independently from its directory', () => {
+  assert.equal(
+    configuredMicroVerticalApiStem('verticals/inventory', [
+      {
+        api: { readiness: { endpoint: `/${warehouseItemsApiStem}/readiness` } },
+        id: 'inventory',
+        path: 'verticals/inventory',
+      },
+    ]),
+    warehouseItemsApiStem,
   );
 });
 
@@ -937,10 +1907,7 @@ void test('MF proof accepts explicit API-only intent but keeps exposed-app archi
 });
 
 void test('Party deployment declares no fake SSR/locale URL while retaining backend contracts', async () => {
-  const topology = await readJson(
-    TopologySchema,
-    path.join(workspaceRoot, 'topology/reference-topology.json'),
-  );
+  const topology = await readJson(TopologySchema, path.join(workspaceRoot, topologyReferencePath));
   const party = topology.verticals.find((entry) => entry.id === partyId);
   assert.ok(party);
   assert.equal(party.cloudflare.routes.ssr, undefined);
@@ -958,10 +1925,7 @@ void test('Party deployment declares no fake SSR/locale URL while retaining back
 });
 
 void test('Party Registry is the sole deployment owner for Contacts capabilities', async () => {
-  const topology = await readJson(
-    TopologySchema,
-    path.join(workspaceRoot, 'topology/reference-topology.json'),
-  );
+  const topology = await readJson(TopologySchema, path.join(workspaceRoot, topologyReferencePath));
   const overlay = await readJson(
     OverlaySchema,
     path.join(workspaceRoot, 'topology/local-overlays/development.json'),
