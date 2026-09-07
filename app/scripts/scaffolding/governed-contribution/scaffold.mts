@@ -55,7 +55,7 @@ import {
   hasNamedImportBinding,
   hasGeneratedProviderApiContract,
   hasGeneratedProviderReadContract,
-  hasTopLevelExportedConstBinding,
+  hasGeneratedOperationPrincipalContract,
   hasUniqueExactNamedImport,
   tokenizeGovernedClient,
 } from '../../generated-module-api-boundary.mts';
@@ -116,111 +116,32 @@ const renderApiContract = (name: string): string => {
   const type = toPascalCase(name);
   const value = `${toPascalCase(name)}Api`;
   return `${generatedHeader(MODULE_API_KIND)}
+import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 
 export const ${type}RequestSchema = Schema.Struct({});
 export type ${type}Request = typeof ${type}RequestSchema.Type;
 export const ${type}ResponseSchema = Schema.Struct({ ok: Schema.Literal(true) });
 export type ${type}Response = typeof ${type}ResponseSchema.Type;
 
-export const ${type}AuthenticationProblemSchema = Schema.TaggedStruct(
+export const ${type}AuthenticationProblemSchema = makeProblemDetailsSchema(
   '${type}AuthenticationProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(401),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(401),
+  401,
 );
-export const ${type}InvalidProblemSchema = Schema.TaggedStruct(
-  '${type}InvalidProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(400),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(400),
-);
-export const ${type}UnavailableProblemSchema = Schema.TaggedStruct(
+export const ${type}InvalidProblemSchema = makeProblemDetailsSchema('${type}InvalidProblem', 400);
+export const ${type}UnavailableProblemSchema = makeRetryableProblemDetailsSchema(
   '${type}UnavailableProblem',
-  {
-    detail: Schema.String,
-    retryable: Schema.Literal(true),
-    status: Schema.Literal(503),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(503),
+  503,
 );
-export const ${type}ForbiddenProblemSchema = Schema.TaggedStruct(
-  '${type}ForbiddenProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(403),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(403),
-);
-export const ${type}NotFoundProblemSchema = Schema.TaggedStruct(
-  '${type}NotFoundProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(404),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(404),
-);
-export const ${type}PolicyProblemSchema = Schema.TaggedStruct(
-  '${type}PolicyProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(422),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(422),
-);
-export const ${type}PolicyConflictProblemSchema = Schema.TaggedStruct(
+export const ${type}ForbiddenProblemSchema = makeProblemDetailsSchema('${type}ForbiddenProblem', 403);
+export const ${type}NotFoundProblemSchema = makeProblemDetailsSchema('${type}NotFoundProblem', 404);
+export const ${type}PolicyProblemSchema = makeProblemDetailsSchema('${type}PolicyProblem', 422);
+export const ${type}PolicyConflictProblemSchema = makeProblemDetailsSchema(
   '${type}PolicyConflictProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(409),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(409),
+  409,
 );
-export const ${type}InternalProblemSchema = Schema.TaggedStruct(
-  '${type}InternalProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(500),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(500),
-);
+export const ${type}InternalProblemSchema = makeProblemDetailsSchema('${type}InternalProblem', 500);
 
 export const ${value} = HttpApi.make('${value}').add(
   HttpApiGroup.make('${toCamelCase(name)}').add(
@@ -524,8 +445,9 @@ const renderProviderApiContract = (
   }),
 )`;
   return `${generatedHeader(kind)}
+import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 
 export const ${type}ProviderRequestSchema = Schema.Struct({
   ${payloadField}: ${kind === REPORT_KIND ? 'Schema.Record(Schema.String, Schema.String)' : 'Schema.String'},
@@ -535,103 +457,32 @@ export type ${type}ProviderRequest = typeof ${type}ProviderRequestSchema.Type;
 export const ${type}ProviderResponseSchema = ${success};
 export type ${type}ProviderResponse = typeof ${type}ProviderResponseSchema.Type;
 
-export const ${type}ProviderUnavailableProblemSchema = Schema.TaggedStruct(
+export const ${type}ProviderUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
   '${type}ProviderUnavailableProblem',
-  {
-    detail: Schema.String,
-    retryable: Schema.Literal(true),
-    status: Schema.Literal(503),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(503),
+  503,
 );
 
-export const ${type}ProviderAuthenticationProblemSchema = Schema.TaggedStruct(
+export const ${type}ProviderAuthenticationProblemSchema = makeProblemDetailsSchema(
   '${type}ProviderAuthenticationProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(401),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(401),
+  401,
 );
-export const ${type}ProviderInvalidProblemSchema = Schema.TaggedStruct(
-  '${type}ProviderInvalidProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(400),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(400),
-);
-export const ${type}ProviderForbiddenProblemSchema = Schema.TaggedStruct(
+export const ${type}ProviderInvalidProblemSchema = makeProblemDetailsSchema('${type}ProviderInvalidProblem', 400);
+export const ${type}ProviderForbiddenProblemSchema = makeProblemDetailsSchema(
   '${type}ProviderForbiddenProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(403),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(403),
+  403,
 );
-export const ${type}ProviderNotFoundProblemSchema = Schema.TaggedStruct(
+export const ${type}ProviderNotFoundProblemSchema = makeProblemDetailsSchema(
   '${type}ProviderNotFoundProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(404),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(404),
+  404,
 );
-export const ${type}ProviderPolicyProblemSchema = Schema.TaggedStruct(
-  '${type}ProviderPolicyProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(422),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(422),
-);
-export const ${type}ProviderPolicyConflictProblemSchema = Schema.TaggedStruct(
+export const ${type}ProviderPolicyProblemSchema = makeProblemDetailsSchema('${type}ProviderPolicyProblem', 422);
+export const ${type}ProviderPolicyConflictProblemSchema = makeProblemDetailsSchema(
   '${type}ProviderPolicyConflictProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(409),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(409),
+  409,
 );
-export const ${type}ProviderInternalProblemSchema = Schema.TaggedStruct(
+export const ${type}ProviderInternalProblemSchema = makeProblemDetailsSchema(
   '${type}ProviderInternalProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(500),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(500),
+  500,
 );
 
 export const ${apiValue} = HttpApi.make('${apiValue}').add(
@@ -675,7 +526,7 @@ const renderGovernedServer = (
   /* eslint-enable no-nested-ternary, unicorn/no-nested-ternary */
   const problemStem = `${type}${isModuleApi ? '' : 'Provider'}`;
   return `${generatedHeader(kind)}
-import { GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
+import { ReadRuntime } from '@app/core-runtime';
 import type { ReadCoreError } from '@app/core-runtime';
 import {
   Effect,
@@ -683,10 +534,10 @@ import {
   HttpEffect,
   HttpServerResponse,
 } from '@modern-js/plugin-bff/effect-edge';
-import { Config, Match } from 'effect';
+import { Match, Redacted } from 'effect';
 import { ${apiValue} } from '../shared/apis/${contract}.ts';
 import { ${readValue} } from '${readImport}';
-import { verifyOperationPrincipal } from './auth/action-principal.ts';
+import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 
 const authenticationProblem = () => ({
   _tag: '${problemStem}AuthenticationProblem' as const,
@@ -750,9 +601,6 @@ const internalProblem = () => ({
 const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
 );
-type VerificationProblem =
-  | ReturnType<typeof authenticationProblem>
-  | ReturnType<typeof unavailableProblem>;
 const readProblem = (error: ReadCoreError) =>
   Match.value(error).pipe(
     Match.tags({
@@ -787,37 +635,12 @@ export const ${toCamelCase(name)}ReadApiLive = HttpApiBuilder.group(
         if (correlationId === undefined || correlationId.trim().length === 0) {
           return yield* Effect.fail(invalidProblem());
         }
-        const environment = yield* Config.all({
-          ONTOS_GATEWAY_ISSUER: Config.string('ONTOS_GATEWAY_ISSUER'),
-          ONTOS_GATEWAY_PUBLIC_JWKS: Config.string('ONTOS_GATEWAY_PUBLIC_JWKS'),
-        }).pipe(Effect.mapError(unavailableProblem));
-        const redemption = yield* GatewayAssertionRedemptionService;
-        const principal = yield* verifyOperationPrincipal(request.headers.authorization, {
-          environment,
-          redemption,
-        }).pipe(
-          Effect.catchTags({
-            ActionPrincipalConfigurationError: () =>
-              Effect.fail<VerificationProblem>(unavailableProblem()),
-            ActionPrincipalExpiredError: () =>
-              bearerChallenge.pipe(
-                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
-              ),
-            ActionPrincipalInvalidError: () =>
-              bearerChallenge.pipe(
-                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
-              ),
-            ActionPrincipalMissingError: () =>
-              bearerChallenge.pipe(
-                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
-              ),
-            ActionPrincipalScopeError: () =>
-              bearerChallenge.pipe(
-                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
-              ),
-            ActionPrincipalUnavailableError: () =>
-              Effect.fail<VerificationProblem>(unavailableProblem()),
-          }),
+        const principal = yield* authenticateOperationPrincipal(
+          Redacted.make(request.headers.authorization),
+          {
+            authentication: authenticationProblem,
+            unavailable: unavailableProblem,
+          },
         );
         const runtime = yield* ReadRuntime;
         return yield* runtime
@@ -1244,11 +1067,7 @@ const hasExistingOperationBoundary = (
     const header = `// @generated by OntOS Codesmith MicroVertical Action Boundary v1\n// @ontos-action-boundary-owner ${vertical.appId}\n`;
     return (
       principal.startsWith(header) &&
-      hasTopLevelExportedConstBinding(
-        principal,
-        'verifyOperationPrincipal',
-        'verifyActionPrincipal',
-      ) &&
+      hasGeneratedOperationPrincipalContract(principal) &&
       hasGeneratedOperationGatewayContract(gateway, vertical.appId)
     );
   });

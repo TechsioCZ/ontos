@@ -222,20 +222,6 @@ export const hasTopLevelExportedConst = (source: string, name: string): boolean 
     [SyntaxKind.EqualsToken],
   ]);
 
-export const hasTopLevelExportedConstBinding = (
-  source: string,
-  name: string,
-  binding: string,
-): boolean =>
-  hasTopLevelSequence(tokenizeGovernedClient(source), [
-    [SyntaxKind.ExportKeyword],
-    [SyntaxKind.ConstKeyword],
-    [SyntaxKind.Identifier, name],
-    [SyntaxKind.EqualsToken],
-    [SyntaxKind.Identifier, binding],
-    [SyntaxKind.SemicolonToken],
-  ]);
-
 const findRootExpressionSequence = (
   tokens: readonly GovernedClientToken[],
   expected: readonly ExpectedToken[],
@@ -625,6 +611,24 @@ export const hasUniqueExactNamedImport = (
   }
   return matchCount === 1 && bindingCount === 1;
 };
+
+export const hasGeneratedOperationPrincipalContract = (source: string): boolean =>
+  hasUniqueExactNamedImport(
+    source,
+    'makeMicroverticalHttpPrincipalAuthentication',
+    '@app/core-runtime/http/principal-authentication',
+  ) &&
+  hasTopLevelSequence(tokenizeGovernedClient(source), [
+    [SyntaxKind.ExportKeyword],
+    [SyntaxKind.ConstKeyword],
+    [SyntaxKind.Identifier, 'authenticateOperationPrincipal'],
+    [SyntaxKind.EqualsToken],
+    [SyntaxKind.Identifier, 'makeMicroverticalHttpPrincipalAuthentication'],
+    [SyntaxKind.OpenParenToken],
+    [SyntaxKind.Identifier, 'verifyOperationPrincipal'],
+    [SyntaxKind.CloseParenToken],
+    [SyntaxKind.SemicolonToken],
+  ]);
 
 const hasExclusiveNamedImportFrom = (
   source: string,
@@ -2094,6 +2098,32 @@ export const hasGeneratedGovernedClientContract = (
   );
 };
 
+const problemMapping = (named: boolean): readonly ExpectedToken[] => [
+  [SyntaxKind.CommaToken],
+  [SyntaxKind.OpenBraceToken],
+  [SyntaxKind.Identifier, 'authentication'],
+  [SyntaxKind.ColonToken],
+  ...(named
+    ? ([[SyntaxKind.Identifier, 'authenticationProblem']] as const)
+    : ([
+        [SyntaxKind.Identifier, 'problem'],
+        [SyntaxKind.DotToken],
+        [SyntaxKind.Identifier, 'authentication'],
+      ] as const)),
+  [SyntaxKind.CommaToken],
+  [SyntaxKind.Identifier, 'unavailable'],
+  [SyntaxKind.ColonToken],
+  ...(named
+    ? ([[SyntaxKind.Identifier, 'unavailableProblem']] as const)
+    : ([
+        [SyntaxKind.Identifier, 'problem'],
+        [SyntaxKind.DotToken],
+        [SyntaxKind.Identifier, 'unavailable'],
+      ] as const)),
+  [SyntaxKind.CommaToken],
+  [SyntaxKind.CloseBraceToken],
+];
+
 const principalAssignmentInHandler = (
   tokens: readonly GovernedClientToken[],
   handlerBody: readonly [start: number, end: number],
@@ -2133,28 +2163,28 @@ const principalAssignmentInHandler = (
     [SyntaxKind.Identifier, 'request'],
     [SyntaxKind.DotToken],
     [SyntaxKind.Identifier, 'headers'],
-    [SyntaxKind.OpenBracketToken],
-    [SyntaxKind.StringLiteral, 'authorization'],
-    [SyntaxKind.CloseBracketToken],
-    [SyntaxKind.CloseParenToken],
   ] satisfies readonly ExpectedToken[];
-  const generatedRequestAuthorization = [
-    [SyntaxKind.Identifier, 'request'],
-    [SyntaxKind.DotToken],
-    [SyntaxKind.Identifier, 'headers'],
-    [SyntaxKind.DotToken],
-    [SyntaxKind.Identifier, 'authorization'],
-    [SyntaxKind.CommaToken],
-    [SyntaxKind.OpenBraceToken],
-    [SyntaxKind.Identifier, 'environment'],
-    [SyntaxKind.CommaToken],
-    [SyntaxKind.Identifier, 'redemption'],
-    [SyntaxKind.CommaToken],
-    [SyntaxKind.CloseBraceToken],
-  ] satisfies readonly ExpectedToken[];
+  const authorizationAccessors = [
+    [[SyntaxKind.DotToken], [SyntaxKind.Identifier, 'authorization']],
+    [
+      [SyntaxKind.OpenBracketToken],
+      [SyntaxKind.StringLiteral, 'authorization'],
+      [SyntaxKind.CloseBracketToken],
+    ],
+  ] satisfies readonly (readonly ExpectedToken[])[];
+  const expectedArguments = authorizationAccessors.flatMap((accessor) =>
+    (verifier === 'verifyPrincipal' ? [[]] : [problemMapping(true), problemMapping(false)]).map(
+      (mapping) => [
+        ...requestAuthorization,
+        ...accessor,
+        [SyntaxKind.CloseParenToken] as const,
+        ...mapping,
+      ],
+    ),
+  );
   const hasExactVerifierArguments =
     callClose !== undefined &&
-    [requestAuthorization, generatedRequestAuthorization].some(
+    expectedArguments.some(
       (expected) =>
         matchesSequence(tokens, callOpen + 1, expected) &&
         (callOpen + expected.length + 1 === callClose ||
@@ -2219,11 +2249,10 @@ const verifiedPrincipalAssignment = (
   tokens: readonly GovernedClientToken[],
   declaration: number,
   handlerBody: readonly [start: number, end: number],
-  readServerSupport: string | undefined,
 ): number | undefined => {
   const principalAssignment = (verifier: string): number | undefined =>
     principalAssignmentInHandler(tokens, handlerBody, verifier);
-  const operationVerification = principalAssignment('verifyOperationPrincipal');
+  const operationVerification = principalAssignment('authenticateOperationPrincipal');
   const verificationHelper = findTopLevelSequence(
     tokens,
     [
@@ -2248,20 +2277,14 @@ const verifiedPrincipalAssignment = (
     verificationHelperEnd !== undefined &&
     findSequence(
       tokens,
-      [[SyntaxKind.Identifier, 'verifyOperationPrincipal'], [SyntaxKind.OpenParenToken]],
+      [[SyntaxKind.Identifier, 'authenticateOperationPrincipal'], [SyntaxKind.OpenParenToken]],
       verificationHelper,
       verificationHelperEnd,
     ) !== undefined &&
     principalAssignment('verifyPrincipal') !== undefined;
-  const legacyVerification =
-    readServerSupport !== undefined &&
-    hasTopLevelExportedConst(readServerSupport, 'verifyOperationPrincipal') &&
-    readServerSupport.includes("case 'ReadPolicyDenied'") &&
-    principalAssignment('verifyReadPrincipal') !== undefined;
   return (
     operationVerification ??
-    (connectedVerificationHelper ? principalAssignment('verifyPrincipal') : undefined) ??
-    (legacyVerification ? principalAssignment('verifyReadPrincipal') : undefined)
+    (connectedVerificationHelper ? principalAssignment('verifyPrincipal') : undefined)
   );
 };
 
@@ -2717,7 +2740,6 @@ const expectedServerGroups = (
 export const hasGeneratedGovernedServerContract = (
   source: string,
   exportedName: string,
-  readServerSupport?: string,
 ): boolean => {
   const tokens = tokenizeGovernedClient(source);
   const declaration = findTopLevelSequence(
@@ -2775,7 +2797,7 @@ export const hasGeneratedGovernedServerContract = (
   const principalAssignment =
     handlerBody === undefined
       ? undefined
-      : verifiedPrincipalAssignment(tokens, declaration, handlerBody, readServerSupport);
+      : verifiedPrincipalAssignment(tokens, declaration, handlerBody);
   const readRegistration = exportedName.endsWith('ApiLive')
     ? exportedName.slice(0, -'ApiLive'.length)
     : '';
@@ -3343,128 +3365,32 @@ const hasExactGeneratedGatewayFactory = (
   start: number,
   end: number,
 ): boolean => {
-  const prefix = [
+  const expected = [
     [SyntaxKind.ExportKeyword],
     [SyntaxKind.ConstKeyword],
-    [SyntaxKind.Identifier, 'makeActionGateway'],
+    [SyntaxKind.Identifier, 'makeOperationGateway'],
     [SyntaxKind.EqualsToken],
     [SyntaxKind.OpenParenToken],
     [SyntaxKind.Identifier, 'acquire'],
     [SyntaxKind.ColonToken],
-    [SyntaxKind.Identifier, 'ActionGatewayIssuer'],
+    [SyntaxKind.Identifier, 'OperationGatewayIssuer'],
     [SyntaxKind.EqualsToken],
     [SyntaxKind.Identifier, 'issueGatewayContext'],
     [SyntaxKind.CloseParenToken],
     [SyntaxKind.EqualsGreaterThanToken],
+    [SyntaxKind.Identifier, 'makeSharedOperationGateway'],
     [SyntaxKind.OpenParenToken],
-    [SyntaxKind.OpenBraceToken],
-    [SyntaxKind.Identifier, 'invoke'],
-    [SyntaxKind.ColonToken],
-    [SyntaxKind.LessThanToken],
-    [SyntaxKind.Identifier, 'Success'],
-    [SyntaxKind.CommaToken],
-    [SyntaxKind.Identifier, 'Failure'],
-    [SyntaxKind.GreaterThanToken],
-    [SyntaxKind.OpenParenToken],
-    [SyntaxKind.Identifier, 'attempt'],
-    [SyntaxKind.ColonToken],
-    [SyntaxKind.Identifier, 'ActionGatewayAttempt'],
-    [SyntaxKind.LessThanToken],
-    [SyntaxKind.Identifier, 'Success'],
-    [SyntaxKind.CommaToken],
-    [SyntaxKind.Identifier, 'Failure'],
-    [SyntaxKind.GreaterThanToken],
-    [SyntaxKind.CommaToken],
-    [SyntaxKind.Identifier, 'options'],
-    [SyntaxKind.ColonToken],
-    [SyntaxKind.Identifier, 'GatewayContextClientOptions'],
-    [SyntaxKind.EqualsToken],
-    [SyntaxKind.OpenBraceToken],
-    [SyntaxKind.CloseBraceToken],
-    [SyntaxKind.CommaToken],
-    [SyntaxKind.CloseParenToken],
-    [SyntaxKind.EqualsGreaterThanToken],
-    [SyntaxKind.Identifier, 'acquire'],
-    [SyntaxKind.OpenParenToken],
-    [SyntaxKind.OpenBraceToken],
-    [SyntaxKind.Identifier, 'audience'],
-    [SyntaxKind.ColonToken],
     [SyntaxKind.Identifier, 'ACTION_GATEWAY_AUDIENCE'],
-    [SyntaxKind.CloseBraceToken],
     [SyntaxKind.CommaToken],
-    [SyntaxKind.Identifier, 'options'],
-    [SyntaxKind.CloseParenToken],
-    [SyntaxKind.DotToken],
-    [SyntaxKind.Identifier, 'pipe'],
-    [SyntaxKind.OpenParenToken],
-    [SyntaxKind.Identifier, 'Effect'],
-    [SyntaxKind.DotToken],
-    [SyntaxKind.Identifier, 'flatMap'],
-    [SyntaxKind.OpenParenToken],
-    [SyntaxKind.OpenParenToken],
-    [SyntaxKind.OpenBraceToken],
-    [SyntaxKind.Identifier, 'token'],
-    [SyntaxKind.CloseBraceToken],
-    [SyntaxKind.CloseParenToken],
-    [SyntaxKind.EqualsGreaterThanToken],
-  ] satisfies readonly ExpectedToken[];
-  const directBearer = [
-    [SyntaxKind.Identifier, 'attempt'],
-    [SyntaxKind.OpenParenToken],
-    [SyntaxKind.TemplateHead, 'Bearer '],
-    [SyntaxKind.Identifier, 'token'],
-    [SyntaxKind.TemplateTail, ''],
-    [SyntaxKind.CloseParenToken],
-  ] satisfies readonly ExpectedToken[];
-  const redactedBearer = [
-    [SyntaxKind.OpenBraceToken],
-    [SyntaxKind.ConstKeyword],
-    [SyntaxKind.Identifier, 'authorization'],
-    [SyntaxKind.EqualsToken],
-    [SyntaxKind.Identifier, 'Redacted'],
-    [SyntaxKind.DotToken],
-    [SyntaxKind.Identifier, 'make'],
-    [SyntaxKind.OpenParenToken],
-    [SyntaxKind.TemplateHead, 'Bearer '],
-    [SyntaxKind.Identifier, 'token'],
-    [SyntaxKind.TemplateTail, ''],
-    [SyntaxKind.CloseParenToken],
-    [SyntaxKind.SemicolonToken],
-    [SyntaxKind.ReturnKeyword],
-    [SyntaxKind.Identifier, 'attempt'],
-    [SyntaxKind.OpenParenToken],
-    [SyntaxKind.Identifier, 'Redacted'],
-    [SyntaxKind.DotToken],
-    [SyntaxKind.Identifier, 'value'],
-    [SyntaxKind.OpenParenToken],
-    [SyntaxKind.Identifier, 'authorization'],
-    [SyntaxKind.CloseParenToken],
-    [SyntaxKind.CloseParenToken],
-    [SyntaxKind.SemicolonToken],
-    [SyntaxKind.CloseBraceToken],
-  ] satisfies readonly ExpectedToken[];
-  const suffix = [
-    [SyntaxKind.CloseParenToken],
-    [SyntaxKind.CommaToken],
-    [SyntaxKind.CloseParenToken],
-    [SyntaxKind.CommaToken],
-    [SyntaxKind.CloseBraceToken],
+    [SyntaxKind.Identifier, 'acquire'],
     [SyntaxKind.CloseParenToken],
     [SyntaxKind.SemicolonToken],
   ] satisfies readonly ExpectedToken[];
-  return [directBearer, redactedBearer].some((bearer) => {
-    const expected = [...prefix, ...bearer, ...suffix];
-    return start + expected.length === end + 1 && matchesSequence(tokens, start, expected);
-  });
+  return start + expected.length === end + 1 && matchesSequence(tokens, start, expected);
 };
 
 const hasGatewayBindingMutation = (tokens: readonly GovernedClientToken[]): boolean => {
-  const protectedBindings = new Set([
-    'actionGateway',
-    'makeActionGateway',
-    'makeOperationGateway',
-    'operationGateway',
-  ]);
+  const protectedBindings = new Set(['makeOperationGateway', 'operationGateway']);
   for (let index = 0; index < tokens.length; index += 1) {
     const binding = tokens[index];
     if (binding?.kind !== SyntaxKind.Identifier || !protectedBindings.has(binding.value)) {
@@ -3530,7 +3456,7 @@ export const hasGeneratedOperationGatewayContract = (
     [
       [SyntaxKind.ExportKeyword],
       [SyntaxKind.ConstKeyword],
-      [SyntaxKind.Identifier, 'makeActionGateway'],
+      [SyntaxKind.Identifier, 'makeOperationGateway'],
       [SyntaxKind.EqualsToken],
     ],
     0,
@@ -3542,7 +3468,17 @@ export const hasGeneratedOperationGatewayContract = (
     factoryEnd !== undefined &&
     hasExactGeneratedGatewayFactory(tokens, factory, factoryEnd) &&
     hasExclusiveNamedImportFrom(source, 'issueGatewayContext', '@app/shared-contracts') &&
-    hasExclusiveNamedImportFrom(source, 'Effect', 'effect');
+    hasExclusiveNamedImportFrom(source, 'makeSharedOperationGateway', '@app/shared-contracts') &&
+    findSequence(
+      tokens,
+      [
+        [SyntaxKind.Identifier, 'makeOperationGateway'],
+        [SyntaxKind.AsKeyword],
+        [SyntaxKind.Identifier, 'makeSharedOperationGateway'],
+      ],
+      0,
+      tokens.length,
+    ) !== undefined;
   return (
     audience !== undefined &&
     invokesFreshIssuer &&
@@ -3550,15 +3486,13 @@ export const hasGeneratedOperationGatewayContract = (
     hasTopLevelSequence(tokens, [
       [SyntaxKind.ExportKeyword],
       [SyntaxKind.ConstKeyword],
-      [SyntaxKind.Identifier, 'actionGateway'],
+      [SyntaxKind.Identifier, 'operationGateway'],
       [SyntaxKind.EqualsToken],
-      [SyntaxKind.Identifier, 'makeActionGateway'],
+      [SyntaxKind.Identifier, 'makeOperationGateway'],
       [SyntaxKind.OpenParenToken],
       [SyntaxKind.CloseParenToken],
       [SyntaxKind.SemicolonToken],
-    ]) &&
-    hasTopLevelExportedConstBinding(source, 'makeOperationGateway', 'makeActionGateway') &&
-    hasTopLevelExportedConstBinding(source, 'operationGateway', 'actionGateway')
+    ])
   );
 };
 
@@ -3578,7 +3512,6 @@ export const hasCompleteGeneratedModuleApiSeam = (
   const registration = sources.get(`${verticalPath}/vertical.registration.ts`);
   const principal = sources.get(`${verticalPath}/api/auth/action-principal.ts`);
   const gateway = sources.get(`${verticalPath}/src/api/action-gateway.ts`);
-  const readServerSupport = sources.get(`${verticalPath}/api/read-server-support.ts`);
   const moduleId =
     manifest === undefined
       ? ''
@@ -3592,11 +3525,7 @@ export const hasCompleteGeneratedModuleApiSeam = (
     principal === undefined ||
     gateway === undefined ||
     !principal.startsWith(actionBoundaryHeader) ||
-    !hasTopLevelExportedConstBinding(
-      principal,
-      'verifyOperationPrincipal',
-      'verifyActionPrincipal',
-    ) ||
+    !hasGeneratedOperationPrincipalContract(principal) ||
     !hasGeneratedOperationGatewayContract(gateway, deploymentAppId)
   ) {
     return false;
@@ -3670,7 +3599,7 @@ export const hasCompleteGeneratedModuleApiSeam = (
         ownerContractImport: `../../shared/apis/${stem}.ts`,
         publicOperation: `execute${pascal}`,
       }) &&
-      hasGeneratedGovernedServerContract(serverSource, `${camel}ReadApiLive`, readServerSupport) &&
+      hasGeneratedGovernedServerContract(serverSource, `${camel}ReadApiLive`) &&
       hasPublishedContract(sharedApi, manifest, registration, stem, pascal)
     );
   });

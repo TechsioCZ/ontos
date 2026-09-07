@@ -1,3 +1,57 @@
+diff --git a/dist/cjs/ultramodern-workspace/api/service.cjs b/dist/cjs/ultramodern-workspace/api/service.cjs
+index 4f317bc245a5724c238421862cffeb4ed2a42603..a32570f6189ca80bedb59733c5cb39bb84f185db 100644
+--- a/dist/cjs/ultramodern-workspace/api/service.cjs
++++ b/dist/cjs/ultramodern-workspace/api/service.cjs
+@@ -37,23 +37,18 @@ const external_naming_cjs_namespaceObject = require("../naming.cjs");
+ const external_checkout_cart_cjs_namespaceObject = require("./checkout-cart.cjs");
+ const external_names_cjs_namespaceObject = require("./names.cjs");
+ const external_rpc_cjs_namespaceObject = require("./rpc.cjs");
+-function createApiServiceEntry(service, contractImportPath) {
++function createApiServiceEntry(scope, service, contractImportPath) {
+     if ((service.api?.protocol ?? 'rest') === 'rpc') return (0, external_rpc_cjs_namespaceObject.createRpcApiServiceEntry)(service);
+     const apiExport = (0, external_names_cjs_namespaceObject.verticalApiExport)(service);
+     const groupName = (0, external_names_cjs_namespaceObject.verticalApiGroupName)(service);
+     const notFoundErrorExport = (0, external_names_cjs_namespaceObject.verticalApiNotFoundErrorExport)(service);
+     const stem = (0, external_descriptors_cjs_namespaceObject.resolveApiStem)(service);
+-    return `import {
+-  defineEffectBff,
++    return `import { assembleEffectBffRuntime } from '${(0, external_naming_cjs_namespaceObject.packageName)(scope, 'shared-contracts')}/server/effect-bff-runtime';
++import {
+   Effect,
+   HttpApiBuilder,
+   Layer,
+ } from '@modern-js/plugin-bff/effect-edge';
+-import type {
+-  EffectBffDefinition,
+-  EffectBffRuntime,
+-  EffectRuntimeLayer,
+-} from '@modern-js/plugin-bff/effect-edge';
+ import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
+ import {
+   ${apiExport},
+@@ -158,14 +153,14 @@ const ${groupName}Layer = HttpApiBuilder.group(
+       )${(0, external_checkout_cart_cjs_namespaceObject.createCheckoutCartServerHandlers)(service)},
+ );
+
+-const layer = HttpApiBuilder.layer(${apiExport}).pipe(
+-  Layer.provide(${groupName}Layer),
+-) satisfies EffectRuntimeLayer;
+-const apiRuntime: EffectBffDefinition<typeof ${apiExport}, EffectRuntimeLayer> &
+-  EffectBffRuntime<typeof ${apiExport}, EffectRuntimeLayer> = defineEffectBff({
+-  api: ${apiExport},
+-  layer,
+-});
++const apiHandlersLive = Layer.mergeAll(${groupName}Layer);
++export const make${apiExport[0].toUpperCase()}${apiExport.slice(1)}Runtime = () => {
++  return assembleEffectBffRuntime({
++    api: ${apiExport},
++    handlers: apiHandlersLive,
++  });
++};
++const apiRuntime = make${apiExport[0].toUpperCase()}${apiExport.slice(1)}Runtime();
+
+ export default apiRuntime;
+ `;
 diff --git a/dist/cjs/ultramodern-workspace/demo-components.cjs b/dist/cjs/ultramodern-workspace/demo-components.cjs
 index 3724fd0b7b14671fba0cb1c46e25719c5e2e03b7..f58815fbb93eea409b3341583b96e682e2c6e783 100644
 --- a/dist/cjs/ultramodern-workspace/demo-components.cjs
@@ -358,6 +412,34 @@ index ef811e6023d5790d8d0bb388455f3b59e9a25707..69a2929c4a71799340a5838d8b52cbed
  const ultramodernBuildArtifact = {
    ...ultramodernGeneratedBuildArtifact,
    deliveryUnit: {
+diff --git a/dist/cjs/ultramodern-workspace/package-json.cjs b/dist/cjs/ultramodern-workspace/package-json.cjs
+index 312a3b3c5caa8c007906c22f589972928efa71e6..55464a13c50f7572ab901ae2a90a6ee721f15122 100644
+--- a/dist/cjs/ultramodern-workspace/package-json.cjs
++++ b/dist/cjs/ultramodern-workspace/package-json.cjs
+@@ -214,7 +214,7 @@ function createAppPackage(scope, app, packageSource, enableTailwind, remotes = [
+     if (Object.keys(packageExports).length > 0) packageJson.exports = packageExports;
+     return packageJson;
+ }
+-function createSharedPackage(scope, id, description) {
++function createSharedPackage(scope, id, description, packageSource) {
+     const packageJson = {
+         private: true,
+         name: (0, external_naming_cjs_namespaceObject.packageName)(scope, id),
+@@ -235,6 +235,14 @@ function createSharedPackage(scope, id, description) {
+         ...packageJson.exports,
+         './tokens.css': './src/tokens.css'
+     };
++    if ('shared-contracts' === id) packageJson.exports = {
++        ...packageJson.exports,
++        './server/effect-bff-runtime': './src/effect-bff-runtime.ts'
++    };
++    if ('shared-contracts' === id) packageJson.dependencies = {
++        '@modern-js/plugin-bff': (0, external_ultramodern_package_source_cjs_namespaceObject.modernPackageSpecifier)('@modern-js/plugin-bff', packageSource),
++        effect: external_policy_cjs_namespaceObject.ULTRAMODERN_PACKAGE_PINS.bffEffectDependencies.effect
++    };
+     return packageJson;
+ }
+ function createSharedContractsIndex() {
 diff --git a/dist/cjs/ultramodern-workspace/workspace-script-plan.cjs b/dist/cjs/ultramodern-workspace/workspace-script-plan.cjs
 index 95812d7b858909ac118b28bdba1dc3845576f60a..005679b4802826a50820613417c7732db03ec7b5 100644
 --- a/dist/cjs/ultramodern-workspace/workspace-script-plan.cjs
@@ -371,6 +453,102 @@ index 95812d7b858909ac118b28bdba1dc3845576f60a..005679b4802826a50820613417c7732d
          check: `pnpm format:check && pnpm lint && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness${bridgeCheck}`
      };
  }
+diff --git a/dist/cjs/ultramodern-workspace/write-app.cjs b/dist/cjs/ultramodern-workspace/write-app.cjs
+index 4d8e88f28808effaedd34499a6a4aaf635f2f6e2..95580818c2d193bf1df6161aae0b24cf4398ce27 100644
+--- a/dist/cjs/ultramodern-workspace/write-app.cjs
++++ b/dist/cjs/ultramodern-workspace/write-app.cjs
+@@ -123,7 +123,7 @@ function writeAppApiAndRemoteExposeFiles({ targetDir, scope, resolvedApp, emitsU
+         const rpcProtocol = 'rpc' === (0, external_descriptors_cjs_namespaceObject.resolveApiProtocol)(resolvedApp);
+         if (rpcProtocol) (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/shared/rpc.ts`, (0, rpc_cjs_namespaceObject.createRpcContractFile)(resolvedApp));
+         else (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/shared/api.ts`, (0, external_api_cjs_namespaceObject.createSharedApi)(resolvedApp));
+-        (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/api/index.ts`, (0, external_api_cjs_namespaceObject.createApiServiceEntry)(resolvedApp, rpcProtocol ? '../shared/rpc.ts' : '../shared/api.ts'));
++        (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/api/index.ts`, (0, external_api_cjs_namespaceObject.createApiServiceEntry)(scope, resolvedApp, rpcProtocol ? '../shared/rpc.ts' : '../shared/api.ts'));
+         (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/api/backend-federation.ts`, (0, external_backend_federation_cjs_namespaceObject.createBackendFederationContractFile)(resolvedApp));
+         (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/api/effect-api.ts`, (0, external_api_cjs_namespaceObject.createBackendEffectApiExpose)(scope, resolvedApp));
+         if (rpcProtocol) (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/src/api/${resolvedApp.api.stem}-rpc-client.ts`, (0, rpc_cjs_namespaceObject.createRpcClientFile)(resolvedApp));
+diff --git a/dist/cjs/ultramodern-workspace/write-workspace.cjs b/dist/cjs/ultramodern-workspace/write-workspace.cjs
+index b239e505a9db2a5d5620a223c96ae986c36b11db..6e124abb2f2c7fb3dacc05bd82671d031be704d1 100644
+--- a/dist/cjs/ultramodern-workspace/write-workspace.cjs
++++ b/dist/cjs/ultramodern-workspace/write-workspace.cjs
+@@ -62,12 +62,13 @@ const external_zerops_cjs_namespaceObject = require("./zerops.cjs");
+ function hasExplicitInstallRequest(options) {
+     return void 0 !== options.packageSource && 'workspace' !== options.packageSource.strategy;
+ }
+-function writeSharedPackages(targetDir, scope) {
++function writeSharedPackages(targetDir, scope, packageSource) {
+     for (const sharedPackage of external_descriptors_cjs_namespaceObject.sharedPackages){
+-        (0, external_fs_io_cjs_namespaceObject.writeJson)(targetDir, `${sharedPackage.directory}/package.json`, (0, external_package_json_cjs_namespaceObject.createSharedPackage)(scope, sharedPackage.id, sharedPackage.description));
++        (0, external_fs_io_cjs_namespaceObject.writeJson)(targetDir, `${sharedPackage.directory}/package.json`, (0, external_package_json_cjs_namespaceObject.createSharedPackage)(scope, sharedPackage.id, sharedPackage.description, packageSource));
+         (0, external_fs_io_cjs_namespaceObject.writeJson)(targetDir, `${sharedPackage.directory}/tsconfig.json`, (0, external_package_json_cjs_namespaceObject.createSharedPackageTsConfig)(sharedPackage.directory));
+     }
+     (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, 'packages/shared-contracts/src/index.ts', (0, external_package_json_cjs_namespaceObject.createSharedContractsIndex)());
++    (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, 'packages/shared-contracts/src/effect-bff-runtime.ts', (0, external_fs_io_cjs_namespaceObject.readFileTemplate)('packages/effect-bff-runtime.ts'));
+     (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, 'packages/shared-design-tokens/src/index.ts', `export const sharedDesignTokens = {
+   color: {
+     accent: '#2f8f68',
+@@ -178,7 +179,7 @@ function generateUltramodernWorkspace(options) {
+     (0, external_fs_io_cjs_namespaceObject.writeJson)(options.targetDir, external_descriptors_cjs_namespaceObject.ULTRAMODERN_CONFIG_PATH, createCompactUltramodernConfig(scope, options.modernVersion, packageSource, createdApps, enableTailwind, bridge));
+     (0, external_write_app_cjs_namespaceObject.writeApp)(options.targetDir, scope, external_descriptors_cjs_namespaceObject.shellApp, packageSource, enableTailwind, initialVerticals, bridge);
+     for (const remote of initialVerticals)(0, external_write_app_cjs_namespaceObject.writeApp)(options.targetDir, scope, remote, packageSource, enableTailwind, initialVerticals, bridge);
+-    writeSharedPackages(options.targetDir, scope);
++    writeSharedPackages(options.targetDir, scope, packageSource);
+     (0, external_workspace_scripts_cjs_namespaceObject.writeGeneratedWorkspaceScripts)(options.targetDir, scope, enableTailwind, initialVerticals, releaseCohort);
+     const preliminaryAfterFiles = (0, external_generation_result_cjs_namespaceObject.createFileSnapshot)(options.targetDir);
+     const preliminaryDiff = (0, external_generation_result_cjs_namespaceObject.diffFileSnapshots)(beforeFiles, preliminaryAfterFiles);
+diff --git a/dist/esm/ultramodern-workspace/api/service.js b/dist/esm/ultramodern-workspace/api/service.js
+index 92e2c050f9b499571236d28f6bb0c6fffc085e47..85310a9dca1862fe9134aa693acabfd9ebd8e9b7 100644
+--- a/dist/esm/ultramodern-workspace/api/service.js
++++ b/dist/esm/ultramodern-workspace/api/service.js
+@@ -4,23 +4,18 @@ import { packageName } from "../naming.js";
+ import { createCheckoutCartServerHandlers, createCheckoutCartServerState } from "./checkout-cart.js";
+ import { verticalApiExport, verticalApiGroupName, verticalApiNotFoundErrorExport } from "./names.js";
+ import { createRpcApiServiceEntry, rpcPath, verticalRpcContractExport, verticalRpcGroupExport } from "./rpc.js";
+-function createApiServiceEntry(service, contractImportPath) {
++function createApiServiceEntry(scope, service, contractImportPath) {
+     if ((service.api?.protocol ?? 'rest') === 'rpc') return createRpcApiServiceEntry(service);
+     const apiExport = verticalApiExport(service);
+     const groupName = verticalApiGroupName(service);
+     const notFoundErrorExport = verticalApiNotFoundErrorExport(service);
+     const stem = resolveApiStem(service);
+-    return `import {
+-  defineEffectBff,
++    return `import { assembleEffectBffRuntime } from '${packageName(scope, 'shared-contracts')}/server/effect-bff-runtime';
++import {
+   Effect,
+   HttpApiBuilder,
+   Layer,
+ } from '@modern-js/plugin-bff/effect-edge';
+-import type {
+-  EffectBffDefinition,
+-  EffectBffRuntime,
+-  EffectRuntimeLayer,
+-} from '@modern-js/plugin-bff/effect-edge';
+ import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
+ import {
+   ${apiExport},
+@@ -125,14 +120,14 @@ const ${groupName}Layer = HttpApiBuilder.group(
+       )${createCheckoutCartServerHandlers(service)},
+ );
+
+-const layer = HttpApiBuilder.layer(${apiExport}).pipe(
+-  Layer.provide(${groupName}Layer),
+-) satisfies EffectRuntimeLayer;
+-const apiRuntime: EffectBffDefinition<typeof ${apiExport}, EffectRuntimeLayer> &
+-  EffectBffRuntime<typeof ${apiExport}, EffectRuntimeLayer> = defineEffectBff({
+-  api: ${apiExport},
+-  layer,
+-});
++const apiHandlersLive = Layer.mergeAll(${groupName}Layer);
++export const make${apiExport[0].toUpperCase()}${apiExport.slice(1)}Runtime = () => {
++  return assembleEffectBffRuntime({
++    api: ${apiExport},
++    handlers: apiHandlersLive,
++  });
++};
++const apiRuntime = make${apiExport[0].toUpperCase()}${apiExport.slice(1)}Runtime();
+
+ export default apiRuntime;
+ `;
 diff --git a/dist/esm/ultramodern-workspace/demo-components.js b/dist/esm/ultramodern-workspace/demo-components.js
 index 4baf232ad01064de66c3dcf8b913a99b4754e5ce..3b5ff3fbf21fdd396bd0a230457798e07a6603fd 100644
 --- a/dist/esm/ultramodern-workspace/demo-components.js
@@ -729,6 +907,34 @@ index 1e2bef1edab5bff011cc1913b7746c39312ca90b..d8b5407100b33140151d7044abbcf828
  const ultramodernBuildArtifact = {
    ...ultramodernGeneratedBuildArtifact,
    deliveryUnit: {
+diff --git a/dist/esm/ultramodern-workspace/package-json.js b/dist/esm/ultramodern-workspace/package-json.js
+index d97db9c90294bd70a94d5ccc10296a0079cd014e..c0d6bd0e9be6618fa82de88ff179a9744cc027f5 100644
+--- a/dist/esm/ultramodern-workspace/package-json.js
++++ b/dist/esm/ultramodern-workspace/package-json.js
+@@ -171,7 +171,7 @@ function createAppPackage(scope, app, packageSource, enableTailwind, remotes = [
+     if (Object.keys(packageExports).length > 0) packageJson.exports = packageExports;
+     return packageJson;
+ }
+-function createSharedPackage(scope, id, description) {
++function createSharedPackage(scope, id, description, packageSource) {
+     const packageJson = {
+         private: true,
+         name: packageName(scope, id),
+@@ -192,6 +192,14 @@ function createSharedPackage(scope, id, description) {
+         ...packageJson.exports,
+         './tokens.css': './src/tokens.css'
+     };
++    if ('shared-contracts' === id) packageJson.exports = {
++        ...packageJson.exports,
++        './server/effect-bff-runtime': './src/effect-bff-runtime.ts'
++    };
++    if ('shared-contracts' === id) packageJson.dependencies = {
++        '@modern-js/plugin-bff': modernPackageSpecifier('@modern-js/plugin-bff', packageSource),
++        effect: ULTRAMODERN_PACKAGE_PINS.bffEffectDependencies.effect
++    };
+     return packageJson;
+ }
+ function createSharedContractsIndex() {
 diff --git a/dist/esm/ultramodern-workspace/workspace-script-plan.js b/dist/esm/ultramodern-workspace/workspace-script-plan.js
 index 683e43743c53e41b163455e8c8138929a44480c2..2d082066f2c5f5b489ec69d9fd7faa4dad5a8ce6 100644
 --- a/dist/esm/ultramodern-workspace/workspace-script-plan.js
@@ -742,6 +948,111 @@ index 683e43743c53e41b163455e8c8138929a44480c2..2d082066f2c5f5b489ec69d9fd7faa4d
          check: `pnpm format:check && pnpm lint && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness${bridgeCheck}`
      };
  }
+diff --git a/dist/esm/ultramodern-workspace/write-app.js b/dist/esm/ultramodern-workspace/write-app.js
+index 15a02949f43f418dd305a50e9c2edebd7f7db907..c9f7ab272b9eb7870990437806148e39e3c81161 100644
+--- a/dist/esm/ultramodern-workspace/write-app.js
++++ b/dist/esm/ultramodern-workspace/write-app.js
+@@ -89,7 +89,7 @@ function writeAppApiAndRemoteExposeFiles({ targetDir, scope, resolvedApp, emitsU
+     if (appHasApi(resolvedApp)) {
+         const rpcProtocol = 'rpc' === resolveApiProtocol(resolvedApp);
+         rpcProtocol ? writeFile(targetDir, `${resolvedApp.directory}/shared/rpc.ts`, createRpcContractFile(resolvedApp)) : writeFile(targetDir, `${resolvedApp.directory}/shared/api.ts`, createSharedApi(resolvedApp));
+-        writeFile(targetDir, `${resolvedApp.directory}/api/index.ts`, createApiServiceEntry(resolvedApp, rpcProtocol ? '../shared/rpc.ts' : '../shared/api.ts'));
++        writeFile(targetDir, `${resolvedApp.directory}/api/index.ts`, createApiServiceEntry(scope, resolvedApp, rpcProtocol ? '../shared/rpc.ts' : '../shared/api.ts'));
+         writeFile(targetDir, `${resolvedApp.directory}/api/backend-federation.ts`, createBackendFederationContractFile(resolvedApp));
+         writeFile(targetDir, `${resolvedApp.directory}/api/effect-api.ts`, createBackendEffectApiExpose(scope, resolvedApp));
+         rpcProtocol ? writeFile(targetDir, `${resolvedApp.directory}/src/api/${resolvedApp.api.stem}-rpc-client.ts`, createRpcClientFile(resolvedApp)) : writeFile(targetDir, `${resolvedApp.directory}/src/api/${resolvedApp.api.stem}-client.ts`, createApiClient(resolvedApp, '../../shared/api'));
+diff --git a/dist/esm/ultramodern-workspace/write-workspace.js b/dist/esm/ultramodern-workspace/write-workspace.js
+index afd450197f1a313fe7f8edd6b349d10b9e0ad8a2..0e34c9589d469b542916dd57ff3fead0384c4591 100644
+--- a/dist/esm/ultramodern-workspace/write-workspace.js
++++ b/dist/esm/ultramodern-workspace/write-workspace.js
+@@ -4,7 +4,7 @@ import { createSharedDesignTokensCss } from "./app-files.js";
+ import { normalizeUltramodernBridgeConfig } from "./bridge-config.js";
+ import { createDevelopmentOverlay, createOwnership, createTopology, createUltramodernConfig } from "./contracts.js";
+ import { ULTRAMODERN_CONFIG_PATH, createShellHost, sharedPackages, shellApp } from "./descriptors.js";
+-import { copyRootTemplate, formatGeneratedWorkspaceFiles, writeFile, writeFileReplacing, writeJson } from "./fs-io.js";
++import { copyRootTemplate, formatGeneratedWorkspaceFiles, readFileTemplate, writeFile, writeFileReplacing, writeJson } from "./fs-io.js";
+ import { createFileSnapshot, createGenerationResult, diffFileSnapshots } from "./generation-result.js";
+ import { assertUniqueTailwindPrefixes, toPackageScope } from "./naming.js";
+ import { runCodeSmithOverlays } from "./overlays.js";
+@@ -18,12 +18,13 @@ import { createZeropsYaml } from "./zerops.js";
+ function hasExplicitInstallRequest(options) {
+     return void 0 !== options.packageSource && 'workspace' !== options.packageSource.strategy;
+ }
+-function writeSharedPackages(targetDir, scope) {
++function writeSharedPackages(targetDir, scope, packageSource) {
+     for (const sharedPackage of sharedPackages){
+-        writeJson(targetDir, `${sharedPackage.directory}/package.json`, createSharedPackage(scope, sharedPackage.id, sharedPackage.description));
++        writeJson(targetDir, `${sharedPackage.directory}/package.json`, createSharedPackage(scope, sharedPackage.id, sharedPackage.description, packageSource));
+         writeJson(targetDir, `${sharedPackage.directory}/tsconfig.json`, createSharedPackageTsConfig(sharedPackage.directory));
+     }
+     writeFile(targetDir, 'packages/shared-contracts/src/index.ts', createSharedContractsIndex());
++    writeFile(targetDir, 'packages/shared-contracts/src/effect-bff-runtime.ts', readFileTemplate('packages/effect-bff-runtime.ts'));
+     writeFile(targetDir, 'packages/shared-design-tokens/src/index.ts', `export const sharedDesignTokens = {
+   color: {
+     accent: '#2f8f68',
+@@ -134,7 +135,7 @@ function generateUltramodernWorkspace(options) {
+     writeJson(options.targetDir, ULTRAMODERN_CONFIG_PATH, createCompactUltramodernConfig(scope, options.modernVersion, packageSource, createdApps, enableTailwind, bridge));
+     writeApp(options.targetDir, scope, shellApp, packageSource, enableTailwind, initialVerticals, bridge);
+     for (const remote of initialVerticals)writeApp(options.targetDir, scope, remote, packageSource, enableTailwind, initialVerticals, bridge);
+-    writeSharedPackages(options.targetDir, scope);
++    writeSharedPackages(options.targetDir, scope, packageSource);
+     writeGeneratedWorkspaceScripts(options.targetDir, scope, enableTailwind, initialVerticals, releaseCohort);
+     const preliminaryAfterFiles = createFileSnapshot(options.targetDir);
+     const preliminaryDiff = diffFileSnapshots(beforeFiles, preliminaryAfterFiles);
+diff --git a/dist/esm-node/ultramodern-workspace/api/service.js b/dist/esm-node/ultramodern-workspace/api/service.js
+index d07b951c8c0dd4f3c55779073c1b7922c9dd1a7c..18aec1024e1f046544e8ac2b6459099812de7ce9 100644
+--- a/dist/esm-node/ultramodern-workspace/api/service.js
++++ b/dist/esm-node/ultramodern-workspace/api/service.js
+@@ -5,23 +5,18 @@ import { packageName } from "../naming.js";
+ import { createCheckoutCartServerHandlers, createCheckoutCartServerState } from "./checkout-cart.js";
+ import { verticalApiExport, verticalApiGroupName, verticalApiNotFoundErrorExport } from "./names.js";
+ import { createRpcApiServiceEntry, rpcPath, verticalRpcContractExport, verticalRpcGroupExport } from "./rpc.js";
+-function createApiServiceEntry(service, contractImportPath) {
++function createApiServiceEntry(scope, service, contractImportPath) {
+     if ((service.api?.protocol ?? 'rest') === 'rpc') return createRpcApiServiceEntry(service);
+     const apiExport = verticalApiExport(service);
+     const groupName = verticalApiGroupName(service);
+     const notFoundErrorExport = verticalApiNotFoundErrorExport(service);
+     const stem = resolveApiStem(service);
+-    return `import {
+-  defineEffectBff,
++    return `import { assembleEffectBffRuntime } from '${packageName(scope, 'shared-contracts')}/server/effect-bff-runtime';
++import {
+   Effect,
+   HttpApiBuilder,
+   Layer,
+ } from '@modern-js/plugin-bff/effect-edge';
+-import type {
+-  EffectBffDefinition,
+-  EffectBffRuntime,
+-  EffectRuntimeLayer,
+-} from '@modern-js/plugin-bff/effect-edge';
+ import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
+ import {
+   ${apiExport},
+@@ -126,14 +121,14 @@ const ${groupName}Layer = HttpApiBuilder.group(
+       )${createCheckoutCartServerHandlers(service)},
+ );
+
+-const layer = HttpApiBuilder.layer(${apiExport}).pipe(
+-  Layer.provide(${groupName}Layer),
+-) satisfies EffectRuntimeLayer;
+-const apiRuntime: EffectBffDefinition<typeof ${apiExport}, EffectRuntimeLayer> &
+-  EffectBffRuntime<typeof ${apiExport}, EffectRuntimeLayer> = defineEffectBff({
+-  api: ${apiExport},
+-  layer,
+-});
++const apiHandlersLive = Layer.mergeAll(${groupName}Layer);
++export const make${apiExport[0].toUpperCase()}${apiExport.slice(1)}Runtime = () => {
++  return assembleEffectBffRuntime({
++    api: ${apiExport},
++    handlers: apiHandlersLive,
++  });
++};
++const apiRuntime = make${apiExport[0].toUpperCase()}${apiExport.slice(1)}Runtime();
+
+ export default apiRuntime;
+ `;
 diff --git a/dist/esm-node/ultramodern-workspace/demo-components.js b/dist/esm-node/ultramodern-workspace/demo-components.js
 index 503564abb6a3ea1be8e3c209197f55ef49b6209f..d0e7878f9d82d9fe8996ed1987eee2f9c12a0862 100644
 --- a/dist/esm-node/ultramodern-workspace/demo-components.js
@@ -1101,6 +1412,34 @@ index be7c63e9f560d2f31a3ee28d4047d700a51b2abb..74714165cdb59faf8158bee5779a5432
  const ultramodernBuildArtifact = {
    ...ultramodernGeneratedBuildArtifact,
    deliveryUnit: {
+diff --git a/dist/esm-node/ultramodern-workspace/package-json.js b/dist/esm-node/ultramodern-workspace/package-json.js
+index f901de089342afc1a1462696799a58e5821fe68e..c99330a62758473a98b2a9d4d5454e4e8abf8e8d 100644
+--- a/dist/esm-node/ultramodern-workspace/package-json.js
++++ b/dist/esm-node/ultramodern-workspace/package-json.js
+@@ -172,7 +172,7 @@ function createAppPackage(scope, app, packageSource, enableTailwind, remotes = [
+     if (Object.keys(packageExports).length > 0) packageJson.exports = packageExports;
+     return packageJson;
+ }
+-function createSharedPackage(scope, id, description) {
++function createSharedPackage(scope, id, description, packageSource) {
+     const packageJson = {
+         private: true,
+         name: packageName(scope, id),
+@@ -193,6 +193,14 @@ function createSharedPackage(scope, id, description) {
+         ...packageJson.exports,
+         './tokens.css': './src/tokens.css'
+     };
++    if ('shared-contracts' === id) packageJson.exports = {
++        ...packageJson.exports,
++        './server/effect-bff-runtime': './src/effect-bff-runtime.ts'
++    };
++    if ('shared-contracts' === id) packageJson.dependencies = {
++        '@modern-js/plugin-bff': modernPackageSpecifier('@modern-js/plugin-bff', packageSource),
++        effect: ULTRAMODERN_PACKAGE_PINS.bffEffectDependencies.effect
++    };
+     return packageJson;
+ }
+ function createSharedContractsIndex() {
 diff --git a/dist/esm-node/ultramodern-workspace/workspace-script-plan.js b/dist/esm-node/ultramodern-workspace/workspace-script-plan.js
 index d5c918d9687cc706d40994e9526d3639624b4acd..f64f423af3cfcc62459c9a6919d63760eca271b8 100644
 --- a/dist/esm-node/ultramodern-workspace/workspace-script-plan.js
@@ -1114,6 +1453,68 @@ index d5c918d9687cc706d40994e9526d3639624b4acd..f64f423af3cfcc62459c9a6919d63760
          check: `pnpm format:check && pnpm lint && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness${bridgeCheck}`
      };
  }
+diff --git a/dist/esm-node/ultramodern-workspace/write-app.js b/dist/esm-node/ultramodern-workspace/write-app.js
+index 60cc1188ac1f6174f7c5c1bdfe62d8d04e44735f..0106d0934e39cc4d0c1c06ec16839ad8826782e3 100644
+--- a/dist/esm-node/ultramodern-workspace/write-app.js
++++ b/dist/esm-node/ultramodern-workspace/write-app.js
+@@ -90,7 +90,7 @@ function writeAppApiAndRemoteExposeFiles({ targetDir, scope, resolvedApp, emitsU
+     if (appHasApi(resolvedApp)) {
+         const rpcProtocol = 'rpc' === resolveApiProtocol(resolvedApp);
+         rpcProtocol ? writeFile(targetDir, `${resolvedApp.directory}/shared/rpc.ts`, createRpcContractFile(resolvedApp)) : writeFile(targetDir, `${resolvedApp.directory}/shared/api.ts`, createSharedApi(resolvedApp));
+-        writeFile(targetDir, `${resolvedApp.directory}/api/index.ts`, createApiServiceEntry(resolvedApp, rpcProtocol ? '../shared/rpc.ts' : '../shared/api.ts'));
++        writeFile(targetDir, `${resolvedApp.directory}/api/index.ts`, createApiServiceEntry(scope, resolvedApp, rpcProtocol ? '../shared/rpc.ts' : '../shared/api.ts'));
+         writeFile(targetDir, `${resolvedApp.directory}/api/backend-federation.ts`, createBackendFederationContractFile(resolvedApp));
+         writeFile(targetDir, `${resolvedApp.directory}/api/effect-api.ts`, createBackendEffectApiExpose(scope, resolvedApp));
+         rpcProtocol ? writeFile(targetDir, `${resolvedApp.directory}/src/api/${resolvedApp.api.stem}-rpc-client.ts`, createRpcClientFile(resolvedApp)) : writeFile(targetDir, `${resolvedApp.directory}/src/api/${resolvedApp.api.stem}-client.ts`, createApiClient(resolvedApp, '../../shared/api'));
+diff --git a/dist/esm-node/ultramodern-workspace/write-workspace.js b/dist/esm-node/ultramodern-workspace/write-workspace.js
+index 5b5c2103812a3a6be778cb9aa4a591614ecf88bd..7f3dcf6d110aa65295167396c44bc4f5d73f19ce 100644
+--- a/dist/esm-node/ultramodern-workspace/write-workspace.js
++++ b/dist/esm-node/ultramodern-workspace/write-workspace.js
+@@ -5,7 +5,7 @@ import { createSharedDesignTokensCss } from "./app-files.js";
+ import { normalizeUltramodernBridgeConfig } from "./bridge-config.js";
+ import { createDevelopmentOverlay, createOwnership, createTopology, createUltramodernConfig } from "./contracts.js";
+ import { ULTRAMODERN_CONFIG_PATH, createShellHost, sharedPackages, shellApp } from "./descriptors.js";
+-import { copyRootTemplate, formatGeneratedWorkspaceFiles, writeFile, writeFileReplacing, writeJson } from "./fs-io.js";
++import { copyRootTemplate, formatGeneratedWorkspaceFiles, readFileTemplate, writeFile, writeFileReplacing, writeJson } from "./fs-io.js";
+ import { createFileSnapshot, createGenerationResult, diffFileSnapshots } from "./generation-result.js";
+ import { assertUniqueTailwindPrefixes, toPackageScope } from "./naming.js";
+ import { runCodeSmithOverlays } from "./overlays.js";
+@@ -19,12 +19,13 @@ import { createZeropsYaml } from "./zerops.js";
+ function hasExplicitInstallRequest(options) {
+     return void 0 !== options.packageSource && 'workspace' !== options.packageSource.strategy;
+ }
+-function writeSharedPackages(targetDir, scope) {
++function writeSharedPackages(targetDir, scope, packageSource) {
+     for (const sharedPackage of sharedPackages){
+-        writeJson(targetDir, `${sharedPackage.directory}/package.json`, createSharedPackage(scope, sharedPackage.id, sharedPackage.description));
++        writeJson(targetDir, `${sharedPackage.directory}/package.json`, createSharedPackage(scope, sharedPackage.id, sharedPackage.description, packageSource));
+         writeJson(targetDir, `${sharedPackage.directory}/tsconfig.json`, createSharedPackageTsConfig(sharedPackage.directory));
+     }
+     writeFile(targetDir, 'packages/shared-contracts/src/index.ts', createSharedContractsIndex());
++    writeFile(targetDir, 'packages/shared-contracts/src/effect-bff-runtime.ts', readFileTemplate('packages/effect-bff-runtime.ts'));
+     writeFile(targetDir, 'packages/shared-design-tokens/src/index.ts', `export const sharedDesignTokens = {
+   color: {
+     accent: '#2f8f68',
+@@ -135,7 +136,7 @@ function generateUltramodernWorkspace(options) {
+     writeJson(options.targetDir, ULTRAMODERN_CONFIG_PATH, createCompactUltramodernConfig(scope, options.modernVersion, packageSource, createdApps, enableTailwind, bridge));
+     writeApp(options.targetDir, scope, shellApp, packageSource, enableTailwind, initialVerticals, bridge);
+     for (const remote of initialVerticals)writeApp(options.targetDir, scope, remote, packageSource, enableTailwind, initialVerticals, bridge);
+-    writeSharedPackages(options.targetDir, scope);
++    writeSharedPackages(options.targetDir, scope, packageSource);
+     writeGeneratedWorkspaceScripts(options.targetDir, scope, enableTailwind, initialVerticals, releaseCohort);
+     const preliminaryAfterFiles = createFileSnapshot(options.targetDir);
+     const preliminaryDiff = diffFileSnapshots(beforeFiles, preliminaryAfterFiles);
+diff --git a/dist/types/ultramodern-workspace/api/service.d.ts b/dist/types/ultramodern-workspace/api/service.d.ts
+index 9b19b2a86a647711488079af713bbd2bcecf5b4b..b8726a46f462b48db088b2490fe275ca40aa3aab 100644
+--- a/dist/types/ultramodern-workspace/api/service.d.ts
++++ b/dist/types/ultramodern-workspace/api/service.d.ts
+@@ -1,5 +1,5 @@
+ import type { WorkspaceApi, WorkspaceApp } from '../types';
+-export declare function createApiServiceEntry(service: {
++export declare function createApiServiceEntry(scope: string, service: {
+     id: string;
+     api?: WorkspaceApi;
+ }, contractImportPath: string): string;
 diff --git a/dist/types/ultramodern-workspace/mf-validation/constants.d.ts b/dist/types/ultramodern-workspace/mf-validation/constants.d.ts
 index ebbc5176bacfd3790c8f01c8000e258ad348ce00..2d9e878b3f30650b0ca3e7b78d8c63de31f1489d 100644
 --- a/dist/types/ultramodern-workspace/mf-validation/constants.d.ts
@@ -1125,8 +1526,68 @@ index ebbc5176bacfd3790c8f01c8000e258ad348ce00..2d9e878b3f30650b0ca3e7b78d8c63de
  export declare const generatedMetadataPaths: string[];
  export declare const defaultAppRootDirs: string[];
  export declare const skippedScanDirs: Set<string>;
+diff --git a/dist/types/ultramodern-workspace/package-json.d.ts b/dist/types/ultramodern-workspace/package-json.d.ts
+index 3ca654405689c3d5e1710e090f28c920b99a824c..ab91958b71bb6cb28d4b9b15a48c564e0e5f4112 100644
+--- a/dist/types/ultramodern-workspace/package-json.d.ts
++++ b/dist/types/ultramodern-workspace/package-json.d.ts
+@@ -4,5 +4,5 @@ export declare function appDependencies(scope: string, packageSource: ResolvedPa
+ export declare function createRootPackageJson(scope: string, packageSource: ResolvedPackageSource, remotes?: WorkspaceApp[], bridge?: UltramodernBridgeConfig, additionalShells?: WorkspaceApp[]): JsonValue;
+ export { createAppMfTypesTsConfig, createAppTsConfig, createPackageTsConfig, createRootTsConfig, createSharedPackageTsConfig, createTsConfigBase, } from './tsconfigs';
+ export declare function createAppPackage(scope: string, app: WorkspaceApp, packageSource: ResolvedPackageSource, enableTailwind: boolean, remotes?: WorkspaceApp[], bridge?: UltramodernBridgeConfig): JsonValue;
+-export declare function createSharedPackage(scope: string, id: string, description: string): JsonValue;
++export declare function createSharedPackage(scope: string, id: string, description: string, packageSource: ResolvedPackageSource): JsonValue;
+ export declare function createSharedContractsIndex(): string;
+diff --git a/templates/packages/effect-bff-runtime.ts b/templates/packages/effect-bff-runtime.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..f1d235b43f22b4d12ed8394b1a8ef03ded137919
+--- /dev/null
++++ b/templates/packages/effect-bff-runtime.ts
+@@ -0,0 +1,43 @@
++/** Server-only assembly for the invariant tail of a strict Effect BFF runtime factory. */
++/* oxlint-disable effect-native/no-dependency-parameters -- The approved BFF assembly seam intentionally accepts caller-composed Layers; expires: 2027-09-07. */
++import {
++  defineEffectBff,
++  HttpApiBuilder,
++  Layer,
++} from '@modern-js/plugin-bff/effect-edge';
++import type {
++  EffectRuntimeRequirements,
++  HttpApi,
++  HttpApiGroup,
++} from '@modern-js/plugin-bff/effect-edge';
++
++export interface EffectBffRuntimeAssembly<
++  ApiId extends string,
++  Groups extends HttpApiGroup.Constraint,
++  HandlerRequirements extends EffectRuntimeRequirements,
++  TransportRequirements extends EffectRuntimeRequirements = never,
++> {
++  readonly api: HttpApi.HttpApi<ApiId, Groups>;
++  readonly handlers: Layer.Layer<
++    HttpApiGroup.ToService<ApiId, Groups>,
++    never,
++    HandlerRequirements
++  >;
++  readonly transport?: Layer.Layer<never, never, TransportRequirements>;
++}
++
++export const assembleEffectBffRuntime = <
++  ApiId extends string,
++  Groups extends HttpApiGroup.Constraint,
++  HandlerRequirements extends EffectRuntimeRequirements,
++  TransportRequirements extends EffectRuntimeRequirements = never,
++>({
++  api,
++  handlers,
++  transport,
++}: EffectBffRuntimeAssembly<ApiId, Groups, HandlerRequirements, TransportRequirements>) => {
++  const apiLayer = HttpApiBuilder.layer(api).pipe(Layer.provide(handlers));
++  const layer = transport === undefined ? apiLayer : apiLayer.pipe(Layer.merge(transport));
++
++  return defineEffectBff({ api, layer });
++};
 diff --git a/templates/workspace/apps/modern.config.ts.handlebars b/templates/workspace/apps/modern.config.ts.handlebars
-index 2144abc7232f756a7d824e18bd90ce881e0dadc2..5df3764b126e9774ca832dbc6bd5ccd72db0f61e 100644
+index 2144abc7232f756a7d824e18bd90ce881e0dadc2..000ece862905b277cc002c7437ce3746da48d75e 100644
 --- a/templates/workspace/apps/modern.config.ts.handlebars
 +++ b/templates/workspace/apps/modern.config.ts.handlebars
 @@ -1,25 +1,60 @@
@@ -1329,6 +1790,1174 @@ index 2144abc7232f756a7d824e18bd90ce881e0dadc2..5df3764b126e9774ca832dbc6bd5ccd7
      {
        appId,
        deliveryUnit: {
+diff --git a/templates/workspace-scripts/check-ultramodern-api-boundaries.mts b/templates/workspace-scripts/check-ultramodern-api-boundaries.mts
+index d606a2265cb438d32a612cfdd6ebb9561529d4f5..5496e23198f2a2bbde1dfbf3e8a54993b90d9782 100644
+--- a/templates/workspace-scripts/check-ultramodern-api-boundaries.mts
++++ b/templates/workspace-scripts/check-ultramodern-api-boundaries.mts
+@@ -187,6 +187,1118 @@ if (exists('apps/shell-super-app') && verticalDirectories.length > 0) {
+   assert(exists(shellClient), `${shellClient} must aggregate vertical API clients.`);
+ }
+
++const runtimeIdentifierPattern = String.raw`[$A-Z_a-z][$\w]*`;
++
++function escapeRegularExpression(value) {
++  return value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
++}
++
++const sourceTriviaPattern =
++  /'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`|\/\/[^\n\r]*|\/\*[\s\S]*?\*\//gu;
++const regularExpressionLiteralPattern =
++  /(?<prefix>(?:^|[!(:,;=[{]|=>|\b(?:case|return|throw))[\t ]*)\/(?![*/])(?:\\.|\[(?:\\.|[^\]\\\n\r])*\]|[^/\\\n\r])+\/[dgimsuvy]*/gmu;
++
++function mask(value) {
++  return value.replaceAll(/[^\n\r]/gu, ' ');
++}
++
++function withoutRegularExpressionLiterals(source) {
++  return source.replaceAll(
++    regularExpressionLiteralPattern,
++    (value, prefix) => `${prefix}${mask(value.slice(prefix.length))}`,
++  );
++}
++
++function withoutComments(source) {
++  return withoutRegularExpressionLiterals(source).replaceAll(sourceTriviaPattern, (value) =>
++    value.startsWith('//') || value.startsWith('/*') ? mask(value) : value,
++  );
++}
++
++function withoutCommentsOrLiterals(source) {
++  return withoutRegularExpressionLiterals(source).replaceAll(sourceTriviaPattern, mask);
++}
++
++function importsNamedValueMatchingSpecifier(source, name, specifierPattern) {
++  const visibleSource = withoutComments(source);
++  const code = withoutCommentsOrLiterals(source);
++  const imports = visibleSource.matchAll(
++    new RegExp(
++      String.raw`^(?<indent>[\t ]*)import\s*\{(?<bindings>[^}]*)\}\s*from\s*['"]${specifierPattern}['"]`,
++      'gmu',
++    ),
++  );
++  return [...imports].some((candidate) => {
++    const indentLength = candidate.groups?.indent?.length ?? 0;
++    const isRealImport = code.slice(candidate.index + indentLength).startsWith('import');
++    return (
++      isRealImport &&
++      (candidate.groups?.bindings?.split(',').some((binding) => {
++        const [imported, local = imported] = binding.trim().split(/\s+as\s+/u);
++        return local === name;
++      }) ?? false)
++    );
++  });
++}
++
++function importedLocalNameMatchingSpecifier(source, importedName, specifierPattern) {
++  const visibleSource = withoutComments(source);
++  const code = withoutCommentsOrLiterals(source);
++  for (const candidate of visibleSource.matchAll(
++    new RegExp(
++      String.raw`^(?<indent>[\t ]*)import\s*\{(?<bindings>[^}]*)\}\s*from\s*['"]${specifierPattern}['"]`,
++      'gmu',
++    ),
++  )) {
++    const indentLength = candidate.groups?.indent?.length ?? 0;
++    if (!code.slice(candidate.index + indentLength).startsWith('import')) {
++      continue;
++    }
++    for (const binding of candidate.groups?.bindings?.split(',') ?? []) {
++      const [imported, local = imported] = binding.trim().split(/\s+as\s+/u);
++      if (imported === importedName) {
++        return local;
++      }
++    }
++  }
++  return undefined;
++}
++
++const importsNamedValue = (source, name, specifier) =>
++  importsNamedValueMatchingSpecifier(source, name, escapeRegularExpression(specifier));
++
++const withoutTerminalSatisfies = (expression) =>
++  expression
++    .replace(
++      /\s+satisfies\s+[$A-Z_a-z][$\w]*(?:\.[$A-Z_a-z][$\w]*)*(?:<[^<>]*>)?$/u,
++      '',
++    )
++    .trim();
++
++function assignmentStart(source, declarationEnd) {
++  let roundDepth = 0;
++  let squareDepth = 0;
++  let curlyDepth = 0;
++  let angleDepth = 0;
++  for (let index = declarationEnd; index < source.length; index += 1) {
++    const character = source[index];
++    if (character === '(') {
++      roundDepth += 1;
++    } else if (character === ')') {
++      roundDepth -= 1;
++    } else if (character === '[') {
++      squareDepth += 1;
++    } else if (character === ']') {
++      squareDepth -= 1;
++    } else if (character === '{') {
++      curlyDepth += 1;
++    } else if (character === '}') {
++      curlyDepth -= 1;
++    } else if (character === '<') {
++      angleDepth += 1;
++    } else if (character === '>' && source[index - 1] !== '=') {
++      angleDepth -= 1;
++    } else if (
++      character === '=' &&
++      source[index + 1] !== '>' &&
++      roundDepth === 0 &&
++      squareDepth === 0 &&
++      curlyDepth === 0 &&
++      angleDepth === 0
++    ) {
++      return index + 1;
++    } else if (
++      character === ';' &&
++      roundDepth === 0 &&
++      squareDepth === 0 &&
++      curlyDepth === 0 &&
++      angleDepth === 0
++    ) {
++      return undefined;
++    }
++  }
++  return undefined;
++}
++
++function curlyAncestorsAt(source, targetIndex) {
++  const ancestors = [];
++  for (let index = 0; index < targetIndex; index += 1) {
++    if (source[index] === '{') {
++      ancestors.push(index);
++    } else if (source[index] === '}') {
++      ancestors.pop();
++    }
++  }
++  return ancestors;
++}
++
++function isScopeVisibleAt(source, declarationIndex, usageIndex) {
++  if (declarationIndex >= usageIndex) {
++    return false;
++  }
++  const declarationAncestors = curlyAncestorsAt(source, declarationIndex);
++  const usageAncestors = curlyAncestorsAt(source, usageIndex);
++  return declarationAncestors.every((ancestor, index) => usageAncestors[index] === ancestor);
++}
++
++function isBindingScopeAt(source, declarationIndex, usageIndex) {
++  const declarationAncestors = curlyAncestorsAt(source, declarationIndex);
++  const usageAncestors = curlyAncestorsAt(source, usageIndex);
++  return declarationAncestors.every((ancestor, index) => usageAncestors[index] === ancestor);
++}
++
++function initializerFor(source, name, usageIndex = source.length) {
++  const declarations = [
++    ...source.matchAll(
++      new RegExp(String.raw`\bconst\s+${escapeRegularExpression(name)}\b`, 'gu'),
++    ),
++  ].filter(({ index }) => isScopeVisibleAt(source, index, usageIndex));
++  const declaration = declarations.sort((left, right) => {
++    const depthDifference =
++      curlyAncestorsAt(source, right.index).length - curlyAncestorsAt(source, left.index).length;
++    return depthDifference === 0 ? right.index - left.index : depthDifference;
++  })[0];
++  if (declaration === undefined) {
++    return undefined;
++  }
++  const start = assignmentStart(source, declaration.index + declaration[0].length);
++  if (start === undefined) {
++    return undefined;
++  }
++
++  let roundDepth = 0;
++  let squareDepth = 0;
++  let curlyDepth = 0;
++  for (let index = start; index < source.length; index += 1) {
++    const character = source[index];
++    if (character === '(') {
++      roundDepth += 1;
++    } else if (character === ')') {
++      roundDepth -= 1;
++    } else if (character === '[') {
++      squareDepth += 1;
++    } else if (character === ']') {
++      squareDepth -= 1;
++    } else if (character === '{') {
++      curlyDepth += 1;
++    } else if (character === '}') {
++      curlyDepth -= 1;
++    } else if (character === ';' && roundDepth === 0 && squareDepth === 0 && curlyDepth === 0) {
++      return withoutTerminalSatisfies(source.slice(start, index).trim());
++    }
++  }
++  return undefined;
++}
++
++function callArguments(expression, callee) {
++  const prefix = new RegExp(String.raw`^${escapeRegularExpression(callee)}\s*\(`, 'u').exec(
++    expression,
++  );
++  if (prefix === null) {
++    return undefined;
++  }
++
++  const openIndex = prefix[0].lastIndexOf('(');
++  let roundDepth = 0;
++  let squareDepth = 0;
++  let curlyDepth = 0;
++  let angleDepth = 0;
++  let argumentStart = openIndex + 1;
++  const argumentsList = [];
++  for (let index = openIndex; index < expression.length; index += 1) {
++    const character = expression[index];
++    if (character === '(') {
++      roundDepth += 1;
++    } else if (character === ')') {
++      roundDepth -= 1;
++      if (roundDepth === 0) {
++        const finalArgument = expression.slice(argumentStart, index).trim();
++        if (finalArgument.length > 0) {
++          argumentsList.push(finalArgument);
++        }
++        return expression.slice(index + 1).trim().length === 0 ? argumentsList : undefined;
++      }
++    } else if (character === '[') {
++      squareDepth += 1;
++    } else if (character === ']') {
++      squareDepth -= 1;
++    } else if (character === '{') {
++      curlyDepth += 1;
++    } else if (character === '}') {
++      curlyDepth -= 1;
++    } else if (character === '<') {
++      angleDepth += 1;
++    } else if (character === '>' && expression[index - 1] !== '=') {
++      angleDepth -= 1;
++    } else if (
++      character === ',' &&
++      roundDepth === 1 &&
++      squareDepth === 0 &&
++      curlyDepth === 0 &&
++      angleDepth === 0
++    ) {
++      argumentsList.push(expression.slice(argumentStart, index).trim());
++      argumentStart = index + 1;
++    }
++  }
++  return undefined;
++}
++
++function safeLayerPipeArguments(expression) {
++  const argumentsList = callArguments(expression, '.pipe');
++  return argumentsList?.every(
++    (argument) =>
++      argument === 'Layer.orDie' || callArguments(argument, 'Layer.provide') !== undefined,
++  ) === true
++    ? argumentsList
++    : undefined;
++}
++
++function layerConstructorRemainder(expression, callee) {
++  const prefix = new RegExp(String.raw`^${escapeRegularExpression(callee)}\s*\(`, 'u').exec(
++    expression,
++  );
++  if (prefix === null) {
++    return undefined;
++  }
++  const openIndex = prefix[0].lastIndexOf('(');
++  let depth = 0;
++  for (let index = openIndex; index < expression.length; index += 1) {
++    if (expression[index] === '(') {
++      depth += 1;
++    } else if (expression[index] === ')') {
++      depth -= 1;
++      if (depth === 0) {
++        return expression.slice(index + 1).trim();
++      }
++    }
++  }
++  return undefined;
++}
++
++function hasSafeLayerConstructor(initializer, callee) {
++  const remainder = layerConstructorRemainder(initializer, callee);
++  return (
++    remainder !== undefined &&
++    (remainder.length === 0 || safeLayerPipeArguments(remainder) !== undefined)
++  );
++}
++
++function leadingCallArguments(expression, callee) {
++  const remainder = layerConstructorRemainder(expression, callee);
++  return remainder === undefined
++    ? undefined
++    : callArguments(expression.slice(0, expression.length - remainder.length).trim(), callee);
++}
++
++function groupCallbackRegistersHandler(groupArguments) {
++  const callback = groupArguments[2]?.trim();
++  if (callback === undefined) {
++    return false;
++  }
++  const binding = /^(?:\(\s*(?<parenthesized>[$A-Z_a-z][$\w]*)(?:\s*:[^)]*)?\s*\)|(?<bare>[$A-Z_a-z][$\w]*))\s*=>/u.exec(callback);
++  const handlerBuilder = binding?.groups?.parenthesized ?? binding?.groups?.bare;
++  return (
++    handlerBuilder !== undefined &&
++    new RegExp(
++      String.raw`\b${escapeRegularExpression(handlerBuilder)}\s*\.\s*handle\s*\(`,
++      'u',
++    ).test(callback.slice(binding?.[0].length ?? 0))
++  );
++}
++
++function importedBindingFromAnyModule(source, name) {
++  const visibleSource = withoutComments(source);
++  const code = withoutCommentsOrLiterals(source);
++  for (const candidate of visibleSource.matchAll(
++    /^(?<indent>[\t ]*)(?:import|export)\s*\{(?<bindings>[^}]*)\}\s*from\s*['"](?<specifier>[^'"]+)['"]/gmu,
++  )) {
++    const indentLength = candidate.groups?.indent?.length ?? 0;
++    const specifier = candidate.groups?.specifier;
++    if (
++      specifier === undefined ||
++      !/^(?:import|export)\b/u.test(code.slice(candidate.index + indentLength))
++    ) {
++      continue;
++    }
++    for (const binding of candidate.groups?.bindings?.split(',') ?? []) {
++      const [imported, local = imported] = binding.trim().split(/\s+as\s+/u);
++      if (local === name && imported !== undefined) {
++        return { imported, specifier };
++      }
++    }
++  }
++  return undefined;
++}
++
++function importedValueBindingFromAnyModule(source, name) {
++  const visibleSource = withoutComments(source);
++  const code = withoutCommentsOrLiterals(source);
++  for (const candidate of visibleSource.matchAll(
++    /^(?<indent>[\t ]*)import\s*\{(?<bindings>[^}]*)\}\s*from\s*['"](?<specifier>[^'"]+)['"]/gmu,
++  )) {
++    const indentLength = candidate.groups?.indent?.length ?? 0;
++    const specifier = candidate.groups?.specifier;
++    if (specifier === undefined || !code.slice(candidate.index + indentLength).startsWith('import')) {
++      continue;
++    }
++    for (const binding of candidate.groups?.bindings?.split(',') ?? []) {
++      const [imported, local = imported] = binding.trim().split(/\s+as\s+/u);
++      if (local === name && imported !== undefined) {
++        return { imported, specifier };
++      }
++    }
++  }
++  return undefined;
++}
++
++function handlerLayerDerivesFromHttpApiBuilder(
++  source,
++  code,
++  name,
++  expectedApiExport,
++  expectedApiModuleId,
++  usageIndex,
++  resolveImport,
++  moduleId,
++  seen = new Set(),
++) {
++  const key = `${moduleId}#${name}`;
++  if (seen.has(key)) {
++    return false;
++  }
++  const nextSeen = new Set([...seen, key]);
++  const initializer = initializerFor(code, name, usageIndex);
++  if (initializer !== undefined) {
++    const groupArguments = leadingCallArguments(initializer, 'HttpApiBuilder.group');
++    if (
++      hasSafeLayerConstructor(initializer, 'HttpApiBuilder.group') &&
++      groupArguments !== undefined &&
++      groupCallbackRegistersHandler(groupArguments)
++    ) {
++      const apiName = groupArguments[0];
++      const apiBinding =
++        apiName === undefined ? undefined : importedValueBindingFromAnyModule(source, apiName);
++      const apiModuleId =
++        apiBinding === undefined ? undefined : resolveImport?.(apiBinding.specifier)?.id;
++      const builderBinding = importedValueBindingFromAnyModule(source, 'HttpApiBuilder');
++      return (
++        builderBinding?.imported === 'HttpApiBuilder' &&
++        builderBinding.specifier === '@modern-js/plugin-bff/effect-edge' &&
++        !shadowsBinding(code, 'HttpApiBuilder', usageIndex) &&
++        apiBinding?.imported === expectedApiExport &&
++        (expectedApiModuleId === undefined
++          ? /(?:^|\/)shared\/api\.ts$/u.test(apiBinding.specifier)
++          : apiModuleId === expectedApiModuleId)
++      );
++    }
++    const mergeArguments = leadingCallArguments(initializer, 'Layer.mergeAll');
++    const layerBinding = importedValueBindingFromAnyModule(source, 'Layer');
++    if (
++      layerBinding?.imported !== 'Layer' ||
++      layerBinding.specifier !== '@modern-js/plugin-bff/effect-edge' ||
++      !hasSafeLayerConstructor(initializer, 'Layer.mergeAll') ||
++      mergeArguments === undefined ||
++      mergeArguments.length === 0
++    ) {
++      return false;
++    }
++    return mergeArguments.every((rawArgument) => {
++      const argument = withoutTerminalSatisfies(rawArgument);
++      const layer = /^(?<name>[$A-Z_a-z][$\w]*)(?<remainder>[\s\S]*)$/u.exec(argument);
++      const layerName = layer?.groups?.name;
++      const remainder = layer?.groups?.remainder?.trim();
++      return (
++        layerName !== undefined &&
++        remainder !== undefined &&
++        (remainder.length === 0 || safeLayerPipeArguments(remainder) !== undefined) &&
++        handlerLayerDerivesFromHttpApiBuilder(
++          source,
++          code,
++          layerName,
++          expectedApiExport,
++          expectedApiModuleId,
++          usageIndex,
++          resolveImport,
++          moduleId,
++          nextSeen,
++        )
++      );
++    });
++  }
++  if (shadowsBinding(code, name, usageIndex)) {
++    return false;
++  }
++  const importedBinding = importedBindingFromAnyModule(source, name);
++  const resolved = importedBinding === undefined ? undefined : resolveImport?.(importedBinding.specifier);
++  if (importedBinding === undefined || resolved === undefined) {
++    return false;
++  }
++  const resolvedCode = withoutCommentsOrLiterals(resolved.source);
++  return handlerLayerDerivesFromHttpApiBuilder(
++    resolved.source,
++    resolvedCode,
++    importedBinding.imported,
++    expectedApiExport,
++    expectedApiModuleId,
++    resolvedCode.length,
++    resolved.resolveImport,
++    resolved.id,
++    nextSeen,
++  );
++}
++
++function composesHandlerLayers(
++  source,
++  code,
++  initializer,
++  expectedApiExport,
++  expectedApiModuleId,
++  usageIndex,
++  resolveImport,
++) {
++  const argumentsList = leadingCallArguments(initializer, 'Layer.mergeAll');
++  return (
++    hasSafeLayerConstructor(initializer, 'Layer.mergeAll') &&
++    argumentsList !== undefined &&
++    argumentsList.length > 0 &&
++    argumentsList.every((rawArgument) => {
++      const argument = withoutTerminalSatisfies(rawArgument);
++      const layer = new RegExp(
++        String.raw`^(?<name>${runtimeIdentifierPattern})(?<remainder>[\s\S]*)$`,
++        'u',
++      ).exec(argument);
++      const layerName = layer?.groups?.name;
++      const remainder = layer?.groups?.remainder?.trim();
++      if (
++        layerName === undefined ||
++        remainder === undefined ||
++        (remainder.length > 0 && safeLayerPipeArguments(remainder) === undefined)
++      ) {
++        return false;
++      }
++      return handlerLayerDerivesFromHttpApiBuilder(
++        source,
++        code,
++        layerName,
++        expectedApiExport,
++        expectedApiModuleId,
++        usageIndex,
++        resolveImport,
++        'entry',
++      );
++    })
++  );
++}
++
++function declaresLayerValue(
++  source,
++  code,
++  name,
++  allowCors = false,
++  requireHandlerOperands = false,
++  expectedApiExport = '',
++  expectedApiModuleId,
++  resolveImport,
++  usageIndex = code.length,
++  seen = new Set(),
++) {
++  if (seen.has(name)) {
++    return false;
++  }
++  const initializer = initializerFor(code, name, usageIndex);
++  if (initializer === undefined) {
++    return false;
++  }
++  if (hasSafeLayerConstructor(initializer, 'Layer.mergeAll')) {
++    return (
++      !requireHandlerOperands ||
++      composesHandlerLayers(
++        source,
++        code,
++        initializer,
++        expectedApiExport,
++        expectedApiModuleId,
++        usageIndex,
++        resolveImport,
++      )
++    );
++  }
++  if (allowCors && hasSafeLayerConstructor(initializer, 'HttpRouter.cors')) {
++    return true;
++  }
++
++  const pipedLayer = new RegExp(
++    String.raw`^(?<base>${runtimeIdentifierPattern})(?<pipe>\.pipe\s*\()`,
++    'u',
++  ).exec(initializer);
++  return pipedLayer?.groups?.base === undefined ||
++    pipedLayer.groups.pipe === undefined ||
++    safeLayerPipeArguments(initializer.slice(pipedLayer.groups.base.length)) === undefined
++    ? false
++    : declaresLayerValue(
++        source,
++        code,
++        pipedLayer.groups.base,
++        allowCors,
++        requireHandlerOperands,
++        expectedApiExport,
++        expectedApiModuleId,
++        resolveImport,
++        usageIndex,
++        new Set([...seen, name]),
++      );
++}
++
++function layerValueUsesCors(source, name, usageIndex, seen = new Set()) {
++  if (seen.has(name)) {
++    return false;
++  }
++  const initializer = initializerFor(source, name, usageIndex);
++  if (initializer === undefined) {
++    return false;
++  }
++  if (/\bHttpRouter\.cors\s*\(/u.test(initializer)) {
++    return true;
++  }
++  const pipedLayer = new RegExp(
++    String.raw`^(?<base>${runtimeIdentifierPattern})(?<pipe>\.pipe\s*\()`,
++    'u',
++  ).exec(initializer);
++  return pipedLayer?.groups?.base === undefined || pipedLayer.groups.pipe === undefined
++    ? false
++    : layerValueUsesCors(
++        source,
++        pipedLayer.groups.base,
++        usageIndex,
++        new Set([...seen, name]),
++      );
++}
++
++function matchingRoundClose(source, openIndex) {
++  let depth = 0;
++  for (let index = openIndex; index < source.length; index += 1) {
++    if (source[index] === '(') {
++      depth += 1;
++    } else if (source[index] === ')') {
++      depth -= 1;
++      if (depth === 0) {
++        return index;
++      }
++    }
++  }
++  return undefined;
++}
++
++function matchingCurlyClose(source, openIndex) {
++  let depth = 0;
++  for (let index = openIndex; index < source.length; index += 1) {
++    if (source[index] === '{') {
++      depth += 1;
++    } else if (source[index] === '}') {
++      depth -= 1;
++      if (depth === 0) {
++        return index;
++      }
++    }
++  }
++  return undefined;
++}
++
++function parameterBinding(parameter) {
++  let roundDepth = 0;
++  let squareDepth = 0;
++  let curlyDepth = 0;
++  for (let index = 0; index < parameter.length; index += 1) {
++    const character = parameter[index];
++    if (character === '(') {
++      roundDepth += 1;
++    } else if (character === ')') {
++      roundDepth -= 1;
++    } else if (character === '[') {
++      squareDepth += 1;
++    } else if (character === ']') {
++      squareDepth -= 1;
++    } else if (character === '{') {
++      curlyDepth += 1;
++    } else if (character === '}') {
++      curlyDepth -= 1;
++    } else if (
++      (character === ':' || character === '=') &&
++      roundDepth === 0 &&
++      squareDepth === 0 &&
++      curlyDepth === 0
++    ) {
++      return parameter.slice(0, index);
++    }
++  }
++  return parameter;
++}
++
++function parameterListShadows(parameters, name) {
++  const escapedName = escapeRegularExpression(name);
++  let roundDepth = 0;
++  let squareDepth = 0;
++  let curlyDepth = 0;
++  let angleDepth = 0;
++  let parameterStart = 0;
++  for (let index = 0; index <= parameters.length; index += 1) {
++    const character = parameters[index];
++    if (character === '(') {
++      roundDepth += 1;
++    } else if (character === ')') {
++      roundDepth -= 1;
++    } else if (character === '[') {
++      squareDepth += 1;
++    } else if (character === ']') {
++      squareDepth -= 1;
++    } else if (character === '{') {
++      curlyDepth += 1;
++    } else if (character === '}') {
++      curlyDepth -= 1;
++    } else if (character === '<') {
++      angleDepth += 1;
++    } else if (character === '>' && parameters[index - 1] !== '=') {
++      angleDepth -= 1;
++    } else if (
++      (character === ',' || index === parameters.length) &&
++      roundDepth === 0 &&
++      squareDepth === 0 &&
++      curlyDepth === 0 &&
++      angleDepth === 0
++    ) {
++      if (
++        new RegExp(String.raw`\b${escapedName}\b`, 'u').test(
++          parameterBinding(parameters.slice(parameterStart, index)),
++        )
++      ) {
++        return true;
++      }
++      parameterStart = index + 1;
++    }
++  }
++  return false;
++}
++
++const controlFlowParentheses = new Set(['for', 'if', 'switch', 'while', 'with']);
++
++function hasParameterDeclarationPrefix(prefix) {
++  const withoutGeneric = prefix.replace(/<[^<>]*>$/u, '').trimEnd();
++  if (
++    new RegExp(String.raw`\bfunction(?:\s+${runtimeIdentifierPattern})?$`, 'u').test(
++      withoutGeneric,
++    )
++  ) {
++    return true;
++  }
++  if (withoutGeneric.endsWith(']')) {
++    return true;
++  }
++  const precedingWord = new RegExp(String.raw`(?<word>${runtimeIdentifierPattern})$`, 'u').exec(
++    withoutGeneric,
++  )?.groups?.word;
++  if (precedingWord === undefined || controlFlowParentheses.has(precedingWord)) {
++    return false;
++  }
++  if (precedingWord === 'catch') {
++    return true;
++  }
++  return /[{};]\s*$/u.test(withoutGeneric.slice(0, -precedingWord.length));
++}
++
++function isParameterList(code, openIndex, closeIndex) {
++  const suffix = code.slice(closeIndex + 1).trimStart();
++  if (suffix.startsWith('=>')) {
++    return true;
++  }
++  const prefix = code.slice(0, openIndex).trimEnd();
++  return (
++    (suffix.startsWith('{') && hasParameterDeclarationPrefix(prefix)) ||
++    (suffix.startsWith(':') &&
++      /^:[^;]*(?:=>|\{)/u.test(suffix) &&
++      (hasParameterDeclarationPrefix(prefix) || /[=,(:]\s*$/u.test(prefix)))
++  );
++}
++
++function parameterScopeContains(code, closeIndex, usageIndex) {
++  for (let index = closeIndex + 1; index < usageIndex; index += 1) {
++    if (code[index] === '{') {
++      const close = matchingCurlyClose(code, index);
++      if (close !== undefined && close >= usageIndex) {
++        return true;
++      }
++    }
++  }
++  return false;
++}
++
++function parameterBindingsShadow(code, name, usageIndex) {
++  for (
++    let openIndex = code.indexOf('(');
++    openIndex >= 0;
++    openIndex = code.indexOf('(', openIndex + 1)
++  ) {
++    const closeIndex = matchingRoundClose(code, openIndex);
++    if (
++      closeIndex !== undefined &&
++      isParameterList(code, openIndex, closeIndex) &&
++      parameterListShadows(code.slice(openIndex + 1, closeIndex), name) &&
++      parameterScopeContains(code, closeIndex, usageIndex)
++    ) {
++      return true;
++    }
++  }
++  return false;
++}
++
++const patternHasVisibleMatch = (code, pattern, usageIndex) =>
++  [...code.matchAll(pattern)].some(({ index }) => isBindingScopeAt(code, index, usageIndex));
++
++function singleArrowBindingShadows(code, name, usageIndex) {
++  const pattern = new RegExp(String.raw`\b${escapeRegularExpression(name)}\s*=>`, 'gu');
++  return [...code.matchAll(pattern)].some((candidate) => {
++    const arrowEnd = candidate.index + candidate[0].length;
++    if (arrowEnd >= usageIndex || !isScopeVisibleAt(code, candidate.index, usageIndex)) {
++      return false;
++    }
++    const relativeBodyStart = code.slice(arrowEnd).search(/\S/u);
++    const bodyStart = relativeBodyStart < 0 ? code.length : relativeBodyStart + arrowEnd;
++    if (code[bodyStart] === '{') {
++      const bodyEnd = matchingCurlyClose(code, bodyStart);
++      return bodyEnd !== undefined && usageIndex < bodyEnd;
++    }
++    return !code.slice(arrowEnd, usageIndex).includes(';');
++  });
++}
++
++function shadowsBinding(code, name, usageIndex) {
++  const escapedName = escapeRegularExpression(name);
++  return (
++    patternHasVisibleMatch(
++      code,
++      new RegExp(
++        String.raw`\b(?:class|const|function|let|module|namespace|using|var)\s+${escapedName}\b`,
++        'gu',
++      ),
++      usageIndex,
++    ) ||
++    singleArrowBindingShadows(code, name, usageIndex) ||
++    patternHasVisibleMatch(
++      code,
++      new RegExp(
++        String.raw`\b(?:const|let|var)\s*(?:\{[^;=]*\b${escapedName}\b[^;=]*\}|\[[^;=]*\b${escapedName}\b[^;=]*\])\s*(?:=|\bof\b|\bin\b)`,
++        'gu',
++      ),
++      usageIndex,
++    ) ||
++    parameterBindingsShadow(code, name, usageIndex)
++  );
++}
++
++function curlyDepthAt(code, targetIndex) {
++  let depth = 0;
++  for (let index = 0; index < targetIndex; index += 1) {
++    if (code[index] === '{') {
++      depth += 1;
++    } else if (code[index] === '}') {
++      depth -= 1;
++    }
++  }
++  return depth;
++}
++
++function functionBodyStartsBefore(code, endIndex) {
++  const starts = new Set();
++  for (
++    let openIndex = code.indexOf('(');
++    openIndex >= 0 && openIndex < endIndex;
++    openIndex = code.indexOf('(', openIndex + 1)
++  ) {
++    const closeIndex = matchingRoundClose(code, openIndex);
++    if (closeIndex === undefined || !isParameterList(code, openIndex, closeIndex)) {
++      continue;
++    }
++    const bodyStart = code.indexOf('{', closeIndex + 1);
++    const statementEnd = code.indexOf(';', closeIndex + 1);
++    if (bodyStart >= 0 && bodyStart < endIndex && (statementEnd < 0 || bodyStart < statementEnd)) {
++      starts.add(bodyStart);
++    }
++  }
++  return starts;
++}
++
++function hasEarlierFactoryExit(code, bodyStart, endIndex) {
++  const functionBodies = functionBodyStartsBefore(code, endIndex);
++  return [...code.slice(bodyStart + 1, endIndex).matchAll(/\b(?:return|throw)\b/gu)].some(
++    ({ index }) => {
++      const absoluteIndex = bodyStart + 1 + index;
++      const owningFunction = curlyAncestorsAt(code, absoluteIndex)
++        .filter((ancestor) => ancestor === bodyStart || functionBodies.has(ancestor))
++        .at(-1);
++      return owningFunction === bodyStart;
++    },
++  );
++}
++
++function isDirectFactoryReturn(code, bodyStart, callIndex, callEnd) {
++  let depth = 1;
++  let statementStart = bodyStart + 1;
++  for (let index = bodyStart + 1; index < callIndex; index += 1) {
++    if (code[index] === '{') {
++      depth += 1;
++    } else if (code[index] === '}') {
++      depth -= 1;
++    } else if (code[index] === ';' && depth === 1) {
++      statementStart = index + 1;
++    }
++  }
++  return (
++    depth === 1 &&
++    /^\s*return\s*$/u.test(code.slice(statementStart, callIndex)) &&
++    !hasEarlierFactoryExit(code, bodyStart, statementStart) &&
++    /^\s*(?:;|\})/u.test(code.slice(callEnd))
++  );
++}
++
++function exportedFactoryOwnsCall(code, callIndex, callEnd) {
++  const candidates = code.slice(0, callIndex).matchAll(
++    new RegExp(
++      String.raw`\bexport\s+const\s+(?<factory>${runtimeIdentifierPattern})\s*=[\s\S]{0,2000}?=>\s*\{`,
++      'gu',
++    ),
++  );
++  const candidate = [...candidates].filter(({ index }) => curlyDepthAt(code, index) === 0).at(-1);
++  const factory = candidate?.groups?.factory;
++  if (candidate === undefined || factory === undefined) {
++    return false;
++  }
++  const bodyStart = candidate.index + candidate[0].length - 1;
++  if (!isDirectFactoryReturn(code, bodyStart, callIndex, callEnd)) {
++    return false;
++  }
++  const defaultRuntime = [
++    ...code.matchAll(
++      new RegExp(
++        String.raw`\bconst\s+(?<runtime>${runtimeIdentifierPattern})\s*=\s*${escapeRegularExpression(factory)}\s*\(`,
++        'gu',
++      ),
++    ),
++  ].find(({ index }) => curlyDepthAt(code, index) === 0)?.groups?.runtime;
++  const defaultRuntimeInitializer =
++    defaultRuntime === undefined ? undefined : initializerFor(code, defaultRuntime, code.length);
++  return (
++    defaultRuntime !== undefined &&
++    defaultRuntimeInitializer !== undefined &&
++    callArguments(defaultRuntimeInitializer, factory) !== undefined &&
++    new RegExp(
++      String.raw`\bexport\s+default\s+${escapeRegularExpression(defaultRuntime)}\s*;`,
++      'u',
++    ).test(code)
++  );
++}
++
++function isRuntimeRootCall(code, callIndex, callEnd) {
++  const prefix = code.slice(0, callIndex);
++  if (/\bexport\s+default\s*$/u.test(prefix)) {
++    return /^\s*(?:;|$)/u.test(code.slice(callEnd));
++  }
++  if (/\breturn\s*$/u.test(prefix)) {
++    return exportedFactoryOwnsCall(code, callIndex, callEnd);
++  }
++  const assignment = new RegExp(
++    String.raw`\bconst\s+(?<name>${runtimeIdentifierPattern})\s*=\s*$`,
++    'u',
++  ).exec(prefix);
++  const runtimeName = assignment?.groups?.name;
++  return (
++    runtimeName !== undefined &&
++    assignment !== null &&
++    /^\s*;/u.test(code.slice(callEnd)) &&
++    curlyDepthAt(code, assignment.index) === 0 &&
++    new RegExp(
++      String.raw`\bexport\s+default\s+${escapeRegularExpression(runtimeName)}\s*;`,
++      'u',
++    ).test(code.slice(callIndex))
++  );
++}
++
++function usesStrictRpcRuntimeTopology(source, resolveImport) {
++  const code = withoutCommentsOrLiterals(source);
++  const defineEffectBff = importedLocalNameMatchingSpecifier(
++    source,
++    'defineEffectBff',
++    escapeRegularExpression('@modern-js/plugin-bff/effect-edge'),
++  );
++  if (
++    defineEffectBff === undefined ||
++    !/\bfrom\s+['"]\.\.\/shared\/rpc\.ts['"]/u.test(withoutComments(source))
++  ) {
++    return false;
++  }
++  const call = new RegExp(
++    String.raw`\b${escapeRegularExpression(defineEffectBff)}\s*\(\s*\{\s*api:\s*(?<api>${runtimeIdentifierPattern})\s*,\s*layer(?:\s*:\s*(?<layer>${runtimeIdentifierPattern}))?\s*,\s*rpc:\s*\{\s*group:\s*(?<group>${runtimeIdentifierPattern})\s*,\s*layer:\s*(?<rpcLayer>${runtimeIdentifierPattern})\s*,\s*path:\s*,\s*serialization:\s*,?\s*\}\s*,?\s*\}\s*,?\s*\)`,
++    'u',
++  ).exec(code);
++  const api = call?.groups?.api;
++  const layer = call === null ? undefined : (call.groups?.layer ?? 'layer');
++  const group = call?.groups?.group;
++  const rpcLayer = call?.groups?.rpcLayer;
++  const callIndex = call?.index ?? code.length;
++  const apiInitializer = api === undefined ? undefined : initializerFor(code, api, callIndex);
++  const layerInitializer = layer === undefined ? undefined : initializerFor(code, layer, callIndex);
++  const rpcLayerInitializer =
++    rpcLayer === undefined ? undefined : initializerFor(code, rpcLayer, callIndex);
++  const httpApiBinding = importedValueBindingFromAnyModule(source, 'HttpApi');
++  const layerBinding = importedValueBindingFromAnyModule(source, 'Layer');
++  const groupBinding =
++    group === undefined ? undefined : importedValueBindingFromAnyModule(source, group);
++  const rpcModule =
++    groupBinding === undefined ? undefined : resolveImport?.(groupBinding.specifier);
++  const rpcModuleCode =
++    rpcModule === undefined ? undefined : withoutCommentsOrLiterals(rpcModule.source);
++  const rpcGroupInitializer =
++    rpcModuleCode === undefined || groupBinding === undefined
++      ? undefined
++      : initializerFor(rpcModuleCode, groupBinding.imported, rpcModuleCode.length);
++  const rpcGroupConstructor =
++    rpcModule === undefined
++      ? undefined
++      : importedValueBindingFromAnyModule(rpcModule.source, 'RpcGroup');
++  return (
++    call !== null &&
++    api !== undefined &&
++    layer !== undefined &&
++    group !== undefined &&
++    rpcLayer !== undefined &&
++    httpApiBinding?.imported === 'HttpApi' &&
++    httpApiBinding.specifier === '@modern-js/plugin-bff/effect-edge' &&
++    layerBinding?.imported === 'Layer' &&
++    layerBinding.specifier === '@modern-js/plugin-bff/effect-edge' &&
++    groupBinding?.imported === group &&
++    groupBinding.specifier === '../shared/rpc.ts' &&
++    rpcModuleCode !== undefined &&
++    rpcGroupConstructor?.imported === 'RpcGroup' &&
++    rpcGroupConstructor.specifier === 'effect/unstable/rpc' &&
++    rpcGroupInitializer !== undefined &&
++    callArguments(rpcGroupInitializer, 'RpcGroup.make') !== undefined &&
++    !shadowsBinding(rpcModuleCode, 'RpcGroup', rpcModuleCode.length) &&
++    !shadowsBinding(code, defineEffectBff, call.index) &&
++    !shadowsBinding(code, 'HttpApi', call.index) &&
++    !shadowsBinding(code, 'Layer', call.index) &&
++    !shadowsBinding(code, group, call.index) &&
++    apiInitializer !== undefined &&
++    callArguments(apiInitializer, 'HttpApi.make') !== undefined &&
++    layerInitializer === 'Layer.empty' &&
++    rpcLayerInitializer !== undefined &&
++    callArguments(rpcLayerInitializer, `${group}.toLayer`) !== undefined &&
++    isRuntimeRootCall(code, call.index, call.index + call[0].length)
++  );
++}
++
++function strictEffectRuntimeTopologyViolation(source, resolveImport) {
++  const code = withoutCommentsOrLiterals(source);
++  const helper = importedLocalNameMatchingSpecifier(
++    source,
++    'assembleEffectBffRuntime',
++    String.raw`@[a-z0-9-]+\/shared-contracts\/server\/effect-bff-runtime`,
++  );
++  if (helper === undefined) {
++    return usesStrictRpcRuntimeTopology(source, resolveImport)
++      ? undefined
++      : 'must import the server-only shared Effect BFF assembly helper';
++  }
++  const call = new RegExp(
++    String.raw`\b${escapeRegularExpression(helper)}\s*\(\s*\{\s*api:\s*(?<api>${runtimeIdentifierPattern})\s*,\s*handlers:\s*(?<handlers>${runtimeIdentifierPattern})(?:\s*,\s*transport:\s*(?<transport>${runtimeIdentifierPattern}))?\s*,?\s*\}\s*\)`,
++    'u',
++  ).exec(code);
++  const api = call?.groups?.api;
++  const handlers = call?.groups?.handlers;
++  const transport = call?.groups?.transport;
++  if (call === null || api === undefined || handlers === undefined) {
++    return 'must pass a concrete api and composed handlers directly to assembleEffectBffRuntime';
++  }
++  if (!importsNamedValue(source, api, '../shared/api.ts')) {
++    return 'must pass the API imported from ../shared/api.ts to assembleEffectBffRuntime';
++  }
++  const apiBinding = importedValueBindingFromAnyModule(source, api);
++  const apiExport = apiBinding?.imported;
++  const expectedApiModuleId =
++    apiBinding === undefined ? undefined : resolveImport?.(apiBinding.specifier)?.id;
++  if (apiExport === undefined || (resolveImport !== undefined && expectedApiModuleId === undefined)) {
++    return 'must prove the exact shared API export used by assembleEffectBffRuntime';
++  }
++  if (
++    importedValueBindingFromAnyModule(source, 'Layer')?.imported !== 'Layer' ||
++    importedValueBindingFromAnyModule(source, 'Layer')?.specifier !== '@modern-js/plugin-bff/effect-edge' ||
++    shadowsBinding(code, helper, call.index) ||
++    shadowsBinding(code, 'Layer', call.index) ||
++    shadowsBinding(code, api, call.index)
++  ) {
++    return 'must use unshadowed server helper, API, and Layer imports for assembly';
++  }
++  if (
++    !declaresLayerValue(
++      source,
++      code,
++      handlers,
++      false,
++      true,
++      apiExport,
++      expectedApiModuleId,
++      resolveImport,
++      call.index,
++    )
++  ) {
++    return 'must pass an explicitly composed Layer as assembleEffectBffRuntime handlers';
++  }
++  if (
++    transport !== undefined &&
++    !declaresLayerValue(
++      source,
++      code,
++      transport,
++      true,
++      false,
++      apiExport,
++      expectedApiModuleId,
++      resolveImport,
++      call.index,
++    )
++  ) {
++    return 'must pass an explicitly composed Layer as assembleEffectBffRuntime transport';
++  }
++  if (
++    transport !== undefined &&
++    layerValueUsesCors(code, transport, call.index) &&
++    (importedValueBindingFromAnyModule(source, 'HttpRouter')?.imported !== 'HttpRouter' ||
++      importedValueBindingFromAnyModule(source, 'HttpRouter')?.specifier !== '@modern-js/plugin-bff/effect-edge' ||
++      shadowsBinding(code, 'HttpRouter', call.index))
++  ) {
++    return 'must use the imported HttpRouter for the transport Layer';
++  }
++  if (!isRuntimeRootCall(code, call.index, call.index + call[0].length)) {
++    return 'must return or export the assembled strict Effect BFF runtime';
++  }
++  return undefined;
++}
++
++function topologyResolverFor(importer) {
++  const resolveImport = (specifier) => {
++    if (!specifier.startsWith('.')) {
++      return undefined;
++    }
++    const unresolved = path.normalize(path.join(path.dirname(importer), specifier));
++    const candidates = /\.[cm]?[jt]sx?$/u.test(unresolved)
++      ? [unresolved]
++      : [`${unresolved}.ts`, `${unresolved}.mts`, `${unresolved}/index.ts`];
++    const id = candidates.find(exists);
++    return id === undefined
++      ? undefined
++      : { id, resolveImport: topologyResolverFor(id), source: readText(id) };
++  };
++  return resolveImport;
++}
++
+ function assertApiSurface(appPath) {
+   const apiEntry = `${appPath}/api/index.ts`;
+   const backendEffectExpose = `${appPath}/api/effect-api.ts`;
+@@ -211,30 +1323,28 @@ function assertApiSurface(appPath) {
+
+   if (exists(apiEntry)) {
+     const entry = readText(apiEntry);
+-    assertContains(
+-      apiEntry,
+-      entry,
+-      /\bdefineEffectBff\b/u,
+-      'must export a defineEffectBff(...) runtime definition.',
+-    );
+-    assertContains(
+-      apiEntry,
++    const usesRpcRuntime = usesStrictRpcRuntimeTopology(entry, topologyResolverFor(apiEntry));
++    const runtimeTopologyViolation = strictEffectRuntimeTopologyViolation(
+       entry,
+-      /\bHttpApiBuilder\b/u,
+-      'must implement handlers through HttpApiBuilder.',
++      topologyResolverFor(apiEntry),
+     );
++    if (runtimeTopologyViolation !== undefined) {
++      fail(`${apiEntry}: ${runtimeTopologyViolation}.`);
++    }
+     assertContains(
+       apiEntry,
+       entry,
+       /\bLayer\b/u,
+       'must compose dependencies with Effect Layer.',
+     );
+-    assertContains(
+-      apiEntry,
+-      entry,
+-      /from ['"]\.\.\/shared\/api\.ts['"]/u,
+-      'must import the contract from ../shared/api.ts.',
+-    );
++    if (!usesRpcRuntime) {
++      assertContains(
++        apiEntry,
++        entry,
++        /from ['"]\.\.\/shared\/api\.ts['"]/u,
++        'must import the contract from ../shared/api.ts.',
++      );
++    }
+   }
+  if (exists(backendEffectExpose)) {
+  const backendExpose = readText(backendEffectExpose);
 diff --git a/templates/workspace-scripts/proof-cloudflare-version.mjs b/templates/workspace-scripts/proof-cloudflare-version.mjs
 index e26615204dea65bcd0562ea04229cb51659da4af..b06de806dbe48cee148ffbf97fbc65c1cb4196d7 100644
 --- a/templates/workspace-scripts/proof-cloudflare-version.mjs

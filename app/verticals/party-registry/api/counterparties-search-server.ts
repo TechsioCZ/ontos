@@ -21,7 +21,7 @@ import {
   CounterpartiesProviderUnavailableProblemSchema,
 } from '../shared/apis/counterparties-search.ts';
 import { counterpartiesRead } from '../src/search/counterparties.provider.ts';
-import { verifyOperationPrincipal } from './auth/action-principal.ts';
+import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 
 const problemStatus = {
   authentication: 401,
@@ -146,17 +146,12 @@ export const counterpartiesReadApiLive = HttpApiBuilder.group(
         if (correlationId === undefined || correlationId.trim().length === 0) {
           return yield* Effect.fail(invalidProblem());
         }
-        const principal = yield* verifyOperationPrincipal(
+        const principal = yield* authenticateOperationPrincipal(
           Redacted.make(request.headers['authorization']),
-        ).pipe(
-          Effect.catchTags({
-            ActionPrincipalConfigurationError: () => Effect.fail(unavailableProblem()),
-            ActionPrincipalExpiredError: () => failProblem(authenticationProblem()),
-            ActionPrincipalInvalidError: () => failProblem(authenticationProblem()),
-            ActionPrincipalMissingError: () => failProblem(authenticationProblem()),
-            ActionPrincipalScopeError: () => failProblem(authenticationProblem()),
-            ActionPrincipalUnavailableError: () => Effect.fail(unavailableProblem()),
-          }),
+          {
+            authentication: authenticationProblem,
+            unavailable: unavailableProblem,
+          },
         );
         const runtime = yield* ReadRuntime;
         return yield* runtime
