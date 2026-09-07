@@ -1,8 +1,11 @@
 import {
+  makeProblemDetailsSchema,
+  makeRetryableProblemDetailsSchema,
+} from '@app/shared-contracts/problem-details';
+import {
   HttpApi,
   HttpApiEndpoint,
   HttpApiGroup,
-  HttpApiSchema,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import { GatewayContextApiGroup } from '@app/shared-contracts';
@@ -503,121 +506,101 @@ export const MediaAttachmentResponseSchema = Schema.Struct({
   attached: Schema.Literal(true),
 });
 
-const authenticationProblemFields = {
-  detail: Schema.String,
-  status: Schema.Finite,
-  title: Schema.String,
-  type: Schema.String,
-};
+export const InvalidCredentialsProblemSchema = makeProblemDetailsSchema(
+  'InvalidCredentialsProblem',
+  401,
+);
 
-const asProblemDetails = HttpApiSchema.asJson({ contentType: 'application/problem+json' });
-
-export const InvalidCredentialsProblemSchema = Schema.TaggedStruct('InvalidCredentialsProblem', {
-  ...authenticationProblemFields,
-}).pipe(asProblemDetails, HttpApiSchema.status(401));
-
-export const OntosIdentityForbiddenProblemSchema = Schema.TaggedStruct(
+export const OntosIdentityForbiddenProblemSchema = makeProblemDetailsSchema(
   'OntosIdentityForbiddenProblem',
-  {
-    ...authenticationProblemFields,
-  },
-).pipe(asProblemDetails, HttpApiSchema.status(403));
+  403,
+);
 
-export const AuthenticationUnavailableProblemSchema = Schema.TaggedStruct(
+export const AuthenticationUnavailableProblemSchema = makeProblemDetailsSchema(
   'AuthenticationUnavailableProblem',
-  {
-    ...authenticationProblemFields,
-  },
-).pipe(asProblemDetails, HttpApiSchema.status(503));
+  503,
+);
 
-export const AuthenticationInternalProblemSchema = Schema.TaggedStruct(
+export const AuthenticationInternalProblemSchema = makeProblemDetailsSchema(
   'AuthenticationInternalProblem',
-  {
-    ...authenticationProblemFields,
-  },
-).pipe(asProblemDetails, HttpApiSchema.status(500));
+  500,
+);
 
-export const TenantAuthenticationRequiredProblemSchema = Schema.TaggedStruct(
+export const TenantAuthenticationRequiredProblemSchema = makeProblemDetailsSchema(
   'TenantAuthenticationRequiredProblem',
-  authenticationProblemFields,
-).pipe(asProblemDetails, HttpApiSchema.status(401));
+  401,
+);
 
-export const TenantAccessForbiddenProblemSchema = Schema.TaggedStruct(
+export const TenantAccessForbiddenProblemSchema = makeProblemDetailsSchema(
   'TenantAccessForbiddenProblem',
-  authenticationProblemFields,
-).pipe(asProblemDetails, HttpApiSchema.status(403));
+  403,
+);
 
-export const TenantCapabilityUnavailableProblemSchema = Schema.TaggedStruct(
+export const TenantCapabilityUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
   'TenantCapabilityUnavailableProblem',
-  {
-    ...authenticationProblemFields,
-    retryable: Schema.Literal(true),
-  },
-).pipe(asProblemDetails, HttpApiSchema.status(503));
+  503,
+);
 
-export const TenantInternalProblemSchema = Schema.TaggedStruct(
-  'TenantInternalProblem',
-  authenticationProblemFields,
-).pipe(asProblemDetails, HttpApiSchema.status(500));
+export const TenantInternalProblemSchema = makeProblemDetailsSchema('TenantInternalProblem', 500);
 
-export const LegalEntityAccessForbiddenProblemSchema = Schema.TaggedStruct(
+export const LegalEntityAccessForbiddenProblemSchema = makeProblemDetailsSchema(
   'LegalEntityAccessForbiddenProblem',
-  authenticationProblemFields,
-).pipe(asProblemDetails, HttpApiSchema.status(403));
+  403,
+);
 
-export const ShellAuthenticationRequiredProblemSchema = Schema.TaggedStruct(
+export const ShellAuthenticationRequiredProblemSchema = makeProblemDetailsSchema(
   'ShellAuthenticationRequiredProblem',
-  authenticationProblemFields,
-).pipe(asProblemDetails, HttpApiSchema.status(401));
+  401,
+);
 
-export const ShellTargetForbiddenProblemSchema = Schema.TaggedStruct(
+export const ShellTargetForbiddenProblemSchema = makeProblemDetailsSchema(
   'ShellTargetForbiddenProblem',
-  authenticationProblemFields,
-).pipe(asProblemDetails, HttpApiSchema.status(403));
+  403,
+);
 
-export const ShellTargetNotFoundProblemSchema = Schema.TaggedStruct(
+export const ShellTargetNotFoundProblemSchema = makeProblemDetailsSchema(
   'ShellTargetNotFoundProblem',
-  authenticationProblemFields,
-).pipe(asProblemDetails, HttpApiSchema.status(404));
+  404,
+);
 
-export const ShellSelectionRequiredProblemSchema = Schema.TaggedStruct(
+export const ShellSelectionRequiredProblemSchema = makeProblemDetailsSchema(
   'ShellSelectionRequiredProblem',
-  authenticationProblemFields,
-).pipe(asProblemDetails, HttpApiSchema.status(409));
+  409,
+);
 
-export const ShellPolicyConflictProblemSchema = Schema.TaggedStruct(
+export const ShellPolicyConflictProblemSchema = makeProblemDetailsSchema(
   'ShellPolicyConflictProblem',
-  authenticationProblemFields,
-).pipe(asProblemDetails, HttpApiSchema.status(409));
+  409,
+);
 
-export const ShellPolicyUnprocessableProblemSchema = Schema.TaggedStruct(
+export const ShellPolicyUnprocessableProblemSchema = makeProblemDetailsSchema(
   'ShellPolicyUnprocessableProblem',
-  authenticationProblemFields,
-).pipe(asProblemDetails, HttpApiSchema.status(422));
+  422,
+);
 
-export const ShellInvalidRequestProblemSchema = Schema.TaggedStruct(
+export const ShellInvalidRequestProblemSchema = makeProblemDetailsSchema(
   'ShellInvalidRequestProblem',
-  authenticationProblemFields,
-).pipe(asProblemDetails, HttpApiSchema.status(400));
+  400,
+);
 
-export const ShellPreconditionRequiredProblemSchema = Schema.TaggedStruct(
+export const ShellPreconditionRequiredProblemSchema = makeProblemDetailsSchema(
   'ShellPreconditionRequiredProblem',
-  authenticationProblemFields,
-).pipe(asProblemDetails, HttpApiSchema.status(428));
+  428,
+);
 
-export const ShellCapabilityUnavailableProblemSchema = Schema.TaggedStruct(
+export const ShellCapabilityUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
   'ShellCapabilityUnavailableProblem',
-  { ...authenticationProblemFields, retryable: Schema.Literal(true) },
-).pipe(asProblemDetails, HttpApiSchema.status(503));
+  503,
+);
 
-export const ShellInternalProblemSchema = Schema.TaggedStruct(
-  'ShellInternalProblem',
-  authenticationProblemFields,
-).pipe(asProblemDetails, HttpApiSchema.status(500));
-export const ShellRateLimitedProblemSchema = Schema.TaggedStruct('ShellRateLimitedProblem', {
-  ...authenticationProblemFields,
-  retryAfterSeconds: Schema.Finite,
-}).pipe(asProblemDetails, HttpApiSchema.status(429));
+export const ShellInternalProblemSchema = makeProblemDetailsSchema('ShellInternalProblem', 500);
+export const ShellRateLimitedProblemSchema = makeProblemDetailsSchema(
+  'ShellRateLimitedProblem',
+  429,
+  {
+    retryAfterSeconds: Schema.Finite,
+  },
+);
 
 const identityErrors = [
   ShellAuthenticationRequiredProblemSchema,

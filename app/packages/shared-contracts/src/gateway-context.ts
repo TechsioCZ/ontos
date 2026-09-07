@@ -1,9 +1,10 @@
+// eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- These pure helpers construct contract schemas, not Effect services.
+import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from './problem-details.ts';
 import {
   Effect,
   HttpApi,
   HttpApiEndpoint,
   HttpApiGroup,
-  HttpApiSchema,
   Schema,
   makeEffectHttpApiClient,
 } from '@modern-js/plugin-bff/effect-client';
@@ -91,41 +92,33 @@ export const GatewayContextResponseSchema = Schema.Struct({
 });
 export type GatewayContextResponse = Schema.Schema.Type<typeof GatewayContextResponseSchema>;
 
-const problemDetailsFields = {
-  detail: Schema.String,
-  status: Schema.Finite,
-  title: Schema.String,
-  type: Schema.String,
-};
-const asProblemDetails = HttpApiSchema.asJson({ contentType: 'application/problem+json' });
-
-export const GatewayAuthenticationRequiredProblemSchema = Schema.TaggedStruct(
+export const GatewayAuthenticationRequiredProblemSchema = makeProblemDetailsSchema(
   'GatewayAuthenticationRequiredProblem',
-  problemDetailsFields,
-).pipe(asProblemDetails, HttpApiSchema.status(401));
+  401,
+);
 
-export const GatewayAudienceInvalidProblemSchema = Schema.TaggedStruct(
+export const GatewayAudienceInvalidProblemSchema = makeProblemDetailsSchema(
   'GatewayAudienceInvalidProblem',
-  problemDetailsFields,
-).pipe(asProblemDetails, HttpApiSchema.status(400));
+  400,
+);
 
-export const GatewayUnavailableProblemSchema = Schema.TaggedStruct('GatewayUnavailableProblem', {
-  ...problemDetailsFields,
-  retryable: Schema.Literal(true),
-}).pipe(asProblemDetails, HttpApiSchema.status(503));
+export const GatewayUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
+  'GatewayUnavailableProblem',
+  503,
+);
 
-export const GatewayInternalProblemSchema = Schema.TaggedStruct(
-  'GatewayInternalProblem',
-  problemDetailsFields,
-).pipe(asProblemDetails, HttpApiSchema.status(500));
-export const GatewayForbiddenProblemSchema = Schema.TaggedStruct(
+export const GatewayInternalProblemSchema = makeProblemDetailsSchema('GatewayInternalProblem', 500);
+export const GatewayForbiddenProblemSchema = makeProblemDetailsSchema(
   'GatewayForbiddenProblem',
-  problemDetailsFields,
-).pipe(asProblemDetails, HttpApiSchema.status(403));
-export const GatewayRateLimitedProblemSchema = Schema.TaggedStruct('GatewayRateLimitedProblem', {
-  ...problemDetailsFields,
-  retryAfterSeconds: Schema.Finite,
-}).pipe(asProblemDetails, HttpApiSchema.status(429));
+  403,
+);
+export const GatewayRateLimitedProblemSchema = makeProblemDetailsSchema(
+  'GatewayRateLimitedProblem',
+  429,
+  {
+    retryAfterSeconds: Schema.Finite,
+  },
+);
 
 export type GatewayAuthenticationRequiredProblem = Schema.Schema.Type<
   typeof GatewayAuthenticationRequiredProblemSchema

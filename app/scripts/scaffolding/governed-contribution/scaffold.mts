@@ -91,111 +91,32 @@ const renderApiContract = (name: string): string => {
   const type = toPascalCase(name);
   const value = `${toPascalCase(name)}Api`;
   return `${generatedHeader(MODULE_API_KIND)}
+import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 
 export const ${type}RequestSchema = Schema.Struct({});
 export type ${type}Request = typeof ${type}RequestSchema.Type;
 export const ${type}ResponseSchema = Schema.Struct({ ok: Schema.Literal(true) });
 export type ${type}Response = typeof ${type}ResponseSchema.Type;
 
-export const ${type}AuthenticationProblemSchema = Schema.TaggedStruct(
+export const ${type}AuthenticationProblemSchema = makeProblemDetailsSchema(
   '${type}AuthenticationProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(401),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(401),
+  401,
 );
-export const ${type}InvalidProblemSchema = Schema.TaggedStruct(
-  '${type}InvalidProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(400),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(400),
-);
-export const ${type}UnavailableProblemSchema = Schema.TaggedStruct(
+export const ${type}InvalidProblemSchema = makeProblemDetailsSchema('${type}InvalidProblem', 400);
+export const ${type}UnavailableProblemSchema = makeRetryableProblemDetailsSchema(
   '${type}UnavailableProblem',
-  {
-    detail: Schema.String,
-    retryable: Schema.Literal(true),
-    status: Schema.Literal(503),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(503),
+  503,
 );
-export const ${type}ForbiddenProblemSchema = Schema.TaggedStruct(
-  '${type}ForbiddenProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(403),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(403),
-);
-export const ${type}NotFoundProblemSchema = Schema.TaggedStruct(
-  '${type}NotFoundProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(404),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(404),
-);
-export const ${type}PolicyProblemSchema = Schema.TaggedStruct(
-  '${type}PolicyProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(422),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(422),
-);
-export const ${type}PolicyConflictProblemSchema = Schema.TaggedStruct(
+export const ${type}ForbiddenProblemSchema = makeProblemDetailsSchema('${type}ForbiddenProblem', 403);
+export const ${type}NotFoundProblemSchema = makeProblemDetailsSchema('${type}NotFoundProblem', 404);
+export const ${type}PolicyProblemSchema = makeProblemDetailsSchema('${type}PolicyProblem', 422);
+export const ${type}PolicyConflictProblemSchema = makeProblemDetailsSchema(
   '${type}PolicyConflictProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(409),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(409),
+  409,
 );
-export const ${type}InternalProblemSchema = Schema.TaggedStruct(
-  '${type}InternalProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(500),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(500),
-);
+export const ${type}InternalProblemSchema = makeProblemDetailsSchema('${type}InternalProblem', 500);
 
 export const ${value} = HttpApi.make('${value}').add(
   HttpApiGroup.make('${toCamelCase(name)}').add(
@@ -490,8 +411,9 @@ const renderProviderApiContract = (
   }),
 )`;
   return `${generatedHeader(kind)}
+import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 
 export const ${type}ProviderRequestSchema = Schema.Struct({
   ${payloadField}: ${kind === REPORT_KIND ? 'Schema.Record(Schema.String, Schema.String)' : 'Schema.String'},
@@ -501,103 +423,32 @@ export type ${type}ProviderRequest = typeof ${type}ProviderRequestSchema.Type;
 export const ${type}ProviderResponseSchema = ${success};
 export type ${type}ProviderResponse = typeof ${type}ProviderResponseSchema.Type;
 
-export const ${type}ProviderUnavailableProblemSchema = Schema.TaggedStruct(
+export const ${type}ProviderUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
   '${type}ProviderUnavailableProblem',
-  {
-    detail: Schema.String,
-    retryable: Schema.Literal(true),
-    status: Schema.Literal(503),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(503),
+  503,
 );
 
-export const ${type}ProviderAuthenticationProblemSchema = Schema.TaggedStruct(
+export const ${type}ProviderAuthenticationProblemSchema = makeProblemDetailsSchema(
   '${type}ProviderAuthenticationProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(401),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(401),
+  401,
 );
-export const ${type}ProviderInvalidProblemSchema = Schema.TaggedStruct(
-  '${type}ProviderInvalidProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(400),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(400),
-);
-export const ${type}ProviderForbiddenProblemSchema = Schema.TaggedStruct(
+export const ${type}ProviderInvalidProblemSchema = makeProblemDetailsSchema('${type}ProviderInvalidProblem', 400);
+export const ${type}ProviderForbiddenProblemSchema = makeProblemDetailsSchema(
   '${type}ProviderForbiddenProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(403),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(403),
+  403,
 );
-export const ${type}ProviderNotFoundProblemSchema = Schema.TaggedStruct(
+export const ${type}ProviderNotFoundProblemSchema = makeProblemDetailsSchema(
   '${type}ProviderNotFoundProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(404),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(404),
+  404,
 );
-export const ${type}ProviderPolicyProblemSchema = Schema.TaggedStruct(
-  '${type}ProviderPolicyProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(422),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(422),
-);
-export const ${type}ProviderPolicyConflictProblemSchema = Schema.TaggedStruct(
+export const ${type}ProviderPolicyProblemSchema = makeProblemDetailsSchema('${type}ProviderPolicyProblem', 422);
+export const ${type}ProviderPolicyConflictProblemSchema = makeProblemDetailsSchema(
   '${type}ProviderPolicyConflictProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(409),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(409),
+  409,
 );
-export const ${type}ProviderInternalProblemSchema = Schema.TaggedStruct(
+export const ${type}ProviderInternalProblemSchema = makeProblemDetailsSchema(
   '${type}ProviderInternalProblem',
-  {
-    detail: Schema.String,
-    status: Schema.Literal(500),
-    title: Schema.String,
-    type: Schema.String,
-  },
-).pipe(
-  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(500),
+  500,
 );
 
 export const ${apiValue} = HttpApi.make('${apiValue}').add(
