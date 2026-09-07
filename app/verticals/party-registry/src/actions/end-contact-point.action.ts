@@ -3,7 +3,7 @@
 // @ontos-action-slug end-contact-point
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import {
   ContactPointTimestampSchema,
   PartyContactPointSchema,
@@ -78,18 +78,19 @@ interface Services {
   ) => Effect.Effect<Readonly<{ changed: boolean; contactPoint: PartyContactPoint }>, EndError>;
 }
 
-const handleEndContactPoint = (
-  payload: EndContactPointPayload,
-  context: ActionHandlerContext<
-    Readonly<{ 'party.registry.contact-point-ended.v1': typeof ContactPointEndedEventSchema }>,
-    Services
-  >,
-) =>
-  Effect.gen(function* endContactPoint() {
+const handleEndContactPoint = Effect.fn('EndContactPointAction.handleEndContactPoint')(
+  function* endContactPoint(
+    payload: EndContactPointPayload,
+    context: ActionHandlerContext<
+      Readonly<{ 'party.registry.contact-point-ended.v1': typeof ContactPointEndedEventSchema }>,
+      Services
+    >,
+  ) {
     const result = yield* context.services.end({
       ...payload,
       acceptedByActionInvocationId: context.actionInvocationId,
       acceptedByPrincipalId: context.scope.principalId,
+      effectiveEnd: DateTime.formatIso(payload.effectiveEnd),
     });
     if (!result.changed) {
       return result.contactPoint;
@@ -116,7 +117,8 @@ const handleEndContactPoint = (
       }),
     );
     return contactPoint;
-  });
+  },
+);
 
 export const endContactPointAction = defineAction(
   {

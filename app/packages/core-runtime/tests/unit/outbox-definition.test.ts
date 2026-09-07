@@ -1,6 +1,5 @@
+import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
-// @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off
-/* eslint-disable promise/prefer-await-to-callbacks -- Node assertions intentionally receive synchronous callbacks. */
 import test from 'node:test';
 import { Effect, Schema, Predicate } from 'effect';
 import {
@@ -11,8 +10,10 @@ import {
   validateOutboxWorkerSubscriptions,
 } from '../../src/outbox/definition.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { OutboxWorkerDescriptorError } from '../../src/outbox/errors.ts';
 
-const payloadSchema = Schema.Struct({ messageKey: Schema.String });
+const MessageKey = Schema.String.pipe(Schema.brand('MessageKey'));
+const payloadSchema = Schema.Struct({ messageKey: MessageKey });
 
 const makeWorker = (workerKey = 'consumer.message-logger') =>
   defineOutboxWorker(
@@ -40,41 +41,42 @@ const makeWorker = (workerKey = 'consumer.message-logger') =>
     (payload) => Effect.sync(() => assert.equal(Predicate.isString(payload.messageKey), true)),
   );
 
-void test('defines an exact immutable registration while keeping the handler opaque', async () => {
-  const worker = makeWorker();
+void test(
+  'defines an exact immutable registration while keeping the handler opaque',
+  makeEffectTestCallback(
+    Effect.gen(function* immutableRegistration() {
+      const worker = makeWorker();
 
-  assert.deepEqual(worker.descriptor, {
-    consumerModuleKey: 'consumer',
-    entrypoint: {
-      access: 'background',
-      authorization: { kind: 'owner_local_background' },
-      entrypointKey: 'consumer.message-logger',
-      moduleKey: 'consumer',
-      role: 'worker',
-      scope: 'tenant',
-    },
-    leaseDurationMs: 30_000,
-    payloadSchema,
-    producerModuleKey: 'producer',
-    retryPolicy: {
-      initialBackoffMs: 1000,
-      maxAttempts: 5,
-      maxBackoffMs: 10_000,
-      multiplier: 2,
-    },
-    topic: 'producer.message-created',
-    workerKey: 'consumer.message-logger',
-  });
-  assert.equal(Object.isFrozen(worker), true);
-  assert.equal(Object.isFrozen(worker.descriptor), true);
-  assert.equal(Object.isFrozen(worker.descriptor.retryPolicy), true);
-  assert.equal('handler' in worker, false);
-  assert.deepEqual(Object.keys(worker), ['descriptor']);
+      assert.deepEqual(worker.descriptor, {
+        consumerModuleKey: 'consumer',
+        entrypoint: {
+          access: 'background',
+          authorization: { kind: 'owner_local_background' },
+          entrypointKey: 'consumer.message-logger',
+          moduleKey: 'consumer',
+          role: 'worker',
+          scope: 'tenant',
+        },
+        leaseDurationMs: 30_000,
+        payloadSchema,
+        producerModuleKey: 'producer',
+        retryPolicy: {
+          initialBackoffMs: 1000,
+          maxAttempts: 5,
+          maxBackoffMs: 10_000,
+          multiplier: 2,
+        },
+        topic: 'producer.message-created',
+        workerKey: 'consumer.message-logger',
+      });
+      assert.equal(Object.isFrozen(worker), true);
+      assert.equal(Object.isFrozen(worker.descriptor), true);
+      assert.equal(Object.isFrozen(worker.descriptor.retryPolicy), true);
+      assert.equal('handler' in worker, false);
+      assert.deepEqual(Object.keys(worker), ['descriptor']);
 
-  await Effect.runPromise(
-    getOutboxWorkerHandler(worker)(
-      { messageKey: 'message-1' },
-      {
+      const payload = yield* Schema.decodeUnknownEffect(payloadSchema)({ messageKey: 'message-1' });
+      yield* getOutboxWorkerHandler(worker)(payload, {
         attemptNumber: 1,
         claimId: 'claim-1',
         deliveryId: 'delivery-1',
@@ -85,10 +87,10 @@ void test('defines an exact immutable registration while keeping the handler opa
         tenantSequenceNo: 1n,
         topic: 'producer.message-created',
         workerKey: 'consumer.message-logger',
-      },
-    ),
-  );
-});
+      });
+    }),
+  ),
+);
 
 void test('preserves schema inference for a typed handler payload', () => {
   defineOutboxWorker(
@@ -147,18 +149,17 @@ void test('rejects invalid identities, retry policies, and lease policies', () =
   for (const descriptor of invalidDescriptors) {
     assert.throws(
       () => defineOutboxWorker(descriptor, () => Effect.void),
-      (error: { readonly _tag?: string }) => error._tag === 'OutboxWorkerDescriptorError',
+      Schema.is(OutboxWorkerDescriptorError),
     );
   }
 });
 
 void test('rejects duplicate worker keys and calculates bounded exponential backoff', () => {
   const worker = makeWorker();
-  assert.throws(
-    () => validateOutboxWorkerRegistrations([worker, worker]),
-    (error: { readonly reason?: string }) =>
-      /duplicate Outbox Worker key/u.test(error.reason ?? ''),
-  );
+  assert.throws(() => validateOutboxWorkerRegistrations([worker, worker]), {
+    name: 'OutboxWorkerDescriptorError',
+    reason: /duplicate Outbox Worker key/u,
+  });
   assert.deepEqual(validateOutboxWorkerRegistrations([worker]), [worker]);
   assert.equal(retryBackoffMs(worker.descriptor.retryPolicy, 1), 1000);
   assert.equal(retryBackoffMs(worker.descriptor.retryPolicy, 3), 4000);
@@ -178,9 +179,8 @@ void test('validates and freezes the schema-free installed subscription catalog'
   assert.deepEqual(validated, [subscription]);
   assert.equal(Object.isFrozen(validated), true);
   assert.equal(Object.isFrozen(validated[0]), true);
-  assert.throws(
-    () => validateOutboxWorkerSubscriptions([subscription, subscription]),
-    (error: { readonly reason?: string }) =>
-      /duplicate Outbox Worker key/u.test(error.reason ?? ''),
-  );
+  assert.throws(() => validateOutboxWorkerSubscriptions([subscription, subscription]), {
+    name: 'OutboxWorkerDescriptorError',
+    reason: /duplicate Outbox Worker key/u,
+  });
 });

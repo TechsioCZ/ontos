@@ -1,6 +1,2 @@
-import { Layer } from 'effect';
-import { CoreDatabaseLive } from './db/client.ts';
-import { DatabaseConfigLive } from './db/config.ts';
-
-/** Server-composition layer that does not expose the underlying database capability. */
-export const CorePersistenceLive = CoreDatabaseLive.pipe(Layer.provide(DatabaseConfigLive));
+/** Dependency-transparent server persistence layer, composed at each application root. */
+export { CoreDatabaseLive as CorePersistenceLive } from './db/client.ts';

@@ -1,12 +1,19 @@
-import { Schema } from 'effect';
+import { DateTime, Option, Schema } from 'effect';
 import { PartyRefSchema } from '../resources/party.ts';
 import { IsoTimestampSchema } from './identity-contracts.ts';
+
+const MergeIsoTimestampJsonSchema = Schema.toEncoded(IsoTimestampSchema).check(
+  Schema.makeFilter((value) => {
+    const parsed = DateTime.make(value);
+    return Option.isSome(parsed) ? undefined : 'invalid UTC calendar timestamp';
+  }),
+);
 
 export const MergeSurvivorCandidateSchema = Schema.Struct({
   authoritativeEvidenceRank: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
   blockingAuthoritativeConflict: Schema.Boolean,
   completenessRank: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
-  createdAt: IsoTimestampSchema,
+  createdAt: MergeIsoTimestampJsonSchema,
   lifecycle: Schema.Literals(['ACTIVE', 'ARCHIVED']),
   partyRef: PartyRefSchema,
   referenceStabilityRank: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
@@ -46,14 +53,21 @@ export const MergeSelectionEvidenceStepSchema = Schema.Struct({
     Schema.isMinLength(1),
   ),
   explanation: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
-  winnerPartyRef: Schema.NullOr(PartyRefSchema),
+  winnerPartyRef: Schema.toEncoded(Schema.OptionFromNullOr(PartyRefSchema)),
 });
 export type MergeSelectionEvidenceStep = typeof MergeSelectionEvidenceStepSchema.Type;
 
+export const ConfirmedDuplicateDecisionIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(
+  Schema.brand('ConfirmedDuplicateDecisionId'),
+);
+export const DecisionActorPrincipalIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(
+  Schema.brand('DecisionActorPrincipalId'),
+);
+
 export const ConfirmedDuplicateSetSchema = Schema.Struct({
-  confirmedDuplicateDecisionId: Schema.String.check(Schema.isMinLength(1)),
+  confirmedDuplicateDecisionId: Schema.toEncoded(ConfirmedDuplicateDecisionIdSchema),
   confirmedPartyRefs: Schema.Array(PartyRefSchema).check(Schema.isMinLength(2)),
-  decisionActorPrincipalId: Schema.String.check(Schema.isMinLength(1)),
+  decisionActorPrincipalId: Schema.toEncoded(DecisionActorPrincipalIdSchema),
   evidenceRefs: Schema.Array(Schema.String.check(Schema.isMinLength(1))).check(
     Schema.isMinLength(1),
   ),

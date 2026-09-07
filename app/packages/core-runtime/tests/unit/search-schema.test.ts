@@ -1,4 +1,4 @@
-/* oxlint-disable typescript/strict-boolean-expressions */
+/* oxlint-disable typescript/strict-boolean-expressions -- Existing compatibility boundary; expires: 2026-12-31. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';

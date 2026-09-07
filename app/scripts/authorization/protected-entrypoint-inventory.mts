@@ -1,130 +1,206 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
+import { Array as EffectArray, Order, Result, Schema } from 'effect';
 
 export const PROTECTED_ENTRYPOINT_INVENTORY_SCHEMA_VERSION = 1 as const;
 
-export type InventoryAuthorization =
-  | { readonly kind: 'public' }
-  | { readonly kind: 'authenticated_principal' }
-  | { readonly kind: 'context_permission'; readonly permission: string }
-  | {
-      readonly kind: 'action_execution';
-      readonly provisioning: 'explicit' | 'tenant_membership_default';
+const PermissionSchema = Schema.String.check(
+  Schema.isPattern(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u),
+);
+
+const InventoryAuthorizationSchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal('public') }),
+  Schema.Struct({ kind: Schema.Literal('authenticated_principal') }),
+  Schema.Struct({
+    kind: Schema.Literal('context_permission'),
+    permission: PermissionSchema,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal('action_execution'),
+    provisioning: Schema.Literals(['explicit', 'tenant_membership_default']),
+  }),
+  Schema.Struct({ kind: Schema.Literal('owner_local_background') }),
+  Schema.Struct({
+    credential: Schema.Literals(['api_key', 'session']),
+    kind: Schema.Literal('capability_issuance'),
+  }),
+]);
+
+export type InventoryAuthorization = typeof InventoryAuthorizationSchema.Type;
+
+const ProtectedEntrypointSurfaceSchema = Schema.Literals([
+  'action',
+  'capability_issuance',
+  'route',
+  'worker',
+]);
+
+export type ProtectedEntrypointSurface = typeof ProtectedEntrypointSurfaceSchema.Type;
+
+const StableIdentifierSchema = Schema.String.check(
+  Schema.isPattern(/^[a-z][a-z0-9]*(?:[./_-][a-z0-9]+)*$/u),
+);
+
+const EntrypointKeySchema = StableIdentifierSchema.pipe(Schema.brand('EntrypointKey'));
+
+const SourceRevisionSchema = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9._-]{1,100}$/u));
+
+const ProtectedEntrypointInventoryEntrySchema = Schema.Struct({
+  authorization: InventoryAuthorizationSchema,
+  deployment: StableIdentifierSchema,
+  entrypointKey: EntrypointKeySchema,
+  owner: StableIdentifierSchema,
+  surface: ProtectedEntrypointSurfaceSchema,
+});
+
+const ProtectedEntrypointInventorySchema = Schema.Struct({
+  entries: Schema.Array(ProtectedEntrypointInventoryEntrySchema),
+  inventoryHash: Schema.String,
+  schemaVersion: Schema.Literal(PROTECTED_ENTRYPOINT_INVENTORY_SCHEMA_VERSION),
+  sourceRevision: SourceRevisionSchema,
+});
+
+export type ProtectedEntrypointInventoryEntry =
+  typeof ProtectedEntrypointInventoryEntrySchema.Encoded;
+
+export type ProtectedEntrypointInventory = typeof ProtectedEntrypointInventorySchema.Encoded;
+
+const encodeJsonResult = Schema.encodeResult(Schema.fromJsonString(Schema.Unknown));
+
+const encodePrettyJsonResult = Schema.encodeResult(
+  Schema.fromJsonString(Schema.Unknown, { space: 2 }),
+);
+
+class ProtectedEntrypointInventoryError extends Schema.TaggedError<ProtectedEntrypointInventoryError>()(
+  'ProtectedEntrypointInventoryError',
+  { message: Schema.String },
+) {}
+
+const invalidInventory = (message: string): ProtectedEntrypointInventoryError =>
+  new ProtectedEntrypointInventoryError({ message });
+
+const toTypeError = (error: ProtectedEntrypointInventoryError): TypeError =>
+  new TypeError(error.message);
+
+// Compatibility boundary for the established synchronous, TypeError-throwing public API.
+const getOrThrowTypeError = <A,>(result: Result.Result<A, ProtectedEntrypointInventoryError>): A =>
+  Result.getOrThrowWith(result, toTypeError);
+
+const encodingFailure = (): ProtectedEntrypointInventoryError =>
+  invalidInventory('protected entrypoint inventory encoding failed');
+
+const stableValue = (
+  value: string,
+  field: string,
+): Result.Result<string, ProtectedEntrypointInventoryError> =>
+  Schema.is(StableIdentifierSchema)(value)
+    ? Result.succeed(value)
+    : Result.fail(invalidInventory(`${field} must be a stable, non-sensitive identifier`));
+
+const normalizeAuthorization = (
+  raw: InventoryAuthorization,
+): Result.Result<InventoryAuthorization, ProtectedEntrypointInventoryError> =>
+  Schema.decodeUnknownResult(InventoryAuthorizationSchema, {
+    onExcessProperty: 'error',
+  })(raw).pipe(
+    Result.mapError(() =>
+      invalidInventory('inventory authorization classification is invalid or contains excess data'),
+    ),
+  );
+
+const normalizeSurface = (
+  surface: ProtectedEntrypointSurface,
+): Result.Result<ProtectedEntrypointSurface, ProtectedEntrypointInventoryError> =>
+  Schema.decodeUnknownResult(ProtectedEntrypointSurfaceSchema)(surface).pipe(
+    Result.mapError(() => invalidInventory(`unsupported inventory surface: ${surface}`)),
+  );
+
+const normalizeEntry = (
+  entry: ProtectedEntrypointInventoryEntry,
+): Result.Result<ProtectedEntrypointInventoryEntry, ProtectedEntrypointInventoryError> =>
+  Result.gen(function* normalizeEntryResult() {
+    const authorization = yield* normalizeAuthorization(entry.authorization);
+    const deployment = yield* stableValue(entry.deployment, 'deployment');
+    const entrypointKey = yield* stableValue(entry.entrypointKey, 'entrypointKey');
+    const owner = yield* stableValue(entry.owner, 'owner');
+    const surface = yield* normalizeSurface(entry.surface);
+    return { authorization, deployment, entrypointKey, owner, surface };
+  });
+
+const compareInventoryEntries = (
+  left: ProtectedEntrypointInventoryEntry,
+  right: ProtectedEntrypointInventoryEntry,
+): -1 | 0 | 1 => {
+  const surfaceOrder = left.surface.localeCompare(right.surface);
+  const order =
+    surfaceOrder === 0 ? left.entrypointKey.localeCompare(right.entrypointKey) : surfaceOrder;
+  if (order < 0) {
+    return -1;
+  }
+  if (order > 0) {
+    return 1;
+  }
+  return 0;
+};
+
+const InventoryEntryOrder = Order.make(compareInventoryEntries);
+
+const normalizeProtectedEntrypointInventoryResult = (
+  entries: readonly ProtectedEntrypointInventoryEntry[],
+): Result.Result<readonly ProtectedEntrypointInventoryEntry[], ProtectedEntrypointInventoryError> =>
+  Result.gen(function* normalizeInventoryResult() {
+    const normalized = yield* Result.all(entries.map(normalizeEntry));
+    const seen = new Set<string>();
+    for (const entry of normalized) {
+      if (seen.has(entry.entrypointKey)) {
+        return yield* Result.fail(
+          invalidInventory(`duplicate protected entrypoint: ${entry.entrypointKey}`),
+        );
+      }
+      seen.add(entry.entrypointKey);
     }
-  | { readonly kind: 'owner_local_background' }
-  | { readonly credential: 'api_key' | 'session'; readonly kind: 'capability_issuance' };
-
-export type ProtectedEntrypointSurface = 'action' | 'capability_issuance' | 'route' | 'worker';
-
-export interface ProtectedEntrypointInventoryEntry {
-  readonly authorization: InventoryAuthorization;
-  readonly deployment: string;
-  readonly entrypointKey: string;
-  readonly owner: string;
-  readonly surface: ProtectedEntrypointSurface;
-}
-
-export interface ProtectedEntrypointInventory {
-  readonly entries: readonly ProtectedEntrypointInventoryEntry[];
-  readonly inventoryHash: string;
-  readonly schemaVersion: typeof PROTECTED_ENTRYPOINT_INVENTORY_SCHEMA_VERSION;
-  readonly sourceRevision: string;
-}
-
-const stableValue = (value: string, field: string): string => {
-  if (!/^[a-z][a-z0-9]*(?:[./_-][a-z0-9]+)*$/u.test(value)) {
-    throw new TypeError(`${field} must be a stable, non-sensitive identifier`);
-  }
-  return value;
-};
-
-const normalizeAuthorization = (raw: InventoryAuthorization): InventoryAuthorization => {
-  const authorization = raw as unknown as Record<string, unknown>;
-  const keys = Object.keys(authorization).toSorted();
-  const kind = authorization['kind'];
-  if (
-    (kind === 'public' ||
-      kind === 'authenticated_principal' ||
-      kind === 'owner_local_background') &&
-    keys.length === 1
-  ) {
-    return { kind };
-  }
-  if (
-    kind === 'context_permission' &&
-    keys.join('\0') === 'kind\0permission' &&
-    typeof authorization['permission'] === 'string' &&
-    /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u.test(authorization['permission'])
-  ) {
-    return { kind, permission: authorization['permission'] };
-  }
-  if (
-    kind === 'action_execution' &&
-    keys.join('\0') === 'kind\0provisioning' &&
-    (authorization['provisioning'] === 'explicit' ||
-      authorization['provisioning'] === 'tenant_membership_default')
-  ) {
-    return { kind, provisioning: authorization['provisioning'] };
-  }
-  if (
-    kind === 'capability_issuance' &&
-    keys.join('\0') === 'credential\0kind' &&
-    (authorization['credential'] === 'api_key' || authorization['credential'] === 'session')
-  ) {
-    return { credential: authorization['credential'], kind };
-  }
-  throw new TypeError('inventory authorization classification is invalid or contains excess data');
-};
+    return EffectArray.sort(normalized, InventoryEntryOrder);
+  });
 
 export const normalizeProtectedEntrypointInventory = (
   entries: readonly ProtectedEntrypointInventoryEntry[],
-): readonly ProtectedEntrypointInventoryEntry[] => {
-  const normalized = entries.map((entry) => ({
-    authorization: normalizeAuthorization(entry.authorization),
-    deployment: stableValue(entry.deployment, 'deployment'),
-    entrypointKey: stableValue(entry.entrypointKey, 'entrypointKey'),
-    owner: stableValue(entry.owner, 'owner'),
-    surface: entry.surface,
-  }));
-  const seen = new Set<string>();
-  for (const entry of normalized) {
-    if (!['action', 'capability_issuance', 'route', 'worker'].includes(entry.surface)) {
-      throw new TypeError(`unsupported inventory surface: ${String(entry.surface)}`);
-    }
-    if (seen.has(entry.entrypointKey)) {
-      throw new TypeError(`duplicate protected entrypoint: ${entry.entrypointKey}`);
-    }
-    seen.add(entry.entrypointKey);
-  }
-  return normalized.toSorted(
-    (left, right) =>
-      left.surface.localeCompare(right.surface) ||
-      left.entrypointKey.localeCompare(right.entrypointKey),
-  );
-};
+): readonly ProtectedEntrypointInventoryEntry[] =>
+  getOrThrowTypeError(normalizeProtectedEntrypointInventoryResult(entries));
 
 export const hashProtectedEntrypointInventory = (
   entries: readonly ProtectedEntrypointInventoryEntry[],
-): string =>
-  createHash('sha256')
-    .update(`${JSON.stringify(entries)}\n`)
-    .digest('hex');
+): string => {
+  const encodedEntries = getOrThrowTypeError(
+    encodeJsonResult(entries).pipe(Result.mapError(encodingFailure)),
+  );
+  const source = `${encodedEntries}\n`;
+  return bytesToHex(sha256(utf8ToBytes(source)));
+};
 
 export const makeProtectedEntrypointInventory = (
   sourceRevision: string,
   entries: readonly ProtectedEntrypointInventoryEntry[],
-): ProtectedEntrypointInventory => {
-  if (!/^[a-zA-Z0-9._-]{1,100}$/u.test(sourceRevision)) {
-    throw new TypeError('sourceRevision must be a stable revision identifier');
-  }
-  const normalized = normalizeProtectedEntrypointInventory(entries);
-  return {
-    entries: normalized,
-    inventoryHash: hashProtectedEntrypointInventory(normalized),
-    schemaVersion: PROTECTED_ENTRYPOINT_INVENTORY_SCHEMA_VERSION,
-    sourceRevision,
-  };
-};
+): ProtectedEntrypointInventory =>
+  getOrThrowTypeError(
+    Result.gen(function* makeInventoryResult() {
+      if (!Schema.is(SourceRevisionSchema)(sourceRevision)) {
+        return yield* Result.fail(
+          invalidInventory('sourceRevision must be a stable revision identifier'),
+        );
+      }
+      const normalized = yield* normalizeProtectedEntrypointInventoryResult(entries);
+      return {
+        entries: normalized,
+        inventoryHash: hashProtectedEntrypointInventory(normalized),
+        schemaVersion: PROTECTED_ENTRYPOINT_INVENTORY_SCHEMA_VERSION,
+        sourceRevision,
+      };
+    }),
+  );
 
 export const serializeProtectedEntrypointInventory = (
   inventory: ProtectedEntrypointInventory,
-): string => `${JSON.stringify(inventory, undefined, 2)}\n`;
+): string =>
+  `${getOrThrowTypeError(
+    encodePrettyJsonResult(inventory).pipe(Result.mapError(encodingFailure)),
+  )}\n`;

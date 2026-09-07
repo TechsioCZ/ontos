@@ -1,21 +1,23 @@
 import type { PartyAlias } from '../../shared/resources/party-alias.ts';
+import { PartyRefSchema } from '../../shared/resources/party.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
+import { Match, Schema } from 'effect';
 
-type AliasResolutionRejection = Readonly<{
-  _tag:
-    | 'PartyAliasCycleRejected'
-    | 'PartyAliasSelfReferenceRejected'
-    | 'PartyAliasCrossTenantRejected';
-  aliasPartyRef: PartyRef;
-}>;
-type CanonicalPartyResolution =
-  | AliasResolutionRejection
-  | Readonly<{
-      _tag: 'CanonicalPartyResolved';
-      canonicalPartyRef: PartyRef;
-      requestedAlias?: PartyRef;
-      traversedAliasPartyRefs: readonly PartyRef[];
-    }>;
+export const AliasResolutionRejectionSchema = Schema.Union([
+  Schema.TaggedStruct('PartyAliasCycleRejected', { aliasPartyRef: PartyRefSchema }),
+  Schema.TaggedStruct('PartyAliasSelfReferenceRejected', { aliasPartyRef: PartyRefSchema }),
+  Schema.TaggedStruct('PartyAliasCrossTenantRejected', { aliasPartyRef: PartyRefSchema }),
+]);
+export type AliasResolutionRejection = typeof AliasResolutionRejectionSchema.Type;
+export const CanonicalPartyResolutionSchema = Schema.Union([
+  AliasResolutionRejectionSchema,
+  Schema.TaggedStruct('CanonicalPartyResolved', {
+    canonicalPartyRef: PartyRefSchema,
+    requestedAlias: Schema.optionalKey(PartyRefSchema),
+    traversedAliasPartyRefs: Schema.Array(PartyRefSchema),
+  }),
+]);
+export type CanonicalPartyResolution = typeof CanonicalPartyResolutionSchema.Type;
 
 const keyOf = ({ resourceId, tenantId }: PartyRef) => `${tenantId}:${resourceId}`;
 
@@ -56,15 +58,20 @@ export const resolveCanonicalPartyRef = (
 
 export const assertCanonicalWriteTarget = (requested: PartyRef, aliases: readonly PartyAlias[]) => {
   const resolved = resolveCanonicalPartyRef(requested, aliases);
-  if (resolved._tag !== 'CanonicalPartyResolved' || resolved.requestedAlias === undefined) {
-    return resolved._tag === 'CanonicalPartyResolved'
-      ? ({ _tag: 'CanonicalWriteTargetAccepted', partyRef: requested } as const)
-      : resolved;
-  }
-  return {
-    _tag: 'AliasWriteRejected',
-    aliasPartyRef: requested,
-    canonicalPartyRef: resolved.canonicalPartyRef,
-    code: 'ALIAS_WRITE_FORBIDDEN',
-  } as const;
+  return Match.value(resolved).pipe(
+    Match.tag('CanonicalPartyResolved', (resolution) =>
+      resolution.requestedAlias === undefined
+        ? ({ _tag: 'CanonicalWriteTargetAccepted', partyRef: requested } as const)
+        : ({
+            _tag: 'AliasWriteRejected',
+            aliasPartyRef: requested,
+            canonicalPartyRef: resolution.canonicalPartyRef,
+            code: 'ALIAS_WRITE_FORBIDDEN',
+          } as const),
+    ),
+    Match.tag('PartyAliasCycleRejected', (rejection) => rejection),
+    Match.tag('PartyAliasSelfReferenceRejected', (rejection) => rejection),
+    Match.tag('PartyAliasCrossTenantRejected', (rejection) => rejection),
+    Match.exhaustive,
+  );
 };

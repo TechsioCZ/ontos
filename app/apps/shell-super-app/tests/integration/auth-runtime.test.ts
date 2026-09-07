@@ -1,5 +1,6 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
-// @effect-diagnostics asyncFunction:off processEnv:off
+// @effect-diagnostics asyncFunction:off processEnv:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -13,6 +14,7 @@ import { Pool } from 'pg';
 import {
   PrincipalResolverUnavailableError,
   ContextAccess,
+  LegalEntityContext,
   TenantModuleStateReadUnavailableError,
   TenantModuleStateService,
   TrustedPrincipalContextSchema,
@@ -35,7 +37,8 @@ import {
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { loadAuthConfig } from '../../api/auth/config.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
-import type { GatewayIssuerDependencies } from '../../api/auth/gateway-issuer.ts';
+import { makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
+import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
 import { account, authRelations, session, user } from '../../api/auth/db/schema.ts';
 import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
 import { makeShellAuthenticationApiRuntime } from '../../api/index.ts';
@@ -49,13 +52,14 @@ const principalId = '40000000-0000-4000-8000-000000000001';
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..', '..');
 const fixtureLegalEntityId = '35000000-0000-4000-8000-000000000001';
 const fixtureAuthBindingId = '45000000-0000-4000-8000-000000000001';
+const PrincipalIdSchema = Schema.String.pipe(Schema.brand('PrincipalId'));
 
 const IdentityResponseSchema = Schema.Struct({
-  identity: Schema.Struct({ email: Schema.String, principalId: Schema.String }),
+  identity: Schema.Struct({ email: Schema.String, principalId: PrincipalIdSchema }),
 });
 const ProblemStatusSchema = Schema.Struct({ status: Schema.Number });
 const SessionResponseSchema = Schema.Struct({
-  identity: Schema.optional(Schema.Struct({ principalId: Schema.optional(Schema.String) })),
+  identity: Schema.optional(Schema.Struct({ principalId: Schema.optional(PrincipalIdSchema) })),
 });
 const RetryableProblemSchema = Schema.Struct({ retryable: Schema.optional(Schema.Boolean) });
 const TokenResponseSchema = Schema.Struct({ token: Schema.String });
@@ -79,8 +83,13 @@ const legalEntitySelectionOptions = {
         ? Effect.succeed({ legalEntityId, legalName: 'Fixture legal entity' })
         : Effect.die('missing fixture legal entity'),
   },
+  runResolverEffect: runEffectTestPromise,
 } as const;
 const contextAccessLayer = Layer.succeed(ContextAccess, legalEntitySelectionOptions.contextAccess);
+const authenticationContextLayer = Layer.mergeAll(
+  contextAccessLayer,
+  Layer.succeed(LegalEntityContext, legalEntitySelectionOptions.legalEntityContext),
+);
 
 const cookieHeader = (setCookieHeaders: readonly string[]) =>
   setCookieHeaders.map((header) => header.split(';')[0]).join('; ');
@@ -196,7 +205,7 @@ const installedPageCatalog = (): InstalledModuleCatalog =>
   ]);
 
 test('creates, resolves, persists, revokes, and signs out a Better Auth session', async () => {
-  const configuration = await Effect.runPromise(loadAuthConfig());
+  const configuration = await runEffectTestPromise(loadAuthConfig());
   const corePool = new Pool({ connectionString: configuration.connectionString });
   const authPool = new Pool({ connectionString: configuration.connectionString });
   const coreDatabase = drizzle({ client: corePool, relations: coreRelations });
@@ -204,7 +213,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
   const resolver = makePrincipalResolver({ executor: coreDatabase });
   const authentication = makeAuthenticationService(configuration, authDatabase, resolver, {
     allowFixtureSignUp: true,
-    ...legalEntitySelectionOptions,
+    runResolverEffect: legalEntitySelectionOptions.runResolverEffect,
   });
   const authenticationLayer = Layer.succeed(AuthenticationService, authentication);
   const moduleStateLayer = Layer.succeed(
@@ -251,7 +260,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
 
   try {
     await cleanup();
-    const betterAuthUserId = await Effect.runPromise(
+    const betterAuthUserId = await runEffectTestPromise(
       authentication.createFixtureUser(email, 'Runtime fixture', password),
     );
     await coreDatabase.insert(tenants).values({
@@ -303,19 +312,19 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     const requestHeaders = new Headers({
       origin: configuration.baseUrl,
     });
-    const invalid = await Effect.runPromise(
+    const invalid = await runEffectTestPromise(
       Effect.flip(authentication.signIn(email, 'wrong-password', requestHeaders)),
     );
     assert.equal(invalid._tag, 'InvalidCredentialsError');
 
     const anonymousRuntime = makeShellAuthenticationApiRuntime(
       authenticationLayer,
-      {
+      makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
         loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
         loadConfig: parseGatewayIssuerConfig({}),
-      },
+      }),
       moduleStateLayer,
       Effect.succeed(installedCatalog(['testing1'])),
       false,
@@ -381,18 +390,22 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
         }),
         method: 'POST',
       });
-    const current = await Effect.runPromise(authentication.currentSession(authenticatedHeaders));
+    const current = await runEffectTestPromise(
+      authentication
+        .currentSession(authenticatedHeaders)
+        .pipe(Effect.provide(authenticationContextLayer)),
+    );
     assert.equal(current.identity?.tenantId, tenantId);
     assert.notEqual(current.identity, undefined);
 
     const pageRuntime = makeShellAuthenticationApiRuntime(
       authenticationLayer,
-      {
+      makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000009'),
         loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
         loadConfig: parseGatewayIssuerConfig({}),
-      },
+      }),
       moduleStateLayer,
       Effect.succeed(installedPageCatalog()),
       false,
@@ -413,8 +426,10 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     );
     assert.equal(missingPageResponse.status, 404);
 
-    const authenticatedContext = await Effect.runPromise(
-      authentication.resolveShellContext(authenticatedHeaders),
+    const authenticatedContext = await runEffectTestPromise(
+      authentication
+        .resolveShellContext(authenticatedHeaders)
+        .pipe(Effect.provide(authenticationContextLayer)),
     );
     assert.equal(authenticatedContext.state, 'authenticated');
     if (authenticatedContext.state !== 'authenticated') {
@@ -437,12 +452,12 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
             state: 'selection_required' as const,
           }),
       }),
-      {
+      makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000010'),
         loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
         loadConfig: parseGatewayIssuerConfig({}),
-      },
+      }),
       moduleStateLayer,
       Effect.succeed(installedPageCatalog()),
       false,
@@ -460,12 +475,12 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
 
     const deniedPageRuntime = makeShellAuthenticationApiRuntime(
       authenticationLayer,
-      {
+      makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000011'),
         loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
         loadConfig: parseGatewayIssuerConfig({}),
-      },
+      }),
       moduleStateLayer,
       Effect.succeed(installedPageCatalog()),
       false,
@@ -510,12 +525,12 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
 
     const deniedIdentityAdministrationRuntime = makeShellAuthenticationApiRuntime(
       authenticationLayer,
-      {
+      makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000002'),
         loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
         loadConfig: parseGatewayIssuerConfig({}),
-      },
+      }),
       moduleStateLayer,
       Effect.succeed(installedCatalog(['testing1'])),
       false,
@@ -658,12 +673,12 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
                 state: 'authenticated' as const,
               }),
       }),
-      {
+      makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
         loadAudiences: Effect.succeed(new Set(['testing1'])),
         loadConfig: parseGatewayIssuerConfig({}),
-      },
+      }),
       moduleStateLayer,
       Effect.succeed(installedCatalog(['testing1'])),
       false,
@@ -705,12 +720,12 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     };
     const unavailableModulesHandler = makeShellAuthenticationApiRuntime(
       authenticationLayer,
-      {
+      makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
         generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
         loadAudiences: Effect.succeed(new Set(['testing1'])),
         loadConfig: parseGatewayIssuerConfig({}),
-      },
+      }),
       Layer.succeed(TenantModuleStateService, unavailableModuleStates),
       Effect.succeed(installedPageCatalog()),
       false,
@@ -759,7 +774,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     const pair = await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true });
     const privateJwk = await exportJWK(pair.privateKey);
     const publicJwk = await exportJWK(pair.publicKey);
-    const issuerDependencies: GatewayIssuerDependencies = {
+    const issuerDependencies: GatewayIssuerLayerOptions = {
       currentTimeSeconds: Effect.succeed(1_700_000_000),
       generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
       loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
@@ -778,9 +793,11 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     };
     const issuingHandler = makeShellAuthenticationApiRuntime(
       authenticationLayer,
-      issuerDependencies,
+      makeGatewayIssuerLayer(issuerDependencies),
       moduleStateLayer,
       Effect.succeed(installedCatalog(['testing1'])),
+      false,
+      contextAccessLayer,
     ).createHandler();
     handlers.push(issuingHandler);
     const assertionResponse = await issuingHandler.handler(
@@ -794,7 +811,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
         method: 'POST',
       }),
     );
-    assert.equal(assertionResponse.status, 200);
+    assert.equal(assertionResponse.status, 200, await assertionResponse.clone().text());
     const assertion = Schema.decodeUnknownSync(TokenResponseSchema)(await assertionResponse.json());
     const verifiedAssertion = await jwtVerify(assertion.token, pair.publicKey, {
       algorithms: ['EdDSA'],
@@ -843,7 +860,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     const { verifyActionPrincipal } = generatedVerifier;
     assert.ok(Predicate.isFunction(verifyActionPrincipal));
     const generatedPrincipal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(
-      await Effect.runPromise(
+      await runEffectTestPromise(
         verifyActionPrincipal(`Bearer ${assertion.token}`, {
           currentTimeSeconds: Effect.succeed(1_700_000_001),
           environment: {
@@ -885,12 +902,14 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
 
     const defectHandler = makeShellAuthenticationApiRuntime(
       authenticationLayer,
-      {
+      makeGatewayIssuerLayer({
         ...issuerDependencies,
         generateJti: Effect.die(new Error('deliberate gateway test defect')),
-      },
+      }),
       moduleStateLayer,
       Effect.succeed(installedCatalog(['testing1'])),
+      false,
+      contextAccessLayer,
     ).createHandler();
     handlers.push(defectHandler);
     const defectResponse = await defectHandler.handler(
@@ -913,8 +932,10 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     assert.equal(defectProblem.detail, 'Gateway authentication could not complete.');
     assert.doesNotMatch(JSON.stringify(defectProblem), /deliberate gateway test defect/u);
 
-    const stillAuthenticated = await Effect.runPromise(
-      authentication.currentSession(authenticatedHeaders),
+    const stillAuthenticated = await runEffectTestPromise(
+      authentication
+        .currentSession(authenticatedHeaders)
+        .pipe(Effect.provide(authenticationContextLayer)),
     );
     assert.equal(stillAuthenticated.identity?.principalId, principalId);
 
@@ -922,8 +943,12 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       .update(principalAuthBindings)
       .set({ revokedAt: new Date('2026-09-01T00:00:00.000Z'), status: 'revoked' })
       .where(eq(principalAuthBindings.providerSubjectId, betterAuthUserId));
-    const revoked = await Effect.runPromise(
-      Effect.flip(authentication.currentSession(authenticatedHeaders)),
+    const revoked = await runEffectTestPromise(
+      Effect.flip(
+        authentication
+          .currentSession(authenticatedHeaders)
+          .pipe(Effect.provide(authenticationContextLayer)),
+      ),
     );
     assert.equal(revoked._tag, 'OntosIdentityForbiddenError');
     const forbiddenModulesResponse = await unavailableHandler.handler(
@@ -950,13 +975,15 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     assert.ok(signedOutCookies.length >= 3);
     assert.ok(signedOutCookies.every((header) => !header.includes(password)));
 
-    const anonymous = await Effect.runPromise(
-      authentication.currentSession(
-        new Headers({
-          cookie: cookieHeader(signedOutCookies),
-          origin: configuration.baseUrl,
-        }),
-      ),
+    const anonymous = await runEffectTestPromise(
+      authentication
+        .currentSession(
+          new Headers({
+            cookie: cookieHeader(signedOutCookies),
+            origin: configuration.baseUrl,
+          }),
+        )
+        .pipe(Effect.provide(authenticationContextLayer)),
     );
     assert.equal(anonymous.identity, null);
     const expiredModulesResponse = await unavailableHandler.handler(
@@ -1002,13 +1029,18 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
           : Effect.die('missing multi-tenant fixture legal entity');
       },
     },
+    runResolverEffect: runEffectTestPromise,
   } as const;
   const multiContextAccessLayer = Layer.succeed(
     ContextAccess,
     multiLegalEntitySelectionOptions.contextAccess,
   );
-  const configuration = await Effect.runPromise(loadAuthConfig());
-  const databaseConnections = await Effect.runPromise(loadDatabaseConnectionPair());
+  const multiAuthenticationContextLayer = Layer.mergeAll(
+    multiContextAccessLayer,
+    Layer.succeed(LegalEntityContext, multiLegalEntitySelectionOptions.legalEntityContext),
+  );
+  const configuration = await runEffectTestPromise(loadAuthConfig());
+  const databaseConnections = await runEffectTestPromise(loadDatabaseConnectionPair());
   const adminPool = new Pool({
     connectionString: databaseConnections.admin.connectionString,
   });
@@ -1020,7 +1052,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
   const resolver = makePrincipalResolver({ executor: coreDatabase });
   const authentication = makeAuthenticationService(configuration, authDatabase, resolver, {
     allowFixtureSignUp: true,
-    ...multiLegalEntitySelectionOptions,
+    runResolverEffect: multiLegalEntitySelectionOptions.runResolverEffect,
   });
   const moduleStateLayer = Layer.succeed(
     TenantModuleStateService,
@@ -1062,7 +1094,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
 
   try {
     await cleanup();
-    const betterAuthUserId = await Effect.runPromise(
+    const betterAuthUserId = await runEffectTestPromise(
       authentication.createFixtureUser(multiEmail, 'Multi tenant fixture', password),
     );
     await coreDatabase.insert(tenants).values([
@@ -1142,7 +1174,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       { moduleKey: 'second-module', state: 'active', tenantId: secondTenantId },
     ]);
 
-    const signIn = await Effect.runPromise(
+    const signIn = await runEffectTestPromise(
       authentication.signIn(multiEmail, password, new Headers({ origin: configuration.baseUrl })),
     );
     assert.equal(signIn.identity.tenantId, firstTenantId);
@@ -1162,7 +1194,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     const privateJwk = await exportJWK(pair.privateKey);
     const runtime = makeShellAuthenticationApiRuntime(
       Layer.succeed(AuthenticationService, authentication),
-      {
+      makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
         generateJti: Effect.succeed('61000000-0000-4000-8000-000000000001'),
         loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
@@ -1178,7 +1210,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
             x: privateJwk.x ?? '',
           },
         }),
-      },
+      }),
       moduleStateLayer,
       Effect.succeed(installedCatalog(['first-module', 'second-module'])),
       false,
@@ -1274,16 +1306,16 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
               )
             : resolver.resolveBetterAuthUserForTenant(userId, selectedTenantId),
       },
-      multiLegalEntitySelectionOptions,
+      { runResolverEffect: multiLegalEntitySelectionOptions.runResolverEffect },
     );
     const resolverUnavailableRuntime = makeShellAuthenticationApiRuntime(
       Layer.succeed(AuthenticationService, resolverUnavailableAuthentication),
-      {
+      makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(1_700_000_000),
         generateJti: Effect.succeed('61000000-0000-4000-8000-000000000002'),
         loadAudiences: Effect.succeed(new Set()),
         loadConfig: parseGatewayIssuerConfig({}),
-      },
+      }),
       moduleStateLayer,
     ).createHandler();
     handlers.push(resolverUnavailableRuntime);
@@ -1389,12 +1421,16 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       .where(eq(session.userId, betterAuthUserId));
     assert.equal(sessionsAfterSwitch[0]?.activeTenantId, secondTenantId);
     assert.equal(sessionsAfterSwitch[0]?.activeLegalEntityId, null);
-    const currentSessionAfterSwitch = await Effect.runPromise(
-      authentication.currentSession(authenticatedHeaders),
+    const currentSessionAfterSwitch = await runEffectTestPromise(
+      authentication
+        .currentSession(authenticatedHeaders)
+        .pipe(Effect.provide(multiAuthenticationContextLayer)),
     );
     assert.equal(currentSessionAfterSwitch.identity?.principalId, secondPrincipalId);
-    const idempotentSwitch = await Effect.runPromise(
-      authentication.switchTenant(secondTenantId, authenticatedHeaders),
+    const idempotentSwitch = await runEffectTestPromise(
+      authentication
+        .switchTenant(secondTenantId, authenticatedHeaders)
+        .pipe(Effect.provide(multiAuthenticationContextLayer)),
     );
     assert.equal(idempotentSwitch.selectedTenantId, secondTenantId);
 
@@ -1519,8 +1555,10 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       );
     }
 
-    const upgradedSession = await Effect.runPromise(
-      authentication.currentSession(authenticatedHeaders),
+    const upgradedSession = await runEffectTestPromise(
+      authentication
+        .currentSession(authenticatedHeaders)
+        .pipe(Effect.provide(multiAuthenticationContextLayer)),
     );
     assert.equal(upgradedSession.identity?.tenantId, firstTenantId);
     const upgradedSessionRows = await authDatabase
@@ -1529,21 +1567,31 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       .where(eq(session.userId, betterAuthUserId));
     assert.equal(upgradedSessionRows[0]?.activeTenantId, firstTenantId);
 
-    await Effect.runPromise(authentication.switchTenant(secondTenantId, authenticatedHeaders));
+    await runEffectTestPromise(
+      authentication
+        .switchTenant(secondTenantId, authenticatedHeaders)
+        .pipe(Effect.provide(multiAuthenticationContextLayer)),
+    );
     await coreDatabase
       .update(principalAuthBindings)
       .set({ revokedAt: new Date('2026-09-01T00:00:00.000Z'), status: 'revoked' })
       .where(eq(principalAuthBindings.tenantId, secondTenantId));
-    const revokedSession = await Effect.runPromise(
-      Effect.flip(authentication.currentSession(authenticatedHeaders)),
+    const revokedSession = await runEffectTestPromise(
+      Effect.flip(
+        authentication
+          .currentSession(authenticatedHeaders)
+          .pipe(Effect.provide(multiAuthenticationContextLayer)),
+      ),
     );
     assert.equal(revokedSession._tag, 'OntosIdentityForbiddenError');
     await coreDatabase
       .update(principalAuthBindings)
       .set({ revokedAt: null, status: 'active' })
       .where(eq(principalAuthBindings.tenantId, secondTenantId));
-    const restoredSession = await Effect.runPromise(
-      authentication.currentSession(authenticatedHeaders),
+    const restoredSession = await runEffectTestPromise(
+      authentication
+        .currentSession(authenticatedHeaders)
+        .pipe(Effect.provide(multiAuthenticationContextLayer)),
     );
     assert.equal(restoredSession.identity?.tenantId, secondTenantId);
 
@@ -1555,8 +1603,12 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     await coreDatabase
       .delete(principalAuthBindings)
       .where(eq(principalAuthBindings.tenantId, secondTenantId));
-    const sessionWithRemovedBinding = await Effect.runPromise(
-      Effect.flip(authentication.currentSession(authenticatedHeaders)),
+    const sessionWithRemovedBinding = await runEffectTestPromise(
+      Effect.flip(
+        authentication
+          .currentSession(authenticatedHeaders)
+          .pipe(Effect.provide(multiAuthenticationContextLayer)),
+      ),
     );
     assert.equal(sessionWithRemovedBinding._tag, 'OntosIdentityForbiddenError');
   } finally {

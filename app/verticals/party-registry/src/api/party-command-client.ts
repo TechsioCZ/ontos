@@ -8,8 +8,13 @@ import { executePartyMatchDecisionWithAuthorization } from './party-match-decisi
 import type { GatewayContextClientOptions } from '@app/shared-contracts';
 import { Effect, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
 import type { HttpApi, HttpApiClient, HttpApiGroup } from '@modern-js/plugin-bff/effect-client';
+import { Context, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import {
+  AddContactPointPayloadSchema,
+  AddPartyOfficialIdentifierPayloadSchema,
+  CreatePartyPayloadSchema,
+  UpdatePartyPayloadSchema,
   partyRegistryCommandsApi,
   partyRegistryCommandRecoveryApi,
 } from '../../shared/command-api.ts';
@@ -40,6 +45,7 @@ import type {
   UpdatePartyRelationshipPayload,
   UpdatePartyPayload,
 } from '../../shared/command-api.ts';
+import { ActionInvocationIdSchema } from '../../shared/domain/correction-contracts.ts';
 
 type CommandGroups =
   typeof partyRegistryCommandsApi extends HttpApi.HttpApi<infer _Id, infer Groups> ? Groups : never;
@@ -49,53 +55,115 @@ export type PartyCommandClient = HttpApiClient.Client<
   never
 >;
 
+const correlationIdOption = 'correlationId' as const;
+const traceIdOption = 'traceId' as const;
+
 export interface PartyCommandRecoveryOptions {
   readonly baseUrl?: string | URL;
-  readonly correlationId: string;
+  readonly [correlationIdOption]: string;
   readonly gateway?: GatewayContextClientOptions;
-  readonly traceId?: string;
+  readonly [traceIdOption]?: string;
 }
 
 export interface PartyCommandOptions extends PartyCommandRecoveryOptions {
   readonly idempotencyKey: string;
 }
 
-interface PartyCommandRequestHeaders extends Readonly<Record<string, string | undefined>> {
-  authorization: string;
-  'x-correlation-id': string;
-  'x-trace-id'?: string;
+type PartyCommandInvocation = readonly [credential: string, options: PartyCommandOptions];
+type PartyCommandRecoveryInvocation = readonly [
+  credential: string,
+  options: PartyCommandRecoveryOptions,
+];
+
+interface PartyCommandRequestContextValue {
+  readonly baseUrl: string | URL;
+  readonly credential: Redacted.Redacted<string>;
+  readonly requestCorrelation: string;
+  readonly requestTrace?: string;
 }
 
-const requestHeaders = (authorization: string, options: PartyCommandRecoveryOptions) => {
-  const headers: PartyCommandRequestHeaders = {
-    authorization,
-    'x-correlation-id': options.correlationId,
-  };
-  if (options.traceId !== undefined) {
-    headers['x-trace-id'] = options.traceId;
-  }
-  return headers;
+const defaultPartyCommandRequestContext: PartyCommandRequestContextValue = {
+  baseUrl: '/party-registry-api',
+  credential: Redacted.make(''),
+  requestCorrelation: '',
 };
 
-const makeClient = (authorization: string, options: PartyCommandOptions) =>
-  makeEffectHttpApiClient(partyRegistryCommandsApi, {
-    baseUrl: options.baseUrl ?? '/party-registry-api',
-    transformClient: HttpClient.mapRequest(
-      HttpClientRequest.setHeaders(requestHeaders(authorization, options)),
-    ),
+const PartyCommandRequestContext = Context.Reference<PartyCommandRequestContextValue>(
+  'PartyCommandRequestContext',
+  { defaultValue: () => defaultPartyCommandRequestContext },
+);
+
+const applyPartyCommandRequestContext = (request: HttpClientRequest.HttpClientRequest) =>
+  Effect.gen(function* applyRequestContext() {
+    const context = yield* PartyCommandRequestContext;
+    const withBaseUrl = HttpClientRequest.prependUrl(request, context.baseUrl.toString());
+    return HttpClientRequest.setHeaders(
+      withBaseUrl,
+      context.requestTrace === undefined
+        ? {
+            authorization: Redacted.value(context.credential),
+            'x-correlation-id': context.requestCorrelation,
+          }
+        : {
+            authorization: Redacted.value(context.credential),
+            'x-correlation-id': context.requestCorrelation,
+            'x-trace-id': context.requestTrace,
+          },
+    );
   });
 
+const transformPartyCommandClient = HttpClient.mapRequestEffect(applyPartyCommandRequestContext);
+
+const partyCommandClient = Effect.runSync(
+  Effect.cached(
+    makeEffectHttpApiClient(partyRegistryCommandsApi, {
+      transformClient: transformPartyCommandClient,
+    }),
+  ),
+);
+
+const partyCommandRecoveryClient = Effect.runSync(
+  Effect.cached(
+    makeEffectHttpApiClient(partyRegistryCommandRecoveryApi, {
+      transformClient: transformPartyCommandClient,
+    }),
+  ),
+);
+
+const providePartyCommandRequestContext = <Success, Failure, Requirements>(
+  effect: Effect.Effect<Success, Failure, Requirements>,
+  gatewayAssertion: string,
+  options: PartyCommandRecoveryOptions,
+) => {
+  const context: PartyCommandRequestContextValue = {
+    baseUrl: options.baseUrl ?? '/party-registry-api',
+    credential: Redacted.make(gatewayAssertion),
+    requestCorrelation: options[correlationIdOption],
+  };
+  const requestTrace = options[traceIdOption];
+  return Effect.provideService(
+    effect,
+    PartyCommandRequestContext,
+    requestTrace === undefined ? context : { ...context, requestTrace },
+  );
+};
+
 const invokeAuthorized = <Success, Failure>(
-  authorization: string,
+  gatewayAssertion: string,
   options: PartyCommandOptions,
   operation: (client: PartyCommandClient) => Effect.Effect<Success, Failure>,
-) => makeClient(authorization, options).pipe(Effect.flatMap(operation));
+) =>
+  providePartyCommandRequestContext(
+    partyCommandClient.pipe(Effect.flatMap(operation)),
+    gatewayAssertion,
+    options,
+  );
 
 // Defer gateway loading to the attempt: the gateway's ARES coordinator uses these exact commands.
 // Assertions are acquired afresh, never cached in a client, route loader, or module initializer.
 const invoke = <Success, Failure>(
   options: PartyCommandRecoveryOptions,
-  operation: (authorization: string) => Effect.Effect<Success, Failure>,
+  operation: (gatewayAssertion: string) => Effect.Effect<Success, Failure>,
 ) =>
   Effect.promise(() => import('./action-gateway.ts')).pipe(
     Effect.flatMap(({ actionGateway }) => actionGateway.invoke(operation, options.gateway)),
@@ -103,15 +171,15 @@ const invoke = <Success, Failure>(
 
 export const resolvePartyCommandCommitWithAuthorization = (
   payload: ResolvePartyCommandCommitPayload,
-  authorization: string,
-  options: PartyCommandRecoveryOptions,
+  ...[credential, options]: PartyCommandRecoveryInvocation
 ) =>
-  makeEffectHttpApiClient(partyRegistryCommandRecoveryApi, {
-    baseUrl: options.baseUrl ?? '/party-registry-api',
-    transformClient: HttpClient.mapRequest(
-      HttpClientRequest.setHeaders(requestHeaders(authorization, options)),
+  providePartyCommandRequestContext(
+    partyCommandRecoveryClient.pipe(
+      Effect.flatMap((client) => client.partyCommandRecovery.resolve({ payload })),
     ),
-  }).pipe(Effect.flatMap((client) => client.partyCommandRecovery.resolve({ payload })));
+    credential,
+    options,
+  );
 
 export const resolvePartyCommandCommit = (
   payload: ResolvePartyCommandCommitPayload,
@@ -123,14 +191,17 @@ export const resolvePartyCommandCommit = (
 
 export const addContactPointWithAuthorization = (
   payload: AddContactPointPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
-    client.partyCommands.addContactPoint({
-      headers: { 'idempotency-key': options.idempotencyKey },
-      payload,
-    }),
+  invokeAuthorized(credential, options, (client) =>
+    Schema.encodeUnknownEffect(AddContactPointPayloadSchema)(payload).pipe(
+      Effect.flatMap((endpointPayload) =>
+        client.partyCommands.addContactPoint({
+          headers: { 'idempotency-key': options.idempotencyKey },
+          payload: endpointPayload,
+        }),
+      ),
+    ),
   );
 
 export const addContactPoint = (payload: AddContactPointPayload, options: PartyCommandOptions) =>
@@ -140,14 +211,17 @@ export const addContactPoint = (payload: AddContactPointPayload, options: PartyC
 
 export const addPartyOfficialIdentifierWithAuthorization = (
   payload: AddPartyOfficialIdentifierPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
-    client.partyCommands.addPartyOfficialIdentifier({
-      headers: { 'idempotency-key': options.idempotencyKey },
-      payload,
-    }),
+  invokeAuthorized(credential, options, (client) =>
+    Schema.encodeUnknownEffect(AddPartyOfficialIdentifierPayloadSchema)(payload).pipe(
+      Effect.flatMap((endpointPayload) =>
+        client.partyCommands.addPartyOfficialIdentifier({
+          headers: { 'idempotency-key': options.idempotencyKey },
+          payload: endpointPayload,
+        }),
+      ),
+    ),
   );
 
 export const addPartyOfficialIdentifier = (
@@ -160,10 +234,9 @@ export const addPartyOfficialIdentifier = (
 
 export const archivePartyWithAuthorization = (
   payload: ArchivePartyPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
+  invokeAuthorized(credential, options, (client) =>
     client.partyCommands.archiveParty({
       headers: { 'idempotency-key': options.idempotencyKey },
       payload,
@@ -177,10 +250,9 @@ export const archiveParty = (payload: ArchivePartyPayload, options: PartyCommand
 
 export const confirmDuplicatePartiesWithAuthorization = (
   payload: ConfirmDuplicatePartiesPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
+  invokeAuthorized(credential, options, (client) =>
     client.partyCommands.confirmDuplicateParties({
       headers: { 'idempotency-key': options.idempotencyKey },
       payload,
@@ -197,10 +269,9 @@ export const confirmDuplicateParties = (
 
 export const correctPartyFactWithAuthorization = (
   payload: CorrectPartyFactPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) => {
+  invokeAuthorized(credential, options, (client) => {
     const headers = { 'idempotency-key': options.idempotencyKey };
     // HttpApi retains an overload for each union member; narrow without weakening its schema.
     if (payload.factKind !== 'RELATIONSHIP') {
@@ -219,10 +290,9 @@ export const correctPartyFact = (payload: CorrectPartyFactPayload, options: Part
 
 export const counterpartyCreateWithAuthorization = (
   payload: CounterpartyCreatePayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
+  invokeAuthorized(credential, options, (client) =>
     client.partyCommands.counterpartyCreate({
       headers: { 'idempotency-key': options.idempotencyKey },
       payload,
@@ -239,10 +309,9 @@ export const counterpartyCreate = (
 
 export const counterpartyRoleAddWithAuthorization = (
   payload: CounterpartyRoleAddPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
+  invokeAuthorized(credential, options, (client) =>
     client.partyCommands.counterpartyRoleAdd({
       headers: { 'idempotency-key': options.idempotencyKey },
       payload,
@@ -259,10 +328,9 @@ export const counterpartyRoleAdd = (
 
 export const counterpartyRoleEndWithAuthorization = (
   payload: CounterpartyRoleEndPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
+  invokeAuthorized(credential, options, (client) =>
     client.partyCommands.counterpartyRoleEnd({
       headers: { 'idempotency-key': options.idempotencyKey },
       payload,
@@ -279,10 +347,9 @@ export const counterpartyRoleEnd = (
 
 export const createPartyRelationshipWithAuthorization = (
   payload: CreatePartyRelationshipPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
+  invokeAuthorized(credential, options, (client) =>
     client.partyCommands.createPartyRelationship({
       headers: { 'idempotency-key': options.idempotencyKey },
       payload,
@@ -299,25 +366,27 @@ export const createPartyRelationship = (
 
 export const createPartyWithAuthorization = (
   payload: CreatePartyPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
-    client.partyCommands.createParty({
-      headers: { 'idempotency-key': options.idempotencyKey },
-      payload,
-    }),
+  invokeAuthorized(credential, options, (client) =>
+    Schema.encodeUnknownEffect(CreatePartyPayloadSchema)(payload).pipe(
+      Effect.flatMap((endpointPayload) =>
+        client.partyCommands.createParty({
+          headers: { 'idempotency-key': options.idempotencyKey },
+          payload: endpointPayload,
+        }),
+      ),
+    ),
   );
 
 export const createParty = (payload: CreatePartyPayload, options: PartyCommandOptions) =>
-  invoke(options, (authorization) => createPartyWithAuthorization(payload, authorization, options));
+  invoke(options, (credential) => createPartyWithAuthorization(payload, credential, options));
 
 export const dismissDuplicateCandidateWithAuthorization = (
   payload: DismissDuplicateCandidatePayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
+  invokeAuthorized(credential, options, (client) =>
     client.partyCommands.dismissDuplicateCandidate({
       headers: { 'idempotency-key': options.idempotencyKey },
       payload,
@@ -334,10 +403,9 @@ export const dismissDuplicateCandidate = (
 
 export const endContactPointWithAuthorization = (
   payload: EndContactPointPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
+  invokeAuthorized(credential, options, (client) =>
     client.partyCommands.endContactPoint({
       headers: { 'idempotency-key': options.idempotencyKey },
       payload,
@@ -351,10 +419,9 @@ export const endContactPoint = (payload: EndContactPointPayload, options: PartyC
 
 export const endPartyOfficialIdentifierWithAuthorization = (
   payload: EndPartyOfficialIdentifierPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
+  invokeAuthorized(credential, options, (client) =>
     client.partyCommands.endPartyOfficialIdentifier({
       headers: { 'idempotency-key': options.idempotencyKey },
       payload,
@@ -371,10 +438,9 @@ export const endPartyOfficialIdentifier = (
 
 export const endPartyRelationshipWithAuthorization = (
   payload: EndPartyRelationshipPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
+  invokeAuthorized(credential, options, (client) =>
     client.partyCommands.endPartyRelationship({
       headers: { 'idempotency-key': options.idempotencyKey },
       payload,
@@ -391,10 +457,9 @@ export const endPartyRelationship = (
 
 export const markDuplicateCandidateNeedsEvidenceWithAuthorization = (
   payload: MarkDuplicateCandidateNeedsEvidencePayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
+  invokeAuthorized(credential, options, (client) =>
     client.partyCommands.markDuplicateCandidateNeedsEvidence({
       headers: { 'idempotency-key': options.idempotencyKey },
       payload,
@@ -411,10 +476,9 @@ export const markDuplicateCandidateNeedsEvidence = (
 
 export const matchPartyWithAuthorization = (
   payload: MatchPartyPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
+  invokeAuthorized(credential, options, (client) =>
     client.partyCommands.matchParty({
       headers: { 'idempotency-key': options.idempotencyKey },
       payload,
@@ -426,10 +490,9 @@ export const matchParty = (payload: MatchPartyPayload, options: PartyCommandOpti
 
 export const requestSearchRebuildWithAuthorization = (
   payload: RequestSearchRebuildPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
+  invokeAuthorized(credential, options, (client) =>
     client.partyCommands.requestSearchRebuild({
       headers: { 'idempotency-key': options.idempotencyKey },
       payload,
@@ -446,10 +509,9 @@ export const requestSearchRebuild = (
 
 export const resolveDuplicateCandidateCreateWithAuthorization = (
   payload: ResolveDuplicateCandidateCreatePayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
+  invokeAuthorized(credential, options, (client) =>
     client.partyCommands.resolveDuplicateCandidateCreate({
       headers: { 'idempotency-key': options.idempotencyKey },
       payload,
@@ -466,10 +528,9 @@ export const resolveDuplicateCandidateCreate = (
 
 export const resolveDuplicateCandidateMatchWithAuthorization = (
   payload: ResolveDuplicateCandidateMatchPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
+  invokeAuthorized(credential, options, (client) =>
     client.partyCommands.resolveDuplicateCandidateMatch({
       headers: { 'idempotency-key': options.idempotencyKey },
       payload,
@@ -486,10 +547,9 @@ export const resolveDuplicateCandidateMatch = (
 
 export const unarchivePartyWithAuthorization = (
   payload: UnarchivePartyPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
+  invokeAuthorized(credential, options, (client) =>
     client.partyCommands.unarchiveParty({
       headers: { 'idempotency-key': options.idempotencyKey },
       payload,
@@ -503,10 +563,9 @@ export const unarchiveParty = (payload: UnarchivePartyPayload, options: PartyCom
 
 export const updateContactPointWithAuthorization = (
   payload: UpdateContactPointPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
+  invokeAuthorized(credential, options, (client) =>
     client.partyCommands.updateContactPoint({
       headers: { 'idempotency-key': options.idempotencyKey },
       payload,
@@ -523,10 +582,9 @@ export const updateContactPoint = (
 
 export const updatePartyOfficialIdentifierWithAuthorization = (
   payload: UpdatePartyOfficialIdentifierPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
+  invokeAuthorized(credential, options, (client) =>
     client.partyCommands.updatePartyOfficialIdentifier({
       headers: { 'idempotency-key': options.idempotencyKey },
       payload,
@@ -543,10 +601,9 @@ export const updatePartyOfficialIdentifier = (
 
 export const updatePartyRelationshipWithAuthorization = (
   payload: UpdatePartyRelationshipPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
+  invokeAuthorized(credential, options, (client) =>
     client.partyCommands.updatePartyRelationship({
       headers: { 'idempotency-key': options.idempotencyKey },
       payload,
@@ -563,14 +620,17 @@ export const updatePartyRelationship = (
 
 export const updatePartyWithAuthorization = (
   payload: UpdatePartyPayload,
-  authorization: string,
-  options: PartyCommandOptions,
+  ...[credential, options]: PartyCommandInvocation
 ) =>
-  invokeAuthorized(authorization, options, (client) =>
-    client.partyCommands.updateParty({
-      headers: { 'idempotency-key': options.idempotencyKey },
-      payload,
-    }),
+  invokeAuthorized(credential, options, (client) =>
+    Schema.encodeUnknownEffect(UpdatePartyPayloadSchema)(payload).pipe(
+      Effect.flatMap((endpointPayload) =>
+        client.partyCommands.updateParty({
+          headers: { 'idempotency-key': options.idempotencyKey },
+          payload: endpointPayload,
+        }),
+      ),
+    ),
   );
 
 export const updateParty = (payload: UpdatePartyPayload, options: PartyCommandOptions) =>
@@ -586,11 +646,14 @@ export const recoverPartyCreate = (
     if (resolution.state !== 'COMMITTED') {
       return { _tag: 'PartyCreateRecoveryPending' as const, resolution };
     }
+    const actionInvocationId = yield* Schema.decodeUnknownEffect(ActionInvocationIdSchema)(
+      payload.invocationId,
+    );
     const decision = yield* invoke(options, (authorization) =>
       executePartyMatchDecisionWithAuthorization(
-        { actionInvocationId: payload.invocationId },
+        { actionInvocationId },
         authorization,
-        options.correlationId,
+        options[correlationIdOption],
         options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl },
       ),
     );

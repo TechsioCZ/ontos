@@ -2,12 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { localPublicClientValues, localSpiceDbValues } from './local-environment-values.mts';
 
-test('preserves canonical SpiceDB values when no local override is supplied', () => {
+const spiceDbGrpcPort = '50052';
+const spiceDbHttpPort = '8444';
+const spiceDbEndpoint = `localhost:${spiceDbGrpcPort}`;
+
+await test('preserves canonical SpiceDB values when no local override is supplied', () => {
   const values = localSpiceDbValues(
     [
-      'SPICEDB_ENDPOINT=localhost:50052',
-      'SPICEDB_GRPC_PORT=50052',
-      'SPICEDB_HTTP_PORT=8444',
+      `SPICEDB_ENDPOINT=${spiceDbEndpoint}`,
+      `SPICEDB_GRPC_PORT=${spiceDbGrpcPort}`,
+      `SPICEDB_HTTP_PORT=${spiceDbHttpPort}`,
       'SPICEDB_INSECURE=true',
       'SPICEDB_PRESHARED_KEY=existing-key',
     ],
@@ -15,26 +19,26 @@ test('preserves canonical SpiceDB values when no local override is supplied', ()
   );
 
   assert.deepEqual(values, {
-    SPICEDB_ENDPOINT: 'localhost:50052',
-    SPICEDB_GRPC_PORT: '50052',
-    SPICEDB_HTTP_PORT: '8444',
+    SPICEDB_ENDPOINT: spiceDbEndpoint,
+    SPICEDB_GRPC_PORT: spiceDbGrpcPort,
+    SPICEDB_HTTP_PORT: spiceDbHttpPort,
     SPICEDB_INSECURE: 'true',
     SPICEDB_PRESHARED_KEY: 'existing-key',
   });
 });
 
-test('applies explicit local port overrides as one consistent endpoint', () => {
+await test('applies explicit local port overrides as one consistent endpoint', () => {
   const values = localSpiceDbValues(
     ['SPICEDB_ENDPOINT=localhost:50051', 'SPICEDB_GRPC_PORT=50051'],
-    { grpcPort: '50052', httpPort: '8444' },
+    { grpcPort: spiceDbGrpcPort, httpPort: spiceDbHttpPort },
   );
 
-  assert.equal(values['SPICEDB_ENDPOINT'], 'localhost:50052');
-  assert.equal(values['SPICEDB_GRPC_PORT'], '50052');
-  assert.equal(values['SPICEDB_HTTP_PORT'], '8444');
+  assert.equal(values.SPICEDB_ENDPOINT, spiceDbEndpoint);
+  assert.equal(values.SPICEDB_GRPC_PORT, spiceDbGrpcPort);
+  assert.equal(values.SPICEDB_HTTP_PORT, spiceDbHttpPort);
 });
 
-test('derives local public-client URLs from configured Shell identity/port and Party API URL', () => {
+await test('derives local public-client URLs from configured Shell identity/port and Party API URL', () => {
   assert.deepEqual(
     localPublicClientValues([], {
       partyRegistryApiBaseUrl: 'http://localhost:4199/party-api',
@@ -48,7 +52,7 @@ test('derives local public-client URLs from configured Shell identity/port and P
   );
 });
 
-test('preserves explicitly configured public-client URLs', () => {
+await test('preserves explicitly configured public-client URLs', () => {
   assert.deepEqual(
     localPublicClientValues(
       [

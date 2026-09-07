@@ -1,8 +1,16 @@
-// @effect-diagnostics asyncFunction:off globalDate:off
-/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type, unicorn/no-thenable -- This focused harness models only the Drizzle system boundary used by the Relationship service. */
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off globalDate:off -- Existing compatibility boundary; expires: 2026-12-31.
+/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type, unicorn/no-thenable -- This focused harness models only the Drizzle system boundary used by the Relationship service. expires: 2026-12-31. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import {
+  CreatePartyRelationshipPayloadSchema,
+  EndPartyRelationshipPayloadSchema,
+  PartyRelationshipCorrectionRequired,
+  UpdatePartyRelationshipPayloadSchema,
+} from '../../shared/domain/relationship-contract.ts';
+import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 import {
   createPartyRelationshipRecord,
   endPartyRelationshipRecord,
@@ -16,6 +24,9 @@ const toPartyId = '30000000-0000-4000-8000-000000000001';
 const relationshipId = '40000000-0000-4000-8000-000000000001';
 const actionInvocationId = '50000000-0000-4000-8000-000000000001';
 const principalId = '60000000-0000-4000-8000-000000000001';
+const decodeCreatePayload = Schema.decodeUnknownSync(CreatePartyRelationshipPayloadSchema);
+const decodeUpdatePayload = Schema.decodeUnknownSync(UpdatePartyRelationshipPayloadSchema);
+const decodeEndPayload = Schema.decodeUnknownSync(EndPartyRelationshipPayloadSchema);
 
 const ref = (resourceId: string) => ({
   moduleId: 'party.registry' as const,
@@ -135,15 +146,21 @@ test('create persists an active assertion with unknown start and derives current
     [[created]],
   );
 
-  const result = await Effect.runPromise(
-    createPartyRelationshipRecord(harness.transaction, tenantId, principalId, actionInvocationId, {
-      fromPartyRef: ref(fromPartyId),
-      provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
-      relationshipType: 'CONTACT_PERSON_OF',
-      toPartyRef: ref(toPartyId),
-      validFrom: null,
-      validTo: null,
-    }),
+  const result = await runEffectTestPromise(
+    createPartyRelationshipRecord(
+      harness.transaction,
+      tenantId,
+      principalId,
+      actionInvocationId,
+      decodeCreatePayload({
+        fromPartyRef: ref(fromPartyId),
+        provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
+        relationshipType: 'CONTACT_PERSON_OF',
+        toPartyRef: ref(toPartyId),
+        validFrom: null,
+        validTo: null,
+      }),
+    ),
   );
 
   assert.equal(result.outcome, 'CREATED');
@@ -161,18 +178,24 @@ test('update refines an unknown historical validFrom through the persistence ser
   const updated = relationshipRow({ revision: 2, validFrom: new Date(refinedAt), validTo });
   const harness = transactionHarness([[current], ...canonicalEndpointReads, []], [], [[updated]]);
 
-  const result = await Effect.runPromise(
-    updatePartyRelationshipRecord(harness.transaction, tenantId, principalId, actionInvocationId, {
-      changeReason: 'Reliable engagement evidence established the relationship start',
-      expectedRevision: 1,
-      provenance: { method: 'DOCUMENT_REVIEW', source: 'ENGAGEMENT_RECORD' },
-      relationshipRef,
-      validFrom: refinedAt,
-    }),
+  const result = await runEffectTestPromise(
+    updatePartyRelationshipRecord(
+      harness.transaction,
+      tenantId,
+      principalId,
+      actionInvocationId,
+      decodeUpdatePayload({
+        changeReason: 'Reliable engagement evidence established the relationship start',
+        expectedRevision: 1,
+        provenance: { method: 'DOCUMENT_REVIEW', source: 'ENGAGEMENT_RECORD' },
+        relationshipRef,
+        validFrom: refinedAt,
+      }),
+    ),
   );
 
   assert.equal(result.outcome, 'CHANGED');
-  assert.equal(result.relationship.validFrom, refinedAt);
+  assert.equal(DateTime.formatIso(Option.getOrThrow(result.relationship.validFrom)), refinedAt);
   assert.equal(result.relationship.state, 'HISTORICAL');
   assert.deepEqual(harness.updateSets[0]?.['validFrom'], new Date(refinedAt));
   assert.equal(harness.updateSets[0]?.['revision'], 2);
@@ -206,25 +229,30 @@ test('end keeps a future-ended relationship current and exposes bounded end hist
     [[ended]],
   );
 
-  const result = await Effect.runPromise(
-    endPartyRelationshipRecord(harness.transaction, tenantId, principalId, actionInvocationId, {
-      effectiveAt,
-      expectedRevision: 1,
-      provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
-      reason: 'A successor contact takes responsibility',
-      relationshipRef,
-    }),
+  const result = await runEffectTestPromise(
+    endPartyRelationshipRecord(
+      harness.transaction,
+      tenantId,
+      principalId,
+      actionInvocationId,
+      decodeEndPayload({
+        effectiveAt,
+        expectedRevision: 1,
+        provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
+        reason: 'A successor contact takes responsibility',
+        relationshipRef,
+      }),
+    ),
   );
 
   assert.equal(result.relationship.state, 'CURRENT');
   assert.equal(result.relationship.from.canonicalPartyRef.resourceId, survivorId);
   assert.equal(result.relationship.from.storedPartyRef.resourceId, fromPartyId);
   assert.equal(result.relationship.endHistory.length, 1);
-  assert.equal(result.relationship.endHistory[0]?.effectiveAt, effectiveAt);
-  assert.equal(
-    result.relationship.endHistory[0]?.reason,
-    'A successor contact takes responsibility',
-  );
+  const [endEvidence] = result.relationship.endHistory;
+  assert.ok(endEvidence);
+  assert.equal(DateTime.formatIso(endEvidence.effectiveAt), effectiveAt);
+  assert.equal(Option.getOrThrow(endEvidence.reason), 'A successor contact takes responsibility');
   assert.equal('state' in (harness.updateSets[0] ?? {}), false);
   assert.equal('isCurrent' in (harness.updateSets[0] ?? {}), false);
 });
@@ -243,15 +271,16 @@ test('detail derives scheduled state and resolves stored endpoint aliases indepe
     [{ partyId: toPartyId }],
   ]);
 
-  const detail = await Effect.runPromise(
+  const detail = await runEffectTestPromise(
     findPartyRelationshipRecord(harness.transaction, tenantId, relationshipId),
   );
 
   assert.equal(detail?.state, 'SCHEDULED');
   assert.equal(detail?.from.storedPartyRef.resourceId, fromPartyId);
   assert.equal(detail?.from.canonicalPartyRef.resourceId, canonicalFrom);
-  assert.equal(detail?.from.requestedAlias?.resourceId, fromPartyId);
-  assert.equal(detail?.to.requestedAlias, null);
+  assert.ok(detail);
+  assert.equal(Option.getOrThrow(detail.from.requestedAlias).resourceId, fromPartyId);
+  assert.ok(Option.isNone(detail.to.requestedAlias));
 });
 
 test('non-active assertions never read as current even with an open effective interval', async () => {
@@ -261,7 +290,7 @@ test('non-active assertions never read as current even with an open effective in
         [relationshipRow({ assertionState })],
         ...canonicalEndpointReads,
       ]);
-      const detail = await Effect.runPromise(
+      const detail = await runEffectTestPromise(
         findPartyRelationshipRecord(harness.transaction, tenantId, relationshipId),
       );
 
@@ -290,14 +319,20 @@ test('durable relationship update resolves alias-backed stored endpoints without
     [],
     [[updated]],
   );
-  const result = await Effect.runPromise(
-    updatePartyRelationshipRecord(harness.transaction, tenantId, principalId, actionInvocationId, {
-      changeReason: 'A revised planned start',
-      expectedRevision: 1,
-      provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
-      relationshipRef,
-      validFrom: '2099-01-01T00:00:00.000Z',
-    }),
+  const result = await runEffectTestPromise(
+    updatePartyRelationshipRecord(
+      harness.transaction,
+      tenantId,
+      principalId,
+      actionInvocationId,
+      decodeUpdatePayload({
+        changeReason: 'A revised planned start',
+        expectedRevision: 1,
+        provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
+        relationshipRef,
+        validFrom: '2099-01-01T00:00:00.000Z',
+      }),
+    ),
   );
 
   assert.equal(result.outcome, 'CHANGED');
@@ -321,19 +356,25 @@ test('create rejects an explicit alias endpoint with canonical survivor guidance
     [],
     [{ partyId: survivorId }],
   ]);
-  const rejection = await Effect.runPromise(
-    createPartyRelationshipRecord(harness.transaction, tenantId, principalId, actionInvocationId, {
-      fromPartyRef: ref(fromPartyId),
-      provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
-      relationshipType: 'CONTACT_PERSON_OF',
-      toPartyRef: ref(toPartyId),
-      validFrom: null,
-      validTo: null,
-    }).pipe(Effect.flip),
+  const rejection = await runEffectTestPromise(
+    createPartyRelationshipRecord(
+      harness.transaction,
+      tenantId,
+      principalId,
+      actionInvocationId,
+      decodeCreatePayload({
+        fromPartyRef: ref(fromPartyId),
+        provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
+        relationshipType: 'CONTACT_PERSON_OF',
+        toPartyRef: ref(toPartyId),
+        validFrom: null,
+        validTo: null,
+      }),
+    ).pipe(Effect.flip),
   );
 
   assert.equal(rejection._tag, 'PartyAliasWriteRejected');
-  if (rejection._tag === 'PartyAliasWriteRejected') {
+  if (Schema.is(PartyAliasWriteRejected)(rejection)) {
     assert.equal(rejection.canonicalPartyRef.resourceId, survivorId);
   }
   assert.equal(harness.insertValues.length, 0);
@@ -344,18 +385,24 @@ test('a known historical start cannot be rewritten by ordinary update', async ()
     [relationshipRow({ validFrom: new Date('2025-01-01T00:00:00.000Z') })],
     ...canonicalEndpointReads,
   ]);
-  const rejection = await Effect.runPromise(
-    updatePartyRelationshipRecord(harness.transaction, tenantId, principalId, actionInvocationId, {
-      changeReason: 'The previous start was wrong',
-      expectedRevision: 1,
-      provenance: { method: 'DOCUMENT_REVIEW', source: 'ENGAGEMENT_RECORD' },
-      relationshipRef,
-      validFrom: '2025-02-01T00:00:00.000Z',
-    }).pipe(Effect.flip),
+  const rejection = await runEffectTestPromise(
+    updatePartyRelationshipRecord(
+      harness.transaction,
+      tenantId,
+      principalId,
+      actionInvocationId,
+      decodeUpdatePayload({
+        changeReason: 'The previous start was wrong',
+        expectedRevision: 1,
+        provenance: { method: 'DOCUMENT_REVIEW', source: 'ENGAGEMENT_RECORD' },
+        relationshipRef,
+        validFrom: '2025-02-01T00:00:00.000Z',
+      }),
+    ).pipe(Effect.flip),
   );
 
   assert.equal(rejection._tag, 'PartyRelationshipCorrectionRequired');
-  if (rejection._tag === 'PartyRelationshipCorrectionRequired') {
+  if (Schema.is(PartyRelationshipCorrectionRequired)(rejection)) {
     assert.equal(rejection.fact, 'validFrom');
   }
   assert.equal(harness.updateSets.length, 0);
@@ -373,23 +420,31 @@ test('removing a future planned end clears its current evidence and retains prio
   });
   const updated = relationshipRow({ revision: 2 });
   const harness = transactionHarness([[current], ...canonicalEndpointReads, []], [], [[updated]]);
-  const result = await Effect.runPromise(
-    updatePartyRelationshipRecord(harness.transaction, tenantId, principalId, actionInvocationId, {
-      changeReason: 'The planned handover was canceled',
-      expectedRevision: 1,
-      provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
-      relationshipRef,
-      validTo: null,
-    }),
+  const result = await runEffectTestPromise(
+    updatePartyRelationshipRecord(
+      harness.transaction,
+      tenantId,
+      principalId,
+      actionInvocationId,
+      decodeUpdatePayload({
+        changeReason: 'The planned handover was canceled',
+        expectedRevision: 1,
+        provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
+        relationshipRef,
+        validTo: null,
+      }),
+    ),
   );
 
   assert.equal(result.outcome, 'CHANGED');
-  assert.equal(result.relationship.validTo, null);
+  assert.ok(Option.isNone(result.relationship.validTo));
   assert.deepEqual(result.relationship.endHistory, []);
   assert.equal(harness.updateSets[0]?.['endReason'], null);
   assert.equal(harness.updateSets[0]?.['endedRecordedAt'], null);
   if (result.outcome === 'CHANGED') {
-    assert.equal(result.previous.endHistory[0]?.reason, 'A planned contact handover');
+    const [previousEndEvidence] = result.previous.endHistory;
+    assert.ok(previousEndEvidence);
+    assert.equal(Option.getOrThrow(previousEndEvidence.reason), 'A planned contact handover');
   }
 });
 
@@ -409,19 +464,27 @@ test('update can shorten a future planned end to a valid retrospective end with 
     validTo: new Date(effectiveAt),
   });
   const harness = transactionHarness([[current], ...canonicalEndpointReads, []], [], [[updated]]);
-  const result = await Effect.runPromise(
-    updatePartyRelationshipRecord(harness.transaction, tenantId, principalId, actionInvocationId, {
-      changeReason: 'The handover actually completed earlier',
-      expectedRevision: 1,
-      provenance: { method: 'DOCUMENT_REVIEW', source: 'ENGAGEMENT_RECORD' },
-      relationshipRef,
-      validTo: effectiveAt,
-    }),
+  const result = await runEffectTestPromise(
+    updatePartyRelationshipRecord(
+      harness.transaction,
+      tenantId,
+      principalId,
+      actionInvocationId,
+      decodeUpdatePayload({
+        changeReason: 'The handover actually completed earlier',
+        expectedRevision: 1,
+        provenance: { method: 'DOCUMENT_REVIEW', source: 'ENGAGEMENT_RECORD' },
+        relationshipRef,
+        validTo: effectiveAt,
+      }),
+    ),
   );
 
   assert.equal(result.outcome, 'CHANGED');
   assert.equal(result.relationship.state, 'HISTORICAL');
-  assert.equal(result.relationship.endHistory[0]?.effectiveAt, effectiveAt);
+  const [endEvidence] = result.relationship.endHistory;
+  assert.ok(endEvidence);
+  assert.equal(DateTime.formatIso(endEvidence.effectiveAt), effectiveAt);
   assert.equal(harness.updateSets[0]?.['endProvenanceSource'], 'ENGAGEMENT_RECORD');
   assert.equal(harness.updateSets[0]?.['endedByActionInvocationId'], actionInvocationId);
 });
@@ -448,30 +511,32 @@ test('an evidence-backed end without a generic reason stays visible and retries 
     provenance: { method: 'DOCUMENT_REVIEW', source: 'ENGAGEMENT_RECORD' },
     relationshipRef,
   };
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     endPartyRelationshipRecord(
       harness.transaction,
       tenantId,
       principalId,
       actionInvocationId,
-      payload,
+      decodeEndPayload(payload),
     ),
   );
   assert.equal(result.relationship.endHistory.length, 1);
-  assert.equal(result.relationship.endHistory[0]?.reason, null);
+  const [endEvidence] = result.relationship.endHistory;
+  assert.ok(endEvidence);
+  assert.ok(Option.isNone(endEvidence.reason));
   assert.equal(harness.updateSets[0]?.['endReason'], null);
 
   const retryHarness = transactionHarness([[ended], ...canonicalEndpointReads]);
-  const retry = await Effect.runPromise(
+  const retry = await runEffectTestPromise(
     endPartyRelationshipRecord(
       retryHarness.transaction,
       tenantId,
       principalId,
       actionInvocationId,
-      {
+      decodeEndPayload({
         ...payload,
         expectedRevision: 2,
-      },
+      }),
     ),
   );
   assert.equal(retry.outcome, 'UNCHANGED');

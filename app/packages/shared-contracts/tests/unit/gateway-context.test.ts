@@ -1,7 +1,8 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
-import { Effect, Schema } from 'effect';
+import { Schema } from 'effect';
 import {
   ApiKeyGatewayHeadersSchema,
   GatewayContextApiGroup,
@@ -40,7 +41,7 @@ const claims = {
 };
 
 void test('decodes the exact versioned public assertion contract', async () => {
-  assert.deepEqual(await Effect.runPromise(decodeGatewayContextClaims(claims)), claims);
+  assert.deepEqual(await runEffectTestPromise(decodeGatewayContextClaims(claims)), claims);
   assert.deepEqual(
     Schema.decodeUnknownSync(GatewayContextProtectedHeaderSchema)({
       alg: 'EdDSA',
@@ -70,16 +71,16 @@ void test('decodes the exact versioned public assertion contract', async () => {
 
 void test('rejects malformed audiences, invalid ordering, and subject mismatch', async () => {
   await assert.rejects(
-    Effect.runPromise(Schema.decodeUnknownEffect(GatewayContextRequestSchema)({ audience: '' })),
+    runEffectTestPromise(Schema.decodeUnknownEffect(GatewayContextRequestSchema)({ audience: '' })),
   );
   await assert.rejects(
-    Effect.runPromise(decodeGatewayContextClaims({ ...claims, exp: claims.iat })),
+    runEffectTestPromise(decodeGatewayContextClaims({ ...claims, exp: claims.iat })),
   );
   await assert.rejects(
-    Effect.runPromise(decodeGatewayContextClaims({ ...claims, exp: claims.iat + 301 })),
+    runEffectTestPromise(decodeGatewayContextClaims({ ...claims, exp: claims.iat + 301 })),
   );
   await assert.rejects(
-    Effect.runPromise(
+    runEffectTestPromise(
       decodeGatewayContextClaims({
         ...claims,
         sub: '60000000-0000-4000-8000-000000000001',
@@ -108,13 +109,13 @@ void test('rejects credential, display, authorization, Action, and business clai
     forbiddenFields.map(
       async (field) =>
         await assert.rejects(
-          Effect.runPromise(decodeGatewayContextClaims({ ...claims, [field]: 'must-not-pass' })),
+          runEffectTestPromise(decodeGatewayContextClaims({ ...claims, [field]: 'must-not-pass' })),
           field,
         ),
     ),
   );
   await assert.rejects(
-    Effect.runPromise(
+    runEffectTestPromise(
       decodeGatewayContextClaims({
         ...claims,
         principal: { ...principal, email: 'must-not-pass@example.test' },

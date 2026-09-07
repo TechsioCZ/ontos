@@ -7,143 +7,105 @@ import {
   HttpEffect,
   HttpServerResponse,
 } from '@modern-js/plugin-bff/effect-edge';
-import { Config } from 'effect';
+import { Match, Redacted, Schema } from 'effect';
 import { partyRegistryApi } from '../shared/api.ts';
+import {
+  PartyMatchDecisionAuthenticationProblemSchema,
+  PartyMatchDecisionForbiddenProblemSchema,
+  PartyMatchDecisionInternalProblemSchema,
+  PartyMatchDecisionInvalidProblemSchema,
+  PartyMatchDecisionNotFoundProblemSchema,
+  PartyMatchDecisionPolicyConflictProblemSchema,
+  PartyMatchDecisionPolicyProblemSchema,
+  PartyMatchDecisionUnavailableProblemSchema,
+} from '../shared/apis/party-match-decision.ts';
 import { partyMatchDecisionRead } from '../src/api/party-match-decision.read.ts';
 import { verifyOperationPrincipal } from './auth/action-principal.ts';
 
-const authenticationProblem = () => ({
-  _tag: 'PartyMatchDecisionAuthenticationProblem' as const,
-  detail: 'A valid audience-scoped Bearer assertion is required.',
-  status: 401 as const,
-  title: 'Authentication required',
-  type: 'https://ontos.dev/problems/operation-authentication-required',
-});
-const unavailableProblem = () => ({
-  _tag: 'PartyMatchDecisionUnavailableProblem' as const,
-  detail: 'The governed read is temporarily unavailable.',
-  retryable: true as const,
-  status: 503 as const,
-  title: 'Read unavailable',
-  type: 'https://ontos.dev/problems/read-unavailable',
-});
-const invalidProblem = () => ({
-  _tag: 'PartyMatchDecisionInvalidProblem' as const,
-  detail: 'The governed read request is invalid.',
-  status: 400 as const,
-  title: 'Invalid read request',
-  type: 'https://ontos.dev/problems/read-invalid',
-});
-const forbiddenProblem = () => ({
-  _tag: 'PartyMatchDecisionForbiddenProblem' as const,
-  detail: 'The principal is not permitted to perform this read.',
-  status: 403 as const,
-  title: 'Read forbidden',
-  type: 'https://ontos.dev/problems/read-forbidden',
-});
-const notFoundProblem = () => ({
-  _tag: 'PartyMatchDecisionNotFoundProblem' as const,
-  detail: 'The requested resource was not found.',
-  status: 404 as const,
-  title: 'Resource not found',
-  type: 'https://ontos.dev/problems/read-not-found',
-});
+const authenticationProblem = () => PartyMatchDecisionAuthenticationProblemSchema.make({});
+const unavailableProblem = (cause?: unknown) => {
+  const problem = PartyMatchDecisionUnavailableProblemSchema.make({});
+  return cause === undefined
+    ? problem
+    : Object.defineProperty(problem, 'cause', { enumerable: false, value: cause });
+};
+const invalidProblem = () => PartyMatchDecisionInvalidProblemSchema.make({});
+const forbiddenProblem = () => PartyMatchDecisionForbiddenProblemSchema.make({});
+const notFoundProblem = () => PartyMatchDecisionNotFoundProblemSchema.make({});
 const policyProblem = (status: 409 | 422) =>
   status === 409
-    ? {
-        _tag: 'PartyMatchDecisionPolicyConflictProblem' as const,
-        detail: 'The read conflicts with the current business state.',
-        status: 409 as const,
-        title: 'Read conflict',
-        type: 'https://ontos.dev/problems/read-policy-conflict',
-      }
-    : {
-        _tag: 'PartyMatchDecisionPolicyProblem' as const,
-        detail: 'The read is not eligible under the current business policy.',
-        status: 422 as const,
-        title: 'Read ineligible',
-        type: 'https://ontos.dev/problems/read-policy-denied',
-      };
-const internalProblem = () => ({
-  _tag: 'PartyMatchDecisionInternalProblem' as const,
-  detail: 'The governed read could not be completed.',
-  status: 500 as const,
-  title: 'Read failed',
-  type: 'https://ontos.dev/problems/read-failed',
-});
+    ? PartyMatchDecisionPolicyConflictProblemSchema.make({})
+    : PartyMatchDecisionPolicyProblemSchema.make({});
+const internalProblem = () => PartyMatchDecisionInternalProblemSchema.make({});
 const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
 );
 type VerificationProblem =
   | ReturnType<typeof authenticationProblem>
   | ReturnType<typeof unavailableProblem>;
-const readProblem = (error: ReadCoreError) => {
-  switch (error._tag) {
-    case 'ReadInputValidationError': {
-      return invalidProblem();
-    }
-    case 'OperationAuthenticationRequired': {
-      return authenticationProblem();
-    }
-    case 'ModuleStateDeniedError':
-    case 'OperationContextDenied':
-    case 'OperationContextInvalid':
-    case 'ReadPermissionDenied': {
-      return forbiddenProblem();
-    }
-    case 'ReadHandlerNotFound': {
-      return notFoundProblem();
-    }
-    case 'ReadPolicyDenied': {
-      return policyProblem(error.httpStatus);
-    }
-    case 'ModuleStateCheckUnavailableError':
-    case 'OperationContextUnavailable':
-    case 'ReadEvidencePersistenceError':
-    case 'ReadHandlerUnavailable':
-    case 'ReadPermissionUnavailable':
-    case 'ReadPolicyEvaluationError': {
-      return unavailableProblem();
-    }
-    case 'ReadEvidenceValidationError':
-    case 'ReadHandlerExecutionError':
-    case 'ReadResultValidationError': {
-      return internalProblem();
-    }
-    default: {
-      const exhaustive: never = error;
-      return exhaustive;
-    }
-  }
-};
+const isAuthenticationProblem = Schema.is(PartyMatchDecisionAuthenticationProblemSchema);
+const readProblem = (error: ReadCoreError) =>
+  Match.value(error).pipe(
+    Match.tags({
+      ModuleStateCheckUnavailableError: unavailableProblem,
+      ModuleStateDeniedError: forbiddenProblem,
+      OperationAuthenticationRequired: authenticationProblem,
+      OperationContextDenied: forbiddenProblem,
+      OperationContextInvalid: forbiddenProblem,
+      OperationContextUnavailable: unavailableProblem,
+      ReadEvidencePersistenceError: unavailableProblem,
+      ReadEvidenceValidationError: internalProblem,
+      ReadHandlerExecutionError: internalProblem,
+      ReadHandlerNotFound: notFoundProblem,
+      ReadHandlerUnavailable: unavailableProblem,
+      ReadInputValidationError: invalidProblem,
+      ReadPermissionDenied: forbiddenProblem,
+      ReadPermissionUnavailable: unavailableProblem,
+      ReadPolicyDenied: (failure) => policyProblem(failure.httpStatus),
+      ReadPolicyEvaluationError: unavailableProblem,
+      ReadResultValidationError: internalProblem,
+    }),
+    Match.exhaustive,
+  );
 
 export const partyMatchDecisionReadApiLive = HttpApiBuilder.group(
   partyRegistryApi,
   'partyMatchDecision',
   (handlers) =>
-    handlers.handle('execute', ({ payload, request }) =>
-      Effect.gen(function* governedProviderRead() {
+    handlers.handle(
+      'execute',
+      Effect.fn('partyMatchDecisionReadApiLive.execute')(function* executePartyMatchDecisionRead({
+        payload,
+        request,
+      }) {
         const correlationId = request.headers['x-correlation-id'];
         if (correlationId === undefined || correlationId.trim().length === 0) {
           return yield* Effect.fail(invalidProblem());
         }
-        const environment = yield* Config.all({
-          ONTOS_GATEWAY_ISSUER: Config.string('ONTOS_GATEWAY_ISSUER'),
-          ONTOS_GATEWAY_PUBLIC_JWKS: Config.string('ONTOS_GATEWAY_PUBLIC_JWKS'),
-        }).pipe(Effect.mapError(unavailableProblem));
-        const principal = yield* verifyOperationPrincipal(request.headers['authorization'], {
-          environment,
-        }).pipe(
-          Effect.catch((error) => {
-            if (
-              error._tag === 'ActionPrincipalConfigurationError' ||
-              error._tag === 'ActionPrincipalUnavailableError'
-            ) {
-              return Effect.fail<VerificationProblem>(unavailableProblem());
-            }
-            return bearerChallenge.pipe(
-              Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
-            );
+        const principal = yield* verifyOperationPrincipal(
+          Redacted.make(request.headers['authorization']),
+        ).pipe(
+          Effect.catchTags({
+            ActionPrincipalConfigurationError: (error) =>
+              Effect.fail<VerificationProblem>(unavailableProblem(error)),
+            ActionPrincipalExpiredError: () =>
+              bearerChallenge.pipe(
+                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
+              ),
+            ActionPrincipalInvalidError: () =>
+              bearerChallenge.pipe(
+                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
+              ),
+            ActionPrincipalMissingError: () =>
+              bearerChallenge.pipe(
+                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
+              ),
+            ActionPrincipalScopeError: () =>
+              bearerChallenge.pipe(
+                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
+              ),
+            ActionPrincipalUnavailableError: (error) =>
+              Effect.fail<VerificationProblem>(unavailableProblem(error)),
           }),
         );
         const runtime = yield* ReadRuntime;
@@ -157,7 +119,7 @@ export const partyMatchDecisionReadApiLive = HttpApiBuilder.group(
           .pipe(
             Effect.catch((error) => {
               const problem = readProblem(error);
-              return (problem.status === 401 ? bearerChallenge : Effect.void).pipe(
+              return (isAuthenticationProblem(problem) ? bearerChallenge : Effect.void).pipe(
                 Effect.andThen(Effect.fail(problem)),
               );
             }),

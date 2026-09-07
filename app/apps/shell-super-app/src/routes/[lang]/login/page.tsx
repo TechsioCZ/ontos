@@ -1,5 +1,5 @@
-import { Predicate } from 'effect';
-/* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- React handlers stay synchronous while Effect requests complete asynchronously. */
+import { Effect, Match, Option, Predicate, Schema } from 'effect';
+import type { Cause } from 'effect';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -7,8 +7,10 @@ import { Link } from '@techsio/ui-kit/atoms/link';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
 import { useRef, useState } from 'react';
-import type { SubmitEvent } from 'react';
-import { runEffectRequest, signIn } from '../../../api/auth-client.ts';
+import { signIn } from '../../../api/auth-client.ts';
+import type { ShellAuthenticationClientError } from '../../../api/auth-client.ts';
+import { runBrowserEffect } from '../../../runtime/browser-effect-runtime.ts';
+import { SignInPayloadSchema } from '../../../../shared/api.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 
 interface LoginValidation {
@@ -21,18 +23,28 @@ const validLogin: LoginValidation = {
   passwordMissing: false,
 };
 
-const authenticationErrorMessageKey = <ErrorTag,>(errorTag: ErrorTag) => {
-  if (errorTag === 'InvalidCredentialsProblem') {
-    return 'shell.login.error.invalid';
-  }
-  if (errorTag === 'OntosIdentityForbiddenProblem') {
-    return 'shell.login.error.forbidden';
-  }
-  if (errorTag === 'AuthenticationUnavailableProblem') {
-    return 'shell.login.error.unavailable';
-  }
-  return 'shell.login.error.internal';
-};
+const SignInFormSchema = Schema.fromFormData(
+  Schema.Struct({
+    email: SignInPayloadSchema.fields.email,
+    password: Schema.RedactedFromValue(SignInPayloadSchema.fields.password.value),
+  }).pipe(Schema.encodeKeys({ email: 'login' })),
+);
+const internalErrorMessageKey = 'shell.login.error.internal';
+const errorTitleKey = 'shell.login.error.title';
+
+const authenticationErrorMessageKey = (error: ShellAuthenticationClientError) =>
+  Match.value(error).pipe(
+    Match.tag('InvalidCredentialsProblem', () => 'shell.login.error.invalid' as const),
+    Match.tag('OntosIdentityForbiddenProblem', () => 'shell.login.error.forbidden' as const),
+    Match.tag('AuthenticationUnavailableProblem', () => 'shell.login.error.unavailable' as const),
+    Match.tag(
+      'AuthenticationInternalProblem',
+      'HttpClientError',
+      'SchemaError',
+      () => internalErrorMessageKey,
+    ),
+    Match.exhaustive,
+  );
 
 const LoginPage = () => {
   const { language, t } = useModernI18n();
@@ -42,15 +54,22 @@ const LoginPage = () => {
   const passwordRef = useRef<HTMLInputElement>(null);
   const [validation, setValidation] = useState<LoginValidation>(validLogin);
   const [submitting, setSubmitting] = useState(false);
+  const handleNavigationFailure = (error: Cause.TimeoutError | Cause.UnknownError) =>
+    Effect.sync(() => {
+      void error;
+      toaster.create({
+        description: t(internalErrorMessageKey),
+        title: t(errorTitleKey),
+        type: 'error',
+      });
+      loginRef.current?.focus();
+    });
 
-  const handleSubmit = (event: SubmitEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
+  const handleSubmit = (formData: FormData) => {
     if (submitting) {
       return;
     }
 
-    const formData = new FormData(event.currentTarget);
     const login = formData.get('login');
     const password = formData.get('password');
     const loginValue = Predicate.isString(login) ? login : '';
@@ -78,34 +97,42 @@ const LoginPage = () => {
       return;
     }
 
-    setSubmitting(true);
-    void runEffectRequest(
-      signIn(
-        {
-          email: loginValue.trim(),
-          password: passwordValue,
-        },
-        { locale: language },
-      ),
-    )
-      .then(() => navigate({ to: `/${language}/` }))
-      .catch(<Failure,>(error: Failure) => {
-        const errorTag =
-          Predicate.isObjectKeyword(error) && error !== null && '_tag' in error
-            ? error._tag
-            : 'AuthenticationInternalProblem';
-        const messageKey = authenticationErrorMessageKey(errorTag);
-
-        toaster.create({
-          description: t(messageKey),
-          title: t('shell.login.error.title'),
-          type: 'error',
-        });
-        loginRef.current?.focus();
-      })
-      .finally(() => {
-        setSubmitting(false);
+    formData.set('login', loginValue.trim());
+    const credentials = Schema.decodeUnknownOption(SignInFormSchema)(formData);
+    if (Option.isNone(credentials)) {
+      toaster.create({
+        description: t(internalErrorMessageKey),
+        title: t(errorTitleKey),
+        type: 'error',
       });
+      return;
+    }
+
+    setSubmitting(true);
+    void runBrowserEffect(
+      signIn(credentials.value, { locale: language }).pipe(
+        Effect.matchEffect({
+          onFailure: (error) =>
+            Effect.sync(() => {
+              toaster.create({
+                description: t(authenticationErrorMessageKey(error)),
+                title: t(errorTitleKey),
+                type: 'error',
+              });
+              loginRef.current?.focus();
+            }),
+          onSuccess: () =>
+            Effect.tryPromise(() => navigate({ to: `/${language}/` })).pipe(
+              Effect.timeout('10 seconds'),
+              Effect.matchEffect({
+                onFailure: handleNavigationFailure,
+                onSuccess: Effect.succeed,
+              }),
+            ),
+        }),
+        Effect.ensuring(Effect.sync(() => setSubmitting(false))),
+      ),
+    );
   };
 
   return (
@@ -119,9 +146,9 @@ const LoginPage = () => {
           <div className="shell:mt-6">
             <h1 className="shell:text-2xl shell:font-bold">{t('shell.login.title')}</h1>
             <form
+              action={handleSubmit}
               className="shell:mt-4 shell:flex shell:flex-col shell:gap-4"
               noValidate
-              onSubmit={handleSubmit}
             >
               <FormInput
                 aria-invalid={validation.loginMissing || undefined}

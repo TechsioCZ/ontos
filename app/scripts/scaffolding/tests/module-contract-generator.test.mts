@@ -3,13 +3,28 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { Schema } from 'effect';
+import { NodeFileSystem } from '@effect/platform-node';
+import { Effect, Schema } from 'effect';
+import { runEffectTestPromise } from '../../../packages/core-runtime/src/testing/effect-runtime.ts';
 import { checkOntosModuleContracts } from '../../check-ontos-module-contracts.mts';
 import { privateOwnerImportViolation } from '../../ultramodern-api-boundary-rules.mts';
 import { generateOntosModuleContract } from '../../generate-ontos-module-contract.mts';
 import { getHelpText, runScaffold } from '../cli.mts';
 import type { JsonValue } from '../shared.mts';
 
+const APP_ID = 'property-registry';
+const AUTHORIZATION_FLAG = '--authorization';
+const DOCUMENTS_APP_ID = 'documents-center';
+const DOCUMENTS_MODULE_ID = 'documents.center';
+const MODULE_CONTRACT_COMMAND = 'module-contract';
+const MODULE_ID = 'property.registry';
+const PROPERTY_MANIFEST_PATH = 'verticals/property-registry/vertical.manifest.ts';
+const PROPERTY_PACKAGE_PATH = 'verticals/property-registry/package.json';
+const VERTICAL_FLAG = '--vertical';
+
+const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
+const ModuleIdSchema = Schema.String.pipe(Schema.brand('ModuleId'));
+const OperationKeySchema = Schema.String.pipe(Schema.brand('OperationKey'));
 const StringRecordSchema = Schema.Record(Schema.String, Schema.String);
 const ModulePackageSchema = Schema.Struct({
   dependencies: StringRecordSchema,
@@ -18,7 +33,7 @@ const ModulePackageSchema = Schema.Struct({
     ontosModule: Schema.Struct({
       contractPath: Schema.String,
       manifest: Schema.String,
-      moduleId: Schema.String,
+      moduleId: ModuleIdSchema,
       registration: Schema.String,
       schemaVersion: Schema.Number,
     }),
@@ -27,11 +42,11 @@ const ModulePackageSchema = Schema.Struct({
 });
 const ModuleTsconfigSchema = Schema.Struct({ include: Schema.Array(Schema.String) });
 const ModuleContractDocumentSchema = Schema.Struct({
-  deployment: Schema.Struct({ appId: Schema.String }),
+  deployment: Schema.Struct({ appId: AppIdSchema }),
   manifest: Schema.Struct({
-    module: Schema.Struct({ id: Schema.String }),
+    module: Schema.Struct({ id: ModuleIdSchema }),
     publicSurface: Schema.Struct({
-      api: Schema.Array(Schema.Struct({ operationKeys: Schema.Array(Schema.String) })),
+      api: Schema.Array(Schema.Struct({ operationKeys: Schema.Array(OperationKeySchema) })),
     }),
   }),
   schemaVersion: Schema.String,
@@ -59,13 +74,13 @@ const createFixture = async (): Promise<string> => {
   await write(root, 'package.json', json({ name: 'fixture', private: true, type: 'module' }));
   await write(
     root,
-    'verticals/property-registry/package.json',
+    PROPERTY_PACKAGE_PATH,
     json({
       dependencies: { zeta: '1.0.0' },
       exports: { '.': './src/index.ts' },
       modernjs: {
         apiRuntime: 'effect',
-        appId: 'property-registry',
+        appId: APP_ID,
         preset: 'presetUltramodern',
         role: 'module-federation-remote',
         topology: '../../topology/reference-topology.json',
@@ -98,7 +113,7 @@ const createFixture = async (): Promise<string> => {
     json({
       dependencies: {},
       modernjs: {
-        appId: 'documents-center',
+        appId: DOCUMENTS_APP_ID,
         role: 'module-federation-remote',
         topology: '../../topology/reference-topology.json',
       },
@@ -131,7 +146,7 @@ const createFixture = async (): Promise<string> => {
         {
           deliveryUnit: { buildMarker: 'property-build' },
           domain: 'property',
-          id: 'property-registry',
+          id: APP_ID,
           kind: 'vertical',
           moduleFederation: { name: 'verticalPropertyRegistry', role: 'remote' },
           package: '@app/property-registry',
@@ -140,7 +155,7 @@ const createFixture = async (): Promise<string> => {
         {
           deliveryUnit: { buildMarker: 'documents-build' },
           domain: 'documents',
-          id: 'documents-center',
+          id: DOCUMENTS_APP_ID,
           kind: 'vertical',
           moduleFederation: { name: 'verticalDocumentsCenter', role: 'remote' },
           package: '@app/documents-center',
@@ -154,10 +169,10 @@ const createFixture = async (): Promise<string> => {
     'topology/local-overlays/development.json',
     json({
       environment: 'development',
-      ontosModuleManifests: {
-        'documents-center': 'http://localhost:4102/.well-known/ontos-module-manifest.json',
-        'property-registry': 'http://localhost:4101/.well-known/ontos-module-manifest.json',
-      },
+      ontosModuleManifests: Object.fromEntries([
+        [DOCUMENTS_APP_ID, 'http://localhost:4102/.well-known/ontos-module-manifest.json'],
+        [APP_ID, 'http://localhost:4101/.well-known/ontos-module-manifest.json'],
+      ]),
       schemaVersion: 1,
     }),
   );
@@ -180,45 +195,47 @@ const withFixture = async (run: (root: string) => Promise<void>): Promise<void> 
   }
 };
 
-const scaffold = (root: string, vertical = 'property-registry', module = 'property.registry') =>
-  runScaffold('module-contract', ['--vertical', vertical, '--module', module], {
+const scaffold = async (root: string, vertical = APP_ID, module = MODULE_ID) =>
+  await runScaffold(MODULE_CONTRACT_COMMAND, [VERTICAL_FLAG, vertical, '--module', module], {
     workspaceRoot: root,
   });
 
-test('module-contract help is exact and write-free', async () => {
+void test('module-contract help is exact and write-free', async () => {
   const missingRoot = path.join(tmpdir(), 'module-contract-help-does-not-exist');
-  const result = await runScaffold('module-contract', ['--help'], { workspaceRoot: missingRoot });
-  assert.deepEqual(result, { help: getHelpText('module-contract'), kind: 'help' });
+  const result = await runScaffold(MODULE_CONTRACT_COMMAND, ['--help'], {
+    workspaceRoot: missingRoot,
+  });
+  assert.deepEqual(result, { help: getHelpText(MODULE_CONTRACT_COMMAND), kind: 'help' });
   assert.match(result.help, /--vertical <vertical> --module <dotted\.module-id>/u);
 });
 
-test('business generators fail closed before the mandatory module contract exists', async () => {
+void test('business generators fail closed before the mandatory module contract exists', async () => {
   await withFixture(async (root) => {
     const commands = [
       [
         'action',
         [
-          '--vertical',
-          'property-registry',
+          VERTICAL_FLAG,
+          APP_ID,
           '--action',
           'create-property',
           '--legal-entity-scope',
           'optional',
-          '--authorization',
+          AUTHORIZATION_FLAG,
           'action_execution',
           '--provisioning',
           'tenant_membership_default',
         ],
       ],
-      ['microvertical-action-boundary', ['--vertical', 'property-registry']],
+      ['microvertical-action-boundary', [VERTICAL_FLAG, APP_ID]],
       [
         'microvertical-page',
         [
-          '--vertical',
-          'property-registry',
+          VERTICAL_FLAG,
+          APP_ID,
           '--page',
           'properties',
-          '--authorization',
+          AUTHORIZATION_FLAG,
           'context_permission',
           '--permission',
           'module.access',
@@ -226,83 +243,61 @@ test('business generators fail closed before the mandatory module contract exist
       ],
       [
         'outbox-message',
-        [
-          '--vertical',
-          'property-registry',
-          '--action',
-          'create-property',
-          '--topic',
-          'property.created',
-        ],
+        [VERTICAL_FLAG, APP_ID, '--action', 'create-property', '--topic', 'property.created'],
       ],
       [
         'outbox-worker',
         [
-          '--vertical',
-          'property-registry',
+          VERTICAL_FLAG,
+          APP_ID,
           '--worker',
           'property-projector',
           '--producer',
-          'documents-center',
+          DOCUMENTS_APP_ID,
           '--topic',
           'document.created',
-          '--authorization',
+          AUTHORIZATION_FLAG,
           'owner_local_background',
         ],
       ],
       [
         'policy',
-        [
-          '--scope',
-          'microvertical',
-          '--vertical',
-          'property-registry',
-          '--policy',
-          'property-visible',
-        ],
+        ['--scope', 'microvertical', VERTICAL_FLAG, APP_ID, '--policy', 'property-visible'],
       ],
     ] as const;
     await Promise.all(
-      commands.map(([command, flags]) =>
-        assert.rejects(
-          runScaffold(command, flags, { workspaceRoot: root }),
-          /requires scaffold:module-contract/u,
-        ),
+      commands.map(
+        async ([command, flags]) =>
+          await assert.rejects(
+            runScaffold(command, flags, { workspaceRoot: root }),
+            /requires scaffold:module-contract/u,
+          ),
       ),
     );
   });
 });
 
-test('rejects malformed, traversing, duplicate, and overwrite requests without partial writes', async () => {
+void test('rejects malformed, traversing, duplicate, and overwrite requests without partial writes', async () => {
   await withFixture(async (root) => {
-    await assert.rejects(scaffold(root, '../property', 'property.registry'), /lower-kebab-case/u);
-    await assert.rejects(scaffold(root, 'property-registry', 'property-registry'), /dotted/u);
-    await assert.rejects(scaffold(root, 'property-registry', 'core.modules'), /non-core/u);
+    await assert.rejects(scaffold(root, '../property', MODULE_ID), /lower-kebab-case/u);
+    await assert.rejects(scaffold(root, APP_ID, APP_ID), /dotted/u);
+    await assert.rejects(scaffold(root, APP_ID, 'core.modules'), /non-core/u);
     await scaffold(root);
-    const packageAfterFirst = await readFile(
-      path.join(root, 'verticals/property-registry/package.json'),
-      'utf-8',
-    );
+    const packageAfterFirst = await readFile(path.join(root, PROPERTY_PACKAGE_PATH), 'utf-8');
     await assert.rejects(scaffold(root), /refusing to overwrite/u);
     assert.equal(
-      await readFile(path.join(root, 'verticals/property-registry/package.json'), 'utf-8'),
+      await readFile(path.join(root, PROPERTY_PACKAGE_PATH), 'utf-8'),
       packageAfterFirst,
     );
-    await assert.rejects(
-      scaffold(root, 'documents-center', 'property.registry'),
-      /duplicate OntOS module ID/u,
-    );
+    await assert.rejects(scaffold(root, DOCUMENTS_APP_ID, MODULE_ID), /duplicate OntOS module ID/u);
   });
 });
 
-test('generates conservative owner files and patches only package and tsconfig owner metadata', async () => {
+void test('generates conservative owner files and patches only package and tsconfig owner metadata', async () => {
   await withFixture(async (root) => {
     const result = await scaffold(root);
     assert.equal(result.kind, 'generated');
-    const manifest = await readFile(
-      path.join(root, 'verticals/property-registry/vertical.manifest.ts'),
-      'utf-8',
-    );
+    const manifest = await readFile(path.join(root, PROPERTY_MANIFEST_PATH), 'utf-8');
     const registration = await readFile(
       path.join(root, 'verticals/property-registry/vertical.registration.ts'),
       'utf-8',
@@ -325,7 +320,7 @@ test('generates conservative owner files and patches only package and tsconfig o
     assert.match(registration, /generated-module-registration-workers/u);
     assert.doesNotMatch(registration, /handler|migration|route/u);
     const packageJson = decodeModulePackage(
-      await readFile(path.join(root, 'verticals/property-registry/package.json'), 'utf-8'),
+      await readFile(path.join(root, PROPERTY_PACKAGE_PATH), 'utf-8'),
     );
     assert.deepEqual(packageJson.dependencies, {
       '@app/core-runtime': 'workspace:*',
@@ -341,7 +336,7 @@ test('generates conservative owner files and patches only package and tsconfig o
     assert.deepEqual(packageJson.modernjs.ontosModule, {
       contractPath: '/.well-known/ontos-module-manifest.json',
       manifest: './vertical.manifest.ts',
-      moduleId: 'property.registry',
+      moduleId: MODULE_ID,
       registration: './vertical.registration.ts',
       schemaVersion: 2,
     });
@@ -359,21 +354,18 @@ test('generates conservative owner files and patches only package and tsconfig o
   });
 });
 
-test('emits deterministic deployment-safe JSON and rejects damaged owner slots', async () => {
+void test('emits deterministic deployment-safe JSON and rejects damaged owner slots', async () => {
   await withFixture(async (root) => {
     await scaffold(root);
-    await scaffold(root, 'documents-center', 'documents.center');
-    const authoredManifestPath = path.join(
-      root,
-      'verticals/property-registry/vertical.manifest.ts',
-    );
+    await scaffold(root, DOCUMENTS_APP_ID, DOCUMENTS_MODULE_ID);
+    const authoredManifestPath = path.join(root, PROPERTY_MANIFEST_PATH);
     const authoredManifest = await readFile(authoredManifestPath, 'utf-8');
     await writeFile(
       authoredManifestPath,
       authoredManifest
         .replace(
-          "import { defineOntosModuleManifest } from '@app/core-runtime';",
-          "import { defineOntosModuleManifest } from '@app/core-runtime';\nimport { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';\n\nconst PropertyApi = HttpApi.make('PropertyApi').add(\n  HttpApiGroup.make('property').add(HttpApiEndpoint.get('listUnits', '/units')),\n);",
+          '// <generated-module-manifest-imports>',
+          "import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';\n\nconst PropertyApi = HttpApi.make('PropertyApi').add(\n  HttpApiGroup.make('property').add(HttpApiEndpoint.get('listUnits', '/units')),\n);\n// <generated-module-manifest-imports>",
         )
         .replace(
           '      // <generated-module-manifest-apis>\n      // </generated-module-manifest-apis>',
@@ -383,19 +375,25 @@ test('emits deterministic deployment-safe JSON and rejects damaged owner slots',
     );
     const first = await generateOntosModuleContract({
       target: 'dist',
-      vertical: 'property-registry',
+      vertical: APP_ID,
       workspaceRoot: root,
     });
     const firstContent = await readFile(first.path, 'utf-8');
-    const packagePath = path.join(root, 'verticals/property-registry/package.json');
+    const packagePath = path.join(root, PROPERTY_PACKAGE_PATH);
     const packageContent = await readFile(packagePath, 'utf-8');
-    const incompatiblePackage = decodeModulePackage(packageContent);
-    incompatiblePackage.modernjs.ontosModule.schemaVersion = 0;
+    const decodedPackage = decodeModulePackage(packageContent);
+    const incompatiblePackage = {
+      ...decodedPackage,
+      modernjs: {
+        ...decodedPackage.modernjs,
+        ontosModule: { ...decodedPackage.modernjs.ontosModule, schemaVersion: 0 },
+      },
+    };
     await writeFile(packagePath, json(incompatiblePackage), 'utf-8');
     await assert.rejects(
       generateOntosModuleContract({
         target: 'dist',
-        vertical: 'property-registry',
+        vertical: APP_ID,
         workspaceRoot: root,
       }),
       /module marker does not match/u,
@@ -404,14 +402,14 @@ test('emits deterministic deployment-safe JSON and rejects damaged owner slots',
     await writeFile(packagePath, packageContent, 'utf-8');
     const second = await generateOntosModuleContract({
       target: 'dist',
-      vertical: 'property-registry',
+      vertical: APP_ID,
       workspaceRoot: root,
     });
     assert.equal(await readFile(second.path, 'utf-8'), firstContent);
     assert.equal(second.etag, first.etag);
     const document = decodeModuleContract(firstContent);
-    assert.equal(document.deployment.appId, 'property-registry');
-    assert.equal(document.manifest.module.id, 'property.registry');
+    assert.equal(document.deployment.appId, APP_ID);
+    assert.equal(document.manifest.module.id, MODULE_ID);
     assert.equal(document.schemaVersion, '2');
     assert.equal(Object.hasOwn(document.manifest, 'dependencies'), false);
     assert.deepEqual(document.manifest.publicSurface.api[0]?.operationKeys, ['property.listUnits']);
@@ -425,14 +423,14 @@ test('emits deterministic deployment-safe JSON and rejects damaged owner slots',
     assert.match(headers, /ETag: "[a-f0-9]{64}"/u);
     const secondDeployment = await generateOntosModuleContract({
       target: 'dist',
-      vertical: 'documents-center',
+      vertical: DOCUMENTS_APP_ID,
       workspaceRoot: root,
     });
     const secondDocument = decodeModuleContract(await readFile(secondDeployment.path, 'utf-8'));
-    assert.equal(secondDocument.deployment.appId, 'documents-center');
-    assert.equal(secondDocument.manifest.module.id, 'documents.center');
+    assert.equal(secondDocument.deployment.appId, DOCUMENTS_APP_ID);
+    assert.equal(secondDocument.manifest.module.id, DOCUMENTS_MODULE_ID);
 
-    const manifestPath = path.join(root, 'verticals/property-registry/vertical.manifest.ts');
+    const manifestPath = path.join(root, PROPERTY_MANIFEST_PATH);
     const manifest = await readFile(manifestPath, 'utf-8');
     await writeFile(
       manifestPath,
@@ -442,7 +440,7 @@ test('emits deterministic deployment-safe JSON and rejects damaged owner slots',
     await assert.rejects(
       generateOntosModuleContract({
         target: 'dist',
-        vertical: 'property-registry',
+        vertical: APP_ID,
         workspaceRoot: root,
       }),
       /exactly one.*slot/u,
@@ -450,24 +448,26 @@ test('emits deterministic deployment-safe JSON and rejects damaged owner slots',
   });
 });
 
-test('maps Cloudflare emission to the Modern output root and validates authored contracts', async () => {
+void test('maps Cloudflare emission to the Modern output root and validates authored contracts', async () => {
   await withFixture(async (root) => {
     await scaffold(root);
-    await scaffold(root, 'documents-center', 'documents.center');
+    await scaffold(root, DOCUMENTS_APP_ID, DOCUMENTS_MODULE_ID);
     const emitted = await generateOntosModuleContract({
       target: 'cloudflare-dist',
-      vertical: 'property-registry',
+      vertical: APP_ID,
       workspaceRoot: root,
     });
     assert.match(
       emitted.path,
       /verticals\/property-registry\/dist-cloudflare\/public\/\.well-known\/ontos-module-manifest\.json$/u,
     );
-    await checkOntosModuleContracts(root);
+    await runEffectTestPromise(
+      checkOntosModuleContracts(root).pipe(Effect.provide(NodeFileSystem.layer)),
+    );
   });
 });
 
-test('permits owner-local registration imports but rejects cross-deployment owner imports', () => {
+void test('permits owner-local registration imports but rejects cross-deployment owner imports', () => {
   const root = '/workspace/app';
   assert.equal(
     privateOwnerImportViolation(

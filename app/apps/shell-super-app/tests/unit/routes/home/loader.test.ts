@@ -1,3 +1,4 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { beforeEach, expect, rstest, test } from '@rstest/core';
 import { ConfigProvider, Effect } from 'effect';
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
@@ -8,11 +9,13 @@ import { loader } from '../../../../src/routes/[lang]/page.data.ts';
 const {
   availableLegalEntitiesMock,
   availableTenantsMock,
+  browserConfigValuesMock,
   currentSessionMock,
   shellCompositionMock,
 } = rstest.hoisted(() => ({
   availableLegalEntitiesMock: rstest.fn(),
   availableTenantsMock: rstest.fn(),
+  browserConfigValuesMock: rstest.fn<() => { readonly BETTER_AUTH_URL?: string }>(),
   currentSessionMock: rstest.fn(),
   shellCompositionMock: rstest.fn(),
 }));
@@ -22,11 +25,19 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
   availableLegalEntities: availableLegalEntitiesMock,
   availableTenants: availableTenantsMock,
   currentSession: currentSessionMock,
-  runEffectRequest: async <Success, Failure>(effect: Effect.Effect<Success, Failure>) =>
-    await Effect.runPromise(
-      effect.pipe(Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv())),
-    ),
   shellComposition: shellCompositionMock,
+}));
+
+rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
+  runBrowserEffect: async <Success, Failure>(effect: Effect.Effect<Success, Failure>) =>
+    await runEffectTestPromise(
+      effect.pipe(
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromUnknown(browserConfigValuesMock()),
+        ),
+      ),
+    ),
 }));
 
 const identity = {
@@ -60,20 +71,12 @@ const withBetterAuthUrl = async <Value>(
   baseUrl: string,
   operation: () => Promise<Value>,
 ): Promise<Value> => {
-  const previousBaseUrl = process.env['BETTER_AUTH_URL'];
-  process.env['BETTER_AUTH_URL'] = baseUrl;
-  try {
-    return await operation();
-  } finally {
-    if (previousBaseUrl === undefined) {
-      delete process.env['BETTER_AUTH_URL'];
-    } else {
-      process.env['BETTER_AUTH_URL'] = previousBaseUrl;
-    }
-  }
+  browserConfigValuesMock.mockReturnValueOnce({ BETTER_AUTH_URL: baseUrl });
+  return await operation();
 };
 
 beforeEach(() => {
+  browserConfigValuesMock.mockReturnValue({});
   currentSessionMock.mockReturnValue(Effect.succeed({ identity, state: 'authenticated' as const }));
   availableLegalEntitiesMock.mockReturnValue(
     Effect.succeed({

@@ -46,60 +46,68 @@ interface Services {
   ) => ReturnType<typeof createOrMatchParty>;
 }
 
-const handleCreateParty = (
+const handleCreateParty = Effect.fn('CreatePartyAction.handleCreateParty')(function* createParty(
   payload: CreatePartyPayload,
   context: ActionHandlerContext<typeof domainEvents, Services>,
-) =>
-  Effect.gen(function* createParty() {
-    const { addedOfficialIdentifierRefs = [], ...result } = yield* context.services.createOrMatch(
-      payload.candidate,
-      context.actionInvocationId,
-    );
-    const target = result.outcome === 'AMBIGUOUS' ? result.caseRef : result.partyRef;
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: candidateFingerprint(payload.candidate),
-      resultCount: result.outcome === 'CREATED' ? 0 : 1,
-      servingModuleKey: 'party.registry',
-      targetModuleKey: 'party.registry',
-      targetResourceId: target.resourceId,
-      targetResourceType: target.resourceType,
-    });
-    if (result.outcome === 'CREATED') {
-      const event = yield* context.addDomainEvent({
-        eventType: 'party.registry.party-created.v1',
-        payloadJson: { partyRef: result.partyRef },
-        producerModuleKey: 'party.registry',
-        subjectModuleKey: 'party.registry',
-        subjectResourceId: result.partyRef.resourceId,
-        subjectResourceType: result.partyRef.resourceType,
-      });
-      yield* context.addOutboxMessage(
-        event,
-        createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage({ partyRef: result.partyRef }),
-      );
-    }
-    if (result.outcome === 'MATCHED_EXISTING') {
-      for (const officialIdentifierRef of addedOfficialIdentifierRefs) {
-        const addedIdentifier = { officialIdentifierRef, partyRef: result.partyRef };
-        const event = yield* context.addDomainEvent({
-          eventType: 'party.registry.official-identifier-added.v1',
-          payloadJson: addedIdentifier,
-          producerModuleKey: 'party.registry',
-          subjectModuleKey: 'party.registry',
-          subjectResourceId: officialIdentifierRef.resourceId,
-          subjectResourceType: officialIdentifierRef.resourceType,
-        });
-        yield* context.addOutboxMessage(
-          event,
-          createAddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxMessage(
-            addedIdentifier,
-          ),
-        );
-      }
-    }
-    return result;
+) {
+  const { addedOfficialIdentifierRefs = [], ...result } = yield* context.services.createOrMatch(
+    payload.candidate,
+    context.actionInvocationId,
+  );
+  const target = result.outcome === 'AMBIGUOUS' ? result.caseRef : result.partyRef;
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: candidateFingerprint(payload.candidate),
+    resultCount: result.outcome === 'CREATED' ? 0 : 1,
+    servingModuleKey: 'party.registry',
+    targetModuleKey: 'party.registry',
+    targetResourceId: target.resourceId,
+    targetResourceType: target.resourceType,
   });
+  if (result.outcome === 'CREATED') {
+    const event = yield* context.addDomainEvent({
+      eventType: 'party.registry.party-created.v1',
+      payloadJson: { partyRef: result.partyRef },
+      producerModuleKey: 'party.registry',
+      subjectModuleKey: 'party.registry',
+      subjectResourceId: result.partyRef.resourceId,
+      subjectResourceType: result.partyRef.resourceType,
+    });
+    yield* context.addOutboxMessage(
+      event,
+      createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage({ partyRef: result.partyRef }),
+    );
+  }
+  if (result.outcome === 'MATCHED_EXISTING') {
+    yield* Effect.forEach(
+      addedOfficialIdentifierRefs,
+      (officialIdentifierRef) => {
+        const addedIdentifier = { officialIdentifierRef, partyRef: result.partyRef };
+        return context
+          .addDomainEvent({
+            eventType: 'party.registry.official-identifier-added.v1',
+            payloadJson: addedIdentifier,
+            producerModuleKey: 'party.registry',
+            subjectModuleKey: 'party.registry',
+            subjectResourceId: officialIdentifierRef.resourceId,
+            subjectResourceType: officialIdentifierRef.resourceType,
+          })
+          .pipe(
+            Effect.flatMap((event) =>
+              context.addOutboxMessage(
+                event,
+                createAddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxMessage(
+                  addedIdentifier,
+                ),
+              ),
+            ),
+          );
+      },
+      { concurrency: 1, discard: true },
+    );
+  }
+  return result;
+});
 
 export const createPartyAction = defineAction(
   {

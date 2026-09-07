@@ -1,10 +1,11 @@
-// @effect-diagnostics asyncFunction:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { eq, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect, Option, Schema } from 'effect';
+import { Option, Schema } from 'effect';
 import { Pool } from 'pg';
 import {
   contactsRelations,
@@ -42,7 +43,7 @@ const hasPostgreSqlCode = (expected: string) => {
 };
 
 test('enforces tenant isolation and canonical-reference uniqueness without cross-vertical FKs', async () => {
-  const connections = await Effect.runPromise(loadDatabaseConnectionPair());
+  const connections = await runEffectTestPromise(loadDatabaseConnectionPair());
   const adminPool = new Pool({ connectionString: connections.admin.connectionString });
   const runtimePool = new Pool({ connectionString: connections.runtime.connectionString, max: 1 });
   const admin = drizzle({ client: adminPool, relations: contactsRelations });

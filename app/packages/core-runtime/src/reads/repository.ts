@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Duration, Effect } from 'effect';
 import { dataAccessEvents } from '../db/schema.ts';
 import type { CoreDbExecutor } from '../db/types.ts';
 import type { OperationalScope } from '../operations/context.ts';
@@ -27,16 +27,22 @@ export interface PersistReadEvidenceInput {
 const accessKind = (kind: ReadAccessKind): 'download' | 'export' | 'list' | 'read' | 'search' =>
   kind === 'detail' || kind === 'report' ? 'read' : kind;
 
+const READ_EVIDENCE_PERSISTENCE_TIMEOUT = Duration.seconds(30);
+
+const readEvidencePersistenceFailure = (cause: unknown): ReadEvidencePersistenceError => {
+  const failure = new ReadEvidencePersistenceError({
+    code: 'read_evidence_persistence_failed',
+    reason: 'Required read evidence could not be persisted',
+  });
+  return Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+};
+
 export const persistReadEvidence = (
   executor: CoreDbExecutor,
   input: PersistReadEvidenceInput,
 ): Effect.Effect<void, ReadEvidencePersistenceError> =>
   Effect.tryPromise({
-    catch: () =>
-      new ReadEvidencePersistenceError({
-        code: 'read_evidence_persistence_failed',
-        reason: 'Required read evidence could not be persisted',
-      }),
+    catch: readEvidencePersistenceFailure,
     try: () =>
       executor.insert(dataAccessEvents).values({
         accessKind: accessKind(input.accessKind),
@@ -61,4 +67,11 @@ export const persistReadEvidence = (
         targetResourceType: input.targetResourceType,
         tenantId: input.scope.tenantId,
       }),
-  }).pipe(Effect.asVoid);
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: READ_EVIDENCE_PERSISTENCE_TIMEOUT,
+      orElse: () =>
+        Effect.fail(readEvidencePersistenceFailure('Read evidence persistence timed out')),
+    }),
+    Effect.asVoid,
+  );

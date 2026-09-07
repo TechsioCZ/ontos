@@ -326,7 +326,7 @@ test('models an originally wrong Contact Point as an explicit correction with op
 });
 
 test('projects independently auditable whole-contact and ADDRESS-purpose ends', () => {
-  const end = Schema.decodeUnknownSync(ContactPointEndSchema)({
+  const encodedEnd = {
     effectiveEnd: '2026-10-01T00:00:00.000Z',
     endedByActionInvocationId: '30000000-0000-4000-8000-000000000001',
     endedByPrincipalId: '40000000-0000-4000-8000-000000000001',
@@ -337,7 +337,8 @@ test('projects independently auditable whole-contact and ADDRESS-purpose ends', 
     },
     reason: 'Correspondence moved to another address',
     recordedAt: '2026-09-03T10:00:00.000Z',
-  });
+  } as const;
+  const end = Schema.decodeUnknownSync(ContactPointEndSchema)(encodedEnd);
   const address = Schema.decodeUnknownSync(AddressContactPointValueSchema)({
     address: {
       addressLine1: 'Na Prikope 1',
@@ -350,7 +351,7 @@ test('projects independently auditable whole-contact and ADDRESS-purpose ends', 
     purposes: [
       {
         current: true,
-        end,
+        end: encodedEnd,
         preferred: true,
         provenance,
         purpose: 'CORRESPONDENCE',

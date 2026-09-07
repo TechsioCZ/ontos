@@ -1,4 +1,4 @@
-// @effect-diagnostics asyncFunction:off nodeBuiltinImport:off
+// @effect-diagnostics asyncFunction:off nodeBuiltinImport:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';

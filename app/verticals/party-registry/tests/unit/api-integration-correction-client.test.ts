@@ -1,7 +1,8 @@
-// @effect-diagnostics asyncFunction:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 import { CorrectPartyFactPayloadSchema } from '../../shared/command-api.ts';
 import {
@@ -112,7 +113,7 @@ test('public clients discover the first assertion and submit a governed correcti
           officialIdentifiers: [],
           partyType: 'ORGANIZATION',
           provenance: { method: 'MANUAL_REVIEW', source: 'document:original' },
-          validFrom: timestamp,
+          validFrom: DateTime.makeUnsafe(timestamp),
         },
       },
       'Bearer test-assertion',
@@ -127,18 +128,19 @@ test('public clients discover the first assertion and submit a governed correcti
     );
     const target = before.currentFactAssertions.find(({ factKind }) => factKind === 'DISPLAY_NAME');
     assert.ok(target);
+    const correctionPayload = yield* Schema.decodeUnknownEffect(CorrectPartyFactPayloadSchema)({
+      evidenceRefs: ['document:reviewed-error'],
+      evidenceSource: 'DOCUMENT',
+      factKind: 'DISPLAY_NAME',
+      partyId: partyRef.resourceId,
+      policyVersion: 'party-correction.v1',
+      provenance: { method: 'MANUAL_REVIEW', source: 'document:reviewed-error' },
+      reasonCode: 'WRONG_IDENTITY_VALUE',
+      replacementValue: 'Corrected name',
+      targetAssertionId: target.assertionId,
+    });
     const correction = yield* correctPartyFactWithAuthorization(
-      {
-        evidenceRefs: ['document:reviewed-error'],
-        evidenceSource: 'DOCUMENT',
-        factKind: 'DISPLAY_NAME',
-        partyId: partyRef.resourceId,
-        policyVersion: 'party-correction.v1',
-        provenance: { method: 'MANUAL_REVIEW', source: 'document:reviewed-error' },
-        reasonCode: 'WRONG_IDENTITY_VALUE',
-        replacementValue: 'Corrected name',
-        targetAssertionId: target.assertionId,
-      },
+      correctionPayload,
       'Bearer test-assertion',
       { ...options, idempotencyKey: 'correct-first-assertion' },
     );
@@ -151,14 +153,26 @@ test('public clients discover the first assertion and submit a governed correcti
     );
     assert.equal(after.currentFactAssertions[0]?.assertionId, replacementAssertionId);
     assert.equal(
-      after.factHistory?.some(
+      Option.getOrElse(after.factHistory, () => []).some(
         ({ assertionId, state }) => assertionId === originalAssertionId && state === 'SUPERSEDED',
       ),
       true,
     );
   });
-  await Effect.runPromise(program.pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch)));
+  await runEffectTestPromise(program.pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch)));
   assert.equal(requests.length, 4);
+  const createRequest = requests.find(({ url }) => url.endsWith('/actions/create-party'));
+  assert.ok(createRequest);
+  assert.deepEqual(await createRequest.json(), {
+    candidate: {
+      displayName: originalAssertion.value,
+      evidenceRefs: ['document:original'],
+      officialIdentifiers: [],
+      partyType: 'ORGANIZATION',
+      provenance: { method: 'MANUAL_REVIEW', source: 'document:original' },
+      validFrom: timestamp,
+    },
+  });
   assert.equal(
     requests.every((request) => request.headers.get('authorization') === 'Bearer test-assertion'),
     true,

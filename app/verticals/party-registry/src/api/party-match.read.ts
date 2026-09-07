@@ -23,6 +23,15 @@ export const partyMatchEntrypoint = defineTenantModuleEntrypoint({
 interface Services {
   readonly preview: (candidate: PartyCandidate) => ReturnType<typeof previewPartyMatch>;
 }
+const partyMatchUnavailable = (cause: unknown) =>
+  Object.defineProperty(
+    new ReadHandlerUnavailable({
+      code: 'read_handler_unavailable',
+      reason: 'Party match preview is unavailable',
+    }),
+    'cause',
+    { value: cause },
+  );
 /** UX preview only. Use the match-party Action for a durable identity decision and review case. */
 export const partyMatchRead = defineRead(
   {
@@ -43,13 +52,7 @@ export const partyMatchRead = defineRead(
   },
   (input, context: ReadHandlerContext<Services>) =>
     context.services.preview(input.candidate).pipe(
-      Effect.mapError(
-        () =>
-          new ReadHandlerUnavailable({
-            code: 'read_handler_unavailable',
-            reason: 'Party match preview is unavailable',
-          }),
-      ),
+      Effect.mapError(partyMatchUnavailable),
       Effect.map((result) => ({
         evidence: { resultCount: result.candidateParties.length },
         result,

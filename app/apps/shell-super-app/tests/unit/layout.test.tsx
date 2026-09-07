@@ -6,6 +6,7 @@ import { Select as ActualSelect } from '@techsio/ui-kit/molecules/select' with {
   rstest: 'importActual',
 };
 import type { ComponentProps, ReactNode } from 'react';
+import { AppIdSchema } from '../../shared/api';
 import Layout from '../../src/routes/layout';
 import { AuthenticatedDashboardLayout } from '../../src/routes/shell-frame';
 
@@ -105,6 +106,11 @@ const homeTitle = 'Home';
 const homeOverviewTitle = 'Home overview';
 const noopLogout = rstest.fn();
 const noopTenantChange = rstest.fn();
+const unavailableDeploymentAppIds = {
+  legacyCenter: AppIdSchema.make('legacy-center'),
+  propertyRegistry: AppIdSchema.make('property-registry'),
+  reportingCenter: AppIdSchema.make('reporting-center'),
+};
 const tenantProps = {
   currentLegalEntityId: 'legal-entity-1',
   currentTenantId: 'tenant-1',
@@ -252,9 +258,17 @@ test('shows failed installed deployments as disabled identities with typed reaso
       onLogout={noopLogout}
       title={homeTitle}
       unavailableDeployments={[
-        { appId: 'property-registry', reason: 'timeout', status: 'unavailable' },
-        { appId: 'reporting-center', reason: 'incompatible', status: 'unavailable' },
-        { appId: 'legacy-center', status: 'revoked' },
+        {
+          appId: unavailableDeploymentAppIds.propertyRegistry,
+          reason: 'timeout',
+          status: 'unavailable',
+        },
+        {
+          appId: unavailableDeploymentAppIds.reportingCenter,
+          reason: 'incompatible',
+          status: 'unavailable',
+        },
+        { appId: unavailableDeploymentAppIds.legacyCenter, status: 'revoked' },
       ]}
     >
       Content

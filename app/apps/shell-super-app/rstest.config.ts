@@ -2,23 +2,54 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { withModernConfig } from '@modern-js/adapter-rstest';
 import { defineConfig } from '@rstest/core';
-import * as Schema from 'effect/Schema';
+import { Result, Schema } from 'effect';
+
+import {
+  DeploymentAllowlistOverlaySchema,
+  DeploymentAllowlistTopologySchema,
+} from './api/modules/deployment-allowlist.ts';
 
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
 
-const decodeJson = Schema.decodeUnknownSync(Schema.Json);
-const referenceTopology = decodeJson(
-  JSON.parse(
+const topologyJsonSchema = Schema.fromJsonString(DeploymentAllowlistTopologySchema);
+const overlayJsonSchema = Schema.fromJsonString(DeploymentAllowlistOverlaySchema);
+const moduleDeploymentAllowlistJsonSchema = Schema.fromJsonString(
+  Schema.Struct({
+    environment: Schema.Literal('development'),
+    overlay: DeploymentAllowlistOverlaySchema,
+    topology: DeploymentAllowlistTopologySchema,
+  }),
+);
+const siteUrlJsonSchema = Schema.fromJsonString(Schema.String);
+const referenceTopology = Result.getOrThrow(
+  Schema.decodeUnknownResult(topologyJsonSchema, { onExcessProperty: 'preserve' })(
     readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8'),
   ),
 );
-const developmentOverlay = decodeJson(
-  JSON.parse(
+const developmentOverlay = Result.getOrThrow(
+  Schema.decodeUnknownResult(overlayJsonSchema, { onExcessProperty: 'preserve' })(
     readFileSync(
       new URL('../../topology/local-overlays/development.json', import.meta.url),
       'utf-8',
     ),
   ),
+);
+const encodeOptions = { onExcessProperty: 'preserve' } as const;
+const encodedReferenceTopology = Result.getOrThrow(
+  Schema.encodeResult(topologyJsonSchema, encodeOptions)(referenceTopology),
+);
+const encodedModuleDeploymentAllowlist = Result.getOrThrow(
+  Schema.encodeResult(
+    moduleDeploymentAllowlistJsonSchema,
+    encodeOptions,
+  )({
+    environment: 'development',
+    overlay: developmentOverlay,
+    topology: referenceTopology,
+  }),
+);
+const encodedSiteUrl = Result.getOrThrow(
+  Schema.encodeResult(siteUrlJsonSchema)('http://localhost:3020'),
 );
 
 export default defineConfig({
@@ -33,13 +64,9 @@ export default defineConfig({
   restoreMocks: true,
   source: {
     define: {
-      ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: JSON.stringify(referenceTopology),
-      ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: JSON.stringify({
-        environment: 'development',
-        overlay: developmentOverlay,
-        topology: referenceTopology,
-      }),
-      ULTRAMODERN_SITE_URL: JSON.stringify('http://localhost:3020'),
+      ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: encodedReferenceTopology,
+      ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: encodedModuleDeploymentAllowlist,
+      ULTRAMODERN_SITE_URL: encodedSiteUrl,
     },
   },
   testEnvironment: 'happy-dom',

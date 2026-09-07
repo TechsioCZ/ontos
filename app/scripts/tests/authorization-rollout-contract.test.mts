@@ -2,27 +2,31 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { validateAuthorizationRolloutContract } from '../authorization/rollout-contract.mts';
 
+const entrypointKey = 'contacts.create-contact';
+const inventoryHash = 'inventory';
+const expiry = '2026-10-01T00:00:00.000Z';
+
 const contract = {
   activatedAt: '2026-09-01T00:00:00.000Z',
-  baselineInventoryHash: 'inventory',
+  baselineInventoryHash: inventoryHash,
   baselineSourceRevision: 'revision',
-  compatibilityEligibleEntrypoints: ['contacts.create-contact'],
+  compatibilityEligibleEntrypoints: [entrypointKey],
   decisionReference: 'https://github.com/TechsioCZ/ontos/issues/169',
-  expiresAt: '2026-10-01T00:00:00.000Z',
+  expiresAt: expiry,
   mode: 'report_only',
   schemaVersion: 1,
 };
 const context = {
-  entrypointKeys: new Set(['contacts.create-contact']),
-  inventoryHash: 'inventory',
+  entrypointKeys: new Set([entrypointKey]),
+  inventoryHash,
   nowEpochMs: Date.parse('2026-09-10T00:00:00.000Z'),
 };
 
-test('rollout contract accepts an active configuration bound to the classified inventory', () => {
+await test('rollout contract accepts an active configuration bound to the classified inventory', () => {
   assert.deepEqual(validateAuthorizationRolloutContract(contract, context), contract);
 });
 
-test('the historical baseline revision does not have to equal the self-referential current commit', () => {
+await test('the historical baseline revision does not have to equal the self-referential current commit', () => {
   assert.deepEqual(
     validateAuthorizationRolloutContract(
       { ...contract, baselineSourceRevision: 'historical-baseline-revision' },
@@ -32,7 +36,7 @@ test('the historical baseline revision does not have to equal the self-referenti
   );
 });
 
-test('enforced rollout remains active after the report-only deadline', () => {
+await test('enforced rollout remains active after the report-only deadline', () => {
   assert.equal(
     validateAuthorizationRolloutContract(
       { ...contract, mode: 'enforced' },
@@ -42,12 +46,12 @@ test('enforced rollout remains active after the report-only deadline', () => {
   );
 });
 
-test('rollout contract rejects expiry, stale inventory binding, extra fields, and duplicate baseline entries', () => {
+await test('rollout contract rejects expiry, stale inventory binding, extra fields, and duplicate baseline entries', () => {
   assert.throws(
     () =>
       validateAuthorizationRolloutContract(contract, {
         ...context,
-        nowEpochMs: Date.parse(contract.expiresAt),
+        nowEpochMs: Date.parse(expiry),
       }),
     /inactive or expired/u,
   );
@@ -64,7 +68,7 @@ test('rollout contract rejects expiry, stale inventory binding, extra fields, an
       validateAuthorizationRolloutContract(
         {
           ...contract,
-          compatibilityEligibleEntrypoints: ['contacts.create-contact', 'contacts.create-contact'],
+          compatibilityEligibleEntrypoints: [entrypointKey, entrypointKey],
         },
         context,
       ),

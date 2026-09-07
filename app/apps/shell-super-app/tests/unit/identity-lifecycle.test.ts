@@ -1,11 +1,12 @@
-// @effect-diagnostics asyncFunction:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { expect, test } from '@rstest/core';
 import {
   ActionTransactionError,
   IdentityTargetInvalidError,
   PrincipalBindingMissingError,
 } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, Redacted } from 'effect';
 import {
   ApiKeyProviderUnavailableError,
   ApiKeyStateInconsistentError,
@@ -37,7 +38,7 @@ const issued = {
   expiresAt: null,
   name: 'automation',
   providerKeyId: 'private-provider-key-id',
-  secret: 'ontos-secret',
+  secret: Redacted.make('ontos-secret'),
   start: 'onto',
 };
 const resolver = makePrincipalResolverDouble({
@@ -77,7 +78,7 @@ test('compensates a failed Core bind and never exposes the provider key identifi
     resolver,
   );
 
-  const failure = await Effect.runPromise(
+  const failure = await runEffectTestPromise(
     Effect.flip(
       service.issue({
         correlationId: 'correlation-1',
@@ -102,7 +103,7 @@ test('preserves resolver lifecycle failures instead of rewriting them as an outa
     }),
   );
 
-  const failure = await Effect.runPromise(
+  const failure = await runEffectTestPromise(
     Effect.flip(
       service.setStatus({
         authBindingId: '00000000-0000-4000-8000-000000000005',
@@ -136,7 +137,7 @@ test('preserves a typed Core status-transition failure before touching provider 
     resolver,
   );
 
-  const failure = await Effect.runPromise(
+  const failure = await runEffectTestPromise(
     Effect.flip(
       service.setStatus({
         authBindingId: '00000000-0000-4000-8000-000000000005',
@@ -216,7 +217,7 @@ test('returns a secret only after bind succeeds and strips the private provider 
     resolver,
   );
 
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     service.issue({
       correlationId: 'correlation-2',
       idempotencyKey: 'issue-2',
@@ -256,7 +257,7 @@ test('revokes the replacement before failing when closing the old Core binding f
   );
 
   await expect(
-    Effect.runPromise(
+    runEffectTestPromise(
       service.rotate({
         correlationId: 'correlation-3',
         idempotencyKey: 'rotate-1',
@@ -290,7 +291,7 @@ test('returns the replacement secret when both old closure and replacement rollb
     resolver,
   );
 
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     service.rotate({
       correlationId: 'correlation-4',
       idempotencyKey: 'rotate-2',
@@ -341,7 +342,7 @@ test('returns the replacement secret when old Core closure committed but provide
     }),
   );
 
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     service.rotate({
       correlationId: 'correlation-old-core-closed',
       idempotencyKey: 'rotate-old-core-closed',
@@ -402,7 +403,7 @@ test('does not return a replacement secret after rollback definitely revoked its
     }),
   );
 
-  const failure = await Effect.runPromise(
+  const failure = await runEffectTestPromise(
     Effect.flip(
       service.rotate({
         correlationId: 'correlation-definite-replacement-rollback',
@@ -444,7 +445,7 @@ test('cleans one bounded pending batch and requires a retry before issuing anoth
     }),
   );
 
-  const failure = await Effect.runPromise(
+  const failure = await runEffectTestPromise(
     Effect.flip(
       service.issue({
         correlationId: 'correlation-bounded-cleanup',
@@ -474,7 +475,7 @@ test('retries provider cleanup without repeating an already committed Core trans
     }),
   );
 
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     service.setStatus({
       authBindingId: '00000000-0000-4000-8000-000000000005',
       correlationId: 'correlation-5',
@@ -512,7 +513,7 @@ test('preserves provider metadata failure after a safe Core disable instead of f
     resolver,
   );
 
-  const failure = await Effect.runPromise(
+  const failure = await runEffectTestPromise(
     Effect.flip(
       service.setStatus({
         authBindingId: '00000000-0000-4000-8000-000000000005',
@@ -560,7 +561,7 @@ test('reconciles a provider key left pending by failed bind compensation before 
     }),
   );
 
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     service.issue({
       correlationId: 'correlation-6',
       idempotencyKey: 'issue-retry',

@@ -1,3 +1,4 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { beforeEach, expect, rstest, test } from '@rstest/core';
 import { Effect } from 'effect';
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
@@ -16,7 +17,10 @@ const { loadHomePageModelMock, resolveModuleTargetMock } = rstest.hoisted(() => 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({
   ...actualAuthClient,
   resolveModuleTarget: resolveModuleTargetMock,
-  runEffectRequest: Effect.runPromise,
+}));
+
+rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
+  runBrowserEffect: runEffectTestPromise,
 }));
 
 rstest.mock('../../../../src/routes/[lang]/page.data.ts', () => ({

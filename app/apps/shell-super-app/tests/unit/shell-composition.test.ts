@@ -1,4 +1,4 @@
-/* eslint-disable unicorn/no-await-expression-member -- Each assertion resolves an independent direct-target request. */
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { expect, test } from '@rstest/core';
 import { buildInstalledModuleCatalog, resolveInstalledModuleCatalog } from '@app/core-runtime';
 import type {
@@ -207,7 +207,7 @@ test('composes one deterministic state and permission batch with lifecycle affor
       },
     },
   });
-  const result = await Effect.runPromise(composition.compose(context));
+  const result = await runEffectTestPromise(composition.compose(context));
   expect(result).toEqual({
     navigation: [
       {
@@ -254,7 +254,7 @@ test('keeps healthy navigation and exposes failed installed deployments separate
       reason: 'timeout',
     },
   ]);
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     makeShellComposition({
       catalog: Effect.succeed(degradedCatalog),
       contextAccess: contextAccess({ 'documents.center': 'allowed' }),
@@ -277,7 +277,7 @@ test('keeps healthy navigation and exposes failed installed deployments separate
 });
 
 test('normalizes number-like module order before returning the public composition', async () => {
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     makeShellComposition({
       catalog: Effect.succeed(catalogWithNumberLikeOrder()),
       contextAccess: contextAccess({
@@ -299,7 +299,7 @@ test('normalizes number-like module order before returning the public compositio
 test.each(['inactive', 'suspended', 'quarantined', 'archived'] as const)(
   'hides the %s lifecycle from normal navigation',
   async (state) => {
-    const result = await Effect.runPromise(
+    const result = await runEffectTestPromise(
       makeShellComposition({
         catalog: Effect.succeed(catalog()),
         contextAccess: contextAccess({
@@ -317,7 +317,7 @@ test.each(['inactive', 'suspended', 'quarantined', 'archived'] as const)(
 );
 
 test('omits definite denial while preserving unavailable authorization as disabled', async () => {
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     makeShellComposition({
       catalog: Effect.succeed(catalog()),
       contextAccess: contextAccess({
@@ -361,65 +361,41 @@ test('resolves direct targets independently with exhaustive safe outcomes and hi
         Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state }))),
     },
   });
-  expect(
-    (
-      await Effect.runPromise(
-        composition.resolveModuleTarget(context, { moduleId: 'property.registry' }),
-      )
-    ).outcome,
-  ).toBe('resolved');
+  const resolved = await runEffectTestPromise(
+    composition.resolveModuleTarget(context, { moduleId: 'property.registry' }),
+  );
+  expect(resolved.outcome).toBe('resolved');
   decision = 'denied';
-  expect(
-    (
-      await Effect.runPromise(
-        composition.resolveModuleTarget(context, { moduleId: 'property.registry' }),
-      )
-    ).outcome,
-  ).toBe('forbidden');
+  const forbidden = await runEffectTestPromise(
+    composition.resolveModuleTarget(context, { moduleId: 'property.registry' }),
+  );
+  expect(forbidden.outcome).toBe('forbidden');
   decision = 'unavailable';
-  expect(
-    (
-      await Effect.runPromise(
-        composition.resolveModuleTarget(context, { moduleId: 'property.registry' }),
-      )
-    ).outcome,
-  ).toBe('unavailable');
+  const unavailable = await runEffectTestPromise(
+    composition.resolveModuleTarget(context, { moduleId: 'property.registry' }),
+  );
+  expect(unavailable.outcome).toBe('unavailable');
   decision = 'allowed';
   state = 'archived';
-  expect(
-    (
-      await Effect.runPromise(
-        composition.resolveModuleTarget(context, { moduleId: 'property.registry' }),
-      )
-    ).outcome,
-  ).toBe('not_found');
-  expect(
-    (
-      await Effect.runPromise(
-        composition.resolveModuleTarget(context, {
-          access: 'historical_read',
-          moduleId: 'property.registry',
-        }),
-      )
-    ).outcome,
-  ).toBe('resolved');
-  expect(
-    (
-      await Effect.runPromise(
-        composition.resolveModuleTarget(
-          { principalId, tenantId },
-          { moduleId: 'property.registry' },
-        ),
-      )
-    ).outcome,
-  ).toBe('selection_required');
-  expect(
-    (
-      await Effect.runPromise(
-        composition.resolveModuleTarget(context, { moduleId: 'missing.module' }),
-      )
-    ).outcome,
-  ).toBe('not_found');
+  const archived = await runEffectTestPromise(
+    composition.resolveModuleTarget(context, { moduleId: 'property.registry' }),
+  );
+  expect(archived.outcome).toBe('not_found');
+  const historical = await runEffectTestPromise(
+    composition.resolveModuleTarget(context, {
+      access: 'historical_read',
+      moduleId: 'property.registry',
+    }),
+  );
+  expect(historical.outcome).toBe('resolved');
+  const selectionRequired = await runEffectTestPromise(
+    composition.resolveModuleTarget({ principalId, tenantId }, { moduleId: 'property.registry' }),
+  );
+  expect(selectionRequired.outcome).toBe('selection_required');
+  const missing = await runEffectTestPromise(
+    composition.resolveModuleTarget(context, { moduleId: 'missing.module' }),
+  );
+  expect(missing.outcome).toBe('not_found');
 });
 
 test.each(['active', 'read_only', 'deprecated'] as const)(
@@ -436,10 +412,10 @@ test.each(['active', 'read_only', 'deprecated'] as const)(
           Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state }))),
       },
     });
-    const landing = await Effect.runPromise(
+    const landing = await runEffectTestPromise(
       composition.resolveModuleTarget(context, { moduleId: 'property.registry' }),
     );
-    const customers = await Effect.runPromise(
+    const customers = await runEffectTestPromise(
       composition.resolveModuleTarget(context, {
         entrypointKey: 'property.registry.page.customers',
         moduleId: 'property.registry',
@@ -454,25 +430,19 @@ test.each(['active', 'read_only', 'deprecated'] as const)(
       page: { componentKey: 'property.registry.page-customers' },
       writable: state === 'active',
     });
-    expect(
-      (
-        await Effect.runPromise(
-          composition.resolveModuleTarget(context, {
-            entrypointKey: 'property.registry.page.missing',
-            moduleId: 'property.registry',
-          }),
-        )
-      ).outcome,
-    ).toBe('not_found');
-    expect(
-      (
-        await Effect.runPromise(
-          composition.resolveModuleTarget(context, {
-            entrypointKey: 'documents.center.page.home',
-            moduleId: 'property.registry',
-          }),
-        )
-      ).outcome,
-    ).toBe('not_found');
+    const missingPage = await runEffectTestPromise(
+      composition.resolveModuleTarget(context, {
+        entrypointKey: 'property.registry.page.missing',
+        moduleId: 'property.registry',
+      }),
+    );
+    expect(missingPage.outcome).toBe('not_found');
+    const crossOwnedPage = await runEffectTestPromise(
+      composition.resolveModuleTarget(context, {
+        entrypointKey: 'documents.center.page.home',
+        moduleId: 'property.registry',
+      }),
+    );
+    expect(crossOwnedPage.outcome).toBe('not_found');
   },
 );

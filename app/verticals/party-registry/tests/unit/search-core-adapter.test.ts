@@ -1,6 +1,8 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
+import { CoreSearchProjectionHitSchema } from '@app/core-runtime';
 import type { CoreSearchQueryRuntimeService } from '@app/core-runtime';
 import { makePartySearchProjectionGateway } from '../../src/search/parties.provider.ts';
 
@@ -18,24 +20,53 @@ const counterpartyRef = (resourceId: string) => ({
   resourceType: 'party.registry.counterparty',
   tenantId,
 });
+const partyAliasHit = Schema.decodeUnknownSync(CoreSearchProjectionHitSchema)({
+  archived: false,
+  facets: [],
+  matchedRef: partyRef('absorbed'),
+  metadata: [],
+  ref: partyRef('survivor'),
+  title: 'ACME',
+});
+const counterpartyHit = Schema.decodeUnknownSync(CoreSearchProjectionHitSchema)({
+  archived: false,
+  facets: [],
+  matchedSubjectRef: partyRef('absorbed'),
+  metadata: [],
+  ref: counterpartyRef('cp-1'),
+  selectedLegalEntityId: legalEntityId,
+  subjectRef: partyRef('survivor'),
+  temporalFacets: [
+    {
+      key: 'current-role',
+      validFrom: '2026-01-01T00:00:00.000Z',
+      validTo: '2027-01-01T00:00:00.000Z',
+      value: 'CUSTOMER',
+    },
+    {
+      key: 'ignored-business-facet',
+      validFrom: '2026-01-01T00:00:00.000Z',
+      value: 'IGNORED',
+    },
+  ],
+  title: 'ACME',
+});
+const wrongResourceHit = Schema.decodeUnknownSync(CoreSearchProjectionHitSchema)({
+  archived: false,
+  facets: [],
+  metadata: [],
+  ref: counterpartyRef('wrong-kind'),
+  title: 'Wrong',
+});
 
 test('Party adapter queries only the Core-owned Party projection and maps alias context', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* partyAdapterQuery() {
       const calls: unknown[] = [];
       const core: CoreSearchQueryRuntimeService = {
         search: (input) => {
           calls.push(input);
-          return Effect.succeed([
-            {
-              archived: false,
-              facets: [],
-              matchedRef: partyRef('absorbed'),
-              metadata: [],
-              ref: partyRef('survivor'),
-              title: 'ACME',
-            },
-          ]);
+          return Effect.succeed([partyAliasHit]);
         },
       };
 
@@ -63,37 +94,13 @@ test('Party adapter queries only the Core-owned Party projection and maps alias 
   ));
 
 test('Counterparty adapter uses trusted Legal Entity, effective time, role facet and safe periods', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* counterpartyAdapterQuery() {
       const calls: unknown[] = [];
       const core: CoreSearchQueryRuntimeService = {
         search: (input) => {
           calls.push(input);
-          return Effect.succeed([
-            {
-              archived: false,
-              facets: [],
-              matchedSubjectRef: partyRef('absorbed'),
-              metadata: [],
-              ref: counterpartyRef('cp-1'),
-              selectedLegalEntityId: legalEntityId,
-              subjectRef: partyRef('survivor'),
-              temporalFacets: [
-                {
-                  key: 'current-role',
-                  validFrom: '2026-01-01T00:00:00.000Z',
-                  validTo: '2027-01-01T00:00:00.000Z',
-                  value: 'CUSTOMER',
-                },
-                {
-                  key: 'ignored-business-facet',
-                  validFrom: '2026-01-01T00:00:00.000Z',
-                  value: 'IGNORED',
-                },
-              ],
-              title: 'ACME',
-            },
-          ]);
+          return Effect.succeed([counterpartyHit]);
         },
       };
       const effectiveAt = '2026-09-03T12:00:00.000Z';
@@ -140,19 +147,10 @@ test('Counterparty adapter uses trusted Legal Entity, effective time, role facet
   ));
 
 test('Party adapter fails closed when a generic projection returns the wrong resource contract', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* invalidProjectionContract() {
       const core: CoreSearchQueryRuntimeService = {
-        search: () =>
-          Effect.succeed([
-            {
-              archived: false,
-              facets: [],
-              metadata: [],
-              ref: counterpartyRef('wrong-kind'),
-              title: 'Wrong',
-            },
-          ]),
+        search: () => Effect.succeed([wrongResourceHit]),
       };
 
       const failure = yield* Effect.exit(

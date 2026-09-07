@@ -1,9 +1,11 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { Client } from 'pg';
 import { PartyFactAssertionSchema } from '../../shared/apis/party-detail.ts';
+import { PartySchema } from '../../shared/domain/identity-contracts.ts';
 import {
   partyDetailPermissionTarget,
   readPartyDetailFromServices,
@@ -20,7 +22,7 @@ const partyRef = {
   resourceType: 'party.registry.party',
   tenantId,
 } as const;
-const fact = {
+const wireFact = {
   assertionId,
   factKind: 'DISPLAY_NAME',
   isCurrent: true,
@@ -33,19 +35,21 @@ const fact = {
   validTo: null,
   value: 'Corrected name',
 } as const;
+const fact = Schema.decodeUnknownSync(PartyFactAssertionSchema)(wireFact);
 
 test('Party fact assertion contract exposes usable correction identities without sensitive evidence', () => {
-  assert.deepEqual(Schema.decodeUnknownSync(PartyFactAssertionSchema)(fact), fact);
+  assert.deepEqual(Schema.encodeSync(PartyFactAssertionSchema)(fact), wireFact);
   assert.throws(() =>
-    Schema.decodeUnknownSync(PartyFactAssertionSchema)({ ...fact, assertionId: 'not-a-uuid' }),
+    Schema.decodeUnknownSync(PartyFactAssertionSchema)({ ...wireFact, assertionId: 'not-a-uuid' }),
   );
+  const decodedWithSensitiveFields = Schema.decodeUnknownSync(PartyFactAssertionSchema)({
+    ...wireFact,
+    evidenceRefs: ['secret'],
+    provenance: { source: 'secret' },
+  });
   assert.deepEqual(
-    Schema.decodeUnknownSync(PartyFactAssertionSchema)({
-      ...fact,
-      evidenceRefs: ['secret'],
-      provenance: { source: 'secret' },
-    }),
-    fact,
+    Schema.encodeSync(PartyFactAssertionSchema)(decodedWithSensitiveFields),
+    wireFact,
   );
 });
 
@@ -99,15 +103,16 @@ test('Party Detail persistence reads safe current and immutable historical asser
     values.push(parameters);
     return Promise.resolve({ rows });
   });
-  return Effect.runPromise(
+  return runEffectTestPromise(
     Effect.gen(function* checkSafeHistory() {
       const result = yield* findPartyDetailAssertions(database, tenantId, partyId, true);
       assert.deepEqual(result.currentFactAssertions, [fact]);
-      assert.equal(result.factHistory?.length, 2);
-      assert.equal(result.factHistory?.[0]?.value, 'Original name');
-      assert.equal(result.factHistory?.[0]?.state, 'SUPERSEDED');
+      const history = Option.getOrThrow(result.factHistory);
+      assert.equal(history.length, 2);
+      assert.equal(history[0]?.value, 'Original name');
+      assert.equal(history[0]?.state, 'SUPERSEDED');
       const current = yield* findPartyDetailAssertions(database, tenantId, partyId, false);
-      assert.deepEqual(current, { currentFactAssertions: [fact], factHistory: null });
+      assert.deepEqual(current, { currentFactAssertions: [fact], factHistory: Option.none() });
       assert.deepEqual(values, [
         [tenantId, partyId],
         [tenantId, partyId, 'ACTIVE', true],
@@ -127,7 +132,7 @@ test('Party Detail persistence reads safe current and immutable historical asser
           find: () =>
             Effect.succeed({
               _tag: 'found' as const,
-              value: {
+              value: Schema.decodeUnknownSync(PartySchema)({
                 archivedAt: null,
                 createdAt: '2026-09-01T10:00:00.000Z',
                 displayName: 'Corrected name',
@@ -135,7 +140,7 @@ test('Party Detail persistence reads safe current and immutable historical asser
                 partyType: 'ORGANIZATION' as const,
                 revision: 2,
                 updatedAt: '2026-09-03T10:00:00.000Z',
-              },
+              }),
             }),
           resolve: () =>
             Effect.succeed({
@@ -148,8 +153,9 @@ test('Party Detail persistence reads safe current and immutable historical asser
         true,
       );
       assert.equal(detail.currentFactAssertions[0]?.assertionId, assertionId);
-      assert.equal(detail.factHistory?.[0]?.assertionId, previousId);
-      assert.equal(detail.factHistory?.[0]?.value, 'Original name');
+      const detailHistory = Option.getOrThrow(detail.factHistory);
+      assert.equal(detailHistory[0]?.assertionId, previousId);
+      assert.equal(detailHistory[0]?.value, 'Original name');
     }).pipe(Effect.ensuring(Effect.sync(() => query.mock.restore()))),
   );
 });

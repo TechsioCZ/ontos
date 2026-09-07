@@ -1,17 +1,20 @@
-import { DateTime } from 'effect';
+import { DateTime, Schema } from 'effect';
 
 export const AUTHORIZATION_WOULD_DENY_SCHEMA_VERSION = 1 as const;
 
-export type AuthorizationRolloutMode = 'enforced' | 'report_only';
-export type AuthorizationDenialReason =
-  | 'cross_tenant'
-  | 'expired_credential'
-  | 'infrastructure_unavailable'
-  | 'malformed_credential'
-  | 'missing_policy'
-  | 'module_disabled'
-  | 'replayed_credential'
-  | 'wrong_audience';
+export const AuthorizationRolloutModeSchema = Schema.Literals(['enforced', 'report_only']);
+export type AuthorizationRolloutMode = typeof AuthorizationRolloutModeSchema.Type;
+export const AuthorizationDenialReasonSchema = Schema.Literals([
+  'cross_tenant',
+  'expired_credential',
+  'infrastructure_unavailable',
+  'malformed_credential',
+  'missing_policy',
+  'module_disabled',
+  'replayed_credential',
+  'wrong_audience',
+]);
+export type AuthorizationDenialReason = typeof AuthorizationDenialReasonSchema.Type;
 
 export interface AuthorizationRolloutRuntimeContract {
   readonly activatedAtEpochMs: number;

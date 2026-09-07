@@ -1,8 +1,10 @@
-/* eslint-disable max-classes-per-file -- Official Identifier exposes one closed typed domain-failure vocabulary. */
 import { AresAppliedEvidenceSchema } from './ares-application.ts';
-import { Schema } from 'effect';
+import { DateTime, Option, Schema, SchemaGetter } from 'effect';
 import { PartyOfficialIdentifierRefSchema } from '../resources/party-official-identifier.ts';
 import { PartyRefSchema } from '../resources/party.ts';
+
+export { OfficialIdentifierClaimConflict } from './identifier-errors/claim-conflict.ts';
+export { OfficialIdentifierInvalid } from './identifier-errors/invalid.ts';
 
 export const OfficialIdentifierTypeSchema = Schema.Literals(['ICO', 'CZ_DIC']);
 export type OfficialIdentifierType = typeof OfficialIdentifierTypeSchema.Type;
@@ -87,33 +89,36 @@ export const OfficialIdentifierAssertionStateSchema = Schema.Literals([
   'DISPUTED',
 ]);
 
+export const OfficialIdentifierIsoTimestampSchema = Schema.DateTimeUtcFromString;
+const OfficialIdentifierIsoTimestampJsonSchema = Schema.String.check(
+  Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u),
+  Schema.makeFilter((value) => {
+    const parsed = DateTime.make(value);
+    const canonicalInput = value.length === 20 ? value.replace(/Z$/u, '.000Z') : value;
+    return Option.isSome(parsed) && DateTime.formatIso(parsed.value) === canonicalInput
+      ? undefined
+      : 'invalid UTC calendar timestamp';
+  }),
+).pipe(
+  Schema.decode({
+    decode: SchemaGetter.dateTimeUtcFromInput<string>().map(DateTime.formatIso),
+    encode: SchemaGetter.dateTimeUtcFromInput<string>().map(DateTime.formatIso),
+  }),
+);
+
 export const OfficialIdentifierAssertionSchema = Schema.Struct({
-  externalEvidence: Schema.optionalKey(Schema.NullOr(AresAppliedEvidenceSchema)),
+  externalEvidence: Schema.optionalKey(
+    Schema.toEncoded(Schema.OptionFromNullOr(AresAppliedEvidenceSchema)),
+  ),
   identifierType: OfficialIdentifierTypeSchema,
   namespace: Schema.String,
   normalizedValue: Schema.String,
   officialIdentifierRef: PartyOfficialIdentifierRefSchema,
   partyRef: PartyRefSchema,
-  recordedAt: Schema.String,
+  recordedAt: OfficialIdentifierIsoTimestampJsonSchema,
   state: OfficialIdentifierAssertionStateSchema,
-  validFrom: Schema.String,
-  validTo: Schema.NullOr(Schema.String),
+  validFrom: OfficialIdentifierIsoTimestampJsonSchema,
+  validTo: Schema.toEncoded(Schema.OptionFromNullOr(OfficialIdentifierIsoTimestampJsonSchema)),
   verification: IdentifierVerificationSchema,
 });
 export type OfficialIdentifierAssertion = typeof OfficialIdentifierAssertionSchema.Type;
-
-export class OfficialIdentifierInvalid extends Schema.TaggedError<OfficialIdentifierInvalid>()(
-  'OfficialIdentifierInvalid',
-  {
-    code: Schema.Literal('party_official_identifier_invalid'),
-    reason: Schema.String,
-  },
-) {}
-
-export class OfficialIdentifierClaimConflict extends Schema.TaggedError<OfficialIdentifierClaimConflict>()(
-  'OfficialIdentifierClaimConflict',
-  {
-    code: Schema.Literal('party_identifier_claim_conflict'),
-    reason: Schema.String,
-  },
-) {}

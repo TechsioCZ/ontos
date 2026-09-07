@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Match, Schema } from 'effect';
 import {
   PartyAliasResolutionBrokenChain,
   PartyAliasResolutionCrossTenant,
@@ -13,9 +13,11 @@ import {
   PartyAliasWriteRejected,
 } from '../../shared/domain/merge-alias-resolution.ts';
 import {
+  partyIdFromString,
   PartyLifecycleConflict,
   PartyNotFound,
   PartyPersistenceUnavailable,
+  PartySchema,
 } from '../../shared/domain/identity-contracts.ts';
 import { PartyRefSchema } from '../../shared/resources/party.ts';
 import { transitionPartyRecord } from '../services/party-identity-persistence.service.ts';
@@ -51,53 +53,76 @@ const domainEvents = {
 interface Services {
   readonly transition: (payload: ArchivePartyPayload) => ReturnType<typeof transitionPartyRecord>;
 }
-const handle = (
+type PersistedParty = typeof PartySchema.Type | typeof PartySchema.Encoded;
+const decodeParty = (party: PersistedParty) =>
+  Schema.is(PartySchema)(party)
+    ? Effect.succeed(party)
+    : Schema.decodeUnknownEffect(PartySchema)(party).pipe(
+        Effect.mapError((cause) =>
+          Object.defineProperty(
+            new PartyPersistenceUnavailable({
+              code: 'party_persistence_unavailable',
+              reason: 'The stored Party could not be decoded',
+            }),
+            'cause',
+            { configurable: true, value: cause },
+          ),
+        ),
+      );
+const handle = Effect.fn('ArchivePartyAction.handle')(function* archiveParty(
   payload: ArchivePartyPayload,
   context: ActionHandlerContext<typeof domainEvents, Services>,
-) =>
-  Effect.gen(function* archiveParty() {
-    const result = yield* context.services.transition(payload);
-    if (result._tag === 'not_found') {
-      return yield* new PartyNotFound({
-        code: 'party_not_found',
-        partyId: payload.partyRef.resourceId,
-        reason: 'The Party does not exist',
-      });
-    }
-    if (result._tag === 'conflict') {
-      return yield* new PartyLifecycleConflict({
-        code: 'party_lifecycle_conflict',
-        reason: 'The Party is already archived or its revision is stale',
-        requestedState: 'ARCHIVED',
-      });
-    }
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: createHash('sha256')
-        .update(`party-archive-invariants:${result.value.partyRef.resourceId}`)
-        .digest('hex'),
-      resultCount: 1,
-      servingModuleKey: 'party.registry',
-      targetModuleKey: 'party.registry',
-      targetResourceId: result.value.partyRef.resourceId,
-      targetResourceType: result.value.partyRef.resourceType,
-    });
-    const event = yield* context.addDomainEvent({
-      eventType: 'party.registry.party-archived.v1',
-      payloadJson: { partyRef: result.value.partyRef },
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
-      subjectResourceId: result.value.partyRef.resourceId,
-      subjectResourceType: result.value.partyRef.resourceType,
-    });
-    yield* context.addOutboxMessage(
-      event,
-      createArchivePartyPartyRegistryPartyArchivedV1OutboxMessage({
-        partyRef: result.value.partyRef,
-      }),
-    );
-    return result.value;
+) {
+  const persistenceResult = yield* context.services.transition(payload);
+  const result = yield* Match.value(persistenceResult).pipe(
+    Match.tag('not_found', () =>
+      Effect.fail(
+        new PartyNotFound({
+          code: 'party_not_found',
+          partyId: partyIdFromString(payload.partyRef.resourceId),
+          reason: 'The Party does not exist',
+        }),
+      ),
+    ),
+    Match.tag('conflict', () =>
+      Effect.fail(
+        new PartyLifecycleConflict({
+          code: 'party_lifecycle_conflict',
+          reason: 'The Party is already archived or its revision is stale',
+          requestedState: 'ARCHIVED',
+        }),
+      ),
+    ),
+    Match.tag('found', ({ value }) => decodeParty(value)),
+    Match.exhaustive,
+  );
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: createHash('sha256')
+      .update(`party-archive-invariants:${result.partyRef.resourceId}`)
+      .digest('hex'),
+    resultCount: 1,
+    servingModuleKey: 'party.registry',
+    targetModuleKey: 'party.registry',
+    targetResourceId: result.partyRef.resourceId,
+    targetResourceType: result.partyRef.resourceType,
   });
+  const event = yield* context.addDomainEvent({
+    eventType: 'party.registry.party-archived.v1',
+    payloadJson: { partyRef: result.partyRef },
+    producerModuleKey: 'party.registry',
+    subjectModuleKey: 'party.registry',
+    subjectResourceId: result.partyRef.resourceId,
+    subjectResourceType: result.partyRef.resourceType,
+  });
+  yield* context.addOutboxMessage(
+    event,
+    createArchivePartyPartyRegistryPartyArchivedV1OutboxMessage({
+      partyRef: result.partyRef,
+    }),
+  );
+  return result;
+});
 export const archivePartyAction = defineAction(
   {
     accessEvidencePolicy: {

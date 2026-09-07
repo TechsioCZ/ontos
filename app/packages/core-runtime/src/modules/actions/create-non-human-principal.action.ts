@@ -4,14 +4,13 @@
 import { Effect, Schema } from 'effect';
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
-import {
-  createNonHumanPrincipal,
-  principalManagementRepositoryFromTransaction,
-} from '../../auth/principal-management.ts';
+import { principalManagementRepositoryFromTransaction } from '../../auth/principal-management.ts';
+import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
 import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
 const uuid = Schema.String.check(Schema.isUUID());
+const PrincipalIdSchema = uuid.pipe(Schema.brand('PrincipalId'));
 const displayName = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200));
 export const CreateNonHumanPrincipalPayloadSchema = Schema.Struct({
   displayName,
@@ -21,26 +20,29 @@ export type CreateNonHumanPrincipalPayload = Schema.Schema.Type<
   typeof CreateNonHumanPrincipalPayloadSchema
 >;
 export const CreateNonHumanPrincipalResultSchema = Schema.Struct({
-  principalId: uuid,
+  principalId: PrincipalIdSchema,
   status: Schema.Literal('active'),
 });
 export type CreateNonHumanPrincipalResult = Schema.Schema.Type<
   typeof CreateNonHumanPrincipalResultSchema
 >;
+type CreateNonHumanPrincipal = PrincipalManagementRepositoryService['createNonHumanPrincipal'];
+type Input = Parameters<CreateNonHumanPrincipal>[0];
+type Result = ReturnType<CreateNonHumanPrincipal>;
 
 const handle = (
   payload: CreateNonHumanPrincipalPayload,
   context: ActionHandlerContext<
     Readonly<Record<never, never>>,
-    {
-      readonly create: (input: {
-        readonly displayName: string;
-        readonly kind: 'integration' | 'service' | 'system';
-        readonly tenantId: string;
-      }) => ReturnType<typeof createNonHumanPrincipal>;
-    }
+    { readonly create: (input: Input) => Result }
   >,
-) => context.services.create({ ...payload, tenantId: context.scope.tenantId });
+) =>
+  context.services.create({ ...payload, tenantId: context.scope.tenantId }).pipe(
+    Effect.map((result) => ({
+      ...result,
+      principalId: PrincipalIdSchema.make(result.principalId),
+    })),
+  );
 
 export const createNonHumanPrincipalAction = defineAction(
   {
@@ -71,6 +73,6 @@ export const createNonHumanPrincipalAction = defineAction(
   handle,
   (transaction) => {
     const repository = principalManagementRepositoryFromTransaction(transaction);
-    return Effect.succeed({ create: (input) => createNonHumanPrincipal(repository, input) });
+    return Effect.succeed({ create: repository.createNonHumanPrincipal });
   },
 );

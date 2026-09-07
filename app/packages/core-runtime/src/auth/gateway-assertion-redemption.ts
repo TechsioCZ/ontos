@@ -1,18 +1,10 @@
-/* eslint-disable max-classes-per-file -- The closed replay error union and its contextual service form one boundary contract. */
-import { Context, Schema } from 'effect';
+import { Context } from 'effect';
 import type { Effect } from 'effect';
+import type { GatewayAssertionRedemptionUnavailableError } from './gateway-assertion-redemption-unavailable-error.ts';
+import type { GatewayAssertionReplayError } from './gateway-assertion-replay-error.ts';
 
-const errorFields = { reason: Schema.String };
-
-export class GatewayAssertionReplayError extends Schema.TaggedError<GatewayAssertionReplayError>()(
-  'GatewayAssertionReplayError',
-  errorFields,
-) {}
-
-export class GatewayAssertionRedemptionUnavailableError extends Schema.TaggedError<GatewayAssertionRedemptionUnavailableError>()(
-  'GatewayAssertionRedemptionUnavailableError',
-  errorFields,
-) {}
+export { GatewayAssertionRedemptionUnavailableError } from './gateway-assertion-redemption-unavailable-error.ts';
+export { GatewayAssertionReplayError } from './gateway-assertion-replay-error.ts';
 
 export interface GatewayAssertionRedemptionInput {
   readonly audience: string;

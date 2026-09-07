@@ -13,14 +13,15 @@ import {
   outboxTopic,
 } from '@app/party-registry/outbox/party-registry-party-unarchived-v1';
 
-const handleProjectPartyUnarchivedToSearch = (
+const handleProjectPartyUnarchivedToSearch = Effect.fn(
+  'ProjectPartyUnarchivedToSearchWorker.handleProjectPartyUnarchivedToSearch',
+)(function* projectCommittedEvent(
   payload: typeof OutboxPayloadSchema.Type,
   context: OutboxWorkerHandlerContext,
-) =>
-  Effect.gen(function* projectCommittedEvent() {
-    const projector = yield* PartySearchProjector;
-    yield* projector.project(context, { partyId: payload.partyRef.resourceId });
-  });
+) {
+  const projector = yield* PartySearchProjector;
+  yield* projector.project(context, { partyId: payload.partyRef.resourceId });
+});
 
 export const projectPartyUnarchivedToSearchWorker = defineOutboxWorker(
   {

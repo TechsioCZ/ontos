@@ -1,4 +1,5 @@
-// @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
@@ -23,7 +24,7 @@ const resolverFor = (record: {
 
 void test('constructs one immutable trusted system context from a branded registration', async () => {
   const registration = registerSystemWorkload({ jobKey: 'inventory-reconcile' });
-  const context = await Effect.runPromise(
+  const context = await runEffectTestPromise(
     resolverFor({ kind: 'system', principalStatus: 'active', tenantStatus: 'active' }).resolve({
       principalId,
       registration,
@@ -41,14 +42,14 @@ void test('constructs one immutable trusted system context from a branded regist
     tenantId,
   });
   assert.deepEqual(Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(context), context);
-  assert.deepEqual(await Effect.runPromise(decodeTrustedPrincipalContext(context)), context);
-  await assert.rejects(Effect.runPromise(decodeTrustedPrincipalContext({ ...context })));
+  assert.deepEqual(await runEffectTestPromise(decodeTrustedPrincipalContext(context)), context);
+  await assert.rejects(runEffectTestPromise(decodeTrustedPrincipalContext({ ...context })));
 });
 
 void test('rejects forged registrations, unsafe refs, wrong kinds, and inactive state', async () => {
   const registration = registerSystemWorkload({ jobKey: 'inventory-reconcile' });
   const forged = { ...registration };
-  const invalid = await Effect.runPromise(
+  const invalid = await runEffectTestPromise(
     Effect.flip(
       resolverFor({ kind: 'system', principalStatus: 'active', tenantStatus: 'active' }).resolve({
         principalId,
@@ -58,7 +59,7 @@ void test('rejects forged registrations, unsafe refs, wrong kinds, and inactive 
       }),
     ),
   );
-  const wrongKind = await Effect.runPromise(
+  const wrongKind = await runEffectTestPromise(
     Effect.flip(
       resolverFor({ kind: 'human', principalStatus: 'active', tenantStatus: 'active' }).resolve({
         principalId,
@@ -68,7 +69,7 @@ void test('rejects forged registrations, unsafe refs, wrong kinds, and inactive 
       }),
     ),
   );
-  const inactive = await Effect.runPromise(
+  const inactive = await runEffectTestPromise(
     Effect.flip(
       resolverFor({ kind: 'system', principalStatus: 'disabled', tenantStatus: 'active' }).resolve({
         principalId,
@@ -86,7 +87,7 @@ void test('rejects forged registrations, unsafe refs, wrong kinds, and inactive 
 });
 
 void test('permits service principals only when the trusted registration opts in', async () => {
-  const denied = await Effect.runPromise(
+  const denied = await runEffectTestPromise(
     Effect.flip(
       resolverFor({ kind: 'service', principalStatus: 'active', tenantStatus: 'active' }).resolve({
         principalId,
@@ -96,7 +97,7 @@ void test('permits service principals only when the trusted registration opts in
       }),
     ),
   );
-  const allowed = await Effect.runPromise(
+  const allowed = await runEffectTestPromise(
     resolverFor({ kind: 'service', principalStatus: 'active', tenantStatus: 'active' }).resolve({
       principalId,
       registration: registerSystemWorkload({ allowServicePrincipal: true, jobKey: 'service-job' }),

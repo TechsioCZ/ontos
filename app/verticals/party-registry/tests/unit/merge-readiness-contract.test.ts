@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { Schema } from 'effect';
+import { Match, Schema } from 'effect';
 import {
   PartyMergeReadinessRequestSchema,
   PartyMergeReadinessResponseSchema,
@@ -117,10 +117,13 @@ test('keeps prepared merge and permanent alias schemas explainable without enabl
       evidenceRefs: ['evidence-1'],
     },
   });
-  assert.equal(selection._tag, 'CanonicalSurvivorSelected');
-  if (selection._tag !== 'CanonicalSurvivorSelected') {
-    return;
-  }
+  const selected = Match.value(selection).pipe(
+    Match.tag('CanonicalSurvivorSelected', (value) => value),
+    Match.tag('SurvivorSelectionBlocked', ({ blocker }) =>
+      assert.fail(`Expected canonical survivor selection, but it was blocked: ${blocker}`),
+    ),
+    Match.exhaustive,
+  );
   const merge = Schema.decodeUnknownSync(PartyMergeSchema)({
     absorbedPartyRefs: [party('party-b')],
     confirmedDuplicateDecisionId: 'decision-1',
@@ -133,7 +136,7 @@ test('keeps prepared merge and permanent alias schemas explainable without enabl
       tenantId,
     },
     policyVersion: 'party-merge-readiness.v1',
-    selectionEvidenceChain: selection.evidenceChain,
+    selectionEvidenceChain: selected.evidenceChain,
     selectionReason: 'AUTHORITATIVE_EVIDENCE',
     state: 'PREPARED',
     survivorPartyRef: party('party-a'),

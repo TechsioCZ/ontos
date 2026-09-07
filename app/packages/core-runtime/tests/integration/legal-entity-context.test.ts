@@ -1,6 +1,5 @@
-/* eslint-disable unicorn/no-await-expression-member -- Assertions read the exact Effect result inline. */
+import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
-// @effect-diagnostics asyncFunction:off processEnv:off
 import test from 'node:test';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -17,90 +16,101 @@ const activeTwo = '21000000-0000-4000-8000-000000000002';
 const suspended = '21000000-0000-4000-8000-000000000003';
 const foreign = '21000000-0000-4000-8000-000000000004';
 
-void test('lists and validates only active legal entities inside the exact tenant', async () => {
-  const configuration = await Effect.runPromise(loadDatabaseConfig());
-  const pool = new Pool({ connectionString: configuration.connectionString });
-  const database = drizzle({ client: pool, relations: coreRelations });
-  const context = makeLegalEntityContext({ executor: database });
+const databaseEffect = <Value>(operation: () => PromiseLike<Value>) => Effect.promise(operation);
+const effectTest = <Value, Failure>(name: string, effect: Effect.Effect<Value, Failure>): void => {
+  test(name, makeEffectTestCallback(effect));
+};
 
-  const cleanup = async () => {
-    await database.delete(legalEntities).where(eq(legalEntities.tenantId, tenantOne));
-    await database.delete(legalEntities).where(eq(legalEntities.tenantId, tenantTwo));
-    await database.delete(tenants).where(eq(tenants.tenantId, tenantOne));
-    await database.delete(tenants).where(eq(tenants.tenantId, tenantTwo));
-  };
+effectTest(
+  'lists and validates only active legal entities inside the exact tenant',
+  Effect.gen(function* legalEntityContextIntegration() {
+    const configuration = yield* loadDatabaseConfig();
+    const pool = new Pool({ connectionString: configuration.connectionString });
+    const database = drizzle({ client: pool, relations: coreRelations });
+    const context = makeLegalEntityContext({ executor: database });
+    const cleanup = Effect.gen(function* cleanLegalEntityContextFixtures() {
+      yield* databaseEffect(() =>
+        database.delete(legalEntities).where(eq(legalEntities.tenantId, tenantOne)),
+      );
+      yield* databaseEffect(() =>
+        database.delete(legalEntities).where(eq(legalEntities.tenantId, tenantTwo)),
+      );
+      yield* databaseEffect(() => database.delete(tenants).where(eq(tenants.tenantId, tenantOne)));
+      yield* databaseEffect(() => database.delete(tenants).where(eq(tenants.tenantId, tenantTwo)));
+    });
 
-  try {
-    await cleanup();
-    await database.insert(tenants).values([
-      {
-        defaultLocale: 'en',
-        name: 'Legal context tenant one',
-        slug: 'legal-context-tenant-one',
-        status: 'active',
-        tenantId: tenantOne,
-      },
-      {
-        defaultLocale: 'en',
-        name: 'Legal context tenant two',
-        slug: 'legal-context-tenant-two',
-        status: 'active',
-        tenantId: tenantTwo,
-      },
-    ]);
-    await database.insert(legalEntities).values([
-      {
+    yield* cleanup;
+    yield* Effect.gen(function* exerciseLegalEntityContext() {
+      yield* databaseEffect(() =>
+        database.insert(tenants).values([
+          {
+            defaultLocale: 'en',
+            name: 'Legal context tenant one',
+            slug: 'legal-context-tenant-one',
+            status: 'active',
+            tenantId: tenantOne,
+          },
+          {
+            defaultLocale: 'en',
+            name: 'Legal context tenant two',
+            slug: 'legal-context-tenant-two',
+            status: 'active',
+            tenantId: tenantTwo,
+          },
+        ]),
+      );
+      yield* databaseEffect(() =>
+        database.insert(legalEntities).values([
+          {
+            legalEntityId: activeOne,
+            legalName: 'Zeta entity',
+            registrationCountry: 'CZ',
+            registrationNumber: 'LEGAL-CONTEXT-1',
+            status: 'active',
+            tenantId: tenantOne,
+          },
+          {
+            legalEntityId: activeTwo,
+            legalName: 'Alpha entity',
+            registrationCountry: 'CZ',
+            registrationNumber: 'LEGAL-CONTEXT-2',
+            status: 'active',
+            tenantId: tenantOne,
+          },
+          {
+            legalEntityId: suspended,
+            legalName: 'Suspended entity',
+            registrationCountry: 'CZ',
+            registrationNumber: 'LEGAL-CONTEXT-3',
+            status: 'suspended',
+            tenantId: tenantOne,
+          },
+          {
+            legalEntityId: foreign,
+            legalName: 'Foreign entity',
+            registrationCountry: 'CZ',
+            registrationNumber: 'LEGAL-CONTEXT-4',
+            status: 'active',
+            tenantId: tenantTwo,
+          },
+        ]),
+      );
+
+      assert.deepEqual(yield* context.listActiveForTenant(tenantOne), [
+        { legalEntityId: activeTwo, legalName: 'Alpha entity' },
+        { legalEntityId: activeOne, legalName: 'Zeta entity' },
+      ]);
+      assert.deepEqual(yield* context.validateSelection(tenantOne, activeOne), {
         legalEntityId: activeOne,
         legalName: 'Zeta entity',
-        registrationCountry: 'CZ',
-        registrationNumber: 'LEGAL-CONTEXT-1',
-        status: 'active',
-        tenantId: tenantOne,
-      },
-      {
-        legalEntityId: activeTwo,
-        legalName: 'Alpha entity',
-        registrationCountry: 'CZ',
-        registrationNumber: 'LEGAL-CONTEXT-2',
-        status: 'active',
-        tenantId: tenantOne,
-      },
-      {
-        legalEntityId: suspended,
-        legalName: 'Suspended entity',
-        registrationCountry: 'CZ',
-        registrationNumber: 'LEGAL-CONTEXT-3',
-        status: 'suspended',
-        tenantId: tenantOne,
-      },
-      {
-        legalEntityId: foreign,
-        legalName: 'Foreign entity',
-        registrationCountry: 'CZ',
-        registrationNumber: 'LEGAL-CONTEXT-4',
-        status: 'active',
-        tenantId: tenantTwo,
-      },
-    ]);
-
-    assert.deepEqual(await Effect.runPromise(context.listActiveForTenant(tenantOne)), [
-      { legalEntityId: activeTwo, legalName: 'Alpha entity' },
-      { legalEntityId: activeOne, legalName: 'Zeta entity' },
-    ]);
-    assert.deepEqual(await Effect.runPromise(context.validateSelection(tenantOne, activeOne)), {
-      legalEntityId: activeOne,
-      legalName: 'Zeta entity',
-    });
-    assert.equal(
-      (await Effect.runPromise(Effect.flip(context.validateSelection(tenantOne, suspended))))._tag,
-      'LegalEntityContextInactiveError',
+      });
+      const inactiveError = yield* Effect.flip(context.validateSelection(tenantOne, suspended));
+      assert.equal(inactiveError._tag, 'LegalEntityContextInactiveError');
+      const missingError = yield* Effect.flip(context.validateSelection(tenantOne, foreign));
+      assert.equal(missingError._tag, 'LegalEntityContextMissingError');
+    }).pipe(
+      Effect.ensuring(cleanup),
+      Effect.ensuring(databaseEffect(pool.end.bind(pool)).pipe(Effect.orDie)),
     );
-    assert.equal(
-      (await Effect.runPromise(Effect.flip(context.validateSelection(tenantOne, foreign))))._tag,
-      'LegalEntityContextMissingError',
-    );
-  } finally {
-    await cleanup();
-    await pool.end();
-  }
-});
+  }),
+);

@@ -1,4 +1,5 @@
-// @effect-diagnostics asyncFunction:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -9,6 +10,7 @@ import { Pool } from 'pg';
 import {
   bindApiKey,
   createNonHumanPrincipal,
+  PrincipalManagementRepository,
   principalManagementRepositoryFromTransaction,
   setApiKeyBindingStatus,
 } from '../../src/auth/principal-management.ts';
@@ -18,7 +20,7 @@ import { coreRelations, principalAuthBindings, principals, tenants } from '../..
 void test('persists managed key lifecycle without credential material and enforces global key cardinality', async () => {
   const tenantId = randomUUID();
   const providerKeyId = `better-auth-principal-management-${randomUUID()}`;
-  const configuration = await Effect.runPromise(loadDatabaseConfig());
+  const configuration = await runEffectTestPromise(loadDatabaseConfig());
   const pool = new Pool({ connectionString: configuration.connectionString });
   const database = drizzle({ client: pool, relations: coreRelations });
   const cleanup = async () => {
@@ -40,45 +42,65 @@ void test('persists managed key lifecycle without credential material and enforc
     });
     const first = await database.transaction(
       async (transaction) =>
-        await Effect.runPromise(
-          createNonHumanPrincipal(principalManagementRepositoryFromTransaction(transaction), {
+        await runEffectTestPromise(
+          createNonHumanPrincipal({
             displayName: 'Managed integration',
             kind: 'integration',
             tenantId,
-          }),
+          }).pipe(
+            Effect.provideService(
+              PrincipalManagementRepository,
+              principalManagementRepositoryFromTransaction(transaction),
+            ),
+          ),
         ),
     );
     const second = await database.transaction(
       async (transaction) =>
-        await Effect.runPromise(
-          createNonHumanPrincipal(principalManagementRepositoryFromTransaction(transaction), {
+        await runEffectTestPromise(
+          createNonHumanPrincipal({
             displayName: 'Managed service',
             kind: 'service',
             tenantId,
-          }),
+          }).pipe(
+            Effect.provideService(
+              PrincipalManagementRepository,
+              principalManagementRepositoryFromTransaction(transaction),
+            ),
+          ),
         ),
     );
     const binding = await database.transaction(
       async (transaction) =>
-        await Effect.runPromise(
-          bindApiKey(principalManagementRepositoryFromTransaction(transaction), {
+        await runEffectTestPromise(
+          bindApiKey({
             managed: true,
             principalId: first.principalId,
             providerSubjectId: providerKeyId,
             tenantId,
-          }),
+          }).pipe(
+            Effect.provideService(
+              PrincipalManagementRepository,
+              principalManagementRepositoryFromTransaction(transaction),
+            ),
+          ),
         ),
     );
     const duplicate = await database.transaction(
       async (transaction) =>
-        await Effect.runPromise(
+        await runEffectTestPromise(
           Effect.flip(
-            bindApiKey(principalManagementRepositoryFromTransaction(transaction), {
+            bindApiKey({
               managed: true,
               principalId: second.principalId,
               providerSubjectId: providerKeyId,
               tenantId,
-            }),
+            }).pipe(
+              Effect.provideService(
+                PrincipalManagementRepository,
+                principalManagementRepositoryFromTransaction(transaction),
+              ),
+            ),
           ),
         ),
     );
@@ -86,16 +108,21 @@ void test('persists managed key lifecycle without credential material and enforc
 
     const missingReason = await database.transaction(
       async (transaction) =>
-        await Effect.runPromise(
+        await runEffectTestPromise(
           Effect.flip(
-            setApiKeyBindingStatus(principalManagementRepositoryFromTransaction(transaction), {
+            setApiKeyBindingStatus({
               authBindingId: binding.authBindingId,
               expectedStatus: 'active',
               managed: true,
               newStatus: 'revoked',
               principalId: first.principalId,
               tenantId,
-            }),
+            }).pipe(
+              Effect.provideService(
+                PrincipalManagementRepository,
+                principalManagementRepositoryFromTransaction(transaction),
+              ),
+            ),
           ),
         ),
     );
@@ -103,8 +130,8 @@ void test('persists managed key lifecycle without credential material and enforc
 
     await database.transaction(
       async (transaction) =>
-        await Effect.runPromise(
-          setApiKeyBindingStatus(principalManagementRepositoryFromTransaction(transaction), {
+        await runEffectTestPromise(
+          setApiKeyBindingStatus({
             authBindingId: binding.authBindingId,
             expectedStatus: 'active',
             managed: true,
@@ -112,7 +139,12 @@ void test('persists managed key lifecycle without credential material and enforc
             principalId: first.principalId,
             reason: 'Integration lifecycle proof',
             tenantId,
-          }),
+          }).pipe(
+            Effect.provideService(
+              PrincipalManagementRepository,
+              principalManagementRepositoryFromTransaction(transaction),
+            ),
+          ),
         ),
     );
     const [stored] = await database

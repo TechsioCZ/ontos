@@ -1,4 +1,5 @@
-import { Predicate } from 'effect';
+import { Predicate, Result, Schema } from 'effect';
+import type { Effect } from 'effect';
 import type { AnyOutboxWorkerRegistration } from '../outbox/definition.ts';
 import { validateOutboxWorkerRegistrations } from '../outbox/definition.ts';
 import type {
@@ -8,6 +9,7 @@ import type {
   OntosModuleManifest,
   OntosOutboxSubscriptionContract,
 } from './manifest.ts';
+import { OntosActionContractSchema } from './manifest.ts';
 import type { OntosShellContributions } from './shell-contribution.ts';
 
 const runtimeRegistrationBrand: unique symbol = Symbol(
@@ -21,12 +23,37 @@ interface PrivateVerticalRuntime {
   readonly shellContributions: OntosShellContributions;
 }
 
-const privateRuntime = new WeakMap<object, PrivateVerticalRuntime>();
-
 export interface VerticalRuntimeRegistration<ModuleId extends string = string> {
   readonly moduleId: ModuleId;
   readonly [runtimeRegistrationBrand]: true;
 }
+
+class VerticalRuntimeRegistrationValue<
+  ModuleId extends string,
+> implements VerticalRuntimeRegistration<ModuleId> {
+  readonly #runtime: PrivateVerticalRuntime;
+  readonly [runtimeRegistrationBrand] = true as const;
+  readonly moduleId: ModuleId;
+
+  constructor(moduleId: ModuleId, runtime: PrivateVerticalRuntime) {
+    this.#runtime = runtime;
+    this.moduleId = moduleId;
+    Object.freeze(this);
+  }
+
+  static runtimeOf(registration: VerticalRuntimeRegistration): PrivateVerticalRuntime | undefined {
+    return #runtime in registration ? registration.#runtime : undefined;
+  }
+}
+
+const VerticalRuntimeRegistrationInvariantError = Schema.TaggedError<Error>()(
+  'VerticalRuntimeRegistrationInvariantError',
+  { message: Schema.String },
+);
+
+const failRuntimeRegistration = (message: string): never => {
+  throw new VerticalRuntimeRegistrationInvariantError({ message });
+};
 
 export interface VerticalRuntimeRegistrationInput<
   Manifest extends OntosModuleManifest = OntosModuleManifest,
@@ -37,7 +64,8 @@ export interface VerticalRuntimeRegistrationInput<
   readonly outboxWorkers: readonly AnyOutboxWorkerRegistration[];
 }
 
-export type VerticalRuntimeEntrypointThunk = () => PromiseLike<object>;
+type EntrypointImportBoundary = Parameters<typeof Effect.promise<object>>[0];
+export type VerticalRuntimeEntrypointThunk = () => ReturnType<EntrypointImportBoundary>;
 
 export interface VerticalRuntimeEntrypointBindings {
   readonly api: Readonly<Record<string, VerticalRuntimeEntrypointThunk>>;
@@ -59,7 +87,7 @@ const assertUnique = (values: readonly string[], label: string): void => {
   const seen = new Set<string>();
   for (const value of values) {
     if (seen.has(value)) {
-      throw new TypeError(`duplicate ${label} ${value}`);
+      failRuntimeRegistration(`duplicate ${label} ${value}`);
     }
     seen.add(value);
   }
@@ -71,7 +99,7 @@ export const defineVerticalRuntimeRegistration = <const Manifest extends OntosMo
   const allowed = new Set(['actions', 'entrypoints', 'manifest', 'outboxWorkers']);
   for (const key of Reflect.ownKeys(input)) {
     if (!Predicate.isString(key) || !allowed.has(key)) {
-      throw new TypeError(`runtime registration contains unsupported field ${String(key)}`);
+      failRuntimeRegistration(`runtime registration contains unsupported field ${String(key)}`);
     }
   }
   const manifestActions = new Set(input.manifest.publicSurface.actions);
@@ -81,35 +109,31 @@ export const defineVerticalRuntimeRegistration = <const Manifest extends OntosMo
   );
   for (const action of input.actions) {
     if (action.descriptor.owningModuleKey !== input.manifest.module.id) {
-      throw new TypeError('runtime Action owner must match the manifest module ID');
+      failRuntimeRegistration('runtime Action owner must match the manifest module ID');
     }
     if (!manifestActions.has(action)) {
-      throw new TypeError('runtime Action must be the same value published by the manifest');
+      failRuntimeRegistration('runtime Action must be the same value published by the manifest');
     }
   }
   const workers = validateOutboxWorkerRegistrations(input.outboxWorkers);
   for (const worker of workers) {
     if (worker.descriptor.consumerModuleKey !== input.manifest.module.id) {
-      throw new TypeError('runtime Outbox Worker owner must match the manifest module ID');
+      failRuntimeRegistration('runtime Outbox Worker owner must match the manifest module ID');
     }
   }
   const entrypoints = input.entrypoints ?? emptyEntrypoints();
   const entrypointCategories = new Set(['api', 'components', 'pages', 'reports', 'search']);
   for (const key of Reflect.ownKeys(entrypoints)) {
     if (!Predicate.isString(key) || !entrypointCategories.has(key)) {
-      throw new TypeError(`runtime entrypoints contain unsupported field ${String(key)}`);
+      failRuntimeRegistration(`runtime entrypoints contain unsupported field ${String(key)}`);
     }
   }
   for (const [category, bindings] of Object.entries(entrypoints)) {
     if (Object.values(bindings).some((value) => !Predicate.isFunction(value))) {
-      throw new TypeError(`runtime ${category} entrypoints must be lazy thunks`);
+      failRuntimeRegistration(`runtime ${category} entrypoints must be lazy thunks`);
     }
   }
-  const registration = Object.freeze({
-    moduleId: input.manifest.module.id,
-    [runtimeRegistrationBrand]: true as const,
-  });
-  privateRuntime.set(registration, {
+  return new VerticalRuntimeRegistrationValue(input.manifest.module.id, {
     actions: Object.freeze([...input.actions]),
     entrypoints: Object.freeze({
       api: Object.freeze({ ...entrypoints.api }),
@@ -121,15 +145,14 @@ export const defineVerticalRuntimeRegistration = <const Manifest extends OntosMo
     outboxWorkers: workers,
     shellContributions: input.manifest.publicSurface.shellContributions,
   });
-  return registration;
 };
 
 const requirePrivateRuntime = (
   registration: VerticalRuntimeRegistration,
 ): PrivateVerticalRuntime => {
-  const value = privateRuntime.get(registration);
+  const value = VerticalRuntimeRegistrationValue.runtimeOf(registration);
   if (value === undefined || !registration[runtimeRegistrationBrand]) {
-    throw new TypeError('invalid Vertical Runtime Registration');
+    return failRuntimeRegistration('invalid Vertical Runtime Registration');
   }
   return value;
 };
@@ -165,15 +188,19 @@ export const extractVerticalRuntimeSafeDescriptors = (
     actions: Object.freeze(
       runtime.actions
         .map(({ descriptor }) =>
-          Object.freeze({
-            actionKey: descriptor.actionKey,
-            auditProfile: descriptor.auditProfile,
-            entrypoint: descriptor.entrypoint,
-            idempotency: descriptor.idempotency,
-            legalEntityScope: descriptor.legalEntityScope,
-            owningModuleId: descriptor.owningModuleKey,
-            schemaVersion: descriptor.schemaVersion,
-          }),
+          Object.freeze(
+            Result.getOrThrow(
+              Schema.decodeUnknownResult(OntosActionContractSchema)({
+                actionKey: descriptor.actionKey,
+                auditProfile: descriptor.auditProfile,
+                entrypoint: descriptor.entrypoint,
+                idempotency: descriptor.idempotency,
+                legalEntityScope: descriptor.legalEntityScope,
+                owningModuleId: descriptor.owningModuleKey,
+                schemaVersion: descriptor.schemaVersion,
+              }),
+            ),
+          ),
         )
         .toSorted((left, right) => left.actionKey.localeCompare(right.actionKey)),
     ),

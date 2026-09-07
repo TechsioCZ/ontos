@@ -1,10 +1,10 @@
-/* eslint-disable no-await-in-loop -- Live lifecycle scenarios are intentionally sequential and transaction-observable. */
-// @effect-diagnostics asyncFunction:off globalDate:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { and, asc, eq } from 'drizzle-orm';
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import {
@@ -20,9 +20,38 @@ import type { CoreDatabaseExecutor } from '../../src/db/types.ts';
 import { defineOutboxWorker } from '../../src/outbox/definition.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import type { AnyOutboxWorkerRegistration } from '../../src/outbox/definition.ts';
+import { OutboxClaimLostError } from '../../src/outbox/errors.ts';
 import { makeOutboxRepository } from '../../src/outbox/repository.ts';
+import type { OutboxClaim, OutboxRepositoryService } from '../../src/outbox/repository.ts';
 
-const payloadSchema = Schema.Struct({ messageKey: Schema.String });
+const MessageKeySchema = Schema.String.pipe(Schema.brand('MessageKey'));
+const payloadSchema = Schema.Struct({ messageKey: MessageKeySchema });
+
+const dateAt = (instant: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(instant));
+
+const advanceDate = (date: Date, milliseconds: number): Date =>
+  DateTime.makeUnsafe(date).pipe(DateTime.add({ milliseconds }), DateTime.toDateUtc);
+
+const claimNext = async (
+  repository: OutboxRepositoryService,
+  registrations: readonly AnyOutboxWorkerRegistration[],
+  claimOwner: string,
+  now: Date,
+): Promise<Option.Option<OutboxClaim>> =>
+  await runEffectTestPromise(repository.claimNext(registrations, claimOwner, now));
+
+const forEachSequential = async <Value>(
+  values: readonly Value[],
+  operation: (value: Value) => PromiseLike<void>,
+  index = 0,
+): Promise<void> => {
+  const value = values[index];
+  if (value === undefined) {
+    return;
+  }
+  await operation(value);
+  await forEachSequential(values, operation, index + 1);
+};
 
 const makeWorker = (
   workerKey: string,
@@ -62,7 +91,7 @@ const subscriptionOf = (registration: AnyOutboxWorkerRegistration) => registrati
 const withDatabase = async <Value>(
   operation: (database: CoreDatabaseExecutor) => Promise<Value>,
 ): Promise<Value> =>
-  await Effect.runPromise(
+  await runEffectTestPromise(
     Effect.scoped(
       Effect.gen(function* databaseScope() {
         const configuration = yield* loadDatabaseConfig();
@@ -133,16 +162,16 @@ const cleanupTenant = async (database: CoreDatabaseExecutor, tenantId: string): 
     .select({ messageId: outboxMessages.outboxMessageId })
     .from(outboxMessages)
     .where(eq(outboxMessages.tenantId, tenantId));
-  for (const { messageId } of messageRows) {
+  await forEachSequential(messageRows, async ({ messageId }) => {
     const deliveries = await database
       .select({ deliveryId: outboxDeliveries.outboxDeliveryId })
       .from(outboxDeliveries)
       .where(eq(outboxDeliveries.outboxMessageId, messageId));
-    for (const { deliveryId } of deliveries) {
+    await forEachSequential(deliveries, async ({ deliveryId }) => {
       await database.delete(outboxAttempts).where(eq(outboxAttempts.outboxDeliveryId, deliveryId));
-    }
+    });
     await database.delete(outboxDeliveries).where(eq(outboxDeliveries.outboxMessageId, messageId));
-  }
+  });
   await database.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId));
   await database.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId));
   await database.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId));
@@ -155,22 +184,22 @@ void test('matches zero, one, or multiple exact workers once without historical 
     try {
       await insertMessage(database, tenantId);
       await insertMessage(database, tenantId, 'producer.unmatched');
-      const repository = makeOutboxRepository({ executor: database });
+      const repository = makeOutboxRepository(database);
       const workers = [makeWorker('consumer.alpha'), makeWorker('consumer.beta')];
 
-      const firstMatch = await Effect.runPromise(
-        repository.matchUnmatched(workers.map(subscriptionOf), new Date('2026-08-03T10:00:00Z')),
+      const firstMatch = await runEffectTestPromise(
+        repository.matchUnmatched(workers.map(subscriptionOf), dateAt('2026-08-03T10:00:00Z')),
       );
       assert.equal(firstMatch.deliveriesCreated, 2);
       assert.ok(firstMatch.messagesMatched >= 2);
-      const repeatMatch = await Effect.runPromise(
-        repository.matchUnmatched(workers.map(subscriptionOf), new Date('2026-08-03T10:01:00Z')),
+      const repeatMatch = await runEffectTestPromise(
+        repository.matchUnmatched(workers.map(subscriptionOf), dateAt('2026-08-03T10:01:00Z')),
       );
       assert.equal(repeatMatch.deliveriesCreated, 0);
-      const lateWorkerMatch = await Effect.runPromise(
+      const lateWorkerMatch = await runEffectTestPromise(
         repository.matchUnmatched(
           [...workers, makeWorker('consumer.late')].map(subscriptionOf),
-          new Date('2026-08-03T10:02:00Z'),
+          dateAt('2026-08-03T10:02:00Z'),
         ),
       );
       assert.equal(lateWorkerMatch.deliveriesCreated, 0);
@@ -216,19 +245,20 @@ void test('matches the complete subscription catalog before owner-local processe
       const reportingWorker = makeWorker('reporting.local', {
         consumerModuleKey: 'reporting',
       });
-      const repository = makeOutboxRepository({ executor: database });
+      const repository = makeOutboxRepository(database);
       const subscriptions = [consumerWorker, reportingWorker].map(subscriptionOf);
 
-      const matched = await Effect.runPromise(
-        repository.matchUnmatched(subscriptions, new Date('2026-08-03T10:00:00Z')),
+      const matched = await runEffectTestPromise(
+        repository.matchUnmatched(subscriptions, dateAt('2026-08-03T10:00:00Z')),
       );
       assert.equal(matched.deliveriesCreated, 2);
 
-      const consumerClaim = await Effect.runPromise(
-        repository.claimNext([consumerWorker], 'consumer-process', new Date()),
+      const claimAt = await runEffectTestPromise(DateTime.nowAsDate);
+      const consumerClaim = Option.getOrNull(
+        await claimNext(repository, [consumerWorker], 'consumer-process', claimAt),
       );
-      const reportingClaim = await Effect.runPromise(
-        repository.claimNext([reportingWorker], 'reporting-process', new Date()),
+      const reportingClaim = Option.getOrNull(
+        await claimNext(repository, [reportingWorker], 'reporting-process', claimAt),
       );
       assert.equal(consumerClaim?.workerKey, 'consumer.local');
       assert.equal(reportingClaim?.workerKey, 'reporting.local');
@@ -244,40 +274,36 @@ void test('gates claims on every non-active consumer state and permits one concu
     try {
       await insertMessage(database, tenantId);
       const registration = makeWorker('consumer.module-gated');
-      const repository = makeOutboxRepository({ executor: database });
-      await Effect.runPromise(
-        repository.matchUnmatched([subscriptionOf(registration)], new Date('2026-08-03T11:00:00Z')),
+      const repository = makeOutboxRepository(database);
+      await runEffectTestPromise(
+        repository.matchUnmatched([subscriptionOf(registration)], dateAt('2026-08-03T11:00:00Z')),
       );
-      const claimAt = new Date(Date.now() + 1000);
+      const claimAt = advanceDate(await runEffectTestPromise(DateTime.nowAsDate), 1000);
       assert.equal(
-        await Effect.runPromise(repository.claimNext([registration], 'runtime-a', claimAt)),
+        Option.getOrNull(await claimNext(repository, [registration], 'runtime-a', claimAt)),
         null,
       );
       await activateConsumer(database, tenantId, 'inactive');
-      for (const state of [
-        'inactive',
-        'read_only',
-        'suspended',
-        'quarantined',
-        'deprecated',
-        'archived',
-      ]) {
-        await database
-          .update(tenantModuleStates)
-          .set({ state })
-          .where(
-            and(
-              eq(tenantModuleStates.tenantId, tenantId),
-              eq(tenantModuleStates.moduleKey, 'consumer'),
+      await forEachSequential(
+        ['inactive', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'] as const,
+        async (state) => {
+          await database
+            .update(tenantModuleStates)
+            .set({ state })
+            .where(
+              and(
+                eq(tenantModuleStates.tenantId, tenantId),
+                eq(tenantModuleStates.moduleKey, 'consumer'),
+              ),
+            );
+          assert.equal(
+            Option.getOrNull(
+              await claimNext(repository, [registration], `runtime-${state}`, claimAt),
             ),
+            null,
           );
-        assert.equal(
-          await Effect.runPromise(
-            repository.claimNext([registration], `runtime-${state}`, claimAt),
-          ),
-          null,
-        );
-      }
+        },
+      );
       await database
         .update(tenantModuleStates)
         .set({ state: 'active' })
@@ -287,10 +313,11 @@ void test('gates claims on every non-active consumer state and permits one concu
             eq(tenantModuleStates.moduleKey, 'consumer'),
           ),
         );
-      const claims = await Promise.all([
-        Effect.runPromise(repository.claimNext([registration], 'runtime-a', claimAt)),
-        Effect.runPromise(repository.claimNext([registration], 'runtime-b', claimAt)),
+      const claimOptions = await Promise.all([
+        claimNext(repository, [registration], 'runtime-a', claimAt),
+        claimNext(repository, [registration], 'runtime-b', claimAt),
       ]);
+      const claims = claimOptions.map(Option.getOrNull);
       assert.equal(claims.filter((candidate) => candidate !== null).length, 1);
       const claimed = claims.find((candidate) => candidate !== null);
       assert.ok(claimed);
@@ -313,27 +340,29 @@ void test('reclaims only expired leases, abandons the old attempt, and rejects s
       await activateConsumer(database, tenantId);
       await insertMessage(database, tenantId);
       const registration = makeWorker('consumer.lease-proof');
-      const repository = makeOutboxRepository({ executor: database });
-      const started = new Date(Date.now() + 1000);
-      await Effect.runPromise(repository.matchUnmatched([subscriptionOf(registration)], started));
-      const first = await Effect.runPromise(
-        repository.claimNext([registration], 'runtime-a', started),
+      const repository = makeOutboxRepository(database);
+      const started = advanceDate(await runEffectTestPromise(DateTime.nowAsDate), 1000);
+      await runEffectTestPromise(
+        repository.matchUnmatched([subscriptionOf(registration)], started),
+      );
+      const first = Option.getOrNull(
+        await claimNext(repository, [registration], 'runtime-a', started),
       );
       assert.ok(first);
       assert.equal(
-        await Effect.runPromise(
-          repository.claimNext([registration], 'runtime-b', new Date(started.getTime() + 999)),
+        Option.getOrNull(
+          await claimNext(repository, [registration], 'runtime-b', advanceDate(started, 999)),
         ),
         null,
       );
-      const second = await Effect.runPromise(
-        repository.claimNext([registration], 'runtime-b', new Date(started.getTime() + 1001)),
+      const second = Option.getOrNull(
+        await claimNext(repository, [registration], 'runtime-b', advanceDate(started, 1001)),
       );
       assert.ok(second);
       assert.notEqual(second.claimId, first.claimId);
       await assert.rejects(
-        Effect.runPromise(repository.complete(first, new Date(started.getTime() + 1002))),
-        (error: { readonly _tag?: string }) => error._tag === 'OutboxClaimLostError',
+        runEffectTestPromise(repository.complete(first, advanceDate(started, 1002))),
+        Schema.is(OutboxClaimLostError),
       );
       const attempts = await database
         .select()
@@ -357,17 +386,19 @@ void test('finishes an abandoned final attempt before dead-lettering its expired
       await activateConsumer(database, tenantId);
       await insertMessage(database, tenantId);
       const registration = makeWorker('consumer.final-lease', { maxAttempts: 1 });
-      const repository = makeOutboxRepository({ executor: database });
-      const started = new Date(Date.now() + 1000);
-      await Effect.runPromise(repository.matchUnmatched([subscriptionOf(registration)], started));
-      const claim = await Effect.runPromise(
-        repository.claimNext([registration], 'runtime-a', started),
+      const repository = makeOutboxRepository(database);
+      const started = advanceDate(await runEffectTestPromise(DateTime.nowAsDate), 1000);
+      await runEffectTestPromise(
+        repository.matchUnmatched([subscriptionOf(registration)], started),
+      );
+      const claim = Option.getOrNull(
+        await claimNext(repository, [registration], 'runtime-a', started),
       );
       assert.ok(claim);
 
       assert.equal(
-        await Effect.runPromise(
-          repository.claimNext([registration], 'runtime-b', new Date(started.getTime() + 1001)),
+        Option.getOrNull(
+          await claimNext(repository, [registration], 'runtime-b', advanceDate(started, 1001)),
         ),
         null,
       );
@@ -396,16 +427,16 @@ void test('finalizes success atomically and advances only through contiguous don
       const firstMessage = await insertMessage(database, tenantId);
       const secondMessage = await insertMessage(database, tenantId);
       const registration = makeWorker('consumer.checkpoint-proof');
-      const repository = makeOutboxRepository({ executor: database });
-      const now = new Date(Date.now() + 1000);
-      await Effect.runPromise(repository.matchUnmatched([subscriptionOf(registration)], now));
-      const first = await Effect.runPromise(repository.claimNext([registration], 'runtime-a', now));
-      const second = await Effect.runPromise(
-        repository.claimNext([registration], 'runtime-b', now),
+      const repository = makeOutboxRepository(database);
+      const now = advanceDate(await runEffectTestPromise(DateTime.nowAsDate), 1000);
+      await runEffectTestPromise(repository.matchUnmatched([subscriptionOf(registration)], now));
+      const first = Option.getOrNull(await claimNext(repository, [registration], 'runtime-a', now));
+      const second = Option.getOrNull(
+        await claimNext(repository, [registration], 'runtime-b', now),
       );
       assert.ok(first);
       assert.ok(second);
-      await Effect.runPromise(repository.complete(second, new Date(now.getTime() + 1)));
+      await runEffectTestPromise(repository.complete(second, advanceDate(now, 1)));
       assert.deepEqual(
         await database
           .select()
@@ -413,7 +444,7 @@ void test('finalizes success atomically and advances only through contiguous don
           .where(eq(workerCheckpoints.tenantId, tenantId)),
         [],
       );
-      await Effect.runPromise(repository.complete(first, new Date(now.getTime() + 2)));
+      await runEffectTestPromise(repository.complete(first, advanceDate(now, 2)));
       const [checkpoint] = await database
         .select()
         .from(workerCheckpoints)
@@ -452,30 +483,30 @@ void test('schedules bounded retry, dead-letters exhaustion, stores safe errors,
       await activateConsumer(database, tenantId);
       await insertMessage(database, tenantId);
       const registration = makeWorker('consumer.retry-proof', { maxAttempts: 2 });
-      const repository = makeOutboxRepository({ executor: database });
-      const now = new Date(Date.now() + 1000);
-      await Effect.runPromise(repository.matchUnmatched([subscriptionOf(registration)], now));
-      const first = await Effect.runPromise(repository.claimNext([registration], 'runtime-a', now));
+      const repository = makeOutboxRepository(database);
+      const now = advanceDate(await runEffectTestPromise(DateTime.nowAsDate), 1000);
+      await runEffectTestPromise(repository.matchUnmatched([subscriptionOf(registration)], now));
+      const first = Option.getOrNull(await claimNext(repository, [registration], 'runtime-a', now));
       assert.ok(first);
       assert.equal(
-        await Effect.runPromise(
-          repository.fail(first, ' safe\nretry\tmessage ', new Date(now.getTime() + 1)),
+        await runEffectTestPromise(
+          repository.fail(first, ' safe\nretry\tmessage ', advanceDate(now, 1)),
         ),
         'pending',
       );
       assert.equal(
-        await Effect.runPromise(
-          repository.claimNext([registration], 'runtime-b', new Date(now.getTime() + 999)),
+        Option.getOrNull(
+          await claimNext(repository, [registration], 'runtime-b', advanceDate(now, 999)),
         ),
         null,
       );
-      const second = await Effect.runPromise(
-        repository.claimNext([registration], 'runtime-b', new Date(now.getTime() + 1001)),
+      const second = Option.getOrNull(
+        await claimNext(repository, [registration], 'runtime-b', advanceDate(now, 1001)),
       );
       assert.ok(second);
       assert.equal(
-        await Effect.runPromise(
-          repository.fail(second, 'terminal safe failure', new Date(now.getTime() + 1002)),
+        await runEffectTestPromise(
+          repository.fail(second, 'terminal safe failure', advanceDate(now, 1002)),
         ),
         'dead',
       );

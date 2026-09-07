@@ -2,6 +2,7 @@
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from 'effect/unstable/httpapi';
 import { AresAppliedEvidenceSchema } from '../domain/ares-application.ts';
+import { AssertionIdSchema } from '../domain/correction-contracts.ts';
 import { IsoTimestampSchema, PartySchema } from '../domain/identity-contracts.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 
@@ -10,20 +11,21 @@ export const PartyDetailRequestSchema = Schema.Struct({
   partyRef: PartyRefSchema,
 });
 export type PartyDetailRequest = typeof PartyDetailRequestSchema.Type;
-const AssertionIdSchema = Schema.String.check(Schema.isUUID());
 /** Owner-local assertion identity, qualified by its Party; not a separately addressable Resource. */
 export const PartyFactAssertionSchema = Schema.Struct({
   assertionId: AssertionIdSchema,
-  externalEvidence: Schema.optionalKey(Schema.NullOr(AresAppliedEvidenceSchema)),
+  externalEvidence: Schema.OptionFromOptionalNullOr(AresAppliedEvidenceSchema, {
+    onNoneEncoding: 'omit',
+  }),
   factKind: Schema.Literals(['PARTY_TYPE', 'DISPLAY_NAME']),
   isCurrent: Schema.Boolean,
   partyRef: PartyRefSchema,
   recordedAt: IsoTimestampSchema,
-  retractsAssertionId: Schema.NullOr(AssertionIdSchema),
+  retractsAssertionId: Schema.OptionFromNullOr(AssertionIdSchema),
   state: Schema.Literals(['ACTIVE', 'ENDED', 'SUPERSEDED', 'RETRACTED', 'DISPUTED']),
-  supersedesAssertionId: Schema.NullOr(AssertionIdSchema),
+  supersedesAssertionId: Schema.OptionFromNullOr(AssertionIdSchema),
   validFrom: IsoTimestampSchema,
-  validTo: Schema.NullOr(IsoTimestampSchema),
+  validTo: Schema.OptionFromNullOr(IsoTimestampSchema),
   value: Schema.String,
 });
 export type PartyFactAssertion = typeof PartyFactAssertionSchema.Type;
@@ -36,7 +38,7 @@ export const PartyDetailResolutionSchema = Schema.Struct({
 export type PartyDetailResolution = typeof PartyDetailResolutionSchema.Type;
 export const PartyDetailResponseSchema = Schema.Struct({
   currentFactAssertions: Schema.Array(PartyFactAssertionSchema),
-  factHistory: Schema.NullOr(Schema.Array(PartyFactAssertionSchema)),
+  factHistory: Schema.OptionFromNullOr(Schema.Array(PartyFactAssertionSchema)),
   party: PartySchema,
   resolution: PartyDetailResolutionSchema,
 });

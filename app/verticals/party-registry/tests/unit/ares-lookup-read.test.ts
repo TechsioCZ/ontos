@@ -1,5 +1,5 @@
-// @effect-diagnostics asyncFunction:off nodeBuiltinImport:off
-/* eslint-disable no-await-in-loop -- Closed failure and source-file cases are intentionally checked in stable order. */
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off nodeBuiltinImport:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
@@ -27,7 +27,7 @@ import {
   AresSubjectUnavailable,
 } from '../../src/integrations/ares/ares-subject.service.ts';
 
-const evidence = {
+const evidenceWire = {
   cacheAgeSeconds: 0,
   observedAt: '2026-09-03T08:00:00.000Z',
   provider: 'ares',
@@ -46,6 +46,7 @@ const evidence = {
     registeredAddress: null,
   },
 } as const;
+const evidence = Schema.decodeUnknownSync(AresLookupResponseSchema)(evidenceWire);
 
 const scope = Object.freeze({
   authBindingId: '00000000-0000-4000-8000-000000000005',
@@ -56,6 +57,7 @@ const scope = Object.freeze({
   principalId: '00000000-0000-4000-8000-000000000003',
   tenantId: '00000000-0000-4000-8000-000000000001',
 });
+const request = Schema.decodeUnknownSync(AresLookupRequestSchema)({ ico: '48039101' });
 
 test('declares a tenant-authorized Party evidence Read with optional Legal Entity context', () => {
   assert.equal(aresLookupRead.descriptor.accessKind, 'detail');
@@ -68,20 +70,17 @@ test('declares a tenant-authorized Party evidence Read with optional Legal Entit
 
 test('passes trusted correlation to the private adapter and returns exactly one evidence result', async () => {
   const calls: unknown[] = [];
-  const result = await Effect.runPromise(
-    getReadHandler(aresLookupRead)(
-      { ico: '48039101' },
-      {
-        readKey: aresLookupRead.descriptor.readKey,
-        scope,
-        services: {
-          lookup: (input) => {
-            calls.push(input);
-            return Effect.succeed(evidence);
-          },
+  const result = await runEffectTestPromise(
+    getReadHandler(aresLookupRead)(request, {
+      readKey: aresLookupRead.descriptor.readKey,
+      scope,
+      services: {
+        lookup: (input) => {
+          calls.push(input);
+          return Effect.succeed(evidence);
         },
       },
-    ).pipe(
+    }).pipe(
       Effect.provideService(AresSubjectService, {
         subject: () => Effect.die('The handler test supplies services directly'),
       }),
@@ -123,23 +122,25 @@ test('maps provider failures to the closed governed Read error vocabulary withou
     ],
   ] as const;
 
-  for (const [failure, expectedTag] of failures) {
-    const error = await Effect.runPromise(
-      Effect.flip(
-        getReadHandler(aresLookupRead)(
-          { ico: '48039101' },
-          {
+  const errors = await runEffectTestPromise(
+    Effect.all(
+      failures.map(([failure, expectedTag]) =>
+        Effect.flip(
+          getReadHandler(aresLookupRead)(request, {
             readKey: aresLookupRead.descriptor.readKey,
             scope,
             services: { lookup: () => Effect.fail(failure) },
-          },
+          }),
+        ).pipe(
+          Effect.provideService(AresSubjectService, {
+            subject: () => Effect.die('The handler test supplies services directly'),
+          }),
+          Effect.map((error) => ({ error, expectedTag })),
         ),
-      ).pipe(
-        Effect.provideService(AresSubjectService, {
-          subject: () => Effect.die('The handler test supplies services directly'),
-        }),
       ),
-    );
+    ),
+  );
+  for (const { error, expectedTag } of errors) {
     assert.equal(error._tag, expectedTag);
     assert.equal(JSON.stringify(error).includes('private'), false);
   }
@@ -185,7 +186,7 @@ test('publishes safe status-matched Problem Details and no provider payload sche
   assert.deepEqual(Schema.decodeUnknownSync(AresLookupRequestSchema)({ ico: '48039101' }), {
     ico: '48039101',
   });
-  assert.deepEqual(Schema.decodeUnknownSync(AresLookupResponseSchema)(evidence), evidence);
+  assert.deepEqual(Schema.decodeUnknownSync(AresLookupResponseSchema)(evidenceWire), evidence);
   assert.equal(AresLookupApi.identifier, 'AresLookupApi');
 });
 
@@ -194,8 +195,8 @@ test('keeps the ARES integration read-only and exposes no ARES Action', async ()
     new URL('../../src/integrations/ares/ares-subject.service.ts', import.meta.url),
     new URL('../../src/api/ares-lookup.read.ts', import.meta.url),
   ];
-  for (const sourceFile of sourceFiles) {
-    const source = await readFile(sourceFile, 'utf-8');
+  const sources = await Promise.all(sourceFiles.map((sourceFile) => readFile(sourceFile, 'utf-8')));
+  for (const source of sources) {
     assert.doesNotMatch(source, /from ['"].*(?:\/db\/|\/actions\/|\/services\/party-)/u);
   }
   const actionFiles = await readdir(new URL('../../src/actions/', import.meta.url));

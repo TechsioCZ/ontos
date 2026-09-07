@@ -6,7 +6,7 @@ import {
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
 } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, Match } from 'effect';
 import {
   CounterpartyReadRequestSchema,
   CounterpartyReadResponseSchema,
@@ -42,6 +42,16 @@ export const counterpartyReadPermissionTarget = (input: CounterpartyReadRequest)
   ] as const,
 });
 
+const counterpartyUnavailable = (cause: unknown) =>
+  Object.defineProperty(
+    new ReadHandlerUnavailable({
+      code: 'read_handler_unavailable',
+      reason: 'Counterparty persistence is temporarily unavailable',
+    }),
+    'cause',
+    { value: cause },
+  );
+
 export const counterpartyReadRead = defineRead(
   {
     accessKind: 'detail',
@@ -72,22 +82,22 @@ export const counterpartyReadRead = defineRead(
   ) =>
     input.counterpartyRef.tenantId === context.scope.tenantId
       ? context.services.find(input.counterpartyRef.resourceId).pipe(
-          Effect.mapError(
-            () =>
-              new ReadHandlerUnavailable({
-                code: 'read_handler_unavailable',
-                reason: 'Counterparty persistence is temporarily unavailable',
-              }),
-          ),
+          Effect.mapError(counterpartyUnavailable),
           Effect.flatMap((result) =>
-            result._tag === 'found'
-              ? Effect.succeed({ evidence: { resultCount: 1 }, result: result.value })
-              : Effect.fail(
+            Match.value(result).pipe(
+              Match.tag('found', ({ value }) =>
+                Effect.succeed({ evidence: { resultCount: 1 }, result: value }),
+              ),
+              Match.tag('not_found', () =>
+                Effect.fail(
                   new ReadHandlerNotFound({
                     code: 'read_handler_not_found',
                     reason: 'The Counterparty does not exist in the authorized context',
                   }),
                 ),
+              ),
+              Match.exhaustive,
+            ),
           ),
         )
       : Effect.fail(

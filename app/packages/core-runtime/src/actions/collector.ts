@@ -1,4 +1,4 @@
-import { Effect, Schema, Predicate } from 'effect';
+import { Effect, Match, Schema, Predicate } from 'effect';
 import {
   DataAccessEventSchema,
   DomainEventSchema,
@@ -50,11 +50,28 @@ const freezeJson = <Value>(value: Value): Value => {
 
 const cloneAndFreeze = <Value>(value: Value): Value => freezeJson(structuredClone(value));
 
-type JsonValue = Schema.Schema.Type<typeof Schema.Json>;
-type JsonObject = Readonly<Record<string, JsonValue>>;
-const isJsonObject = (value: JsonValue): value is JsonObject =>
-  value !== null && Predicate.isObjectKeyword(value) && !Array.isArray(value);
+const JsonObjectSchema = Schema.Record(Schema.String, Schema.Json);
+const JsonObjectJsonStringSchema = Schema.fromJsonString(JsonObjectSchema);
 const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
+const RuntimeActionKeyEvidenceSchema = Schema.Struct({ actionKey: Schema.Unknown });
+const RuntimeResultHashEvidenceSchema = Schema.Struct({ resultHash: Schema.Unknown });
+
+const metadataOnlyPolicyFields = (
+  policy: Extract<ActionAccessEvidencePolicy, { readonly captureMode: 'metadata_only' }>,
+) =>
+  ({
+    evidenceCaptureMode: policy.captureMode,
+    evidencePolicyKey: policy.policyKey,
+  }) as const;
+
+const redactedPayloadPolicyFields = (
+  policy: Extract<ActionAccessEvidencePolicy, { readonly captureMode: 'redacted_payload' }>,
+) =>
+  ({
+    evidenceCaptureMode: policy.captureMode,
+    evidencePolicyKey: policy.policyKey,
+    redactionProfile: policy.redactionProfile,
+  }) as const;
 
 const validateDataAccessInvariant = (
   event: DataAccessEvent,
@@ -155,10 +172,12 @@ export interface ActionCollector<DomainEvents extends DomainEventContractMap> {
 }
 
 export const createActionCollector = <DomainEvents extends DomainEventContractMap>(
-  domainEventContracts: DomainEvents,
-  owningModuleKey: string,
-  accessEvidencePolicy: ActionAccessEvidencePolicy,
-  auditEvidenceSchema?: Schema.ConstraintDecoder<unknown>,
+  ...[domainEventContracts, owningModuleKey, accessEvidencePolicy, auditEvidenceSchema]: readonly [
+    domainEventContracts: DomainEvents,
+    owningModuleKey: string,
+    accessEvidencePolicy: ActionAccessEvidencePolicy,
+    auditEvidenceSchema?: Schema.ConstraintDecoder<unknown>,
+  ]
 ): ActionCollector<DomainEvents> => {
   const dataAccessEvents: DataAccessEvent[] = [];
   let auditEvidence: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>> = {};
@@ -169,34 +188,52 @@ export const createActionCollector = <DomainEvents extends DomainEventContractMa
 
   const recordAuditEvidenceInput = <Input>(
     evidence: Input,
-  ): Effect.Effect<void, ActionCollectorError> => {
-    if (evidence === null || !Predicate.isObjectKeyword(evidence) || Array.isArray(evidence)) {
-      return Effect.fail(invalidCollectorInput('Action audit evidence must be a JSON object'));
-    }
-    if (hasAuditEvidence) {
-      return Effect.fail(invalidCollectorInput('Action audit evidence may be recorded only once'));
-    }
-    if (Object.hasOwn(evidence, 'actionKey') || Object.hasOwn(evidence, 'resultHash')) {
-      return Effect.fail(
-        invalidCollectorInput('Action audit evidence cannot replace runtime-owned fields'),
-      );
-    }
-    if (auditEvidenceSchema === undefined) {
-      return Effect.fail(
-        invalidCollectorInput('This Action does not declare custom audit evidence'),
-      );
-    }
-    return Schema.decodeUnknownEffect(auditEvidenceSchema)(evidence).pipe(
-      Effect.mapError(() =>
-        invalidCollectorInput('The Action audit evidence does not match its declared schema'),
+  ): Effect.Effect<void, ActionCollectorError> =>
+    Schema.decodeUnknownEffect(UnknownRecordSchema)(evidence).pipe(
+      Effect.catchTag('SchemaError', () =>
+        Effect.fail(invalidCollectorInput('Action audit evidence must be a JSON object')),
       ),
-      Effect.flatMap((declared) => Schema.decodeUnknownEffect(Schema.Json)(declared)),
-      Effect.mapError(() => invalidCollectorInput('The Action audit evidence is not valid JSON')),
-      Effect.flatMap((decoded) => {
-        if (!isJsonObject(decoded)) {
+      Effect.flatMap((evidenceRecord) => {
+        if (hasAuditEvidence) {
+          return Effect.fail(
+            invalidCollectorInput('Action audit evidence may be recorded only once'),
+          );
+        }
+        if (
+          Schema.is(RuntimeActionKeyEvidenceSchema)(evidenceRecord) ||
+          Schema.is(RuntimeResultHashEvidenceSchema)(evidenceRecord)
+        ) {
+          return Effect.fail(
+            invalidCollectorInput('Action audit evidence cannot replace runtime-owned fields'),
+          );
+        }
+        if (auditEvidenceSchema === undefined) {
+          return Effect.fail(
+            invalidCollectorInput('This Action does not declare custom audit evidence'),
+          );
+        }
+        const inputKeys = Object.keys(evidenceRecord).toSorted();
+        return Schema.decodeUnknownEffect(auditEvidenceSchema)(evidence).pipe(
+          Effect.catchTag('SchemaError', () =>
+            Effect.fail(
+              invalidCollectorInput('The Action audit evidence does not match its declared schema'),
+            ),
+          ),
+          Effect.map((declared) => ({ declared, inputKeys })),
+        );
+      }),
+      Effect.flatMap(({ declared, inputKeys }) =>
+        Schema.decodeUnknownEffect(Schema.Json)(declared).pipe(
+          Effect.map((decoded) => ({ decoded, inputKeys })),
+        ),
+      ),
+      Effect.catchTag('SchemaError', () =>
+        Effect.fail(invalidCollectorInput('The Action audit evidence is not valid JSON')),
+      ),
+      Effect.flatMap(({ decoded, inputKeys }) => {
+        if (!Schema.is(JsonObjectSchema)(decoded)) {
           return Effect.fail(invalidCollectorInput('Action audit evidence must be a JSON object'));
         }
-        const inputKeys = Object.keys(evidence).toSorted();
         const decodedKeys = Object.keys(decoded).toSorted();
         if (
           inputKeys.length !== decodedKeys.length ||
@@ -206,16 +243,24 @@ export const createActionCollector = <DomainEvents extends DomainEventContractMa
             invalidCollectorInput('Action audit evidence contains undeclared fields'),
           );
         }
-        if (Buffer.byteLength(JSON.stringify(decoded), 'utf-8') > 4096) {
-          return Effect.fail(invalidCollectorInput('Action audit evidence exceeds its size limit'));
-        }
-        return Effect.sync(() => {
-          auditEvidence = cloneAndFreeze(decoded);
-          hasAuditEvidence = true;
-        });
+        return Schema.encodeEffect(JsonObjectJsonStringSchema)(decoded).pipe(
+          Effect.catchTag('SchemaError', () =>
+            Effect.fail(invalidCollectorInput('The Action audit evidence is not valid JSON')),
+          ),
+          Effect.flatMap((encoded) => {
+            if (Buffer.byteLength(encoded, 'utf-8') > 4096) {
+              return Effect.fail(
+                invalidCollectorInput('Action audit evidence exceeds its size limit'),
+              );
+            }
+            return Effect.sync(() => {
+              auditEvidence = cloneAndFreeze(decoded);
+              hasAuditEvidence = true;
+            });
+          }),
+        );
       }),
     );
-  };
   const recordAuditEvidence: ActionCollector<DomainEvents>['recordAuditEvidence'] =
     recordAuditEvidenceInput;
 
@@ -224,44 +269,30 @@ export const createActionCollector = <DomainEvents extends DomainEventContractMa
   ): Effect.Effect<void, ActionCollectorError> => {
     const eventRecord = Schema.is(UnknownRecordSchema)(event) ? event : undefined;
     const resultFingerprintHash = eventRecord?.['resultFingerprintHash'];
-    const policyFields = (() => {
-      switch (accessEvidencePolicy.captureMode) {
-        case 'hash_only': {
-          return withOptionalProperty(
-            {
-              evidenceCaptureMode: accessEvidencePolicy.captureMode,
-              evidencePolicyKey: accessEvidencePolicy.policyKey,
-            },
-            resultFingerprintHash !== undefined,
-            'resultFingerprintSchema',
-            accessEvidencePolicy.resultFingerprintSchema,
-            {},
-          );
-        }
-        case 'metadata_only': {
-          return {
-            evidenceCaptureMode: accessEvidencePolicy.captureMode,
-            evidencePolicyKey: accessEvidencePolicy.policyKey,
-          } as const;
-        }
-        case 'redacted_payload': {
-          return {
-            evidenceCaptureMode: accessEvidencePolicy.captureMode,
-            evidencePolicyKey: accessEvidencePolicy.policyKey,
-            redactionProfile: accessEvidencePolicy.redactionProfile,
-          } as const;
-        }
-        default: {
-          const unhandledPolicy: never = accessEvidencePolicy;
-          return unhandledPolicy;
-        }
-      }
-    })();
+    const policyFields = Match.value(accessEvidencePolicy).pipe(
+      Match.when({ captureMode: 'hash_only' }, (policy) =>
+        withOptionalProperty(
+          {
+            evidenceCaptureMode: policy.captureMode,
+            evidencePolicyKey: policy.policyKey,
+          },
+          resultFingerprintHash !== undefined,
+          'resultFingerprintSchema',
+          policy.resultFingerprintSchema,
+          {},
+        ),
+      ),
+      Match.when({ captureMode: 'metadata_only' }, metadataOnlyPolicyFields),
+      Match.when({ captureMode: 'redacted_payload' }, redactedPayloadPolicyFields),
+      Match.exhaustive,
+    );
     const materializedEvent =
       eventRecord === undefined ? event : { ...eventRecord, ...policyFields };
 
     return Schema.decodeUnknownEffect(DataAccessEventSchema)(materializedEvent).pipe(
-      Effect.mapError(() => invalidCollectorInput('The Data Access Event is structurally invalid')),
+      Effect.catchTag('SchemaError', () =>
+        Effect.fail(invalidCollectorInput('The Data Access Event is structurally invalid')),
+      ),
       Effect.flatMap(validateDataAccessInvariant),
       Effect.tap((decoded) =>
         Effect.sync(() => {
@@ -277,7 +308,9 @@ export const createActionCollector = <DomainEvents extends DomainEventContractMa
     event: Input,
   ): Effect.Effect<DomainEventReference, ActionCollectorError> =>
     Schema.decodeUnknownEffect(DomainEventSchema)(event).pipe(
-      Effect.mapError(() => invalidCollectorInput('The Domain Event is structurally invalid')),
+      Effect.catchTag('SchemaError', () =>
+        Effect.fail(invalidCollectorInput('The Domain Event is structurally invalid')),
+      ),
       Effect.flatMap((decoded) => {
         if (decoded.producerModuleKey !== owningModuleKey) {
           return Effect.fail(
@@ -296,13 +329,15 @@ export const createActionCollector = <DomainEvents extends DomainEventContractMa
           );
         }
         return Schema.decodeUnknownEffect(payloadSchema)(decoded.payloadJson).pipe(
-          Effect.mapError(() =>
-            invalidCollectorInput('The Domain Event payload violates its declared contract'),
+          Effect.catchTag('SchemaError', () =>
+            Effect.fail(
+              invalidCollectorInput('The Domain Event payload violates its declared contract'),
+            ),
           ),
           Effect.flatMap((payload) =>
             Schema.decodeUnknownEffect(Schema.Json)(payload).pipe(
-              Effect.mapError(() =>
-                invalidCollectorInput('The decoded Domain Event payload is not JSON'),
+              Effect.catchTag('SchemaError', () =>
+                Effect.fail(invalidCollectorInput('The decoded Domain Event payload is not JSON')),
               ),
             ),
           ),
@@ -342,7 +377,9 @@ export const createActionCollector = <DomainEvents extends DomainEventContractMa
     }
 
     return Schema.decodeUnknownEffect(OutboxMessageSchema)(message).pipe(
-      Effect.mapError(() => invalidCollectorInput('The Outbox Message is structurally invalid')),
+      Effect.catchTag('SchemaError', () =>
+        Effect.fail(invalidCollectorInput('The Outbox Message is structurally invalid')),
+      ),
       Effect.flatMap((decoded) => {
         const registeredDomainEvent = domainEvents[domainEventIndex];
         if (

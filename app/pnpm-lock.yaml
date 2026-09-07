@@ -17,7 +17,7 @@ patchedDependencies:
   '@better-fetch/fetch@1.3.1': 9276628e25c79910215b343c608abe336b3636f093565a04953069224d890747
   '@bleedingdev/modern-js-app-tools@3.8.2-ultramodern.12': 92106508bb75f01d2d27454563d5030569bcf89a49155b2cc91a2b9111360d4c
   '@bleedingdev/modern-js-builder@3.8.2-ultramodern.12': c5bdbbf89a17e39cb43c17f66a1904ed29a1462b09fd19aaf05c7301cbe4601c
-  '@bleedingdev/modern-js-create@3.8.2-ultramodern.12': 4954a538ab206291d85d4960a52717f1c6a814d0165b29a6d26081eba443677c
+  '@bleedingdev/modern-js-create@3.8.2-ultramodern.12': 170353f7a86cb6d74f2179263582b5b6272a196405b6399584aea09c322ff096
   '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12': e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0
   '@bleedingdev/modern-js-server-utils@3.8.2-ultramodern.12': 254be68a353f0c3a57aed91447a2de7b86afe26d1badeb9786945fd466fe760d
   '@module-federation/bridge-react@2.8.0': 54bfc79e097473222f83cbfa6d717792e3026bf16b5097c2ed91715b7da126be
@@ -49,6 +49,9 @@ importers:
         specifier: 8.22.0
         version: 8.22.0
     devDependencies:
+      '@effect/platform-node':
+        specifier: 4.0.0-beta.107
+        version: 4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(ioredis@5.11.1(supports-color@10.2.2))
       '@effect/tsgo':
         specifier: 0.19.0
         version: 0.19.0
@@ -60,13 +63,16 @@ importers:
         version: 2.6.9(supports-color@10.2.2)
       '@modern-js/create':
         specifier: npm:@bleedingdev/modern-js-create@3.8.2-ultramodern.12
-        version: '@bleedingdev/modern-js-create@3.8.2-ultramodern.12(patch_hash=4954a538ab206291d85d4960a52717f1c6a814d0165b29a6d26081eba443677c)(oxlint@1.79.0(oxlint-tsgolint@7.0.2001))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)'
+        version: '@bleedingdev/modern-js-create@3.8.2-ultramodern.12(patch_hash=170353f7a86cb6d74f2179263582b5b6272a196405b6399584aea09c322ff096)(oxlint@1.79.0(oxlint-tsgolint@7.0.2001))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)'
       '@modern-js/plugin-bff':
         specifier: npm:@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12
         version: '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12(patch_hash=e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0)(02f8732f8d0ac3252ab424ea7a1b32c5)'
       '@nkzw/eslint-plugin':
         specifier: 2.0.0
         version: 2.0.0(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))
+      '@noble/hashes':
+        specifier: 2.2.0
+        version: 2.2.0
       '@oxlint/plugins':
         specifier: 1.79.0
         version: 1.79.0
@@ -9442,7 +9448,7 @@ snapshots:
       - react
       - react-dom
 
-  '@bleedingdev/modern-js-create@3.8.2-ultramodern.12(patch_hash=4954a538ab206291d85d4960a52717f1c6a814d0165b29a6d26081eba443677c)(oxlint@1.79.0(oxlint-tsgolint@7.0.2001))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)':
+  '@bleedingdev/modern-js-create@3.8.2-ultramodern.12(patch_hash=170353f7a86cb6d74f2179263582b5b6272a196405b6399584aea09c322ff096)(oxlint@1.79.0(oxlint-tsgolint@7.0.2001))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)':
     dependencies:
       '@modern-js/codesmith': 2.6.9(supports-color@10.2.2)
       '@modern-js/i18n-utils': '@bleedingdev/modern-js-i18n-utils@3.8.2-ultramodern.12(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'

@@ -1,4 +1,4 @@
-// @effect-diagnostics asyncFunction:off
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Context, Effect, Layer } from 'effect';
 import type { Scope } from 'effect';
@@ -23,15 +23,21 @@ export interface PoolResource {
   readonly end: () => Promise<void>;
 }
 
+const connectionFailure = (reason: string, cause: unknown): DatabaseConnectionError =>
+  Object.defineProperty(new DatabaseConnectionError({ reason }), 'cause', {
+    configurable: false,
+    enumerable: false,
+    value: cause,
+    writable: false,
+  });
+
 export const acquirePoolResource = <Resource extends PoolResource>(
   acquire: () => Resource,
 ): Effect.Effect<Resource, DatabaseConnectionError, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.try({
-      catch: () =>
-        new DatabaseConnectionError({
-          reason: 'Unable to initialize the PostgreSQL connection pool',
-        }),
+      catch: (cause) =>
+        connectionFailure('Unable to initialize the PostgreSQL connection pool', cause),
       try: acquire,
     }),
     (pool) => Effect.promise(async () => await pool.end()),

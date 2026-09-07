@@ -1,4 +1,4 @@
-import { Effect, Match } from 'effect';
+import { Effect, Match, Option } from 'effect';
 import type { CounterpartyRef, PartyRef } from '../../shared/party-registry-references.ts';
 import {
   EngagementProfileConflict,
@@ -6,7 +6,7 @@ import {
 } from '../../shared/domain/engagement-profile.ts';
 import type { CounterpartyPersistenceUnavailable } from '../../shared/domain/counterparty-errors.ts';
 import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-resolution.ts';
-import type { PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
+import type { PartyPersistenceUnavailableError } from '../../shared/domain/identity-contracts.ts';
 import type { PartyTransaction } from '../db/types.ts';
 import { resolvePartyAlias } from '../merge/party-alias-resolution.service.ts';
 import { findCounterpartyRecord } from './counterparty-persistence.service.ts';
@@ -44,7 +44,7 @@ export interface PartyRegistryReferenceOperations {
 type ReferencePersistenceError =
   | CounterpartyPersistenceUnavailable
   | PartyAliasResolutionError
-  | PartyPersistenceUnavailable;
+  | PartyPersistenceUnavailableError;
 
 const unavailable = (cause: ReferencePersistenceError) =>
   new PartyRegistryReferenceUnavailable({
@@ -112,7 +112,7 @@ export const partyRegistryReferenceOperations = ({
                   ),
                   Match.tag('found', ({ value }) =>
                     Effect.succeed({
-                      archived: value.archivedAt !== null,
+                      archived: Option.isSome(value.archivedAt),
                       partyRef: value.partyRef,
                       partyType: value.partyType,
                       requestedPartyRef: makePartyRef(tenantId, resolution.requestedPartyId),

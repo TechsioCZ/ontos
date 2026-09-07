@@ -53,47 +53,56 @@ interface Services {
 const domainEvents = {
   'party.registry.official-identifier-added.v1': AddPartyOfficialIdentifierResultSchema,
 } as const;
-const handle = (
+const handle = Effect.fn('ResolveDuplicateCandidateMatchAction.handle')(function* resolveMatch(
   payload: ResolveDuplicateCandidateMatchPayload,
   context: ActionHandlerContext<typeof domainEvents, Services>,
-) =>
-  Effect.gen(function* resolveMatch() {
-    const { addedOfficialIdentifierRefs = [], ...result } = yield* context.services.resolve(
-      payload,
-      context.actionInvocationId,
-    );
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: createHash('sha256')
-        .update(`duplicate-case-invariants:${payload.caseRef.resourceId}`)
-        .digest('hex'),
-      resultCount: 1,
-      servingModuleKey: 'party.registry',
-      targetModuleKey: 'party.registry',
-      targetResourceId: result.caseRef.resourceId,
-      targetResourceType: result.caseRef.resourceType,
-    });
-    if (result.partyRef !== null) {
-      for (const officialIdentifierRef of addedOfficialIdentifierRefs) {
-        const addedIdentifier = { officialIdentifierRef, partyRef: result.partyRef };
-        const event = yield* context.addDomainEvent({
-          eventType: 'party.registry.official-identifier-added.v1',
-          payloadJson: addedIdentifier,
-          producerModuleKey: 'party.registry',
-          subjectModuleKey: 'party.registry',
-          subjectResourceId: officialIdentifierRef.resourceId,
-          subjectResourceType: officialIdentifierRef.resourceType,
-        });
-        yield* context.addOutboxMessage(
-          event,
-          createAddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxMessage(
-            addedIdentifier,
-          ),
-        );
-      }
-    }
-    return result;
+) {
+  const { addedOfficialIdentifierRefs = [], ...result } = yield* context.services.resolve(
+    payload,
+    context.actionInvocationId,
+  );
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: createHash('sha256')
+      .update(`duplicate-case-invariants:${payload.caseRef.resourceId}`)
+      .digest('hex'),
+    resultCount: 1,
+    servingModuleKey: 'party.registry',
+    targetModuleKey: 'party.registry',
+    targetResourceId: result.caseRef.resourceId,
+    targetResourceType: result.caseRef.resourceType,
   });
+  if (result.partyRef !== null) {
+    const { partyRef } = result;
+    yield* Effect.forEach(
+      addedOfficialIdentifierRefs,
+      (officialIdentifierRef) => {
+        const addedIdentifier = { officialIdentifierRef, partyRef };
+        return context
+          .addDomainEvent({
+            eventType: 'party.registry.official-identifier-added.v1',
+            payloadJson: addedIdentifier,
+            producerModuleKey: 'party.registry',
+            subjectModuleKey: 'party.registry',
+            subjectResourceId: officialIdentifierRef.resourceId,
+            subjectResourceType: officialIdentifierRef.resourceType,
+          })
+          .pipe(
+            Effect.flatMap((event) =>
+              context.addOutboxMessage(
+                event,
+                createAddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxMessage(
+                  addedIdentifier,
+                ),
+              ),
+            ),
+          );
+      },
+      { concurrency: 1, discard: true },
+    );
+  }
+  return result;
+});
 export const resolveDuplicateCandidateMatchAction = defineAction(
   {
     accessEvidencePolicy: {

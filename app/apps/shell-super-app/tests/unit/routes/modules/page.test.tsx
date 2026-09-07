@@ -1,9 +1,18 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { afterEach, beforeEach, expect, rstest, test } from '@rstest/core';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
-import { Effect } from 'effect';
+import { Schema } from 'effect';
 import type { ReactNode } from 'react';
+import {
+  LegalEntityIdSchema,
+  ResolvedModuleTargetSchema,
+  SafeTenantIdentitySchema,
+} from '../../../../shared/api.ts';
+import ContactsPage from '../../../../src/routes/[lang]/contacts/page.tsx';
 import ModuleTargetPage from '../../../../src/routes/[lang]/modules/[moduleId]/page.tsx';
 import type { ModuleTargetPageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/page.data.ts';
+
+type ResolvedPageModel = Extract<ModuleTargetPageModel, { readonly state: 'resolved' }>;
 
 const {
   findApprovedVerticalPageClientMock,
@@ -29,8 +38,8 @@ rstest.mock('@techsio/ui-kit/atoms/status-text', () => ({
   StatusText: ({ children }: { readonly children: ReactNode }) => <span>{children}</span>,
 }));
 
-rstest.mock('../../../../src/api/auth-client.ts', () => ({
-  runEffectRequest: Effect.runPromise,
+rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
+  runBrowserEffect: runEffectTestPromise,
 }));
 
 rstest.mock('../../../../src/api/vertical-clients.ts', () => ({
@@ -58,34 +67,37 @@ rstest.mock('../../../../src/routes/use-shell-controls.ts', () => ({
   }),
 }));
 
-const shell = {
+const shell: ResolvedPageModel['shell'] = {
   contextState: 'authenticated' as const,
-  identity: {
+  identity: Schema.decodeUnknownSync(SafeTenantIdentitySchema)({
     displayName: 'Ada Lovelace',
     email: 'ada@example.test',
-    legalEntityId: 'legal-1',
-    legalName: 'Alpha company',
     principalId: 'principal-1',
     tenantId: 'tenant-1',
-  },
+  }),
   legalEntities: { items: [], state: 'available' as const },
   navigation: { items: [], state: 'available' as const, unavailableDeployments: [] },
-  selectedLegalEntityId: 'legal-1',
+  selectedLegalEntityId: Schema.decodeUnknownSync(LegalEntityIdSchema)(
+    '20000000-0000-4000-8000-000000000001',
+  ),
   state: 'authenticated' as const,
   tenants: { items: [], state: 'available' as const },
 };
 
-const resolvedModel: ModuleTargetPageModel = {
+const targetFixture = (componentKey: string, entrypointKey: string, writable = true) =>
+  Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
+    appId: 'contacts',
+    componentKey,
+    entrypointKey,
+    moduleId: 'contacts.core',
+    writable,
+  });
+
+const resolvedModel: ResolvedPageModel = {
   routeParams: { id: 'customer-1' },
   shell,
   state: 'resolved',
-  target: {
-    appId: 'contacts',
-    componentKey: 'contacts.core.page-customers',
-    entrypointKey: 'contacts.core.page.customers',
-    moduleId: 'contacts.core',
-    writable: true,
-  },
+  target: targetFixture('contacts.core.page-customers', 'contacts.core.page.customers'),
 };
 
 beforeEach(() => {
@@ -127,6 +139,21 @@ test('invokes the exact private page loader only after a resolved authenticated 
   expect(await screen.findByText('contacts.core.page-customers:customer-1')).toBeTruthy();
 });
 
+test('reads loader data from the active Party Registry owner route', () => {
+  useLoaderDataMock.mockImplementation(({ from }: { readonly from: string }) => {
+    if (from !== '/$lang/contacts') {
+      throw new Error(`Invariant failed: Could not find an active match from "${from}"`);
+    }
+    return resolvedModel;
+  });
+
+  expect(() => render(<ContactsPage />)).not.toThrow();
+  expect(useLoaderDataMock).toHaveBeenCalledWith({
+    from: '/$lang/contacts',
+    structuralSharing: false,
+  });
+});
+
 test('maps an unreachable approved remote to its safe local diagnostic', async () => {
   loadRemotePageMock.mockRejectedValueOnce(new Error('private remote error'));
   useLoaderDataMock.mockReturnValue(resolvedModel);
@@ -154,14 +181,10 @@ test('passes an empty route-parameter record to a resolved static page', async (
 });
 
 test('loads the generated Customers list page as a static exact target', async () => {
-  const customersListModel: ModuleTargetPageModel = {
+  const customersListModel: ResolvedPageModel = {
     ...resolvedModel,
     routeParams: {},
-    target: {
-      ...resolvedModel.target,
-      componentKey: 'contacts.core.page-customers-list',
-      entrypointKey: 'contacts.core.page.customers-list',
-    },
+    target: targetFixture('contacts.core.page-customers-list', 'contacts.core.page.customers-list'),
   };
   useLoaderDataMock.mockReturnValue(customersListModel);
   render(<ModuleTargetPage />);
@@ -171,14 +194,13 @@ test('loads the generated Customers list page as a static exact target', async (
 });
 
 test('loads the approved Customer-detail remote once with the exact declared Customer ID', async () => {
-  const customerDetailModel: ModuleTargetPageModel = {
+  const customerDetailModel: ResolvedPageModel = {
     ...resolvedModel,
     routeParams: { id: '11111111-1111-4111-8111-111111111111' },
-    target: {
-      ...resolvedModel.target,
-      componentKey: 'contacts.core.page-customer-detail',
-      entrypointKey: 'contacts.core.page.customer-detail',
-    },
+    target: targetFixture(
+      'contacts.core.page-customer-detail',
+      'contacts.core.page.customer-detail',
+    ),
   };
   useLoaderDataMock.mockReturnValue(customerDetailModel);
   render(<ModuleTargetPage />);
@@ -192,17 +214,13 @@ test('loads the approved Customer-detail remote once with the exact declared Cus
 });
 
 test('loads the approved Contact-detail remote once with both exact hierarchical IDs', async () => {
-  const contactDetailModel: ModuleTargetPageModel = {
+  const contactDetailModel: ResolvedPageModel = {
     ...resolvedModel,
     routeParams: {
       contactId: '33333333-3333-4333-8333-333333333333',
       id: '11111111-1111-4111-8111-111111111111',
     },
-    target: {
-      ...resolvedModel.target,
-      componentKey: 'contacts.core.page-contact-detail',
-      entrypointKey: 'contacts.core.page.contact-detail',
-    },
+    target: targetFixture('contacts.core.page-contact-detail', 'contacts.core.page.contact-detail'),
   };
   useLoaderDataMock.mockReturnValue(contactDetailModel);
   render(<ModuleTargetPage />);
@@ -216,18 +234,17 @@ test('loads the approved Contact-detail remote once with both exact hierarchical
 });
 
 test('passes ContactEdit both hierarchical IDs and the resolved fail-closed target', async () => {
-  const contactEditModel: ModuleTargetPageModel = {
+  const contactEditModel: ResolvedPageModel = {
     ...resolvedModel,
     routeParams: {
       contactId: '33333333-3333-4333-8333-333333333333',
       id: '11111111-1111-4111-8111-111111111111',
     },
-    target: {
-      ...resolvedModel.target,
-      componentKey: 'contacts.core.page-contact-edit',
-      entrypointKey: 'contacts.core.page.contact-edit',
-      writable: false,
-    },
+    target: targetFixture(
+      'contacts.core.page-contact-edit',
+      'contacts.core.page.contact-edit',
+      false,
+    ),
   };
   useLoaderDataMock.mockReturnValue(contactEditModel);
   render(<ModuleTargetPage />);
@@ -241,15 +258,14 @@ test('passes ContactEdit both hierarchical IDs and the resolved fail-closed targ
 });
 
 test('passes CustomerEdit its exact ID and fail-closed writable target', async () => {
-  const customerEditModel: ModuleTargetPageModel = {
+  const customerEditModel: ResolvedPageModel = {
     ...resolvedModel,
     routeParams: { id: 'customer-1' },
-    target: {
-      ...resolvedModel.target,
-      componentKey: 'contacts.core.page-customer-edit',
-      entrypointKey: 'contacts.core.page.customer-edit',
-      writable: false,
-    },
+    target: targetFixture(
+      'contacts.core.page-customer-edit',
+      'contacts.core.page.customer-edit',
+      false,
+    ),
   };
   useLoaderDataMock.mockReturnValue(customerEditModel);
   render(<ModuleTargetPage />);
@@ -264,15 +280,13 @@ test('passes CustomerEdit its exact ID and fail-closed writable target', async (
 });
 
 test('passes CustomerCreate its bounded route context and resolved writable target', async () => {
-  const customerCreateModel: ModuleTargetPageModel = {
+  const customerCreateModel: ResolvedPageModel = {
     ...resolvedModel,
     routeParams: { id: 'untrusted-route-context' },
-    target: {
-      ...resolvedModel.target,
-      componentKey: 'contacts.core.page-customer-create',
-      entrypointKey: 'contacts.core.page.customer-create',
-      writable: true,
-    },
+    target: targetFixture(
+      'contacts.core.page-customer-create',
+      'contacts.core.page.customer-create',
+    ),
   };
   useLoaderDataMock.mockReturnValue(customerCreateModel);
   render(<ModuleTargetPage />);
@@ -289,15 +303,14 @@ test('passes CustomerCreate its bounded route context and resolved writable targ
 });
 
 test('passes ContactCreate its exact ID and fail-closed writable target', async () => {
-  const contactCreateModel: ModuleTargetPageModel = {
+  const contactCreateModel: ResolvedPageModel = {
     ...resolvedModel,
     routeParams: { id: '11111111-1111-4111-8111-111111111111' },
-    target: {
-      ...resolvedModel.target,
-      componentKey: 'contacts.core.page-contact-create',
-      entrypointKey: 'contacts.core.page.contact-create',
-      writable: false,
-    },
+    target: targetFixture(
+      'contacts.core.page-contact-create',
+      'contacts.core.page.contact-create',
+      false,
+    ),
   };
   useLoaderDataMock.mockReturnValue(contactCreateModel);
   render(<ModuleTargetPage />);

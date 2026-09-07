@@ -3,7 +3,7 @@
 // @ontos-action-slug add-contact-point
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import {
   PartyContactPointSchema,
   assertAddressPurposeRules,
@@ -82,11 +82,14 @@ interface Services {
 
 const validateAndNormalize = (payload: AddContactPointPayload) =>
   Effect.try({
-    catch: () =>
-      new PartyContactPointInvalid({
-        code: 'party_contact_point_invalid',
-        reason: 'The Contact Point does not satisfy its type, purpose, or evidence rules',
-      }),
+    catch: (cause) =>
+      Object.assign(
+        new PartyContactPointInvalid({
+          code: 'party_contact_point_invalid',
+          reason: 'The Contact Point does not satisfy its type, purpose, or evidence rules',
+        }),
+        { cause },
+      ),
     try: () => {
       assertVerificationRules(payload.verification);
       if (payload.contactPoint.type === 'ADDRESS') {
@@ -97,19 +100,20 @@ const validateAndNormalize = (payload: AddContactPointPayload) =>
     },
   });
 
-const handleAddContactPoint = (
-  payload: AddContactPointPayload,
-  context: ActionHandlerContext<
-    Readonly<{ 'party.registry.contact-point-added.v1': typeof ContactPointAddedEventSchema }>,
-    Services
-  >,
-) =>
-  Effect.gen(function* addContactPoint() {
+const handleAddContactPoint = Effect.fn('AddContactPointAction.handleAddContactPoint')(
+  function* addContactPoint(
+    payload: AddContactPointPayload,
+    context: ActionHandlerContext<
+      Readonly<{ 'party.registry.contact-point-added.v1': typeof ContactPointAddedEventSchema }>,
+      Services
+    >,
+  ) {
     const command = yield* validateAndNormalize(payload);
     const contactPoint = yield* context.services.add({
       ...command,
       acceptedByActionInvocationId: context.actionInvocationId,
       acceptedByPrincipalId: context.scope.principalId,
+      validFrom: DateTime.formatIso(command.validFrom),
     });
     yield* context.recordDataAccess({
       accessKind: 'read',
@@ -140,7 +144,8 @@ const handleAddContactPoint = (
       }),
     );
     return contactPoint;
-  });
+  },
+);
 
 export const addContactPointAction = defineAction(
   {

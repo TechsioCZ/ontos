@@ -92,7 +92,11 @@ export const attachPersonEngagementAction = defineAction(
     }
     const { legalEntityId } = scope;
     return Effect.succeed({
-      create: (payload) => createPersonEngagementProfile(transaction, scope.tenantId, payload),
+      create: (payload) =>
+        createPersonEngagementProfile(transaction, {
+          ...payload,
+          tenantId: scope.tenantId,
+        }),
       validate: (payload) =>
         validatePartyRegistryReferences(
           partyRegistryReferenceOperations({

@@ -1,23 +1,37 @@
 #!/usr/bin/env node
 
-import { readdir, rm } from 'node:fs/promises';
-import path from 'node:path';
+import { NodeServices } from '@effect/platform-node';
+import { Console, Effect, FileSystem, Path } from 'effect';
 
-const workspaceRoot = path.resolve(import.meta.dirname, '..');
-const dependencyDirectories = [path.join(workspaceRoot, 'node_modules')];
+const main = Effect.gen(function* resetWorkspaceDependenciesEffect() {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const workspaceRoot = path.resolve(import.meta.dirname, '..');
+  const dependencyDirectories = [path.join(workspaceRoot, 'node_modules')];
 
-for (const scope of ['apps', 'packages', 'verticals']) {
-  const scopeDirectory = path.join(workspaceRoot, scope);
-  const entries = await readdir(scopeDirectory, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      dependencyDirectories.push(path.join(scopeDirectory, entry.name, 'node_modules'));
-    }
+  for (const scope of ['apps', 'packages', 'verticals']) {
+    const scopeDirectory = path.join(workspaceRoot, scope);
+    const entries = yield* fileSystem.readDirectory(scopeDirectory);
+    const packageDirectories = yield* Effect.filter(
+      entries,
+      (entry) =>
+        fileSystem
+          .stat(path.join(scopeDirectory, entry))
+          .pipe(Effect.map((info) => info.type === 'Directory')),
+      { concurrency: 'unbounded' },
+    );
+    dependencyDirectories.push(
+      ...packageDirectories.map((entry) => path.join(scopeDirectory, entry, 'node_modules')),
+    );
   }
-}
 
-await Promise.all(
-  dependencyDirectories.map((directory) => rm(directory, { force: true, recursive: true })),
-);
+  yield* Effect.forEach(
+    dependencyDirectories,
+    (directory) => fileSystem.remove(directory, { force: true, recursive: true }),
+    { concurrency: 'unbounded', discard: true },
+  );
 
-console.log(`Removed ${dependencyDirectories.length} workspace dependency directories`);
+  yield* Console.log(`Removed ${dependencyDirectories.length} workspace dependency directories`);
+});
+
+await Effect.runPromise(main.pipe(Effect.provide(NodeServices.layer)));

@@ -1,5 +1,4 @@
-/* eslint-disable max-classes-per-file -- The generated identity contract keeps its closed tagged-error family together. */
-import { DateTime, Option, Schema } from 'effect';
+import { Brand, Schema } from 'effect';
 import { PartyRefSchema } from '../resources/party.ts';
 import type { PartyRef } from '../resources/party.ts';
 import { DuplicateCandidateCaseRefSchema } from '../resources/duplicate-candidate-case.ts';
@@ -11,16 +10,16 @@ export const PartyTypeSchema = Schema.Literals(['PERSON', 'ORGANIZATION', 'UNRES
 export type PartyType = typeof PartyTypeSchema.Type;
 export const isPartyTypeEnrichment = (current: PartyType, requested: PartyType): boolean =>
   current === requested || (current === 'UNRESOLVED' && requested !== 'UNRESOLVED');
-export const IsoTimestampSchema = Schema.String.check(
-  Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u),
-  Schema.makeFilter((value) => {
-    const parsed = DateTime.make(value);
-    const canonicalInput = value.length === 20 ? value.replace(/Z$/u, '.000Z') : value;
-    return Option.isSome(parsed) && DateTime.formatIso(parsed.value) === canonicalInput
-      ? undefined
-      : 'invalid UTC calendar timestamp';
-  }),
-);
+export const IsoTimestampSchema = Schema.DateTimeUtcFromString;
+export const PartyIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PartyId'));
+export type PartyId = typeof PartyIdSchema.Type;
+export const PartySubjectKeySchema = Schema.Trim.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(200),
+).pipe(Schema.brand('PartySubjectKey'));
+export type PartySubjectKey = typeof PartySubjectKeySchema.Type;
+export const partyIdFromString = Brand.nominal<PartyId>();
+export const partySubjectKeyFromString = Brand.nominal<PartySubjectKey>();
 export const PartyDisplayNameSchema = Schema.Trim.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(300),
@@ -46,7 +45,7 @@ export const PartySubjectEvidenceSchema = Schema.Struct({
     'MANAGED_LEGAL_ENTITY',
   ]),
   statement: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
-  subjectKey: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  subjectKey: PartySubjectKeySchema,
 });
 export type PartySubjectEvidence = typeof PartySubjectEvidenceSchema.Type;
 export const PartySubjectEvidenceListSchema = Schema.Array(PartySubjectEvidenceSchema).check(
@@ -78,9 +77,9 @@ export const PartyCandidateSchema = Schema.Struct({
 export type PartyCandidate = typeof PartyCandidateSchema.Type;
 
 export const PartySchema = Schema.Struct({
-  archivedAt: Schema.NullOr(IsoTimestampSchema),
+  archivedAt: Schema.OptionFromNullOr(IsoTimestampSchema),
   createdAt: IsoTimestampSchema,
-  displayName: Schema.NullOr(PartyDisplayNameSchema),
+  displayName: Schema.OptionFromNullOr(PartyDisplayNameSchema),
   partyRef: PartyRefSchema,
   partyType: PartyTypeSchema,
   revision: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0)),
@@ -114,55 +113,101 @@ export const PartyCreateOutcomeSchema = Schema.Union([
 ]);
 export type PartyCreateOutcome = typeof PartyCreateOutcomeSchema.Type;
 
-export class PartyNotFound extends Schema.TaggedError<PartyNotFound>()('PartyNotFound', {
+const partyNotFoundFields = {
   code: Schema.Literal('party_not_found'),
-  partyId: Schema.String.check(Schema.isUUID()),
+  partyId: PartyIdSchema,
   reason: Schema.String,
-}) {}
-export class PartyLifecycleConflict extends Schema.TaggedError<PartyLifecycleConflict>()(
+} as const;
+const PartyNotFoundSchema = Schema.TaggedStruct('PartyNotFound', partyNotFoundFields);
+export const PartyNotFound = Schema.TaggedError<typeof PartyNotFoundSchema.Type>()(
+  'PartyNotFound',
+  partyNotFoundFields,
+);
+export type PartyNotFoundError = InstanceType<typeof PartyNotFound>;
+
+const partyLifecycleConflictFields = {
+  code: Schema.Literal('party_lifecycle_conflict'),
+  reason: Schema.String,
+  requestedState: Schema.Literals(['ACTIVE', 'ARCHIVED']),
+} as const;
+const PartyLifecycleConflictSchema = Schema.TaggedStruct(
   'PartyLifecycleConflict',
-  {
-    code: Schema.Literal('party_lifecycle_conflict'),
-    reason: Schema.String,
-    requestedState: Schema.Literals(['ACTIVE', 'ARCHIVED']),
-  },
-) {}
-export class PartyUnarchiveIdentityConflict extends Schema.TaggedError<PartyUnarchiveIdentityConflict>()(
+  partyLifecycleConflictFields,
+);
+export const PartyLifecycleConflict = Schema.TaggedError<
+  typeof PartyLifecycleConflictSchema.Type
+>()('PartyLifecycleConflict', partyLifecycleConflictFields);
+export type PartyLifecycleConflictError = InstanceType<typeof PartyLifecycleConflict>;
+
+const partyUnarchiveIdentityConflictFields = {
+  code: Schema.Literal('party_unarchive_identity_conflict'),
+  conflictingPartyRef: PartyRefSchema,
+  reason: Schema.String,
+} as const;
+const PartyUnarchiveIdentityConflictSchema = Schema.TaggedStruct(
   'PartyUnarchiveIdentityConflict',
-  {
-    code: Schema.Literal('party_unarchive_identity_conflict'),
-    conflictingPartyRef: PartyRefSchema,
-    reason: Schema.String,
-  },
-) {}
-export class PartyUnarchiveIdentityAmbiguous extends Schema.TaggedError<PartyUnarchiveIdentityAmbiguous>()(
+  partyUnarchiveIdentityConflictFields,
+);
+export const PartyUnarchiveIdentityConflict = Schema.TaggedError<
+  typeof PartyUnarchiveIdentityConflictSchema.Type
+>()('PartyUnarchiveIdentityConflict', partyUnarchiveIdentityConflictFields);
+export type PartyUnarchiveIdentityConflictError = InstanceType<
+  typeof PartyUnarchiveIdentityConflict
+>;
+
+const partyUnarchiveIdentityAmbiguousFields = {
+  candidatePartyRefs: Schema.Array(PartyRefSchema).check(Schema.isMinLength(2)),
+  code: Schema.Literal('party_unarchive_identity_ambiguous'),
+  reason: Schema.String,
+} as const;
+const PartyUnarchiveIdentityAmbiguousSchema = Schema.TaggedStruct(
   'PartyUnarchiveIdentityAmbiguous',
-  {
-    candidatePartyRefs: Schema.Array(PartyRefSchema).check(Schema.isMinLength(2)),
-    code: Schema.Literal('party_unarchive_identity_ambiguous'),
-    reason: Schema.String,
-  },
-) {}
-export class PartyUnarchiveReviewRequired extends Schema.TaggedError<PartyUnarchiveReviewRequired>()(
+  partyUnarchiveIdentityAmbiguousFields,
+);
+export const PartyUnarchiveIdentityAmbiguous = Schema.TaggedError<
+  typeof PartyUnarchiveIdentityAmbiguousSchema.Type
+>()('PartyUnarchiveIdentityAmbiguous', partyUnarchiveIdentityAmbiguousFields);
+export type PartyUnarchiveIdentityAmbiguousError = InstanceType<
+  typeof PartyUnarchiveIdentityAmbiguous
+>;
+
+const partyUnarchiveReviewRequiredFields = {
+  caseRefs: Schema.Array(DuplicateCandidateCaseRefSchema),
+  code: Schema.Literal('party_unarchive_review_required'),
+  reason: Schema.String,
+  reasonCode: Schema.Literals(['OPEN_DUPLICATE_CASE', 'UNRESOLVED_IDENTITY']),
+} as const;
+const PartyUnarchiveReviewRequiredSchema = Schema.TaggedStruct(
   'PartyUnarchiveReviewRequired',
-  {
-    caseRefs: Schema.Array(DuplicateCandidateCaseRefSchema),
-    code: Schema.Literal('party_unarchive_review_required'),
-    reason: Schema.String,
-    reasonCode: Schema.Literals(['OPEN_DUPLICATE_CASE', 'UNRESOLVED_IDENTITY']),
-  },
-) {}
-export class PartyEvidenceInsufficient extends Schema.TaggedError<PartyEvidenceInsufficient>()(
+  partyUnarchiveReviewRequiredFields,
+);
+export const PartyUnarchiveReviewRequired = Schema.TaggedError<
+  typeof PartyUnarchiveReviewRequiredSchema.Type
+>()('PartyUnarchiveReviewRequired', partyUnarchiveReviewRequiredFields);
+export type PartyUnarchiveReviewRequiredError = InstanceType<typeof PartyUnarchiveReviewRequired>;
+
+const partyEvidenceInsufficientFields = {
+  code: Schema.Literal('party_evidence_insufficient'),
+  reason: Schema.String,
+} as const;
+const PartyEvidenceInsufficientSchema = Schema.TaggedStruct(
   'PartyEvidenceInsufficient',
-  {
-    code: Schema.Literal('party_evidence_insufficient'),
-    reason: Schema.String,
-  },
-) {}
-export class PartyPersistenceUnavailable extends Schema.TaggedError<PartyPersistenceUnavailable>()(
+  partyEvidenceInsufficientFields,
+);
+export const PartyEvidenceInsufficient = Schema.TaggedError<
+  typeof PartyEvidenceInsufficientSchema.Type
+>()('PartyEvidenceInsufficient', partyEvidenceInsufficientFields);
+export type PartyEvidenceInsufficientError = InstanceType<typeof PartyEvidenceInsufficient>;
+
+const partyPersistenceUnavailableFields = {
+  code: Schema.Literal('party_persistence_unavailable'),
+  reason: Schema.String,
+} as const;
+const PartyPersistenceUnavailableSchema = Schema.TaggedStruct(
   'PartyPersistenceUnavailable',
-  {
-    code: Schema.Literal('party_persistence_unavailable'),
-    reason: Schema.String,
-  },
-) {}
+  partyPersistenceUnavailableFields,
+);
+export const PartyPersistenceUnavailable = Schema.TaggedError<
+  typeof PartyPersistenceUnavailableSchema.Type
+>()('PartyPersistenceUnavailable', partyPersistenceUnavailableFields);
+export type PartyPersistenceUnavailableError = InstanceType<typeof PartyPersistenceUnavailable>;

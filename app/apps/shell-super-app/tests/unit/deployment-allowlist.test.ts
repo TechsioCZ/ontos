@@ -1,5 +1,5 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { expect, test } from '@rstest/core';
-import { Effect } from 'effect';
 import { deriveDeploymentAllowlist } from '../../api/modules/deployment-allowlist.ts';
 import { createModuleDeploymentAllowlistBuildInput } from '../../module-deployment-allowlist.config.ts';
 
@@ -25,7 +25,7 @@ const validUrls = {
 };
 
 test('derives an immutable, topology-authorized and deterministically ordered allowlist', async () => {
-  const allowlist = await Effect.runPromise(
+  const allowlist = await runEffectTestPromise(
     deriveDeploymentAllowlist({
       environment: 'development',
       overlay: overlay(validUrls),
@@ -59,7 +59,7 @@ test.each([
   ['arbitrary path', { ...validUrls, 'property-registry': 'http://localhost:4101/private.json' }],
 ])('rejects %s configuration without authorizing a fetch', async (_label, manifests) => {
   await expect(
-    Effect.runPromise(
+    runEffectTestPromise(
       deriveDeploymentAllowlist({
         environment: 'development',
         overlay: overlay(manifests),
@@ -75,7 +75,7 @@ test('requires HTTPS outside loopback development', async () => {
     'property-registry': 'https://property.example.test/.well-known/ontos-module-manifest.json',
   };
   await expect(
-    Effect.runPromise(
+    runEffectTestPromise(
       deriveDeploymentAllowlist({
         environment: 'production',
         overlay: overlay(
@@ -90,7 +90,7 @@ test('requires HTTPS outside loopback development', async () => {
     ),
   ).rejects.toMatchObject({ code: 'deployment_allowlist_invalid' });
   await expect(
-    Effect.runPromise(
+    runEffectTestPromise(
       deriveDeploymentAllowlist({
         environment: 'production',
         overlay: overlay(productionUrls, 'production'),

@@ -64,7 +64,7 @@ index 38e47a2ba5c0186660f29ea0add05f18256e3b4c..16085a6a428609b948c9084a0d002ced
          hostOnlyNoExposes
      };
 diff --git a/dist/cjs/ultramodern-workspace/module-federation/config.cjs b/dist/cjs/ultramodern-workspace/module-federation/config.cjs
-index 45a7179587e8ab49d1828ba05d25241acad5db82..1d196cdcc5e9d12f69eabba19a99c323026df396 100644
+index 45a7179587e8ab49d1828ba05d25241acad5db82..3fcaa7833e9a1f1b3917470796a6ea3444c97c86 100644
 --- a/dist/cjs/ultramodern-workspace/module-federation/config.cjs
 +++ b/dist/cjs/ultramodern-workspace/module-federation/config.cjs
 @@ -46,19 +46,18 @@ const external_shared_config_cjs_namespaceObject = require("./shared-config.cjs"
@@ -93,7 +93,17 @@ index 45a7179587e8ab49d1828ba05d25241acad5db82..1d196cdcc5e9d12f69eabba19a99c323
      // Zephyr uploads federated build artifacts to Zephyr Cloud (the fast
      // rollback path). Uploading REQUIRES a Zephyr Cloud account and, in CI, a
      // deploy-scoped ZE_CI_TOKEN; without it Zephyr fatally fails to load its
-@@ -81,7 +80,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
+@@ -69,8 +68,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
+     // (this gate keys on Zephyr's native deploy token, not any UltraModern
+     // opt-out). When deploying, ZE_FAIL_BUILD=true makes an upload failure a
+     // hard build failure.
+-    const zephyrCiDeploy =
+-      (getBuildConfigEnvironment('ZE_CI_TOKEN') ?? '').length > 0;
++    const zephyrCiDeploy = envValue('ZE_CI_TOKEN') !== undefined;
+     if (!zephyrCiDeploy) {
+       return;
+     }
+@@ -81,7 +79,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
  });
 
  ` : '';
@@ -102,7 +112,7 @@ index 45a7179587e8ab49d1828ba05d25241acad5db82..1d196cdcc5e9d12f69eabba19a99c323
      const uiPluginEntries = emitsUi ? '        moduleFederationPlugin(),\n        zephyrRspackPlugin(),\n' : '';
      const tailwindImport = enableTailwind ? "import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';\n" : '';
      const bffConfig = (0, external_descriptors_cjs_namespaceObject.appHasApi)(app) ? `      bff: {
-@@ -117,17 +116,16 @@ ${(0, external_descriptors_cjs_namespaceObject.distributedSsrExposes)(service).m
+@@ -117,17 +115,16 @@ ${(0, external_descriptors_cjs_namespaceObject.distributedSsrExposes)(service).m
            ],
  ` : '';
      const defaultAssetPrefixSource = 'shell' === app.kind ? "const defaultAssetPrefix = '/';" : `const remoteAssetOrigin =
@@ -124,7 +134,7 @@ index 45a7179587e8ab49d1828ba05d25241acad5db82..1d196cdcc5e9d12f69eabba19a99c323
  const defaultAssetPrefix = defaultRemoteAssetPrefix;`;
      const devAssetPrefixSource = 'shell' === app.kind ? `        // Keep shell dev assets origin-relative so the shell works through
          // tunnels and local previews without rewriting its own chunks.
-@@ -142,7 +140,7 @@ const defaultAssetPrefix = defaultRemoteAssetPrefix;`;
+@@ -142,7 +139,7 @@ const defaultAssetPrefix = defaultRemoteAssetPrefix;`;
          ]).filter((port)=>'number' == typeof port && Number.isFinite(port)))
      ].toSorted((left, right)=>left - right);
      const legacyCorsSource = `const moduleFederationDevServerOrigin =
@@ -133,7 +143,7 @@ index 45a7179587e8ab49d1828ba05d25241acad5db82..1d196cdcc5e9d12f69eabba19a99c323
      const configuredCorsSource = `const moduleFederationDevServerAllowedOrigins = [
  ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
  ];`;
-@@ -154,7 +152,125 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+@@ -154,7 +151,125 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
            },
          },`;
      const useConfiguredCorsAllowlist = void 0 !== configuredDevPorts;
@@ -147,7 +157,7 @@ index 45a7179587e8ab49d1828ba05d25241acad5db82..1d196cdcc5e9d12f69eabba19a99c323
 +const nodeBuiltinRequests = new Set(
 +  cloudflareDeployEnabled ? builtinModules.flatMap((name) => [name, \`node:\${name}\`]) : [],
 +);
-+/* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. */
++/* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. expires: 2026-12-31. */
 +const cloudflareRuntimeExternal = (
 +  { dependencyType, request }: { dependencyType?: string; request?: string },
 +  callback: (error?: Error, result?: string | string[], type?: 'module-import') => void,
@@ -259,7 +269,7 @@ index 45a7179587e8ab49d1828ba05d25241acad5db82..1d196cdcc5e9d12f69eabba19a99c323
      return (0, external_fs_io_cjs_namespaceObject.renderFileTemplate)('workspace/apps/modern.config.ts', {
          value0: `${bffImport}${tailwindImport}`,
          value1: app.id,
-@@ -176,7 +292,7 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+@@ -176,7 +291,7 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
          value17: (0, external_naming_cjs_namespaceObject.createRspackChunkLoadingGlobal)(app),
          value18: tailwindBuilderPluginsConfig,
          value19: useConfiguredCorsAllowlist ? configuredCorsSource : legacyCorsSource,
@@ -268,7 +278,7 @@ index 45a7179587e8ab49d1828ba05d25241acad5db82..1d196cdcc5e9d12f69eabba19a99c323
          value21: configuredCorsHeader,
          value22: uiImports,
          value23: zephyrPluginSource,
-@@ -184,7 +300,19 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+@@ -184,7 +299,19 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
          value25: uiPluginEntries,
          value26: deliveryUnit.unitId,
          value27: deliveryUnit.buildMarker,
@@ -289,7 +299,7 @@ index 45a7179587e8ab49d1828ba05d25241acad5db82..1d196cdcc5e9d12f69eabba19a99c323
      });
  }
  function createModuleFederationBridgeConfig(enableBridgeRouter) {
-@@ -239,15 +367,15 @@ export default moduleFederationConfig;
+@@ -239,15 +366,15 @@ export default moduleFederationConfig;
  function createBackendModuleFederationConfig(app) {
      return `import { createRequire } from 'node:module';
  import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
@@ -425,7 +435,7 @@ index d3d50e38814b4f1c95815a1bb61065c163ab8772..7f8bc5f5d7699225fadf3d711ab0571f
          hostOnlyNoExposes
      };
 diff --git a/dist/esm/ultramodern-workspace/module-federation/config.js b/dist/esm/ultramodern-workspace/module-federation/config.js
-index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..d323f12dd2c225739f86274768e003119f3f2968 100644
+index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..eb3e2e74650a06d7130b77594239ef8b6b3c16a0 100644
 --- a/dist/esm/ultramodern-workspace/module-federation/config.js
 +++ b/dist/esm/ultramodern-workspace/module-federation/config.js
 @@ -11,19 +11,18 @@ import { createSharedModuleFederationConfig, formatTsObjectLiteral } from "./sha
@@ -454,7 +464,17 @@ index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..d323f12dd2c225739f86274768e00311
      // Zephyr uploads federated build artifacts to Zephyr Cloud (the fast
      // rollback path). Uploading REQUIRES a Zephyr Cloud account and, in CI, a
      // deploy-scoped ZE_CI_TOKEN; without it Zephyr fatally fails to load its
-@@ -46,7 +45,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
+@@ -34,8 +33,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
+     // (this gate keys on Zephyr's native deploy token, not any UltraModern
+     // opt-out). When deploying, ZE_FAIL_BUILD=true makes an upload failure a
+     // hard build failure.
+-    const zephyrCiDeploy =
+-      (getBuildConfigEnvironment('ZE_CI_TOKEN') ?? '').length > 0;
++    const zephyrCiDeploy = envValue('ZE_CI_TOKEN') !== undefined;
+     if (!zephyrCiDeploy) {
+       return;
+     }
+@@ -46,7 +44,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
  });
 
  ` : '';
@@ -463,7 +483,7 @@ index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..d323f12dd2c225739f86274768e00311
      const uiPluginEntries = emitsUi ? '        moduleFederationPlugin(),\n        zephyrRspackPlugin(),\n' : '';
      const tailwindImport = enableTailwind ? "import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';\n" : '';
      const bffConfig = appHasApi(app) ? `      bff: {
-@@ -82,17 +81,16 @@ ${distributedSsrExposes(service).map((expose)=>`                {
+@@ -82,17 +80,16 @@ ${distributedSsrExposes(service).map((expose)=>`                {
            ],
  ` : '';
      const defaultAssetPrefixSource = 'shell' === app.kind ? "const defaultAssetPrefix = '/';" : `const remoteAssetOrigin =
@@ -485,7 +505,7 @@ index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..d323f12dd2c225739f86274768e00311
  const defaultAssetPrefix = defaultRemoteAssetPrefix;`;
      const devAssetPrefixSource = 'shell' === app.kind ? `        // Keep shell dev assets origin-relative so the shell works through
          // tunnels and local previews without rewriting its own chunks.
-@@ -107,7 +105,7 @@ const defaultAssetPrefix = defaultRemoteAssetPrefix;`;
+@@ -107,7 +104,7 @@ const defaultAssetPrefix = defaultRemoteAssetPrefix;`;
          ]).filter((port)=>'number' == typeof port && Number.isFinite(port)))
      ].toSorted((left, right)=>left - right);
      const legacyCorsSource = `const moduleFederationDevServerOrigin =
@@ -494,7 +514,7 @@ index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..d323f12dd2c225739f86274768e00311
      const configuredCorsSource = `const moduleFederationDevServerAllowedOrigins = [
  ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
  ];`;
-@@ -119,7 +117,125 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+@@ -119,7 +116,125 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
            },
          },`;
      const useConfiguredCorsAllowlist = void 0 !== configuredDevPorts;
@@ -508,7 +528,7 @@ index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..d323f12dd2c225739f86274768e00311
 +const nodeBuiltinRequests = new Set(
 +  cloudflareDeployEnabled ? builtinModules.flatMap((name) => [name, \`node:\${name}\`]) : [],
 +);
-+/* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. */
++/* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. expires: 2026-12-31. */
 +const cloudflareRuntimeExternal = (
 +  { dependencyType, request }: { dependencyType?: string; request?: string },
 +  callback: (error?: Error, result?: string | string[], type?: 'module-import') => void,
@@ -620,7 +640,7 @@ index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..d323f12dd2c225739f86274768e00311
      return renderFileTemplate('workspace/apps/modern.config.ts', {
          value0: `${bffImport}${tailwindImport}`,
          value1: app.id,
-@@ -141,7 +257,7 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+@@ -141,7 +256,7 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
          value17: createRspackChunkLoadingGlobal(app),
          value18: tailwindBuilderPluginsConfig,
          value19: useConfiguredCorsAllowlist ? configuredCorsSource : legacyCorsSource,
@@ -629,7 +649,7 @@ index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..d323f12dd2c225739f86274768e00311
          value21: configuredCorsHeader,
          value22: uiImports,
          value23: zephyrPluginSource,
-@@ -149,7 +265,19 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+@@ -149,7 +264,19 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
          value25: uiPluginEntries,
          value26: deliveryUnit.unitId,
          value27: deliveryUnit.buildMarker,
@@ -650,7 +670,7 @@ index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..d323f12dd2c225739f86274768e00311
      });
  }
  function createModuleFederationBridgeConfig(enableBridgeRouter) {
-@@ -204,15 +332,15 @@ export default moduleFederationConfig;
+@@ -204,15 +331,15 @@ export default moduleFederationConfig;
  function createBackendModuleFederationConfig(app) {
      return `import { createRequire } from 'node:module';
  import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
@@ -787,7 +807,7 @@ index c333334745820eaf95b7a9783e481b500c669590..5bfe33f755f0ad4460fb93a47f4f2fd0
          hostOnlyNoExposes
      };
 diff --git a/dist/esm-node/ultramodern-workspace/module-federation/config.js b/dist/esm-node/ultramodern-workspace/module-federation/config.js
-index 5956501f8ec070d086690b2be4096c40c0c249c0..63fb7474a65ea6e6edd1f5c00a3578bbfa6548d2 100644
+index 5956501f8ec070d086690b2be4096c40c0c249c0..6ac78eac22d08322d0546fc25bcd5c642ed216c1 100644
 --- a/dist/esm-node/ultramodern-workspace/module-federation/config.js
 +++ b/dist/esm-node/ultramodern-workspace/module-federation/config.js
 @@ -12,19 +12,18 @@ import { createSharedModuleFederationConfig, formatTsObjectLiteral } from "./sha
@@ -816,7 +836,17 @@ index 5956501f8ec070d086690b2be4096c40c0c249c0..63fb7474a65ea6e6edd1f5c00a3578bb
      // Zephyr uploads federated build artifacts to Zephyr Cloud (the fast
      // rollback path). Uploading REQUIRES a Zephyr Cloud account and, in CI, a
      // deploy-scoped ZE_CI_TOKEN; without it Zephyr fatally fails to load its
-@@ -47,7 +46,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
+@@ -35,8 +34,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
+     // (this gate keys on Zephyr's native deploy token, not any UltraModern
+     // opt-out). When deploying, ZE_FAIL_BUILD=true makes an upload failure a
+     // hard build failure.
+-    const zephyrCiDeploy =
+-      (getBuildConfigEnvironment('ZE_CI_TOKEN') ?? '').length > 0;
++    const zephyrCiDeploy = envValue('ZE_CI_TOKEN') !== undefined;
+     if (!zephyrCiDeploy) {
+       return;
+     }
+@@ -47,7 +45,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
  });
 
  ` : '';
@@ -825,7 +855,7 @@ index 5956501f8ec070d086690b2be4096c40c0c249c0..63fb7474a65ea6e6edd1f5c00a3578bb
      const uiPluginEntries = emitsUi ? '        moduleFederationPlugin(),\n        zephyrRspackPlugin(),\n' : '';
      const tailwindImport = enableTailwind ? "import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';\n" : '';
      const bffConfig = appHasApi(app) ? `      bff: {
-@@ -83,17 +82,16 @@ ${distributedSsrExposes(service).map((expose)=>`                {
+@@ -83,17 +81,16 @@ ${distributedSsrExposes(service).map((expose)=>`                {
            ],
  ` : '';
      const defaultAssetPrefixSource = 'shell' === app.kind ? "const defaultAssetPrefix = '/';" : `const remoteAssetOrigin =
@@ -847,7 +877,7 @@ index 5956501f8ec070d086690b2be4096c40c0c249c0..63fb7474a65ea6e6edd1f5c00a3578bb
  const defaultAssetPrefix = defaultRemoteAssetPrefix;`;
      const devAssetPrefixSource = 'shell' === app.kind ? `        // Keep shell dev assets origin-relative so the shell works through
          // tunnels and local previews without rewriting its own chunks.
-@@ -108,7 +106,7 @@ const defaultAssetPrefix = defaultRemoteAssetPrefix;`;
+@@ -108,7 +105,7 @@ const defaultAssetPrefix = defaultRemoteAssetPrefix;`;
          ]).filter((port)=>'number' == typeof port && Number.isFinite(port)))
      ].toSorted((left, right)=>left - right);
      const legacyCorsSource = `const moduleFederationDevServerOrigin =
@@ -856,7 +886,7 @@ index 5956501f8ec070d086690b2be4096c40c0c249c0..63fb7474a65ea6e6edd1f5c00a3578bb
      const configuredCorsSource = `const moduleFederationDevServerAllowedOrigins = [
  ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
  ];`;
-@@ -120,7 +118,125 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+@@ -120,7 +117,125 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
            },
          },`;
      const useConfiguredCorsAllowlist = void 0 !== configuredDevPorts;
@@ -870,7 +900,7 @@ index 5956501f8ec070d086690b2be4096c40c0c249c0..63fb7474a65ea6e6edd1f5c00a3578bb
 +const nodeBuiltinRequests = new Set(
 +  cloudflareDeployEnabled ? builtinModules.flatMap((name) => [name, \`node:\${name}\`]) : [],
 +);
-+/* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. */
++/* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. expires: 2026-12-31. */
 +const cloudflareRuntimeExternal = (
 +  { dependencyType, request }: { dependencyType?: string; request?: string },
 +  callback: (error?: Error, result?: string | string[], type?: 'module-import') => void,
@@ -982,7 +1012,7 @@ index 5956501f8ec070d086690b2be4096c40c0c249c0..63fb7474a65ea6e6edd1f5c00a3578bb
      return renderFileTemplate('workspace/apps/modern.config.ts', {
          value0: `${bffImport}${tailwindImport}`,
          value1: app.id,
-@@ -142,7 +258,7 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+@@ -142,7 +257,7 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
          value17: createRspackChunkLoadingGlobal(app),
          value18: tailwindBuilderPluginsConfig,
          value19: useConfiguredCorsAllowlist ? configuredCorsSource : legacyCorsSource,
@@ -991,7 +1021,7 @@ index 5956501f8ec070d086690b2be4096c40c0c249c0..63fb7474a65ea6e6edd1f5c00a3578bb
          value21: configuredCorsHeader,
          value22: uiImports,
          value23: zephyrPluginSource,
-@@ -150,7 +266,19 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+@@ -150,7 +265,19 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
          value25: uiPluginEntries,
          value26: deliveryUnit.unitId,
          value27: deliveryUnit.buildMarker,
@@ -1012,7 +1042,7 @@ index 5956501f8ec070d086690b2be4096c40c0c249c0..63fb7474a65ea6e6edd1f5c00a3578bb
      });
  }
  function createModuleFederationBridgeConfig(enableBridgeRouter) {
-@@ -205,15 +333,15 @@ export default moduleFederationConfig;
+@@ -205,15 +332,15 @@ export default moduleFederationConfig;
  function createBackendModuleFederationConfig(app) {
      return `import { createRequire } from 'node:module';
  import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
@@ -1096,10 +1126,10 @@ index ebbc5176bacfd3790c8f01c8000e258ad348ce00..2d9e878b3f30650b0ca3e7b78d8c63de
  export declare const defaultAppRootDirs: string[];
  export declare const skippedScanDirs: Set<string>;
 diff --git a/templates/workspace/apps/modern.config.ts.handlebars b/templates/workspace/apps/modern.config.ts.handlebars
-index 2144abc7232f756a7d824e18bd90ce881e0dadc2..90a60a9de370f33986aad0cbd1faacebdc324af6 100644
+index 2144abc7232f756a7d824e18bd90ce881e0dadc2..5df3764b126e9774ca832dbc6bd5ccd72db0f61e 100644
 --- a/templates/workspace/apps/modern.config.ts.handlebars
 +++ b/templates/workspace/apps/modern.config.ts.handlebars
-@@ -1,8 +1,12 @@
+@@ -1,25 +1,60 @@
 -import {
 +{{value36}}import { {{value29}}createRequire } from 'node:module';
 +{{value30}}import {
@@ -1113,20 +1143,63 @@ index 2144abc7232f756a7d824e18bd90ce881e0dadc2..90a60a9de370f33986aad0cbd1faaceb
  import {
    getBuildConfigEnvironment,
    withBuildConfigEnvironment,
-@@ -10,9 +14,11 @@ import {
+ } from '@modern-js/app-tools/config';
  {{value0}}import { i18nPlugin } from '@modern-js/plugin-i18n';
  import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
++import { Config, Option, Result, Schema } from 'effect';
  {{value22}}
+-const cloudflareDeployEnabled =
+-  getBuildConfigEnvironment('MODERNJS_DEPLOY') === 'cloudflare';
+-
 +Object.assign(globalThis, { require: createRequire(import.meta.url) });
 +{{value37}}
- const cloudflareDeployEnabled =
-   getBuildConfigEnvironment('MODERNJS_DEPLOY') === 'cloudflare';
--
++const nonEmptyBuildStringSchema = Schema.Trim.pipe(Schema.check(Schema.isMinLength(1)));
++const getOptionalBuildConfig = (name: string): string | undefined => {
++  const decoded = Schema.decodeUnknownResult(
++    Schema.OptionFromUndefinedOr(nonEmptyBuildStringSchema),
++  )(getBuildConfigEnvironment(name));
++  return Result.isSuccess(decoded) ? Option.getOrUndefined(decoded.success) : undefined;
++};
++const envValue = getOptionalBuildConfig;
++const getBuildBoolean = (name: string): boolean =>
++  Option.getOrElse(
++    Result.getOrThrow(
++      Schema.decodeUnknownResult(Schema.OptionFromUndefinedOr(Config.Boolean))(
++        getBuildConfigEnvironment(name),
++      ),
++    ),
++    () => false,
++  );
++const cloudflareDeployMode = Result.getOrThrow(
++  Schema.decodeUnknownResult(Schema.OptionFromUndefinedOr(Schema.Literal('cloudflare')))(
++    getBuildConfigEnvironment('MODERNJS_DEPLOY'),
++  ),
++);
++const cloudflareDeployEnabled = Option.isSome(cloudflareDeployMode);
 +{{value31}}
  {{value23}}const appId = '{{value1}}';
  const cloudflareWorkerName = '{{value2}}';
- const port = Number(getBuildConfigEnvironment('{{value3}}') ?? {{value4}});
-@@ -35,16 +41,16 @@ const inferredCloudflareUrl =
+-const port = Number(getBuildConfigEnvironment('{{value3}}') ?? {{value4}});
+-const envValue = (name: string) => {
+-  const value = getBuildConfigEnvironment(name)?.trim();
+-  return value !== undefined && value.length > 0 ? value : undefined;
+-};
++const port = Option.getOrElse(
++  Result.getOrThrow(
++    Schema.decodeUnknownResult(
++      Schema.OptionFromUndefinedOr(
++        Schema.NumberFromString.pipe(
++          Schema.check(Schema.isInt(), Schema.isBetween({ maximum: 65_535, minimum: 1 })),
++        ),
++      ),
++    )(getBuildConfigEnvironment('{{value3}}')),
++  ),
++  () => {{value4}},
++);
+ const configuredSiteUrl = envValue('MODERN_PUBLIC_SITE_URL');
+ const configuredCloudflareUrl = envValue('{{value5}}');
+ const configuredUltramodernAssetPrefix = envValue('ULTRAMODERN_ASSET_PREFIX');
+@@ -35,16 +70,16 @@ const inferredCloudflareUrl =
  // Site origin (SEO: canonical/hreflang URLs) prefers the site-wide public URL;
  // the per-app deployment URL only fills in when no site origin is configured.
  const siteUrl =
@@ -1147,7 +1220,16 @@ index 2144abc7232f756a7d824e18bd90ce881e0dadc2..90a60a9de370f33986aad0cbd1faaceb
  const buildTarget = cloudflareDeployEnabled ? 'cloudflare' : 'web';
  const buildOutputRoot = cloudflareDeployEnabled ? 'dist-cloudflare' : 'dist';
  const buildTempDirectory = `node_modules/.modern-js-${appId}-${buildTarget}`;
-@@ -62,23 +68,26 @@ if (
+@@ -52,7 +87,7 @@ const buildCacheDirectory = `node_modules/.cache/rspack-${appId}-${buildTarget}`
+
+ if (
+   cloudflareDeployEnabled &&
+-  getBuildConfigEnvironment('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') === 'true' &&
++  getBuildBoolean('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') &&
+   configuredCloudflareUrl === undefined &&
+   configuredSiteUrl === undefined &&
+   inferredCloudflareUrl === undefined
+@@ -62,23 +97,26 @@ if (
    );
  }
 
@@ -1187,7 +1269,16 @@ index 2144abc7232f756a7d824e18bd90ce881e0dadc2..90a60a9de370f33986aad0cbd1faaceb
        },
        html: {
          outputStructure: 'flat',
-@@ -115,6 +124,7 @@ export default defineConfig(
+@@ -101,7 +139,7 @@ export default defineConfig(
+         },
+         rsdoctor: {
+           disableClientServer: true,
+-          enabled: getBuildConfigEnvironment('ULTRAMODERN_RSDOCTOR') === 'true',
++          enabled: getBuildBoolean('ULTRAMODERN_RSDOCTOR'),
+         },
+       },
+       plugins: [
+@@ -115,6 +153,7 @@ export default defineConfig(
            localeDetection: {
              fallbackLanguage: 'en',
              ignoreRedirectRoutes: [
@@ -1195,7 +1286,7 @@ index 2144abc7232f756a7d824e18bd90ce881e0dadc2..90a60a9de370f33986aad0cbd1faaceb
                '/@mf-types',
                '/assets',
                '/bundles',
-@@ -137,7 +147,7 @@ export default defineConfig(
+@@ -137,7 +176,7 @@ export default defineConfig(
  {{value15}}{{value25}}      ],
        server: {
          port,
@@ -1204,7 +1295,7 @@ index 2144abc7232f756a7d824e18bd90ce881e0dadc2..90a60a9de370f33986aad0cbd1faaceb
        },
        source: {
          alias: {
-@@ -145,6 +155,8 @@ export default defineConfig(
+@@ -145,6 +184,8 @@ export default defineConfig(
              '@modern-js/plugin-i18n/runtime/no-react-i18next',
          },
          globalVars: {
@@ -1213,7 +1304,7 @@ index 2144abc7232f756a7d824e18bd90ce881e0dadc2..90a60a9de370f33986aad0cbd1faaceb
            ULTRAMODERN_SITE_URL: siteUrl,
          },
          mainEntryName: 'index',
-@@ -153,21 +165,13 @@ export default defineConfig(
+@@ -153,21 +194,13 @@ export default defineConfig(
          autoprefixer: {
            overrideBrowserslist: ['defaults'],
          },

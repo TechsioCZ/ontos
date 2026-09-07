@@ -19,15 +19,26 @@ export interface PoolResource {
   readonly end: () => Promise<void>;
 }
 
+const connectionFailure = (cause: unknown): PartyDatabaseConnectionError =>
+  Object.defineProperty(
+    new PartyDatabaseConnectionError({
+      reason: 'Unable to initialize the Party Registry PostgreSQL connection pool',
+    }),
+    'cause',
+    {
+      configurable: false,
+      enumerable: false,
+      value: cause,
+      writable: false,
+    },
+  );
+
 export const acquirePoolResource = <Resource extends PoolResource>(
   acquire: () => Resource,
 ): Effect.Effect<Resource, PartyDatabaseConnectionError, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.try({
-      catch: () =>
-        new PartyDatabaseConnectionError({
-          reason: 'Unable to initialize the Party Registry PostgreSQL connection pool',
-        }),
+      catch: connectionFailure,
       try: acquire,
     }),
     (pool) => Effect.promise(() => pool.end()),

@@ -1,8 +1,10 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { UpdatePartyOfficialIdentifierResultSchema } from '../../shared/actions/update-party-official-identifier.ts';
 import type { UpdatePartyOfficialIdentifierPayload } from '../../shared/actions/update-party-official-identifier.ts';
 import { OfficialIdentifierClaimConflict } from '../../shared/domain/identifier-contracts.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/party-registry-official-identifier-updated-v1.ts';
@@ -30,12 +32,12 @@ const before = {
 } as const;
 const changes: readonly UpdatePartyOfficialIdentifierPayload['change'][] = [
   { expectedVerification: 'UNVERIFIED', type: 'SET_VERIFICATION', verification: 'VERIFIED' },
-  { type: 'END_VALIDITY', validTo: '2026-01-02T00:00:00.000Z' },
+  { type: 'END_VALIDITY', validTo: DateTime.makeUnsafe('2026-01-02T00:00:00.000Z') },
 ];
 
 for (const change of changes) {
   test(`${change.type} links one stable-reference outbox message to its committed Domain Event`, () =>
-    Effect.runPromise(
+    runEffectTestPromise(
       Effect.gen(function* successfulUpdate() {
         const collector = createActionCollector(
           updatePartyOfficialIdentifierAction.descriptor.domainEvents,
@@ -43,6 +45,10 @@ for (const change of changes) {
           updatePartyOfficialIdentifierAction.descriptor.accessEvidencePolicy,
         );
         const handler = getActionHandler(updatePartyOfficialIdentifierAction);
+        const encodedValidTo =
+          change.type === 'END_VALIDITY'
+            ? yield* Schema.encodeEffect(Schema.DateTimeUtcFromString)(change.validTo)
+            : null;
         const after =
           change.type === 'SET_VERIFICATION'
             ? {
@@ -51,12 +57,16 @@ for (const change of changes) {
                 verifiedAt: '2026-01-02T00:00:00.000Z',
                 verifiedByPrincipalId: '40000000-0000-4000-8000-000000000001',
               }
-            : { ...before, state: 'ENDED' as const, validTo: change.validTo };
+            : {
+                ...before,
+                state: 'ENDED' as const,
+                validTo: encodedValidTo,
+              };
         const result = {
           officialIdentifierRef,
           partyRef,
           state: after.state,
-          validTo: after.validTo,
+          validTo: change.type === 'END_VALIDITY' ? Option.some(change.validTo) : Option.none(),
           verification: after.verification,
         };
         yield* handler(
@@ -110,7 +120,7 @@ for (const change of changes) {
 }
 
 test('rejected identifier updates publish neither Domain Event nor outbox message', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* rejectedUpdate() {
       const collector = createActionCollector(
         updatePartyOfficialIdentifierAction.descriptor.domainEvents,
@@ -161,3 +171,31 @@ test('published identifier update payload contains references only', () => {
   });
   assert.throws(() => decode({ officialIdentifierRef, partyRef, verification: 'VERIFIED' }));
 });
+
+test('identifier update results keep DateTime and Option internally with nullable JSON', () =>
+  runEffectTestPromise(
+    Effect.gen(function* identifierUpdateResultWireRoundTrip() {
+      const wire = {
+        officialIdentifierRef,
+        partyRef,
+        state: 'ENDED',
+        validTo: '2026-01-02T00:00:00.000Z',
+        verification: 'VERIFIED',
+      } as const;
+      const decoded = yield* Schema.decodeUnknownEffect(UpdatePartyOfficialIdentifierResultSchema)(
+        wire,
+      );
+      assert.equal(Option.isSome(decoded.validTo), true);
+      assert.equal(
+        Option.match(decoded.validTo, {
+          onNone: () => null,
+          onSome: DateTime.formatIso,
+        }),
+        wire.validTo,
+      );
+      assert.deepEqual(
+        yield* Schema.encodeEffect(UpdatePartyOfficialIdentifierResultSchema)(decoded),
+        wire,
+      );
+    }),
+  ));

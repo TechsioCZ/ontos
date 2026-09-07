@@ -1,9 +1,16 @@
-// @effect-diagnostics asyncFunction:off processEnv:off -- Drizzle and Authzed Promise callbacks are contained by the Effect boundary.
 import { v1 } from '@authzed/authzed-node';
 import { and, eq, or } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { Effect, Schema } from 'effect';
+import type { NodePgDatabase, NodePgTransaction } from 'drizzle-orm/node-postgres';
+import {
+  Config,
+  Duration,
+  Effect,
+  Function as EffectFunction,
+  Option,
+  Redacted,
+  Schema,
+} from 'effect';
 import { Pool } from 'pg';
 import { parseDatabaseConfig } from '../db/config.ts';
 import {
@@ -61,9 +68,9 @@ type StageContextKey = keyof typeof STAGE_CONTEXTS;
 type StageContext = (typeof STAGE_CONTEXTS)[StageContextKey];
 
 interface StageContextBootstrapConfiguration {
-  readonly databaseAdminUrl: string;
+  readonly databaseAdminUrl: Redacted.Redacted;
   readonly spiceDbEndpoint: string;
-  readonly spiceDbPreSharedKey: string;
+  readonly spiceDbPreSharedKey: Redacted.Redacted;
   readonly spiceDbSecurity: v1.ClientSecurity;
 }
 
@@ -90,40 +97,94 @@ export type StageContextBootstrapResults = readonly [
 export class StageContextBootstrapError extends Schema.TaggedError<StageContextBootstrapError>()(
   'StageContextBootstrapError',
   {
+    cause: Schema.optionalKey(Schema.Unknown),
     code: Schema.Literal('stage_context_bootstrap_failed'),
     reason: Schema.String,
   },
 ) {}
 
-const failure = (reason: string): StageContextBootstrapError =>
-  new StageContextBootstrapError({ code: 'stage_context_bootstrap_failed', reason });
+const failure = (reason: string, cause?: unknown): StageContextBootstrapError =>
+  new StageContextBootstrapError(
+    cause === undefined
+      ? { code: 'stage_context_bootstrap_failed', reason }
+      : { cause, code: 'stage_context_bootstrap_failed', reason },
+  );
+
+const TrimmedNonEmptyString = Schema.Trim.pipe(Schema.check(Schema.isNonEmpty()));
+const StageEnvironmentSchema = Schema.Trim.pipe(Schema.decodeTo(Schema.Literal('stage')));
+const CauseMessageSchema = Schema.Struct({ message: Schema.String });
+
+const bootstrapFailureFromCause = (cause: unknown): StageContextBootstrapError => {
+  if (Schema.is(StageContextBootstrapError)(cause)) {
+    return cause;
+  }
+  return Schema.decodeUnknownOption(CauseMessageSchema)(cause).pipe(
+    Option.match({
+      onNone: () => failure('The fixed stage Core context could not be reconciled', cause),
+      onSome: ({ message }) => failure(message, cause),
+    }),
+  );
+};
+
+const tryBootstrapPromise = <Value>(
+  evaluate: () => PromiseLike<Value>,
+): Effect.Effect<Value, StageContextBootstrapError> =>
+  Effect.tryPromise({ catch: bootstrapFailureFromCause, try: evaluate }).pipe(
+    Effect.timeoutOrElse({
+      duration: Duration.infinity,
+      orElse: () => Effect.fail(failure('The fixed stage Core context could not be reconciled')),
+    }),
+  );
 
 const loadConfiguration = (): Effect.Effect<
   StageContextBootstrapConfiguration,
   StageContextBootstrapError
 > =>
   Effect.gen(function* loadStageContextBootstrapConfiguration() {
-    const environment = process.env;
-    if (environment['ULTRAMODERN_DEPLOYMENT_ENVIRONMENT']?.trim() !== 'stage') {
-      return yield* failure('The Core installation bootstrap can run only in stage');
-    }
-    const databaseAdminUrl = environment['DATABASE_ADMIN_URL']?.trim();
-    if (databaseAdminUrl === undefined || databaseAdminUrl.length === 0) {
-      return yield* failure('DATABASE_ADMIN_URL is required');
-    }
-    yield* parseDatabaseConfig({ DATABASE_URL: databaseAdminUrl }).pipe(
-      Effect.mapError((error) => failure(error.reason)),
+    const source = yield* Effect.all(
+      {
+        databaseAdminUrl: Config.schema(
+          Schema.Redacted(TrimmedNonEmptyString),
+          'DATABASE_ADMIN_URL',
+        ).pipe(Effect.mapError((cause) => failure('DATABASE_ADMIN_URL is required', cause))),
+        deploymentEnvironment: Config.schema(
+          StageEnvironmentSchema,
+          'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
+        ).pipe(
+          Effect.mapError((cause) =>
+            failure('The Core installation bootstrap can run only in stage', cause),
+          ),
+        ),
+        spiceDbEndpoint: Config.schema(TrimmedNonEmptyString, 'SPICEDB_ENDPOINT').pipe(
+          Effect.mapError((cause) => failure('SPICEDB_ENDPOINT is required', cause)),
+        ),
+        spiceDbInsecure: Config.schema(Schema.Trim, 'SPICEDB_INSECURE').pipe(
+          Effect.mapError((cause) =>
+            failure('SPICEDB_INSECURE must be explicitly true or false', cause),
+          ),
+        ),
+        spiceDbPreSharedKey: Config.redacted('SPICEDB_PRESHARED_KEY').pipe(
+          Effect.mapError((cause) => failure('SPICEDB_PRESHARED_KEY is required', cause)),
+        ),
+      },
+      { concurrency: 5 },
     );
-    const spiceDb = yield* parseSpiceDbConfig(environment).pipe(
-      Effect.mapError((error) => failure(error.reason)),
+    yield* parseDatabaseConfig({ DATABASE_URL: Redacted.value(source.databaseAdminUrl) }).pipe(
+      Effect.mapError((error) => failure(error.reason, error)),
     );
+    const spiceDb = yield* parseSpiceDbConfig({
+      SPICEDB_ENDPOINT: source.spiceDbEndpoint,
+      SPICEDB_INSECURE: source.spiceDbInsecure,
+      SPICEDB_PRESHARED_KEY: Redacted.value(source.spiceDbPreSharedKey),
+      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: source.deploymentEnvironment,
+    }).pipe(Effect.mapError((error) => failure(error.reason, error)));
     if (spiceDb.endpoint !== 'spicedb:50051' || !spiceDb.insecureLocal) {
       return yield* failure('The Core installation bootstrap requires stage-private SpiceDB');
     }
     return {
-      databaseAdminUrl,
+      databaseAdminUrl: source.databaseAdminUrl,
       spiceDbEndpoint: spiceDb.endpoint,
-      spiceDbPreSharedKey: spiceDb.preSharedKey,
+      spiceDbPreSharedKey: Redacted.make(spiceDb.preSharedKey),
       spiceDbSecurity: spiceDbClientSecurity(spiceDb),
     };
   });
@@ -132,28 +193,32 @@ const classifyExactRecord = <Expected extends ExactRecord>(
   label: string,
   existing: ExactRecord | undefined,
   expected: Expected,
-): 'create' | 'existing' => {
+): Effect.Effect<'create' | 'existing', StageContextBootstrapError> => {
   if (existing === undefined) {
-    return 'create';
+    return Effect.succeed('create');
   }
   const conflictingFields = Object.entries(expected).flatMap(([key, value]) =>
     existing[key] === value ? [] : [key],
   );
   if (conflictingFields.length > 0) {
-    throw new Error(
-      `Existing ${label} conflicts with the stage bootstrap definition (${conflictingFields.join(', ')})`,
+    return Effect.fail(
+      failure(
+        `Existing ${label} conflicts with the stage bootstrap definition (${conflictingFields.join(', ')})`,
+      ),
     );
   }
-  return 'existing';
+  return Effect.succeed('existing');
 };
 
-const reconcilePostgresContext = async (
-  database: NodePgDatabase<typeof coreRelations>,
+const reconcilePostgresTransaction = Effect.fn(
+  'StageContextBootstrap.reconcilePostgresTransaction',
+)(function* reconcileStagePostgresTransaction(
+  transaction: NodePgTransaction<typeof coreRelations>,
   context: StageContext,
   authUserId: string,
-): Promise<void> => {
-  await database.transaction(async (transaction) => {
-    const tenantCandidates = await transaction
+): Effect.fn.Return<void, StageContextBootstrapError> {
+  const tenantCandidates = yield* tryBootstrapPromise(() =>
+    transaction
       .select({
         defaultLocale: tenants.defaultLocale,
         name: tenants.name,
@@ -163,22 +228,24 @@ const reconcilePostgresContext = async (
       })
       .from(tenants)
       .where(or(eq(tenants.tenantId, context.tenantId), eq(tenants.slug, context.tenantSlug)))
-      .limit(2);
-    if (tenantCandidates.length > 1) {
-      throw new Error('The stage tenant identity conflicts');
-    }
-    const expectedTenant = {
-      defaultLocale: context.defaultLocale,
-      name: context.tenantName,
-      slug: context.tenantSlug,
-      status: 'active',
-      tenantId: context.tenantId,
-    } as const;
-    if (classifyExactRecord('tenant', tenantCandidates[0], expectedTenant) === 'create') {
-      await transaction.insert(tenants).values(expectedTenant);
-    }
+      .limit(2),
+  );
+  if (tenantCandidates.length > 1) {
+    return yield* failure('The stage tenant identity conflicts');
+  }
+  const expectedTenant = {
+    defaultLocale: context.defaultLocale,
+    name: context.tenantName,
+    slug: context.tenantSlug,
+    status: 'active',
+    tenantId: context.tenantId,
+  } as const;
+  if ((yield* classifyExactRecord('tenant', tenantCandidates[0], expectedTenant)) === 'create') {
+    yield* tryBootstrapPromise(() => transaction.insert(tenants).values(expectedTenant));
+  }
 
-    const legalEntityCandidates = await transaction
+  const legalEntityCandidates = yield* tryBootstrapPromise(() =>
+    transaction
       .select({
         legalEntityId: legalEntities.legalEntityId,
         legalName: legalEntities.legalName,
@@ -198,33 +265,35 @@ const reconcilePostgresContext = async (
           ),
         ),
       )
-      .limit(2);
-    if (legalEntityCandidates.length > 1) {
-      throw new Error('The stage legal-entity identity conflicts');
-    }
-    const expectedLegalEntity = {
-      legalEntityId: context.legalEntityId,
-      legalName: context.legalName,
-      registrationCountry: context.registrationCountry,
-      registrationNumber: context.registrationNumber,
-      status: 'active',
-      tenantId: context.tenantId,
-    } as const;
-    if (
-      classifyExactRecord('legal entity', legalEntityCandidates[0], expectedLegalEntity) ===
-      'create'
-    ) {
-      await transaction.insert(legalEntities).values(expectedLegalEntity);
-    }
+      .limit(2),
+  );
+  if (legalEntityCandidates.length > 1) {
+    return yield* failure('The stage legal-entity identity conflicts');
+  }
+  const expectedLegalEntity = {
+    legalEntityId: context.legalEntityId,
+    legalName: context.legalName,
+    registrationCountry: context.registrationCountry,
+    registrationNumber: context.registrationNumber,
+    status: 'active',
+    tenantId: context.tenantId,
+  } as const;
+  if (
+    (yield* classifyExactRecord('legal entity', legalEntityCandidates[0], expectedLegalEntity)) ===
+    'create'
+  ) {
+    yield* tryBootstrapPromise(() => transaction.insert(legalEntities).values(expectedLegalEntity));
+  }
 
-    const expectedPrincipal = {
-      displayName: context.principalDisplayName,
-      kind: 'human',
-      principalId: context.principalId,
-      status: 'active',
-      tenantId: context.tenantId,
-    } as const;
-    const principalCandidates = await transaction
+  const expectedPrincipal = {
+    displayName: context.principalDisplayName,
+    kind: 'human',
+    principalId: context.principalId,
+    status: 'active',
+    tenantId: context.tenantId,
+  } as const;
+  const principalCandidates = yield* tryBootstrapPromise(() =>
+    transaction
       .select({
         displayName: principals.displayName,
         kind: principals.kind,
@@ -234,12 +303,17 @@ const reconcilePostgresContext = async (
       })
       .from(principals)
       .where(eq(principals.principalId, context.principalId))
-      .limit(1);
-    if (classifyExactRecord('principal', principalCandidates[0], expectedPrincipal) === 'create') {
-      await transaction.insert(principals).values(expectedPrincipal);
-    }
+      .limit(1),
+  );
+  if (
+    (yield* classifyExactRecord('principal', principalCandidates[0], expectedPrincipal)) ===
+    'create'
+  ) {
+    yield* tryBootstrapPromise(() => transaction.insert(principals).values(expectedPrincipal));
+  }
 
-    const bindingCandidates = await transaction
+  const bindingCandidates = yield* tryBootstrapPromise(() =>
+    transaction
       .select({
         principalAuthBindingId: principalAuthBindings.principalAuthBindingId,
         principalId: principalAuthBindings.principalId,
@@ -261,27 +335,34 @@ const reconcilePostgresContext = async (
           ),
         ),
       )
-      .limit(2);
-    if (bindingCandidates.length > 1) {
-      throw new Error('The stage authentication binding conflicts');
-    }
-    const expectedBinding = {
-      principalAuthBindingId: context.authBindingId,
-      principalId: context.principalId,
-      provider: 'better_auth',
-      providerSubjectId: authUserId,
-      status: 'active',
-      subjectType: 'user',
-      tenantId: context.tenantId,
-    } as const;
-    if (
-      classifyExactRecord('authentication binding', bindingCandidates[0], expectedBinding) ===
-      'create'
-    ) {
-      await transaction.insert(principalAuthBindings).values(expectedBinding);
-    }
+      .limit(2),
+  );
+  if (bindingCandidates.length > 1) {
+    return yield* failure('The stage authentication binding conflicts');
+  }
+  const expectedBinding = {
+    principalAuthBindingId: context.authBindingId,
+    principalId: context.principalId,
+    provider: 'better_auth',
+    providerSubjectId: authUserId,
+    status: 'active',
+    subjectType: 'user',
+    tenantId: context.tenantId,
+  } as const;
+  if (
+    (yield* classifyExactRecord(
+      'authentication binding',
+      bindingCandidates[0],
+      expectedBinding,
+    )) === 'create'
+  ) {
+    yield* tryBootstrapPromise(() =>
+      transaction.insert(principalAuthBindings).values(expectedBinding),
+    );
+  }
 
-    const moduleStateCandidates = await transaction
+  const moduleStateCandidates = yield* tryBootstrapPromise(() =>
+    transaction
       .select({
         moduleKey: tenantModuleStates.moduleKey,
         state: tenantModuleStates.state,
@@ -298,167 +379,204 @@ const reconcilePostgresContext = async (
           ),
         ),
       )
-      .limit(2);
-    if (moduleStateCandidates.length > 1) {
-      throw new Error('The stage module-state identity conflicts');
-    }
-    const expectedModuleState = {
-      moduleKey: context.moduleId,
-      state: 'active',
-      tenantId: context.tenantId,
-      tenantModuleStateId: context.moduleStateId,
-    } as const;
-    if (
-      classifyExactRecord('module state', moduleStateCandidates[0], expectedModuleState) ===
-      'create'
-    ) {
-      await transaction.insert(tenantModuleStates).values(expectedModuleState);
-    }
-  });
-};
-
-const buildRelationships = (
-  context: StageContext,
-): readonly StageContextBootstrapRelationship[] => {
-  const legalEntityObjectId = toLegalEntityAccessObjectId(context.tenantId, context.legalEntityId);
-  const moduleObjectId = toModuleAccessObjectId(
-    context.tenantId,
-    context.legalEntityId,
-    context.moduleId,
+      .limit(2),
   );
-  if (legalEntityObjectId === undefined || moduleObjectId === undefined) {
-    throw new Error('The stage authorization object IDs are invalid');
+  if (moduleStateCandidates.length > 1) {
+    return yield* failure('The stage module-state identity conflicts');
   }
-  return [
-    {
-      relation: 'member',
-      resourceId: context.tenantId,
-      resourceType: 'tenant',
-      subjectId: context.principalId,
-      subjectType: 'principal',
-    },
-    {
-      relation: 'tenant',
-      resourceId: legalEntityObjectId,
-      resourceType: 'legal_entity',
-      subjectId: context.tenantId,
-      subjectType: 'tenant',
-    },
-    {
-      relation: 'member',
-      resourceId: legalEntityObjectId,
-      resourceType: 'legal_entity',
-      subjectId: context.principalId,
-      subjectType: 'principal',
-    },
-    {
-      relation: 'legal_entity',
-      resourceId: moduleObjectId,
-      resourceType: 'module_access',
-      subjectId: legalEntityObjectId,
-      subjectType: 'legal_entity',
-    },
-    {
-      relation: 'accessor',
-      resourceId: moduleObjectId,
-      resourceType: 'module_access',
-      subjectId: context.principalId,
-      subjectType: 'principal',
-    },
-  ];
-};
+  const expectedModuleState = {
+    moduleKey: context.moduleId,
+    state: 'active',
+    tenantId: context.tenantId,
+    tenantModuleStateId: context.moduleStateId,
+  } as const;
+  if (
+    (yield* classifyExactRecord('module state', moduleStateCandidates[0], expectedModuleState)) ===
+    'create'
+  ) {
+    yield* tryBootstrapPromise(() =>
+      transaction.insert(tenantModuleStates).values(expectedModuleState),
+    );
+  }
+  return yield* Effect.void;
+});
 
-const touchRelationships = async (
-  configuration: StageContextBootstrapConfiguration,
-  context: StageContext,
-): Promise<void> => {
-  const client = v1.NewClient(
-    configuration.spiceDbPreSharedKey,
-    configuration.spiceDbEndpoint,
-    configuration.spiceDbSecurity,
-  );
-  try {
-    await client.promises.writeRelationships(
-      v1.WriteRelationshipsRequest.create({
-        updates: buildRelationships(context).map((item) =>
-          v1.RelationshipUpdate.create({
-            operation: v1.RelationshipUpdate_Operation.TOUCH,
-            relationship: v1.Relationship.create({
-              relation: item.relation,
-              resource: v1.ObjectReference.create({
-                objectId: item.resourceId,
-                objectType: item.resourceType,
-              }),
-              subject: v1.SubjectReference.create({
-                object: v1.ObjectReference.create({
-                  objectId: item.subjectId,
-                  objectType: item.subjectType,
-                }),
+const reconcilePostgresContext = Effect.fn('StageContextBootstrap.reconcilePostgresContext')(
+  function* reconcileStagePostgresContext(
+    database: NodePgDatabase<typeof coreRelations>,
+    context: StageContext,
+    authUserId: string,
+  ): Effect.fn.Return<void, StageContextBootstrapError> {
+    const effectContext = yield* Effect.context();
+    const runTransaction = EffectFunction.flow(
+      (transaction: NodePgTransaction<typeof coreRelations>) =>
+        reconcilePostgresTransaction(transaction, context, authUserId),
+      Effect.runPromiseWith(effectContext),
+    );
+    yield* tryBootstrapPromise(database.transaction.bind(database, runTransaction));
+  },
+);
+
+const buildRelationships = Effect.fn('StageContextBootstrap.buildRelationships')(
+  function* buildStageContextRelationships(
+    context: StageContext,
+  ): Effect.fn.Return<readonly StageContextBootstrapRelationship[], StageContextBootstrapError> {
+    const legalEntityObjectId = toLegalEntityAccessObjectId(
+      context.tenantId,
+      context.legalEntityId,
+    );
+    const moduleObjectId = toModuleAccessObjectId(
+      context.tenantId,
+      context.legalEntityId,
+      context.moduleId,
+    );
+    if (legalEntityObjectId === undefined || moduleObjectId === undefined) {
+      return yield* failure('The stage authorization object IDs are invalid');
+    }
+    return [
+      {
+        relation: 'member',
+        resourceId: context.tenantId,
+        resourceType: 'tenant',
+        subjectId: context.principalId,
+        subjectType: 'principal',
+      },
+      {
+        relation: 'tenant',
+        resourceId: legalEntityObjectId,
+        resourceType: 'legal_entity',
+        subjectId: context.tenantId,
+        subjectType: 'tenant',
+      },
+      {
+        relation: 'member',
+        resourceId: legalEntityObjectId,
+        resourceType: 'legal_entity',
+        subjectId: context.principalId,
+        subjectType: 'principal',
+      },
+      {
+        relation: 'legal_entity',
+        resourceId: moduleObjectId,
+        resourceType: 'module_access',
+        subjectId: legalEntityObjectId,
+        subjectType: 'legal_entity',
+      },
+      {
+        relation: 'accessor',
+        resourceId: moduleObjectId,
+        resourceType: 'module_access',
+        subjectId: context.principalId,
+        subjectType: 'principal',
+      },
+    ];
+  },
+);
+
+const touchRelationships = Effect.fn('StageContextBootstrap.touchRelationships')(
+  function* touchStageContextRelationships(
+    configuration: StageContextBootstrapConfiguration,
+    context: StageContext,
+  ): Effect.fn.Return<void, StageContextBootstrapError> {
+    const relationships = yield* buildRelationships(context);
+    const request = v1.WriteRelationshipsRequest.create({
+      updates: relationships.map((item) =>
+        v1.RelationshipUpdate.create({
+          operation: v1.RelationshipUpdate_Operation.TOUCH,
+          relationship: v1.Relationship.create({
+            relation: item.relation,
+            resource: v1.ObjectReference.create({
+              objectId: item.resourceId,
+              objectType: item.resourceType,
+            }),
+            subject: v1.SubjectReference.create({
+              object: v1.ObjectReference.create({
+                objectId: item.subjectId,
+                objectType: item.subjectType,
               }),
             }),
           }),
-        ),
+        }),
+      ),
+    });
+    yield* Effect.acquireUseRelease(
+      Effect.try({
+        catch: bootstrapFailureFromCause,
+        try: () =>
+          v1.NewClient(
+            Redacted.value(configuration.spiceDbPreSharedKey),
+            configuration.spiceDbEndpoint,
+            configuration.spiceDbSecurity,
+          ),
       }),
+      (client) =>
+        tryBootstrapPromise(client.promises.writeRelationships.bind(client.promises, request)).pipe(
+          Effect.asVoid,
+        ),
+      (client) => Effect.try({ catch: bootstrapFailureFromCause, try: () => client.close() }),
     );
-  } finally {
-    client.close();
-  }
-};
+  },
+);
 
 /**
  * Reconciles the complete fixed set of stage contexts before their principals/tenants can exist.
  * The caller supplies only the Shell-owned Better Auth user IDs in the documented fixed order.
  */
-export const reconcileStageContextBootstraps = (
+export const reconcileStageContextBootstraps = Effect.fn(
+  'StageContextBootstrap.reconcileStageContextBootstraps',
+)(function* reconcileFixedStageContexts(
   providerUserIds: StageContextBootstrapProviderUserIds,
-): Effect.Effect<StageContextBootstrapResults, StageContextBootstrapError> =>
-  Effect.gen(function* reconcileFixedStageContexts() {
-    const [techsioProviderUserId, siamparkProviderUserId] = providerUserIds;
-    if (techsioProviderUserId.trim().length === 0 || siamparkProviderUserId.trim().length === 0) {
-      return yield* failure('Both Better Auth provider user IDs are required');
-    }
-    if (techsioProviderUserId === siamparkProviderUserId) {
-      return yield* failure('The stage contexts require distinct Better Auth provider user IDs');
-    }
-    const contexts = [
-      { context: STAGE_CONTEXTS.techsio, providerUserId: techsioProviderUserId },
-      { context: STAGE_CONTEXTS.siampark, providerUserId: siamparkProviderUserId },
-    ] as const;
-    const configuration = yield* loadConfiguration();
-    yield* Effect.tryPromise({
-      catch: (cause) =>
-        failure(
-          cause instanceof Error
-            ? cause.message
-            : 'The fixed stage Core context could not be reconciled',
-        ),
-      try: async () => {
-        const pool = new Pool({ connectionString: configuration.databaseAdminUrl });
-        try {
-          const database = drizzle({ client: pool, relations: coreRelations });
-          for (const { context, providerUserId } of contexts) {
+): Effect.fn.Return<StageContextBootstrapResults, StageContextBootstrapError> {
+  const [techsioProviderUserId, siamparkProviderUserId] = providerUserIds;
+  if (techsioProviderUserId.trim().length === 0 || siamparkProviderUserId.trim().length === 0) {
+    return yield* failure('Both Better Auth provider user IDs are required');
+  }
+  if (techsioProviderUserId === siamparkProviderUserId) {
+    return yield* failure('The stage contexts require distinct Better Auth provider user IDs');
+  }
+  const contexts = [
+    { context: STAGE_CONTEXTS.techsio, providerUserId: techsioProviderUserId },
+    { context: STAGE_CONTEXTS.siampark, providerUserId: siamparkProviderUserId },
+  ] as const;
+  const configuration = yield* loadConfiguration();
+  yield* Effect.acquireUseRelease(
+    Effect.try({
+      catch: bootstrapFailureFromCause,
+      try: () =>
+        new Pool({
+          connectionString: Redacted.value(configuration.databaseAdminUrl),
+        }),
+    }),
+    (pool) =>
+      Effect.try({
+        catch: bootstrapFailureFromCause,
+        try: () => drizzle({ client: pool, relations: coreRelations }),
+      }).pipe(
+        Effect.flatMap((database) =>
+          Effect.forEach(
+            contexts,
+            ({ context, providerUserId }) =>
+              reconcilePostgresContext(database, context, providerUserId).pipe(
+                Effect.andThen(touchRelationships(configuration, context)),
+              ),
             // The fixed installation set is intentionally reconciled in order to avoid racing
             // cross-store bootstrap writes and to make a retry's stopping point deterministic.
-            // eslint-disable-next-line no-await-in-loop
-            await reconcilePostgresContext(database, context, providerUserId);
-            // eslint-disable-next-line no-await-in-loop
-            await touchRelationships(configuration, context);
-          }
-        } finally {
-          await pool.end();
-        }
-      },
-    });
-    return [
-      {
-        legalEntityId: STAGE_CONTEXTS.techsio.legalEntityId,
-        principalId: STAGE_CONTEXTS.techsio.principalId,
-        tenantId: STAGE_CONTEXTS.techsio.tenantId,
-      },
-      {
-        legalEntityId: STAGE_CONTEXTS.siampark.legalEntityId,
-        principalId: STAGE_CONTEXTS.siampark.principalId,
-        tenantId: STAGE_CONTEXTS.siampark.tenantId,
-      },
-    ];
-  });
+            { concurrency: 1, discard: true },
+          ),
+        ),
+      ),
+    (pool) => tryBootstrapPromise(pool.end.bind(pool)),
+  );
+  return [
+    {
+      legalEntityId: STAGE_CONTEXTS.techsio.legalEntityId,
+      principalId: STAGE_CONTEXTS.techsio.principalId,
+      tenantId: STAGE_CONTEXTS.techsio.tenantId,
+    },
+    {
+      legalEntityId: STAGE_CONTEXTS.siampark.legalEntityId,
+      principalId: STAGE_CONTEXTS.siampark.principalId,
+      tenantId: STAGE_CONTEXTS.siampark.tenantId,
+    },
+  ];
+});

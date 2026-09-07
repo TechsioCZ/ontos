@@ -1,20 +1,39 @@
-/* eslint-disable max-classes-per-file -- The engagement boundary owns one closed error vocabulary. */
-import { Schema } from 'effect';
+import { DateTime, Option, Schema, SchemaGetter } from 'effect';
 import { CounterpartyRefSchema, PartyRefSchema } from '../party-registry-references.ts';
 import { OrganizationEngagementProfileRefSchema } from '../resources/organization-engagement-profile.ts';
 import { PersonEngagementProfileRefSchema } from '../resources/person-engagement-profile.ts';
 
-export const EngagementProfileIdSchema = Schema.String.check(Schema.isUUID());
-export const EngagementIsoTimestampSchema = Schema.String.check(
+export {
+  EngagementProfileIdSchema,
+  EngagementProfileNotFound,
+} from './engagement-profile-errors/not-found.ts';
+export { EngagementProfileConflict } from './engagement-profile-errors/conflict.ts';
+export { EngagementProfilePersistenceUnavailable } from './engagement-profile-errors/persistence-unavailable.ts';
+export { PartyRegistryReferenceUnavailable } from './engagement-profile-errors/party-registry-reference-unavailable.ts';
+
+export const EngagementIsoTimestampSchema = Schema.DateTimeUtcFromString;
+const EngagementIsoTimestampJsonSchema = Schema.String.check(
   Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u),
+  Schema.makeFilter((value) => {
+    const parsed = DateTime.make(value);
+    const canonicalInput = value.length === 20 ? value.replace(/Z$/u, '.000Z') : value;
+    return Option.isSome(parsed) && DateTime.formatIso(parsed.value) === canonicalInput
+      ? undefined
+      : 'invalid UTC calendar timestamp';
+  }),
+).pipe(
+  Schema.decode({
+    decode: SchemaGetter.dateTimeUtcFromInput<string>().map(DateTime.formatIso),
+    encode: SchemaGetter.dateTimeUtcFromInput<string>().map(DateTime.formatIso),
+  }),
 );
 
 const commonFields = {
-  archivedAt: Schema.NullOr(EngagementIsoTimestampSchema),
-  counterpartyRef: Schema.NullOr(CounterpartyRefSchema),
-  createdAt: EngagementIsoTimestampSchema,
+  archivedAt: Schema.toEncoded(Schema.OptionFromNullOr(EngagementIsoTimestampJsonSchema)),
+  counterpartyRef: Schema.toEncoded(Schema.OptionFromNullOr(CounterpartyRefSchema)),
+  createdAt: EngagementIsoTimestampJsonSchema,
   partyRef: PartyRefSchema,
-  updatedAt: EngagementIsoTimestampSchema,
+  updatedAt: EngagementIsoTimestampJsonSchema,
 } as const;
 
 export const OrganizationEngagementProfileSchema = Schema.Struct({
@@ -52,44 +71,3 @@ export const PersonEngagementLifecyclePayloadSchema = Schema.Struct({
   profileRef: PersonEngagementProfileRefSchema,
 });
 export type PersonEngagementLifecyclePayload = typeof PersonEngagementLifecyclePayloadSchema.Type;
-
-export class EngagementProfileNotFound extends Schema.TaggedError<EngagementProfileNotFound>()(
-  'EngagementProfileNotFound',
-  {
-    code: Schema.Literal('contacts_engagement_profile_not_found'),
-    profileId: EngagementProfileIdSchema,
-    reason: Schema.String,
-  },
-) {}
-
-export class EngagementProfileConflict extends Schema.TaggedError<EngagementProfileConflict>()(
-  'EngagementProfileConflict',
-  {
-    code: Schema.Literals([
-      'contacts_counterparty_customer_role_required',
-      'contacts_engagement_profile_already_exists',
-      'contacts_engagement_profile_lifecycle_conflict',
-      'contacts_party_counterparty_mismatch',
-      'contacts_party_alias_requires_canonical_reference',
-      'contacts_party_archived',
-      'contacts_party_type_mismatch',
-    ]),
-    reason: Schema.String,
-  },
-) {}
-
-export class EngagementProfilePersistenceUnavailable extends Schema.TaggedError<EngagementProfilePersistenceUnavailable>()(
-  'EngagementProfilePersistenceUnavailable',
-  {
-    code: Schema.Literal('contacts_engagement_profile_persistence_unavailable'),
-    reason: Schema.String,
-  },
-) {}
-
-export class PartyRegistryReferenceUnavailable extends Schema.TaggedError<PartyRegistryReferenceUnavailable>()(
-  'PartyRegistryReferenceUnavailable',
-  {
-    code: Schema.Literal('party_registry_reference_unavailable'),
-    reason: Schema.String,
-  },
-) {}

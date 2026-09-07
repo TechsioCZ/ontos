@@ -1,8 +1,8 @@
-/* eslint-disable no-await-in-loop -- Recovery outcomes intentionally exercise separate sequential transport fixtures. */
-// @effect-diagnostics asyncFunction:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Result, Schema } from 'effect';
+import { Effect, Match, Result, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 import {
   PartyCommandCommitIndeterminateProblemSchema,
@@ -12,13 +12,16 @@ import {
   partyRegistryCommandRecoveryApi,
   partyRegistryCommandsApi,
 } from '../../shared/command-api.ts';
+import { ActionInvocationIdSchema } from '../../shared/domain/correction-contracts.ts';
 import {
   requestSearchRebuildWithAuthorization,
   resolvePartyCommandCommit,
   recoverPartyCreate,
 } from '../../src/api/party-command-client.ts';
 
-const invocationId = '10000000-0000-4000-8000-000000000001';
+const invocationId = Schema.decodeUnknownSync(ActionInvocationIdSchema)(
+  '10000000-0000-4000-8000-000000000001',
+);
 
 test('already committed is terminal and carries the invocation for governed refresh', () => {
   const problem = {
@@ -111,7 +114,7 @@ test('the command client decodes indeterminate commits without losing recovery m
         status: 503,
       }),
     );
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     requestSearchRebuildWithAuthorization({}, 'Bearer test', {
       baseUrl: 'https://party.example/party-registry-api',
       correlationId: 'uncertain',
@@ -141,7 +144,7 @@ test('the command client preserves committed invocation metadata across HTTP', a
         status: 409,
       }),
     );
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     requestSearchRebuildWithAuthorization({}, 'Bearer test', {
       baseUrl: 'https://party.example/party-registry-api',
       correlationId: 'committed',
@@ -173,7 +176,7 @@ test('recovery acquires a fresh assertion without submitting an idempotency key 
       }),
     );
   };
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     resolvePartyCommandCommit(
       { invocationId },
       {
@@ -201,70 +204,76 @@ test('recovery acquires a fresh assertion without submitting an idempotency key 
 });
 
 test('Create recovery resolves commit and returns exact original operation result with fresh read authority', async () => {
-  for (const outcome of ['CREATED', 'MATCHED_EXISTING', 'AMBIGUOUS'] as const) {
-    const requests: Request[] = [];
-    let assertions = 0;
-    const partyRef = {
-      moduleId: 'party.registry',
-      resourceId: invocationId,
-      resourceType: 'party.registry.party',
-      tenantId: invocationId,
-    };
-    const decisionRef = { ...partyRef, resourceType: 'party.registry.party-match-decision' };
-    const caseRef = { ...partyRef, resourceType: 'party.registry.duplicate-candidate-case' };
-    const fakeFetch: typeof fetch = (input, init) => {
-      const request = new Request(input, init);
-      requests.push(request);
-      if (new URL(request.url).hostname === 'shell.example') {
-        return Promise.resolve(
-          Response.json({ expiresAt: 2_000_000_000, token: `fresh-${(assertions += 1)}` }),
-        );
-      }
-      if (request.url.endsWith('/resolve')) {
+  await Promise.all(
+    (['CREATED', 'MATCHED_EXISTING', 'AMBIGUOUS'] as const).map(async (outcome) => {
+      const requests: Request[] = [];
+      let assertions = 0;
+      const partyRef = {
+        moduleId: 'party.registry',
+        resourceId: invocationId,
+        resourceType: 'party.registry.party',
+        tenantId: invocationId,
+      };
+      const decisionRef = { ...partyRef, resourceType: 'party.registry.party-match-decision' };
+      const caseRef = { ...partyRef, resourceType: 'party.registry.duplicate-candidate-case' };
+      const fakeFetch: typeof fetch = (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        if (new URL(request.url).hostname === 'shell.example') {
+          return Promise.resolve(
+            Response.json({ expiresAt: 2_000_000_000, token: `fresh-${(assertions += 1)}` }),
+          );
+        }
+        if (request.url.endsWith('/resolve')) {
+          return Promise.resolve(
+            Response.json({
+              _tag: 'PartyCommandCommitResolution',
+              invocationId,
+              retryCommand: false,
+              state: 'COMMITTED',
+            }),
+          );
+        }
         return Promise.resolve(
           Response.json({
-            _tag: 'PartyCommandCommitResolution',
-            invocationId,
-            retryCommand: false,
-            state: 'COMMITTED',
+            caseRef: outcome === 'AMBIGUOUS' ? caseRef : null,
+            committedCreateOutcome: outcome,
+            decidedAt: '2026-09-04T00:00:00Z',
+            decisionRef,
+            evidenceExplanation: [],
+            matchRuleVersion: 'party-exact-claims.v1',
+            operation: 'CREATE',
+            outcome: outcome === 'MATCHED_EXISTING' ? 'MATCHED' : outcome,
+            partyRef: outcome === 'AMBIGUOUS' ? null : partyRef,
           }),
         );
-      }
-      return Promise.resolve(
-        Response.json({
-          caseRef: outcome === 'AMBIGUOUS' ? caseRef : null,
-          committedCreateOutcome: outcome,
-          decidedAt: '2026-09-04T00:00:00Z',
-          decisionRef,
-          evidenceExplanation: [],
-          matchRuleVersion: 'party-exact-claims.v1',
-          operation: 'CREATE',
-          outcome: outcome === 'MATCHED_EXISTING' ? 'MATCHED' : outcome,
-          partyRef: outcome === 'AMBIGUOUS' ? null : partyRef,
-        }),
+      };
+      const recovered = await runEffectTestPromise(
+        recoverPartyCreate(
+          { invocationId },
+          {
+            baseUrl: 'https://party.example/party-registry-api',
+            correlationId: 'recover',
+            gateway: { baseUrl: 'https://shell.example/shell-super-app-api' },
+          },
+        ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch)),
       );
-    };
-    const recovered = await Effect.runPromise(
-      recoverPartyCreate(
-        { invocationId },
-        {
-          baseUrl: 'https://party.example/party-registry-api',
-          correlationId: 'recover',
-          gateway: { baseUrl: 'https://shell.example/shell-super-app-api' },
-        },
-      ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch)),
-    );
-    assert.equal(recovered._tag, 'PartyCreateRecovered');
-    if (recovered._tag === 'PartyCreateRecovered') {
-      assert.equal(recovered.result.outcome, outcome);
-    }
-    assert.equal(assertions, 2);
-    assert.equal(requests.length, 4);
-    assert.ok(
-      requests.every(
-        (request) =>
-          !request.url.includes('/commands/') && request.headers.get('idempotency-key') === null,
-      ),
-    );
-  }
+      const recoveredResult = Match.value(recovered).pipe(
+        Match.tag('PartyCreateRecovered', ({ result }) => result),
+        Match.tag('PartyCreateRecoveryPending', ({ resolution }) =>
+          assert.fail(`Expected committed recovery, received ${resolution.state}`),
+        ),
+        Match.exhaustive,
+      );
+      assert.equal(recoveredResult.outcome, outcome);
+      assert.equal(assertions, 2);
+      assert.equal(requests.length, 4);
+      assert.ok(
+        requests.every(
+          (request) =>
+            !request.url.includes('/commands/') && request.headers.get('idempotency-key') === null,
+        ),
+      );
+    }),
+  );
 });

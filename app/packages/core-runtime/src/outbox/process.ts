@@ -1,21 +1,29 @@
-/* oxlint-disable typescript/return-await */
-// @effect-diagnostics asyncFunction:off
-/* eslint-disable promise/prefer-await-to-then -- Promises are used only at the Node process edge. */
-import { Config, Effect, Layer, ManagedRuntime, Option, Random } from 'effect';
-import { DatabaseConfigLive } from '../db/config.ts';
-import { CoreDatabaseLive } from '../db/client.ts';
+import {
+  Config,
+  Effect,
+  Exit,
+  Function as Fn,
+  Logger,
+  ManagedRuntime,
+  Option,
+  Random,
+  References,
+  Schema,
+  Tracer,
+} from 'effect';
+import type { Layer } from 'effect';
 import type {
   AnyOutboxWorkerRegistration,
   OutboxWorkerRequirements,
   OutboxWorkerSubscription,
 } from './definition.ts';
+import type { createOutboxWorkerHealth, serveOutboxWorkerHealth } from './health.ts';
 import { parseOutboxPollingConfig, runOutboxPollingLoop } from './poller.ts';
 import type { RunOutboxPollingLoopInput } from './poller.ts';
-import { createOutboxWorkerHealth, serveOutboxWorkerHealth } from './health.ts';
-import { OutboxRuntimeLive } from './runtime.ts';
 import type { OutboxRuntime } from './runtime.ts';
 
-type ShutdownSignal = 'SIGINT' | 'SIGTERM';
+export const ShutdownSignalSchema = Schema.Literals(['SIGINT', 'SIGTERM']);
+export type ShutdownSignal = typeof ShutdownSignalSchema.Type;
 
 export interface RunOutboxWorkerProcessInput<
   Registration extends AnyOutboxWorkerRegistration = AnyOutboxWorkerRegistration,
@@ -48,10 +56,21 @@ const waitForShutdownSignal = Effect.callback<ShutdownSignal>((resume) => {
 
 const healthPortConfig = Config.option(Config.port('OUTBOX_WORKER_HEALTH_PORT'));
 
-export const OutboxWorkerInfrastructureLive = OutboxRuntimeLive.pipe(
-  Layer.provide(CoreDatabaseLive),
-  Layer.provide(DatabaseConfigLive),
-);
+export { OutboxRuntimeLive as OutboxWorkerInfrastructureLive } from './runtime.ts';
+
+const processTracer = Tracer.make({
+  span: (options) => new Tracer.NativeSpan(options),
+});
+
+interface OutboxWorkerHealthApi {
+  readonly createOutboxWorkerHealth: typeof createOutboxWorkerHealth;
+  readonly serveOutboxWorkerHealth: typeof serveOutboxWorkerHealth;
+}
+
+const loadOutboxWorkerHealthApi = Effect.suspend(() => {
+  const healthApi: Promise<OutboxWorkerHealthApi> = import('./health.ts');
+  return Effect.promise(Fn.constant(healthApi)).pipe(Effect.timeout('30 seconds'), Effect.orDie);
+});
 
 export const runOutboxWorkerProcess = <Registration extends AnyOutboxWorkerRegistration>(
   input: RunOutboxWorkerProcessInput<Registration>,
@@ -62,16 +81,17 @@ export const runOutboxWorkerProcess = <Registration extends AnyOutboxWorkerRegis
       const config = yield* parseOutboxPollingConfig({
         defaultClaimOwner: `${input.claimOwnerPrefix}:${process.pid}:${processNonce}`,
       });
+      const healthApi = input.health === true ? yield* loadOutboxWorkerHealthApi : undefined;
       const health =
-        input.health === true
-          ? yield* createOutboxWorkerHealth({
+        healthApi === undefined
+          ? undefined
+          : yield* healthApi.createOutboxWorkerHealth({
               staleAfterMs: Math.max(5000, config.pollIntervalMs * 3),
-            })
-          : undefined;
-      if (health !== undefined) {
+            });
+      if (health !== undefined && healthApi !== undefined) {
         const configuredHealthPort = yield* healthPortConfig;
         if (Option.isSome(configuredHealthPort)) {
-          yield* serveOutboxWorkerHealth(health, { port: configuredHealthPort.value });
+          yield* healthApi.serveOutboxWorkerHealth(health, { port: configuredHealthPort.value });
         }
       }
       yield* Effect.annotateLogs(Effect.logInfo('Outbox Worker process started'), {
@@ -113,15 +133,17 @@ export const startOutboxWorkerProcess = <
     processInput = { ...processInput, health: input.health };
   }
   const runtime = ManagedRuntime.make(input.layer);
-  void runtime
-    .runPromise(runOutboxWorkerProcess(processInput))
-    .then(
-      () => {
-        process.exitCode = 0;
+  runtime.runCallback(
+    runOutboxWorkerProcess(processInput).pipe(
+      Effect.withLogger(Logger.defaultLogger),
+      Effect.withTracer(processTracer),
+      Effect.provideService(References.MinimumLogLevel, 'Info'),
+      Effect.ensuring(runtime.disposeEffect),
+    ),
+    {
+      onExit: (exit) => {
+        process.exitCode = Exit.isSuccess(exit) ? 0 : 1;
       },
-      () => {
-        process.exitCode = 1;
-      },
-    )
-    .finally(async () => runtime.dispose());
+    },
+  );
 };

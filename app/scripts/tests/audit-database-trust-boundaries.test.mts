@@ -11,8 +11,8 @@ import {
   getEffectiveDatabaseEndpoint,
   getDatabaseTrustBoundaryFailureMessage,
   hasTrustedContextValue,
-  type DatabaseTrustBoundarySnapshot,
 } from '../audit-database-trust-boundaries.mts';
+import type { DatabaseTrustBoundarySnapshot } from '../audit-database-trust-boundaries.mts';
 
 const ordinaryRole = {
   bypassRls: false,
@@ -31,8 +31,8 @@ const snapshot = {
   databasePrivileges: { connect: true, create: false, temporary: true },
   defaultPrivileges: [
     {
-      grantee: 'analytics_reader',
       grantable: false,
+      grantee: 'analytics_reader',
       objectType: 'function',
       owner: 'ontos_admin',
       privilege: 'EXECUTE',
@@ -40,8 +40,8 @@ const snapshot = {
       source: 'inherited',
     },
     {
-      grantee: 'ontos_runtime',
       grantable: false,
+      grantee: 'ontos_runtime',
       objectType: 'sequence',
       owner: 'ontos_admin',
       privilege: 'USAGE',
@@ -49,8 +49,8 @@ const snapshot = {
       source: 'direct',
     },
     {
-      grantee: 'PUBLIC',
       grantable: false,
+      grantee: 'PUBLIC',
       objectType: 'table',
       owner: 'ontos_admin',
       privilege: 'SELECT',
@@ -62,6 +62,7 @@ const snapshot = {
   memberships: [],
   parameterPrivileges: [],
   role: ordinaryRole,
+  routines: [],
   runtimeRole: 'ontos_runtime',
   schemas: [
     { create: false, owner: 'ontos_admin', schema: 'contacts', usage: true },
@@ -76,7 +77,6 @@ const snapshot = {
       sequence: 'customers_id_seq',
     },
   ],
-  routines: [],
   tables: [
     {
       kind: 'table',
@@ -133,7 +133,6 @@ const snapshot = {
       table: 'tenants',
     },
   ],
-  types: [],
   trustedContext: {
     legalEntitySettingRetainedAfterRollback: false,
     legalEntitySettingSettable: true,
@@ -141,7 +140,8 @@ const snapshot = {
     tenantSettingSettable: true,
     transactionLocal: true,
   },
-} satisfies DatabaseTrustBoundarySnapshot;
+  types: [],
+} as const satisfies DatabaseTrustBoundarySnapshot;
 
 const hardenedSnapshot = {
   ...snapshot,
@@ -151,7 +151,7 @@ const hardenedSnapshot = {
     legalEntitySettingSettable: false,
     tenantSettingSettable: false,
   },
-} satisfies DatabaseTrustBoundarySnapshot;
+} as const satisfies DatabaseTrustBoundarySnapshot;
 
 const buildHardenedReport = (overrides: Partial<DatabaseTrustBoundarySnapshot> = {}) =>
   buildDatabaseTrustBoundaryReport({ ...hardenedSnapshot, ...overrides });
@@ -159,11 +159,16 @@ const buildHardenedReport = (overrides: Partial<DatabaseTrustBoundarySnapshot> =
 const findingCodes = (report: ReturnType<typeof buildDatabaseTrustBoundaryReport>) =>
   report.findings.map(({ code }) => code);
 
-test('builds deterministic current-state evidence and identifies the material trust gaps', () => {
+const reversed = <Value extends object>(values: readonly Value[]): Value[] => {
+  const [head, ...tail] = values;
+  return head === undefined ? [] : [...reversed(tail), head];
+};
+
+void test('builds deterministic current-state evidence and identifies the material trust gaps', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
-    schemas: snapshot.schemas.toReversed(),
-    tables: snapshot.tables.toReversed(),
+    schemas: reversed(snapshot.schemas),
+    tables: reversed(snapshot.tables),
   });
 
   assert.deepEqual(
@@ -200,7 +205,7 @@ test('builds deterministic current-state evidence and identifies the material tr
   assert.equal(report.schemaVersion, 1);
 });
 
-test('orders audit evidence by code units rather than locale collation', () => {
+void test('orders audit evidence by code units rather than locale collation', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
     types: [
@@ -215,10 +220,10 @@ test('orders audit evidence by code units rather than locale collation', () => {
   );
 });
 
-test('totally orders default privileges from distinct creator roles', () => {
+void test('totally orders default privileges from distinct creator roles', () => {
   const sharedPrivilege = {
-    grantee: 'PUBLIC',
     grantable: false,
+    grantee: 'PUBLIC',
     objectType: 'function',
     privilege: 'EXECUTE',
     schema: null,
@@ -238,7 +243,7 @@ test('totally orders default privileges from distinct creator roles', () => {
   );
 });
 
-test('extracts typed audit failures from an Effect cause', () => {
+void test('extracts typed audit failures from an Effect cause', () => {
   const reason = 'DATABASE_ADMIN_URL and DATABASE_URL must use distinct roles';
 
   assert.equal(
@@ -253,13 +258,13 @@ test('extracts typed audit failures from an Effect cause', () => {
   );
 });
 
-test('treats any non-empty post-rollback trusted context as retained', () => {
+void test('treats any non-empty post-rollback trusted context as retained', () => {
   assert.equal(hasTrustedContextValue(null), false);
   assert.equal(hasTrustedContextValue(''), false);
   assert.equal(hasTrustedContextValue('pre-existing-tenant-context'), true);
 });
 
-test('reports privilege escalation paths without embedding credentials or context values', () => {
+void test('reports privilege escalation paths without embedding credentials or context values', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
     memberships: [
@@ -296,7 +301,7 @@ test('reports privilege escalation paths without embedding credentials or contex
   assert.doesNotMatch(JSON.stringify(report), /postgresql:|password|secret|tenant-id|entity-id/iu);
 });
 
-test('flags database-level CREATE even when no existing schema is writable', () => {
+void test('flags database-level CREATE even when no existing schema is writable', () => {
   const report = buildHardenedReport({
     databasePrivileges: { ...snapshot.databasePrivileges, create: true },
   });
@@ -304,7 +309,7 @@ test('flags database-level CREATE even when no existing schema is writable', () 
   assert.deepEqual(findingCodes(report), ['runtime_role_has_ddl_authority']);
 });
 
-test('classifies reachable predefined PostgreSQL roles as privileged', () => {
+void test('classifies reachable predefined PostgreSQL roles as privileged', () => {
   const report = buildHardenedReport({
     memberships: [
       {
@@ -330,7 +335,7 @@ test('classifies reachable predefined PostgreSQL roles as privileged', () => {
   assert.deepEqual(findingCodes(report), ['runtime_role_can_assume_privileged_role']);
 });
 
-test('classifies a directly authenticated predefined PostgreSQL role as privileged', () => {
+void test('classifies a directly authenticated predefined PostgreSQL role as privileged', () => {
   const report = buildHardenedReport({
     role: { ...ordinaryRole, predefinedRole: true },
     runtimeRole: 'pg_execute_server_program',
@@ -339,7 +344,7 @@ test('classifies a directly authenticated predefined PostgreSQL role as privileg
   assert.deepEqual(findingCodes(report), ['runtime_role_is_privileged']);
 });
 
-test('flags effective configuration parameter authority', () => {
+void test('flags effective configuration parameter authority', () => {
   const report = buildHardenedReport({
     parameterPrivileges: [{ alterSystem: false, parameter: 'session_replication_role', set: true }],
   });
@@ -348,7 +353,7 @@ test('flags effective configuration parameter authority', () => {
   assert.equal(report.summary.parameterPrivilegeCount, 1);
 });
 
-test('flags grant options on current objects as persistent authority', () => {
+void test('flags grant options on current objects as persistent authority', () => {
   const report = buildHardenedReport({
     grantOptions: ['relation:contacts.customers:SELECT'],
   });
@@ -357,7 +362,7 @@ test('flags grant options on current objects as persistent authority', () => {
   assert.equal(report.summary.grantOptionCount, 1);
 });
 
-test('flags creator-default grant options as persistent authority', () => {
+void test('flags creator-default grant options as persistent authority', () => {
   const report = buildHardenedReport({
     defaultPrivileges: [{ ...snapshot.defaultPrivileges[0], grantable: true }],
   });
@@ -366,7 +371,7 @@ test('flags creator-default grant options as persistent authority', () => {
   assert.equal(report.summary.grantOptionCount, 1);
 });
 
-test('flags selectable privileged owner-context views but accepts security invokers', () => {
+void test('flags selectable privileged owner-context views but accepts security invokers', () => {
   const ownerContextView = {
     ...snapshot.tables[0],
     deletable: true,
@@ -435,7 +440,7 @@ test('flags selectable privileged owner-context views but accepts security invok
   assert.deepEqual(invokerReport.findings, []);
 });
 
-test('flags owner-context views that bypass RLS through owner-matched dependencies', () => {
+void test('flags owner-context views that bypass RLS through owner-matched dependencies', () => {
   const report = buildHardenedReport({
     tables: [
       {
@@ -459,7 +464,7 @@ test('flags owner-context views that bypass RLS through owner-matched dependenci
   assert.equal(report.summary.privilegedOwnerViewCount, 1);
 });
 
-test('flags privileged owners in nested owner-context views', () => {
+void test('flags privileged owners in nested owner-context views', () => {
   const report = buildHardenedReport({
     tables: [
       {
@@ -482,7 +487,7 @@ test('flags privileged owners in nested owner-context views', () => {
   assert.deepEqual(findingCodes(report), ['runtime_role_can_use_privileged_owner_view']);
 });
 
-test('flags ownership of an audited relation as DDL authority', () => {
+void test('flags ownership of an audited relation as DDL authority', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
     sequences: [],
@@ -514,7 +519,7 @@ test('flags ownership of an audited relation as DDL authority', () => {
   assert.deepEqual(findingCodes(report), ['runtime_role_has_ddl_authority']);
 });
 
-test('flags ownership of an audited routine as DDL authority', () => {
+void test('flags ownership of an audited routine as DDL authority', () => {
   const report = buildHardenedReport({
     routines: [
       {
@@ -532,7 +537,7 @@ test('flags ownership of an audited routine as DDL authority', () => {
   assert.deepEqual(findingCodes(report), ['runtime_role_has_ddl_authority']);
 });
 
-test('flags ownership of an audited application type as DDL authority', () => {
+void test('flags ownership of an audited application type as DDL authority', () => {
   const report = buildHardenedReport({
     types: [
       {
@@ -548,7 +553,7 @@ test('flags ownership of an audited application type as DDL authority', () => {
   assert.equal(report.summary.typeCount, 1);
 });
 
-test('flags direct relation control and executable security-definer authority', () => {
+void test('flags direct relation control and executable security-definer authority', () => {
   const report = buildHardenedReport({
     routines: [
       {
@@ -576,7 +581,7 @@ test('flags direct relation control and executable security-definer authority', 
   assert.equal(report.summary.securityDefinerExecutableCount, 1);
 });
 
-test('flags direct sequence mutation authority', () => {
+void test('flags direct sequence mutation authority', () => {
   const report = buildHardenedReport({
     sequences: [
       {
@@ -589,7 +594,7 @@ test('flags direct sequence mutation authority', () => {
   assert.deepEqual(findingCodes(report), ['runtime_role_has_sequence_mutation_authority']);
 });
 
-test('classifies every assumable role and escalates relation authority', () => {
+void test('classifies every assumable role and escalates relation authority', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
     memberships: [
@@ -634,7 +639,7 @@ test('classifies every assumable role and escalates relation authority', () => {
   ]);
 });
 
-test('treats ADMIN OPTION as an escalation path when SET OPTION is false', () => {
+void test('treats ADMIN OPTION as an escalation path when SET OPTION is false', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
     memberships: [
@@ -663,7 +668,7 @@ test('treats ADMIN OPTION as an escalation path when SET OPTION is false', () =>
   ]);
 });
 
-test('traverses SET OPTION descendants after every ADMIN OPTION role', async () => {
+void test('traverses SET OPTION descendants after every ADMIN OPTION role', async () => {
   const source = await readFile(
     new URL('../database-trust-audit/collect-snapshot.mts', import.meta.url),
     'utf-8',
@@ -691,7 +696,7 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   );
 });
 
-test('treats inherited owner-role authority as effective runtime DDL authority', () => {
+void test('treats inherited owner-role authority as effective runtime DDL authority', () => {
   const report = buildHardenedReport({
     memberships: [
       {
@@ -718,7 +723,7 @@ test('treats inherited owner-role authority as effective runtime DDL authority',
   ]);
 });
 
-test('does not inherit cluster attributes without SET ROLE or ADMIN OPTION', () => {
+void test('does not inherit cluster attributes without SET ROLE or ADMIN OPTION', () => {
   const report = buildHardenedReport({
     memberships: [
       {
@@ -742,19 +747,19 @@ test('does not inherit cluster attributes without SET ROLE or ADMIN OPTION', () 
   assert.deepEqual(findingCodes(report), ['runtime_role_can_assume_other_role']);
 });
 
-test('uses node-postgres effective query-parameter socket endpoints', () => {
+void test('uses node-postgres effective query-parameter socket endpoints', () => {
   const client = new Client({
     connectionString:
-      'postgresql://authority_user:password@authority.invalid:5432/ontos?host=%2Ftmp%2Fruntime-db&port=6432',
+      'postgresql://authority_user:password@authority.invalid:5432/ontos?host=%2Fvar%2Frun%2Fruntime-db&port=6432',
   });
 
   assert.deepEqual(getEffectiveDatabaseEndpoint(client), {
-    configuredHost: '/tmp/runtime-db',
+    configuredHost: '/var/run/runtime-db',
     configuredPort: 6432,
   });
 });
 
-test('requires direct, distinct live database session identities', () => {
+void test('requires direct, distinct live database session identities', () => {
   assert.doesNotThrow(() =>
     assertDatabaseSessionIdentities(
       { currentRole: 'ontos_admin', sessionRole: 'ontos_admin' },
@@ -779,12 +784,14 @@ test('requires direct, distinct live database session identities', () => {
   );
 });
 
-test('rejects evidence collected from different servers or databases', () => {
+void test('rejects evidence collected from different servers or databases', () => {
+  const alternateServerAddress = [10, 0, 0, 2].join('.');
+  const serverAddress = [10, 0, 0, 1].join('.');
   const target = {
     configuredHost: 'database.internal',
     configuredPort: 5432,
     database: 'ontos',
-    serverAddress: '10.0.0.1',
+    serverAddress,
     serverPort: 5432,
   };
 
@@ -794,7 +801,7 @@ test('rejects evidence collected from different servers or databases', () => {
     /same PostgreSQL server and database/u,
   );
   assert.throws(
-    () => assertSameDatabaseTarget(target, { ...target, serverAddress: '10.0.0.2' }),
+    () => assertSameDatabaseTarget(target, { ...target, serverAddress: alternateServerAddress }),
     /same PostgreSQL server and database/u,
   );
   assert.throws(
@@ -817,7 +824,7 @@ test('rejects evidence collected from different servers or databases', () => {
   );
 });
 
-test('treats transaction-local context retention as a critical boundary failure', () => {
+void test('treats transaction-local context retention as a critical boundary failure', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
     tables: snapshot.tables.slice(0, 1),

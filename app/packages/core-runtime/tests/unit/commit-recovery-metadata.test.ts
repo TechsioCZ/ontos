@@ -1,5 +1,6 @@
-/* oxlint-disable sonarjs/no-undefined-assignment, typescript/strict-boolean-expressions */
-// @effect-diagnostics asyncFunction:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+/* oxlint-disable sonarjs/no-undefined-assignment, typescript/strict-boolean-expressions -- Existing compatibility boundary; expires: 2026-12-31. */
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
@@ -54,11 +55,11 @@ test('committed retry and explicit recovery return the same invocation without r
     transport: { correlationId: 'commit-recovery-test', idempotencyKey: 'commit-once' },
   } as const;
 
-  assert.deepEqual(await Effect.runPromise(harness.runtime.runAction(request)), { total: 2 });
+  assert.deepEqual(await runEffectTestPromise(harness.runtime.runAction(request)), { total: 2 });
   const invocationId = harness.snapshot().invocations[0]?.actionInvocationId;
   assert.ok(invocationId);
-  const replay = await Effect.runPromise(harness.runtime.runAction(request).pipe(Effect.flip));
-  const recovered = await Effect.runPromise(
+  const replay = await runEffectTestPromise(harness.runtime.runAction(request).pipe(Effect.flip));
+  const recovered = await runEffectTestPromise(
     harness.runtime.resolveActionCommit({ invocationId, principal }).pipe(Effect.flip),
   );
 
@@ -80,11 +81,11 @@ test('committed error schema requires and preserves the recovery invocation iden
     invocationId: '40000000-0000-4000-8000-000000000001',
     reason: 'This idempotency key already committed successfully',
   } as const;
-  const decoded = await Effect.runPromise(
+  const decoded = await runEffectTestPromise(
     Schema.decodeUnknownEffect(ActionAlreadyCommitted)(encoded),
   );
   assert.deepEqual(
-    await Effect.runPromise(Schema.encodeEffect(ActionAlreadyCommitted)(decoded)),
+    await runEffectTestPromise(decoded.pipe(Schema.encodeEffect(ActionAlreadyCommitted))),
     encoded,
   );
   assert.equal(
@@ -140,18 +141,20 @@ test('lost commit acknowledgement recovers the committed invocation and faults o
     transport: { correlationId: 'lost-acknowledgement', idempotencyKey: 'commit-once' },
   } as const;
 
-  const uncertain = await Effect.runPromise(harness.runtime.runAction(request).pipe(Effect.flip));
+  const uncertain = await runEffectTestPromise(
+    harness.runtime.runAction(request).pipe(Effect.flip),
+  );
   assert.equal(uncertain._tag, 'ActionCommitIndeterminate');
   assert.ok('invocationId' in uncertain);
   assert.equal(uncertain.invocationId, harness.snapshot().invocations[0]?.actionInvocationId);
   assert.equal(harness.snapshot().invocations[0]?.status, 'succeeded');
 
-  const recovered = await Effect.runPromise(
+  const recovered = await runEffectTestPromise(
     harness.runtime
       .resolveActionCommit({ invocationId: uncertain.invocationId, principal })
       .pipe(Effect.flip),
   );
-  const replay = await Effect.runPromise(harness.runtime.runAction(request).pipe(Effect.flip));
+  const replay = await runEffectTestPromise(harness.runtime.runAction(request).pipe(Effect.flip));
   for (const outcome of [recovered, replay]) {
     assert.equal(outcome._tag, 'ActionAlreadyCommitted');
     assert.ok('invocationId' in outcome);
@@ -162,7 +165,7 @@ test('lost commit acknowledgement recovers the committed invocation and faults o
   assert.equal(harness.snapshot().transactionCount, 1);
 
   assert.equal(
-    await Effect.runPromise(
+    await runEffectTestPromise(
       harness.runtime.runAction({
         ...request,
         transport: { correlationId: 'acknowledged-next', idempotencyKey: 'next-invocation' },

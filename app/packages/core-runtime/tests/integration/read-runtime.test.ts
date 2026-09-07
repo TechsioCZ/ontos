@@ -1,4 +1,5 @@
-// @effect-diagnostics asyncFunction:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -31,7 +32,7 @@ void test('standalone governed-read evidence permits no Action invocation and re
 });
 
 void test('commits live allowed evidence before releasing a governed read result', async () => {
-  const connections = await Effect.runPromise(loadDatabaseConnectionPair());
+  const connections = await runEffectTestPromise(loadDatabaseConnectionPair());
   const admin = new Pool({ connectionString: connections.admin.connectionString });
   const runtimePool = new Pool({ connectionString: connections.runtime.connectionString });
   const runtimeDatabase = drizzle({ client: runtimePool, relations: coreRelations });
@@ -79,7 +80,7 @@ void test('commits live allowed evidence before releasing a governed read result
       resources: () => Effect.succeed([]),
       tenants: () => Effect.succeed([]),
     };
-    const principal = await Effect.runPromise(
+    const principal = await runEffectTestPromise(
       makeSystemPrincipalContextResolver({ executor: runtimeDatabase }).resolve({
         principalId,
         registration: registerSystemWorkload({ jobKey: 'read-runtime-integration' }),
@@ -97,7 +98,7 @@ void test('commits live allowed evidence before releasing a governed read result
       contextAccess,
     );
     assert.deepEqual(
-      await Effect.runPromise(
+      await runEffectTestPromise(
         runtime.runRead({
           input: {},
           principal,

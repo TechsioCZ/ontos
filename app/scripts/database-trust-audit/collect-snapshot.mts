@@ -1,10 +1,13 @@
-import type { Client, ClientBase } from 'pg';
+import type { Client, ClientBase, QueryResult, QueryResultRow } from 'pg';
+import { Effect, Schema } from 'effect';
 import {
   assertDatabaseSessionIdentities,
   assertSameDatabaseTarget,
+  DatabaseSessionIdentityError,
+  DatabaseTargetMismatchError,
   getEffectiveDatabaseEndpoint,
-  type DatabaseTrustBoundarySnapshot,
 } from './report.mts';
+import type { DatabaseTrustBoundarySnapshot } from './report.mts';
 
 interface RoleRow {
   readonly bypass_rls: boolean;
@@ -20,11 +23,11 @@ interface RoleRow {
 interface MembershipRow {
   readonly bypass_rls: boolean;
   readonly can_administer_role: boolean;
-  readonly can_inherit_role: boolean;
-  readonly can_set_role: boolean;
   readonly can_create_databases: boolean;
   readonly can_create_roles: boolean;
+  readonly can_inherit_role: boolean;
   readonly can_login: boolean;
+  readonly can_set_role: boolean;
   readonly create_schemas: string[];
   readonly database_create: boolean;
   readonly inherit: boolean;
@@ -44,9 +47,9 @@ interface MembershipRow {
 interface DatabaseTargetRow {
   readonly current_role: string;
   readonly database: string;
-  readonly session_role: string;
   readonly server_address: string | null;
   readonly server_port: number | null;
+  readonly session_role: string;
 }
 
 interface DatabasePrivilegeRow {
@@ -76,15 +79,15 @@ interface RoutinePrivilegeRow {
 interface TablePrivilegeRow {
   readonly deletable: boolean;
   readonly delete: boolean;
-  readonly insertable: boolean;
   readonly insert: boolean;
+  readonly insertable: boolean;
   readonly kind: 'foreign-table' | 'materialized-view' | 'partitioned-table' | 'table' | 'view';
+  readonly maintain: boolean;
   readonly owner: string;
   readonly owner_bypass_rls: boolean;
   readonly owner_context_privileged: boolean;
   readonly owner_context_rls_bypass: boolean;
   readonly owner_superuser: boolean;
-  readonly maintain: boolean;
   readonly references: boolean;
   readonly rls_enabled: boolean;
   readonly rls_forced: boolean;
@@ -121,8 +124,8 @@ interface SequencePrivilegeRow {
 }
 
 interface DefaultPrivilegeRow {
-  readonly grantee: string;
   readonly grantable: boolean;
+  readonly grantee: string;
   readonly object_type: string;
   readonly owner: string;
   readonly privilege: string;
@@ -138,85 +141,147 @@ interface SettingRow {
   readonly value: string | null;
 }
 
+class DatabaseTrustBoundarySnapshotError extends Schema.TaggedError<DatabaseTrustBoundarySnapshotError>()(
+  'DatabaseTrustBoundarySnapshotError',
+  {
+    code: Schema.Literals([
+      'database_privilege_unavailable',
+      'database_query_failed',
+      'database_session_identity_unavailable',
+      'database_target_identity_unavailable',
+      'runtime_role_absent',
+    ]),
+    reason: Schema.String,
+  },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
+
+type DatabaseSessionIdentityFailure = InstanceType<typeof DatabaseSessionIdentityError>;
+type DatabaseTargetMismatchFailure = InstanceType<typeof DatabaseTargetMismatchError>;
+
+const query = <Row extends QueryResultRow>(
+  client: ClientBase,
+  statement: string,
+  values: unknown[] = [],
+): Effect.Effect<QueryResult<Row>, DatabaseTrustBoundarySnapshotError> =>
+  Effect.tryPromise({
+    catch: () =>
+      new DatabaseTrustBoundarySnapshotError({
+        code: 'database_query_failed',
+        reason: 'database trust-boundary query failed',
+      }),
+    try: async () => await client.query<Row>(statement, values),
+  });
+
 export const hasTrustedContextValue = (value: string | null): boolean =>
   value !== null && value.length > 0;
 
-const probeSetting = async (
+const probeSettingEffect = Effect.fn('probeSetting')(function* probeSetting(
   client: ClientBase,
   setting: 'ontos.legal_entity_id' | 'ontos.tenant_id',
   value: string,
-): Promise<{ readonly retainedAfterRollback: boolean; readonly settable: boolean }> => {
-  await client.query('begin');
-  let settable = false;
-  try {
-    await client.query('select set_config($1, $2, true)', [setting, value]);
-    const current = await client.query<SettingRow>('select current_setting($1, true) as value', [
+) {
+  yield* query(client, 'begin');
+  const settable = yield* Effect.gen(function* probeTrustedContextSetting() {
+    yield* query(client, 'select set_config($1, $2, true)', [setting, value]);
+    const current = yield* query<SettingRow>(client, 'select current_setting($1, true) as value', [
       setting,
     ]);
-    settable = current.rows[0]?.value === value;
-  } catch {
-    settable = false;
-  } finally {
-    await client.query('rollback');
-  }
-  const after = await client.query<SettingRow>('select current_setting($1, true) as value', [
+    const [currentRow] = current.rows;
+    return currentRow?.value === value;
+  }).pipe(Effect.catch(() => Effect.succeed(false)));
+  yield* query(client, 'rollback');
+  const after = yield* query<SettingRow>(client, 'select current_setting($1, true) as value', [
     setting,
   ]);
+  const [afterRow] = after.rows;
   return {
-    retainedAfterRollback: hasTrustedContextValue(after.rows[0]?.value ?? null),
+    retainedAfterRollback: hasTrustedContextValue(afterRow?.value ?? null),
     settable,
   };
-};
+});
 
-export const collectSnapshot = async (
+export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSnapshotEffect(
   admin: Client,
   runtime: Client,
-): Promise<DatabaseTrustBoundarySnapshot> => {
+): Effect.fn.Return<
+  DatabaseTrustBoundarySnapshot,
+  | DatabaseSessionIdentityFailure
+  | DatabaseTargetMismatchFailure
+  | DatabaseTrustBoundarySnapshotError
+> {
   const targetQuery = `select
     current_user::text as current_role,
     current_database() as database,
     session_user::text as session_role,
     inet_server_addr()::text as server_address,
     inet_server_port() as server_port`;
-  const [administrativeTarget, runtimeTarget] = await Promise.all([
-    admin.query<DatabaseTargetRow>(targetQuery),
-    runtime.query<DatabaseTargetRow>(targetQuery),
-  ]);
-  const administrativeTargetRow = administrativeTarget.rows[0];
-  const runtimeTargetRow = runtimeTarget.rows[0];
+  const [administrativeTarget, runtimeTarget] = yield* Effect.all(
+    [query<DatabaseTargetRow>(admin, targetQuery), query<DatabaseTargetRow>(runtime, targetQuery)],
+    { concurrency: 'unbounded' },
+  );
+  const [administrativeTargetRow] = administrativeTarget.rows;
+  const [runtimeTargetRow] = runtimeTarget.rows;
   if (administrativeTargetRow === undefined || runtimeTargetRow === undefined) {
-    throw new Error('database target identity is unavailable');
+    return yield* new DatabaseTrustBoundarySnapshotError({
+      code: 'database_target_identity_unavailable',
+      reason: 'database target identity is unavailable',
+    });
   }
   const administrativeEndpoint = getEffectiveDatabaseEndpoint(admin);
   const runtimeEndpoint = getEffectiveDatabaseEndpoint(runtime);
-  assertSameDatabaseTarget(
-    {
-      ...administrativeEndpoint,
-      database: administrativeTargetRow.database,
-      serverAddress: administrativeTargetRow.server_address,
-      serverPort: administrativeTargetRow.server_port,
-    },
-    {
-      ...runtimeEndpoint,
-      database: runtimeTargetRow.database,
-      serverAddress: runtimeTargetRow.server_address,
-      serverPort: runtimeTargetRow.server_port,
-    },
-  );
-  assertDatabaseSessionIdentities(
-    {
-      currentRole: administrativeTargetRow.current_role,
-      sessionRole: administrativeTargetRow.session_role,
-    },
-    {
-      currentRole: runtimeTargetRow.current_role,
-      sessionRole: runtimeTargetRow.session_role,
-    },
-  );
+  yield* Effect.try({
+    catch: (cause) =>
+      cause instanceof DatabaseTargetMismatchError
+        ? cause
+        : new DatabaseTrustBoundarySnapshotError({
+            code: 'database_target_identity_unavailable',
+            reason: 'database target identity is unavailable',
+          }),
+    try: () =>
+      assertSameDatabaseTarget(
+        {
+          ...administrativeEndpoint,
+          database: administrativeTargetRow.database,
+          serverAddress: administrativeTargetRow.server_address,
+          serverPort: administrativeTargetRow.server_port,
+        },
+        {
+          ...runtimeEndpoint,
+          database: runtimeTargetRow.database,
+          serverAddress: runtimeTargetRow.server_address,
+          serverPort: runtimeTargetRow.server_port,
+        },
+      ),
+  });
+  yield* Effect.try({
+    catch: (cause) =>
+      cause instanceof DatabaseSessionIdentityError
+        ? cause
+        : new DatabaseTrustBoundarySnapshotError({
+            code: 'database_session_identity_unavailable',
+            reason: 'database session identity is unavailable',
+          }),
+    try: () =>
+      assertDatabaseSessionIdentities(
+        {
+          currentRole: administrativeTargetRow.current_role,
+          sessionRole: administrativeTargetRow.session_role,
+        },
+        {
+          currentRole: runtimeTargetRow.current_role,
+          sessionRole: runtimeTargetRow.session_role,
+        },
+      ),
+  });
   const administrativeRole = administrativeTargetRow.session_role;
   const runtimeRole = runtimeTargetRow.session_role;
 
-  const role = await admin.query<RoleRow>(
+  const role = yield* query<RoleRow>(
+    admin,
     `select
        rolbypassrls as bypass_rls,
        rolcreatedb as can_create_databases,
@@ -230,10 +295,16 @@ export const collectSnapshot = async (
      where rolname = $1`,
     [runtimeRole],
   );
-  const roleRow = role.rows[0];
-  if (roleRow === undefined) throw new Error('runtime role is absent');
+  const [roleRow] = role.rows;
+  if (roleRow === undefined) {
+    return yield* new DatabaseTrustBoundarySnapshotError({
+      code: 'runtime_role_absent',
+      reason: 'runtime role is absent',
+    });
+  }
 
-  const memberships = await admin.query<MembershipRow>(
+  const memberships = yield* query<MembershipRow>(
+    admin,
     `with recursive reachable_roles(role_oid) as (
        select candidate.oid
        from pg_catalog.pg_roles as candidate
@@ -391,7 +462,8 @@ export const collectSnapshot = async (
      order by candidate.rolname`,
     [runtimeRole],
   );
-  const database = await admin.query<DatabasePrivilegeRow>(
+  const database = yield* query<DatabasePrivilegeRow>(
+    admin,
     `select
        current_database() as database,
        has_database_privilege($1, current_database(), 'CONNECT') as connect,
@@ -399,10 +471,16 @@ export const collectSnapshot = async (
        has_database_privilege($1, current_database(), 'TEMPORARY') as temporary`,
     [runtimeRole],
   );
-  const databaseRow = database.rows[0];
-  if (databaseRow === undefined) throw new Error('database privilege row is absent');
+  const [databaseRow] = database.rows;
+  if (databaseRow === undefined) {
+    return yield* new DatabaseTrustBoundarySnapshotError({
+      code: 'database_privilege_unavailable',
+      reason: 'database privilege row is absent',
+    });
+  }
 
-  const schemas = await admin.query<SchemaPrivilegeRow>(
+  const schemas = yield* query<SchemaPrivilegeRow>(
+    admin,
     `select
        namespace.nspname as schema,
        owner.rolname as owner,
@@ -416,7 +494,8 @@ export const collectSnapshot = async (
     [runtimeRole],
   );
   const schemaNames = schemas.rows.map(({ schema }) => schema);
-  const routines = await admin.query<RoutinePrivilegeRow>(
+  const routines = yield* query<RoutinePrivilegeRow>(
+    admin,
     `select
        namespace.nspname as schema,
        routine.proname as routine,
@@ -440,7 +519,8 @@ export const collectSnapshot = async (
      order by namespace.nspname, routine.proname, routine.oid`,
     [runtimeRole, schemaNames],
   );
-  const tables = await admin.query<TablePrivilegeRow>(
+  const tables = yield* query<TablePrivilegeRow>(
+    admin,
     `with recursive view_dependencies(view_oid, referenced_oid, effective_owner_oid) as (
        select
          rewrite.ev_class,
@@ -602,7 +682,8 @@ export const collectSnapshot = async (
      order by namespace.nspname, relation.relname`,
     [runtimeRole, schemaNames, administrativeRole],
   );
-  const types = await admin.query<TypePrivilegeRow>(
+  const types = yield* query<TypePrivilegeRow>(
+    admin,
     `select
        namespace.nspname as schema,
        audited_type.typname as type,
@@ -635,7 +716,8 @@ export const collectSnapshot = async (
      order by namespace.nspname, audited_type.typname`,
     [schemaNames],
   );
-  const sequences = await admin.query<SequencePrivilegeRow>(
+  const sequences = yield* query<SequencePrivilegeRow>(
+    admin,
     `select
        namespace.nspname as schema,
        relation.relname as sequence,
@@ -659,7 +741,8 @@ export const collectSnapshot = async (
      order by namespace.nspname, relation.relname`,
     [runtimeRole, schemaNames],
   );
-  const parameterPrivileges = await admin.query<ParameterPrivilegeRow>(
+  const parameterPrivileges = yield* query<ParameterPrivilegeRow>(
+    admin,
     `select
        parameter.parname as parameter,
        has_parameter_privilege($1, parameter.parname, 'ALTER SYSTEM') as alter_system,
@@ -670,7 +753,8 @@ export const collectSnapshot = async (
      order by parameter.parname`,
     [runtimeRole],
   );
-  const grantOptions = await admin.query<GrantOptionRow>(
+  const grantOptions = yield* query<GrantOptionRow>(
+    admin,
     `with recursive reachable_roles(role_oid) as (
        select candidate.oid
        from pg_catalog.pg_roles as candidate
@@ -858,7 +942,8 @@ export const collectSnapshot = async (
      order by target.role_name, authority.grant_option`,
     [runtimeRole, schemaNames],
   );
-  const defaultPrivileges = await admin.query<DefaultPrivilegeRow>(
+  const defaultPrivileges = yield* query<DefaultPrivilegeRow>(
+    admin,
     `with recursive reachable_roles(role_oid) as (
        select candidate.oid
        from pg_catalog.pg_roles as candidate
@@ -985,12 +1070,12 @@ export const collectSnapshot = async (
        grantable`,
     [runtimeRole, schemaNames, administrativeRole],
   );
-  const tenant = await probeSetting(
+  const tenant = yield* probeSettingEffect(
     runtime,
     'ontos.tenant_id',
     '00000000-0000-4000-8000-000000000001',
   );
-  const legalEntity = await probeSetting(
+  const legalEntity = yield* probeSettingEffect(
     runtime,
     'ontos.legal_entity_id',
     '00000000-0000-4000-8000-000000000002',
@@ -1005,8 +1090,8 @@ export const collectSnapshot = async (
       temporary: databaseRow.temporary,
     },
     defaultPrivileges: defaultPrivileges.rows.map((privilege) => ({
-      grantee: privilege.grantee,
       grantable: privilege.grantable,
+      grantee: privilege.grantee,
       objectType: privilege.object_type,
       owner: privilege.owner,
       privilege: privilege.privilege,
@@ -1110,4 +1195,4 @@ export const collectSnapshot = async (
     },
     types: types.rows,
   };
-};
+});

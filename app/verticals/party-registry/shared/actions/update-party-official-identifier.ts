@@ -35,7 +35,7 @@ export const UpdatePartyOfficialIdentifierResultSchema = Schema.Struct({
   officialIdentifierRef: PartyOfficialIdentifierRefSchema,
   partyRef: PartyRefSchema,
   state: OfficialIdentifierAssertionStateSchema,
-  validTo: Schema.NullOr(IsoTimestampSchema),
+  validTo: Schema.OptionFromNullOr(IsoTimestampSchema),
   verification: IdentifierVerificationSchema,
 });
 export type UpdatePartyOfficialIdentifierResult =

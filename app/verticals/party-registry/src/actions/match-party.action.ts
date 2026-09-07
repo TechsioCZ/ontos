@@ -8,6 +8,7 @@ import {
   PartyEvidenceInsufficient,
   PartyPersistenceUnavailable,
 } from '../../shared/domain/identity-contracts.ts';
+import { RuleKeySchema } from '../../shared/domain/matching-contracts.ts';
 import {
   candidateFingerprint,
   matchParty,
@@ -33,23 +34,32 @@ interface Services {
   ) => ReturnType<typeof matchParty>;
 }
 
-const handleMatchParty = (
-  payload: MatchPartyPayload,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
-) =>
-  context.services.match(payload, context.actionInvocationId).pipe(
-    Effect.tap((result) =>
-      context.recordDataAccess({
-        accessKind: 'read',
-        queryHash: candidateFingerprint(payload.candidate),
-        resultCount: result.candidateParties.length,
-        servingModuleKey: 'party.registry',
-        targetModuleKey: 'party.registry',
-        targetResourceId: result.decisionRef.resourceId,
-        targetResourceType: result.decisionRef.resourceType,
-      }),
+const handleMatchParty = Effect.fn('MatchPartyAction.handleMatchParty')(
+  (
+    payload: MatchPartyPayload,
+    context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
+  ) =>
+    context.services.match(payload, context.actionInvocationId).pipe(
+      Effect.map((result) => ({
+        ...result,
+        evidenceExplanation: result.evidenceExplanation.map((explanation) => ({
+          ...explanation,
+          ruleKey: RuleKeySchema.make(explanation.ruleKey),
+        })),
+      })),
+      Effect.tap((result) =>
+        context.recordDataAccess({
+          accessKind: 'read',
+          queryHash: candidateFingerprint(payload.candidate),
+          resultCount: result.candidateParties.length,
+          servingModuleKey: 'party.registry',
+          targetModuleKey: 'party.registry',
+          targetResourceId: result.decisionRef.resourceId,
+          targetResourceType: result.decisionRef.resourceType,
+        }),
+      ),
     ),
-  );
+);
 
 export const matchPartyAction = defineAction(
   {

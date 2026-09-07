@@ -1,145 +1,278 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { isBuiltin } from 'node:module';
+import { NodeServices } from '@effect/platform-node';
 import { build } from 'esbuild';
+import { Config, Effect, FileSystem, ManagedRuntime, Path, Schema } from 'effect';
 import { outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
 
-/** Bundle owner + Core code; retain exact production dependencies, never workspace links. */
-export const materializeOutboxWorker = async ({
-  workspaceRoot,
+const TopologySchema = Schema.fromJsonString(
+  Schema.Struct({
+    verticals: Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        moduleFederation: Schema.Struct({ manifestUrl: Schema.String }),
+        package: Schema.String,
+        path: Schema.String,
+      }),
+    ),
+  }),
+);
+
+const PackageManifestSchema = Schema.fromJsonString(
+  Schema.Struct({
+    dependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+    name: Schema.String,
+  }),
+);
+
+const MetafileInputsSchema = Schema.Struct({
+  inputs: Schema.Record(Schema.String, Schema.Unknown),
+});
+
+const WORKER_ENTRY = 'worker.mjs';
+const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
+const ServiceIdSchema = Schema.String.pipe(Schema.brand('ServiceId'));
+
+const WorkerArtifactSchema = Schema.fromJsonString(
+  Schema.Struct({
+    appId: AppIdSchema,
+    entry: Schema.Literal(WORKER_ENTRY),
+    schemaVersion: Schema.Literal(1),
+    serviceId: ServiceIdSchema,
+    sourceInputs: Schema.Array(Schema.String),
+    sourceRevision: Schema.OptionFromNullOr(Schema.String),
+  }),
+  { space: 2 },
+);
+
+class OutboxWorkerMaterializationError extends Error {
+  /** @param {string} message Error detail. */
+  constructor(message) {
+    super(message);
+    this.name = 'OutboxWorkerMaterializationError';
+    this._tag = 'OutboxWorkerMaterializationError';
+  }
+}
+
+/** @param {string} message Error detail. */
+const failure = (message) => new OutboxWorkerMaterializationError(message);
+
+const nodeRuntime = ManagedRuntime.make(NodeServices.layer);
+
+/**
+ * esbuild compiles filters with Go regular expressions, where Unicode semantics are implicit and
+ * the JavaScript `u` flag is rejected. Author filters as Unicode-aware JavaScript expressions and
+ * remove only that transport-only flag at the esbuild boundary.
+ * @param {RegExp} pattern Unicode-aware source expression.
+ * @returns {RegExp} Equivalent esbuild-compatible filter.
+ */
+const esbuildFilter = (pattern) => new RegExp(pattern.source, pattern.flags.replaceAll('u', ''));
+
+/**
+ * @param {{
+ *   packages: Map<string, { manifest: Schema.Schema.Type<typeof PackageManifestSchema> }>,
+ *   path: import('effect/Path').Path,
+ *   workspaceRoot: string,
+ * }} context Plugin dependencies.
+ * @returns {import('esbuild').Plugin} Production dependency externalization plugin.
+ */
+const makeProductionDependenciesPlugin = ({ packages, path, workspaceRoot }) => ({
+  name: 'worker-production-dependencies',
+  setup(builder) {
+    builder.onResolve({ filter: esbuildFilter(/^@effect\/platform-node$/u) }, () => ({
+      namespace: 'worker-platform-node',
+      path: '@effect/platform-node',
+    }));
+    builder.onLoad(
+      {
+        filter: esbuildFilter(/.*/u),
+        namespace: 'worker-platform-node',
+      },
+      () => ({
+        contents: [
+          "import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem';",
+          "import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer';",
+          "import * as NodePath from '@effect/platform-node/NodePath';",
+          'export { NodeFileSystem, NodeHttpServer, NodePath };',
+        ].join('\n'),
+        loader: 'js',
+        resolveDir: workspaceRoot,
+      }),
+    );
+    builder.onResolve({ filter: esbuildFilter(/^[^./]/u) }, (args) => {
+      if (isBuiltin(args.path)) {
+        return { external: true, path: args.path };
+      }
+      const name = args.path.startsWith('@')
+        ? args.path.split('/').slice(0, 2).join('/')
+        : args.path.split('/').at(0);
+      if (args.path === '@app/core-runtime') {
+        return {
+          path: path.join(workspaceRoot, 'packages/core-runtime/src/outbox/worker-entrypoint.ts'),
+        };
+      }
+      if (name !== undefined && packages.has(name)) {
+        return null;
+      }
+      return { external: true, path: args.path };
+    });
+  },
+});
+
+/**
+ * @typedef {{
+ *   appId: string,
+ *   packageDir: string,
+ *   packageName: string,
+ *   runtimeDir: string,
+ *   workspaceRoot: string,
+ * }} MaterializeOptions
+ */
+
+/**
+ * Bundle owner + Core code; retain exact production dependencies, never workspace links.
+ * @param {MaterializeOptions} options Materialization identity and paths.
+ */
+const materializeOutboxWorkerEffect = ({
   appId,
-  packageName,
   packageDir,
+  packageName,
   runtimeDir,
-}) => {
-  const topology = JSON.parse(
-    fs.readFileSync(path.join(workspaceRoot, 'topology/reference-topology.json'), 'utf-8'),
-  );
-  const vertical = topology.verticals.find((candidate) => candidate.id === appId);
-  if (!vertical || vertical.package !== packageName || vertical.path !== packageDir) {
-    throw new Error('Worker identity must match its topology owner');
-  }
-  const delivery = outboxWorkerDelivery(workspaceRoot, vertical);
-  if (!delivery) {
-    throw new Error(`${appId} has no generated Outbox Worker host`);
-  }
-  const dependencies = {};
-  const packages = new Map();
-  for (const directory of ['packages', 'apps', 'verticals']) {
-    const parent = path.join(workspaceRoot, directory);
-    if (!fs.existsSync(parent)) {
-      continue;
+  workspaceRoot,
+}) =>
+  Effect.gen(function* materializeWorker() {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const topologySource = yield* fs.readFileString(
+      path.join(workspaceRoot, 'topology/reference-topology.json'),
+    );
+    const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
+    const vertical = topology.verticals.find((candidate) => candidate.id === appId);
+    if (
+      vertical === undefined ||
+      vertical.package !== packageName ||
+      vertical.path !== packageDir
+    ) {
+      return yield* Effect.fail(failure('Worker identity must match its topology owner'));
     }
-    for (const entry of fs.readdirSync(parent)) {
-      const manifest = path.join(parent, entry, 'package.json');
-      if (!fs.existsSync(manifest)) {
+    const delivery = yield* outboxWorkerDelivery(workspaceRoot, vertical).pipe(
+      Effect.mapError(() => failure(`Invalid generated worker delivery for ${appId}`)),
+    );
+    if (delivery === undefined) {
+      return yield* Effect.fail(failure(`${appId} has no generated Outbox Worker host`));
+    }
+    /** @type {Record<string, string>} */
+    const dependencies = {};
+    /** @type {Map<string, { manifest: Schema.Schema.Type<typeof PackageManifestSchema> }>} */
+    const packages = new Map();
+    for (const directory of ['packages', 'apps', 'verticals']) {
+      const parent = path.join(workspaceRoot, directory);
+      if (!(yield* fs.exists(parent))) {
         continue;
       }
-      const value = JSON.parse(fs.readFileSync(manifest, 'utf-8'));
-      packages.set(value.name, { directory: path.dirname(manifest), manifest: value });
+      for (const entry of yield* fs.readDirectory(parent)) {
+        const manifestPath = path.join(parent, entry, 'package.json');
+        if (!(yield* fs.exists(manifestPath))) {
+          continue;
+        }
+        const manifestSource = yield* fs.readFileString(manifestPath);
+        const manifest = yield* Schema.decodeUnknownEffect(PackageManifestSchema)(manifestSource);
+        packages.set(manifest.name, { manifest });
+      }
     }
-  }
-  const result = await build({
-    absWorkingDir: workspaceRoot,
-    banner: {
-      js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
-    },
-    bundle: true,
-    entryPoints: [path.join(packageDir, delivery.entry)],
-    format: 'esm',
-    metafile: true,
-    outfile: path.join(runtimeDir, 'worker.mjs'),
-    platform: 'node',
-    plugins: [
-      {
-        name: 'worker-production-dependencies',
-        setup(builder) {
-          // eslint-disable-next-line require-unicode-regexp -- esbuild accepts Go regular expressions and rejects the JavaScript `u` flag.
-          builder.onResolve({ filter: /^@effect\/platform-node$/ }, () => ({
-            namespace: 'worker-platform-node',
-            path: '@effect/platform-node',
-          }));
-          // eslint-disable-next-line require-unicode-regexp -- esbuild accepts Go regular expressions and rejects the JavaScript `u` flag.
-          builder.onLoad({ filter: /.*/, namespace: 'worker-platform-node' }, () => ({
-            contents: [
-              "import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem';",
-              "import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer';",
-              "import * as NodePath from '@effect/platform-node/NodePath';",
-              'export { NodeFileSystem, NodeHttpServer, NodePath };',
-            ].join('\n'),
-            loader: 'js',
-            resolveDir: workspaceRoot,
-          }));
-          // eslint-disable-next-line require-unicode-regexp -- esbuild accepts Go regular expressions and rejects the JavaScript `u` flag.
-          builder.onResolve({ filter: /^[^./]/ }, (args) => {
-            if (isBuiltin(args.path)) {
-              return { external: true, path: args.path };
-            }
-            const name = args.path.startsWith('@')
-              ? args.path.split('/').slice(0, 2).join('/')
-              : args.path.split('/').at(0);
-            if (args.path === '@app/core-runtime') {
-              return {
-                path: path.join(
-                  workspaceRoot,
-                  'packages/core-runtime/src/outbox/worker-entrypoint.ts',
-                ),
-              };
-            }
-            if (packages.has(name)) {
-              return;
-            }
-            return { external: true, path: args.path };
-          });
-        },
-      },
-    ],
-    target: 'node26',
+    const result = yield* Effect.tryPromise({
+      catch: () => failure(`Unable to bundle the ${appId} Outbox Worker`),
+      try: () =>
+        /** @type {PromiseLike<import('esbuild').BuildResult<{ metafile: true }>>} */
+        (
+          build({
+            absWorkingDir: workspaceRoot,
+            banner: {
+              js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
+            },
+            bundle: true,
+            entryPoints: [path.join(packageDir, delivery.entry)],
+            format: 'esm',
+            metafile: true,
+            outfile: path.join(runtimeDir, WORKER_ENTRY),
+            platform: 'node',
+            plugins: [makeProductionDependenciesPlugin({ packages, path, workspaceRoot })],
+            target: 'node26',
+          })
+        ),
+    });
+    const { metafile } = result;
+    for (const output of Object.values(metafile.outputs)) {
+      for (const imported of output.imports.filter((item) => item.external === true)) {
+        if (isBuiltin(imported.path)) {
+          continue;
+        }
+        const name = imported.path.startsWith('@')
+          ? imported.path.split('/').slice(0, 2).join('/')
+          : imported.path.split('/').at(0);
+        if (name === undefined) {
+          return yield* Effect.fail(failure(`Invalid worker dependency ${imported.path}`));
+        }
+        const versions = [...packages.values()].flatMap(({ manifest }) => {
+          const version = manifest.dependencies?.[name];
+          return version !== undefined && !version.startsWith('workspace:') ? [version] : [];
+        });
+        const uniqueVersions = [...new Set(versions)];
+        if (uniqueVersions.length !== 1) {
+          return yield* Effect.fail(
+            failure(`Worker dependency ${name} must have one declared production version`),
+          );
+        }
+        const [version] = uniqueVersions;
+        if (version === undefined) {
+          return yield* Effect.fail(failure(`Worker dependency ${name} has no version`));
+        }
+        dependencies[name] = version;
+      }
+    }
+    yield* fs.copyFile(
+      path.join(workspaceRoot, 'topology/reference-topology.json'),
+      path.join(runtimeDir, 'topology.json'),
+    );
+    const sourceRevision = yield* Config.option(Config.string('ULTRAMODERN_SOURCE_REVISION'));
+    const artifactAppId = yield* Schema.decodeUnknownEffect(AppIdSchema)(appId);
+    const artifactServiceId = yield* Schema.decodeUnknownEffect(ServiceIdSchema)(delivery.id);
+    const { inputs: sourceInputMetadata } =
+      yield* Schema.decodeUnknownEffect(MetafileInputsSchema)(metafile);
+    /** @type {string[]} */
+    const sourceInputs = [];
+    for (const sourceInput in sourceInputMetadata) {
+      if (Object.hasOwn(sourceInputMetadata, sourceInput)) {
+        sourceInputs.push(sourceInput);
+      }
+    }
+    sourceInputs.sort();
+    const artifactSource = yield* Schema.encodeEffect(WorkerArtifactSchema)({
+      appId: artifactAppId,
+      entry: WORKER_ENTRY,
+      schemaVersion: 1,
+      serviceId: artifactServiceId,
+      sourceInputs,
+      sourceRevision,
+    });
+    yield* fs.writeFileString(path.join(runtimeDir, 'worker-artifact.json'), `${artifactSource}\n`);
+    return {
+      dependencies,
+      name: `${delivery.id}-runtime`,
+      private: true,
+      scripts: { serve: `node ${WORKER_ENTRY}` },
+      type: 'module',
+    };
   });
-  for (const output of Object.values(result.metafile.outputs)) {
-    for (const imported of output.imports.filter((item) => item.external)) {
-      if (isBuiltin(imported.path)) {
-        continue;
-      }
-      const name = imported.path.startsWith('@')
-        ? imported.path.split('/').slice(0, 2).join('/')
-        : imported.path.split('/').at(0);
-      const versions = [...packages.values()].flatMap(({ manifest }) => {
-        const version = manifest.dependencies?.[name];
-        return version && !version.startsWith('workspace:') ? [version] : [];
-      });
-      const uniqueVersions = [...new Set(versions)];
-      if (uniqueVersions.length !== 1) {
-        throw new Error(`Worker dependency ${name} must have one declared production version`);
-      }
-      const [version] = uniqueVersions;
-      dependencies[name] = version;
-    }
-  }
-  fs.copyFileSync(
-    path.join(workspaceRoot, 'topology/reference-topology.json'),
-    path.join(runtimeDir, 'topology.json'),
-  );
-  fs.writeFileSync(
-    path.join(runtimeDir, 'worker-artifact.json'),
-    `${JSON.stringify(
-      {
-        appId,
-        entry: 'worker.mjs',
-        schemaVersion: 1,
-        serviceId: delivery.id,
-        sourceInputs: Object.keys(result.metafile.inputs).toSorted(),
-        sourceRevision: process.env.ULTRAMODERN_SOURCE_REVISION ?? null,
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  return {
-    dependencies,
-    name: `${delivery.id}-runtime`,
-    private: true,
-    scripts: { serve: 'node worker.mjs' },
-    type: 'module',
-  };
-};
+
+/**
+ * @param {MaterializeOptions} options Materialization identity and paths.
+ * @returns {PromiseLike<{
+ *   dependencies: Record<string, string>,
+ *   name: string,
+ *   private: boolean,
+ *   scripts: { serve: string },
+ *   type: string,
+ * }>} Materialized runtime package manifest.
+ */
+export const materializeOutboxWorker = (options) =>
+  nodeRuntime.runPromise(materializeOutboxWorkerEffect(options));

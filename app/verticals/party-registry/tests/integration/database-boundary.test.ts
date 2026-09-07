@@ -1,12 +1,13 @@
-// @effect-diagnostics asyncFunction:off globalDate:off
-/* eslint-disable unicorn/no-await-expression-member -- Live database assertions keep each typed query beside its expected result. */
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off globalDate:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { and, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect } from 'effect';
+import { DateTime, Schema } from 'effect';
 import { Pool } from 'pg';
+import { RuleKeySchema } from '../../shared/domain/matching-contracts.ts';
 import {
   counterparties,
   counterpartyAdminReadModels,
@@ -52,12 +53,14 @@ const actionA = 'aa000000-0000-4000-8000-000000000001';
 const principalA = 'ab000000-0000-4000-8000-000000000001';
 const fixtureTenants = [tenantA, tenantB] as const;
 
-const isRuntimeObject = <Value>(value: Value): value is Value & object =>
-  value !== null && Object(value) === value;
+const PostgreSqlErrorCauseSchema = Schema.Struct({
+  cause: Schema.optionalKey(Schema.Unknown),
+  code: Schema.optionalKey(Schema.String),
+});
 
 const hasPostgreSqlCode = (expected: string) => {
   const matches = <ErrorValue>(error: ErrorValue): boolean => {
-    if (!isRuntimeObject(error)) {
+    if (!Schema.is(PostgreSqlErrorCauseSchema)(error)) {
       return false;
     }
     if ('code' in error && error.code === expected) {
@@ -69,7 +72,7 @@ const hasPostgreSqlCode = (expected: string) => {
 };
 
 test('enforces Party owner invariants, tenant isolation, and independent fact lifecycles', async () => {
-  const connections = await Effect.runPromise(loadDatabaseConnectionPair());
+  const connections = await runEffectTestPromise(loadDatabaseConnectionPair());
   const adminPool = new Pool({ connectionString: connections.admin.connectionString });
   const runtimePool = new Pool({ connectionString: connections.runtime.connectionString, max: 1 });
   const admin = drizzle({ client: adminPool, relations: partyRelations });
@@ -210,13 +213,14 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
       reasonCode: 'selected_missing_fact_confirmed',
       servedAt: '2026-01-01T12:00:00.000Z',
     };
-    await admin
-      .insert(partyOfficialIdentifiers)
-      .values([
-        { ...identifierValues(tenantA, partyOrganizationA, identifierA), externalEvidence },
-        identifierValues(tenantA, partyOrganizationA2, identifierA2),
-        identifierValues(tenantB, partyOrganizationB, identifierB),
-      ]);
+    await admin.insert(partyOfficialIdentifiers).values([
+      {
+        ...identifierValues(tenantA, partyOrganizationA, identifierA),
+        externalEvidence: sql`${JSON.stringify(externalEvidence)}::jsonb`,
+      },
+      identifierValues(tenantA, partyOrganizationA2, identifierA2),
+      identifierValues(tenantB, partyOrganizationB, identifierB),
+    ]);
     const [persistedExternalEvidence] = await admin
       .select({
         externalEvidence: partyOfficialIdentifiers.externalEvidence,
@@ -356,7 +360,9 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
       }),
       hasPostgreSqlCode('23505'),
     );
-    const contactEndRecordedAt = new Date();
+    const contactEndRecordedAt = DateTime.toDateUtc(
+      DateTime.makeUnsafe('2026-09-07T00:00:00.000Z'),
+    );
     const futureContactEnd = new Date('2099-01-01T00:00:00.000Z');
     await admin
       .update(partyContactPoints)
@@ -452,21 +458,21 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
       toPartyId: partyOrganizationA,
       validFrom: new Date('2026-12-31T00:00:00.000Z'),
     });
-    const effectiveRelationshipCount = async (effectiveAt: Date) =>
-      (
-        await admin
-          .select()
-          .from(partyRelationships)
-          .where(
-            and(
-              eq(partyRelationships.fromPartyId, partyPersonA),
-              eq(partyRelationships.toPartyId, partyOrganizationA),
-              eq(partyRelationships.assertionState, 'ACTIVE'),
-              lte(partyRelationships.validFrom, effectiveAt),
-              or(isNull(partyRelationships.validTo), gt(partyRelationships.validTo, effectiveAt)),
-            ),
-          )
-      ).length;
+    const effectiveRelationshipCount = async (effectiveAt: Date) => {
+      const relationships = await admin
+        .select()
+        .from(partyRelationships)
+        .where(
+          and(
+            eq(partyRelationships.fromPartyId, partyPersonA),
+            eq(partyRelationships.toPartyId, partyOrganizationA),
+            eq(partyRelationships.assertionState, 'ACTIVE'),
+            lte(partyRelationships.validFrom, effectiveAt),
+            or(isNull(partyRelationships.validTo), gt(partyRelationships.validTo, effectiveAt)),
+          ),
+        );
+      return relationships.length;
+    };
     assert.equal(await effectiveRelationshipCount(new Date('2026-06-01T00:00:00.000Z')), 1);
     assert.equal(await effectiveRelationshipCount(new Date('2027-01-01T00:00:00.000Z')), 1);
     const [unknownStart] = await admin
@@ -624,34 +630,26 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
       hasPostgreSqlCode('23P01'),
     );
     const effectiveAt = new Date('2026-09-01T00:00:00.000Z');
-    assert.equal(
-      (
-        await admin
-          .select()
-          .from(counterpartyRolePeriods)
-          .where(
-            and(
-              eq(counterpartyRolePeriods.counterpartyId, counterpartyA),
-              eq(counterpartyRolePeriods.state, 'ACTIVE'),
-              lte(counterpartyRolePeriods.validFrom, effectiveAt),
-              or(
-                isNull(counterpartyRolePeriods.validTo),
-                gt(counterpartyRolePeriods.validTo, effectiveAt),
-              ),
-            ),
-          )
-      ).length,
-      1,
-    );
-    assert.equal(
-      (
-        await admin
-          .select()
-          .from(counterparties)
-          .where(eq(counterparties.counterpartyId, counterpartyA))
-      ).length,
-      1,
-    );
+    const effectiveRoles = await admin
+      .select()
+      .from(counterpartyRolePeriods)
+      .where(
+        and(
+          eq(counterpartyRolePeriods.counterpartyId, counterpartyA),
+          eq(counterpartyRolePeriods.state, 'ACTIVE'),
+          lte(counterpartyRolePeriods.validFrom, effectiveAt),
+          or(
+            isNull(counterpartyRolePeriods.validTo),
+            gt(counterpartyRolePeriods.validTo, effectiveAt),
+          ),
+        ),
+      );
+    assert.equal(effectiveRoles.length, 1);
+    const persistedCounterparties = await admin
+      .select()
+      .from(counterparties)
+      .where(eq(counterparties.counterpartyId, counterpartyA));
+    assert.equal(persistedCounterparties.length, 1);
 
     const [counterpartySource] = await admin
       .select()
@@ -696,22 +694,14 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
       [],
     );
     assert.deepEqual(await runtime.select().from(counterpartyAdminReadModels), []);
-    assert.equal(
-      (
-        await withTenant(tenantA, (transaction) =>
-          transaction.select().from(counterpartyAdminReadModels),
-        )
-      ).length,
-      1,
+    const tenantCounterpartyModels = await withTenant(tenantA, (transaction) =>
+      transaction.select().from(counterpartyAdminReadModels),
     );
-    assert.equal(
-      (
-        await withTenant(tenantA, (transaction) =>
-          transaction.select().from(counterpartyRoleAdminReadModels),
-        )
-      ).length,
-      roleSources.length,
+    assert.equal(tenantCounterpartyModels.length, 1);
+    const tenantRoleModels = await withTenant(tenantA, (transaction) =>
+      transaction.select().from(counterpartyRoleAdminReadModels),
     );
+    assert.equal(tenantRoleModels.length, roleSources.length);
     assert.deepEqual(
       await withTenant(tenantB, (transaction) =>
         transaction.select().from(counterpartyAdminReadModels),
@@ -724,18 +714,14 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
       ),
       [],
     );
-    assert.equal(
-      (
-        await runtime.transaction(async (transaction) => {
-          await transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantA}, true)`);
-          await transaction.execute(
-            sql`select set_config('ontos.legal_entity_id', ${legalEntityA}, true)`,
-          );
-          return transaction.select().from(counterparties);
-        })
-      ).length,
-      1,
-    );
+    const scopedCounterparties = await runtime.transaction(async (transaction) => {
+      await transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantA}, true)`);
+      await transaction.execute(
+        sql`select set_config('ontos.legal_entity_id', ${legalEntityA}, true)`,
+      );
+      return transaction.select().from(counterparties);
+    });
+    assert.equal(scopedCounterparties.length, 1);
 
     await admin.insert(duplicateCandidateCases).values({
       candidateCaseId: caseA,
@@ -746,7 +732,10 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
         validFrom: '2026-01-01T00:00:00.000Z',
       },
       evaluatedEvidence: [
-        { reason: 'One identifier points to conflicting candidates', ruleKey: 'ico.v1' },
+        {
+          reason: 'One identifier points to conflicting candidates',
+          ruleKey: RuleKeySchema.make('ico.v1'),
+        },
       ],
       evaluationFingerprint: 'c'.repeat(64),
       matchRuleVersion: 'party-match.v1',
@@ -754,7 +743,10 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
     });
     await admin.insert(duplicateCandidateCaseParties).values({
       candidateCaseId: caseA,
-      evidenceExplanation: { reason: 'Authoritative conflict', ruleKey: 'ico.v1' },
+      evidenceExplanation: {
+        reason: 'Authoritative conflict',
+        ruleKey: RuleKeySchema.make('ico.v1'),
+      },
       partyId: partyOrganizationA,
       rank: 1,
       tenantId: tenantA,
@@ -764,7 +756,10 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
       candidateCaseId: caseA,
       candidateFingerprint: 'a'.repeat(64),
       evidenceExplanation: [
-        { reason: 'One identifier points to conflicting candidates', ruleKey: 'ico.v1' },
+        {
+          reason: 'One identifier points to conflicting candidates',
+          ruleKey: RuleKeySchema.make('ico.v1'),
+        },
       ],
       matchRuleVersion: 'party-match.v1',
       outcome: 'AMBIGUOUS',

@@ -13,14 +13,15 @@ import {
   outboxTopic,
 } from '@app/party-registry/outbox/party-registry-counterparty-role-ended-v1';
 
-const handleProjectCounterpartyRoleEndedToSearch = (
+const handleProjectCounterpartyRoleEndedToSearch = Effect.fn(
+  'handleProjectCounterpartyRoleEndedToSearch',
+)(function* projectCommittedEvent(
   payload: typeof OutboxPayloadSchema.Type,
   context: OutboxWorkerHandlerContext,
-) =>
-  Effect.gen(function* projectCommittedEvent() {
-    const projector = yield* PartySearchProjector;
-    yield* projector.project(context, { counterpartyId: payload.counterpartyRef.resourceId });
-  });
+) {
+  const projector = yield* PartySearchProjector;
+  yield* projector.project(context, { counterpartyId: payload.counterpartyRef.resourceId });
+});
 
 export const projectCounterpartyRoleEndedToSearchWorker = defineOutboxWorker(
   {

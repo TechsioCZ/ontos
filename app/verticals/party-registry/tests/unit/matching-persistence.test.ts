@@ -1,13 +1,15 @@
-/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type, unicorn/no-thenable -- This harness implements the narrow Drizzle PromiseLike boundary exercised by the owner-local matching service. */
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type, unicorn/no-thenable -- This harness implements the narrow Drizzle PromiseLike boundary exercised by the owner-local matching service. expires: 2026-12-31. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DateTime, Effect } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import type { SQL } from 'drizzle-orm';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import type { PartyCandidate } from '../../shared/domain/identity-contracts.ts';
-import { makePartyRef } from '../../shared/domain/identity-contracts.ts';
+import { makePartyRef, partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
 import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
+import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { resolveDuplicateCandidateMatchAction } from '../../src/actions/resolve-duplicate-candidate-match.action.ts';
 import { matchPartyAction } from '../../src/actions/match-party.action.ts';
@@ -54,10 +56,10 @@ const candidate = (overrides: Partial<PartyCandidate> = {}): PartyCandidate => (
       kind: 'ACTOR_ATTESTATION',
       observedSubject: 'ORGANIZATION',
       statement: 'Reviewed evidence for this external organization',
-      subjectKey: 'one-subject',
+      subjectKey: partySubjectKeyFromString('one-subject'),
     },
   ],
-  validFrom: instant,
+  validFrom: DateTime.makeUnsafe(instant),
   ...overrides,
 });
 const caseRow = () => ({
@@ -192,7 +194,7 @@ const ambiguousHarness = (existingCase: boolean) =>
   );
 
 test('durable Party Match commits an ambiguity decision, complete case references, and original evidence without mutating a Party', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* durablePartyMatchCommitsAnAmbiguityDecision() {
       const subject = ambiguousHarness(false);
       const result = yield* matchParty(subject.transaction, {
@@ -235,7 +237,7 @@ test('durable Party Match commits an ambiguity decision, complete case reference
   ));
 
 test('an unchanged open ambiguity reuses its immutable evaluated case without rewriting candidate links', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* anUnchangedOpenAmbiguityReusesItsImmutable() {
       const subject = ambiguousHarness(true);
       yield* matchParty(subject.transaction, {
@@ -252,7 +254,7 @@ test('an unchanged open ambiguity reuses its immutable evaluated case without re
   ));
 
 test('PERSON IČO cannot acquire organization auto-match authority and NO_MATCH still records a decision', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* personIOCannotAcquireOrganizationAuto() {
       const subject = harness();
       const result = yield* matchParty(subject.transaction, {
@@ -269,7 +271,7 @@ test('PERSON IČO cannot acquire organization auto-match authority and NO_MATCH 
               kind: 'ACTOR_ATTESTATION',
               observedSubject: 'PERSON',
               statement: 'Met this human',
-              subjectKey: 'one-subject',
+              subjectKey: partySubjectKeyFromString('one-subject'),
             },
           ],
         }),
@@ -305,7 +307,7 @@ const resolutionInput = {
 };
 
 test('an unarchive review cannot create a replacement Party or attach its facts through Candidate matching', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* unarchiveIntentBoundary() {
       for (const resolution of ['CREATE', 'MATCH']) {
         const original = caseRow();
@@ -358,7 +360,7 @@ const actionScope = {
 };
 
 test('Create Party matching an existing subject publishes each newly accepted identifier without fabricating Party Created', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* createPartyMatchingAnExistingSubjectPublishes() {
       const subject = harness(
         new Map<unknown, readonly Rows[]>([
@@ -420,7 +422,7 @@ test('Create Party matching an existing subject publishes each newly accepted id
   ));
 
 test('reviewed matching publishes the accepted identifier through its declared Action event and linked outbox', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* reviewedMatchingPublishesTheAcceptedIdentifierThrough() {
       const subject = harness(
         new Map<unknown, readonly Rows[]>([
@@ -473,7 +475,7 @@ test('reviewed matching publishes the accepted identifier through its declared A
   ));
 
 test('matched Create reusing an existing identifier does not republish an acceptance event', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* matchedCreateReusingAnExistingIdentifierDoes() {
       const subject = harness(
         new Map<unknown, readonly Rows[]>([
@@ -533,7 +535,7 @@ test('matched Create reusing an existing identifier does not republish an accept
   ));
 
 test('repeated Candidate facts accepted in one matching transaction publish one identifier event', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* repeatedCandidateFactsAcceptedInOneMatching() {
       const subject = harness(
         new Map<unknown, readonly Rows[]>([
@@ -599,7 +601,7 @@ test('repeated Candidate facts accepted in one matching transaction publish one 
   ));
 
 test('reviewed matching with already-owned claims creates no duplicate identifier notifications', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* reviewedMatchingWithAlreadyOwnedClaimsCreates() {
       const subject = harness(
         new Map<unknown, readonly Rows[]>([
@@ -637,7 +639,7 @@ test('reviewed matching with already-owned claims creates no duplicate identifie
   ));
 
 test('reviewed matching locks and rejects an archived canonical target before any attachment or resolution', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* reviewedMatchingLocksAndRejectsAnArchived() {
       const subject = harness(
         new Map<unknown, readonly Rows[]>([
@@ -672,7 +674,7 @@ test('reviewed matching locks and rejects an archived canonical target before an
   ));
 
 test('reviewed matching rejects a cross-tenant selected reference without resolving its identity', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* reviewedMatchingRejectsACrossTenantSelected() {
       const subject = harness();
       const failure = yield* Effect.flip(
@@ -692,7 +694,7 @@ test('reviewed matching rejects a cross-tenant selected reference without resolv
   ));
 
 test('reviewed matching rejects an absorbed target with the full-chain canonical survivor reference', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* reviewedMatchingRejectsAnAbsorbedTargetWith() {
       const subject = harness(
         new Map<unknown, readonly Rows[]>([
@@ -714,23 +716,21 @@ test('reviewed matching rejects an absorbed target with the full-chain canonical
           selectedPartyId: partyB,
         }),
       );
-      assert.equal(failure._tag, 'PartyAliasWriteRejected');
-      if (failure._tag === 'PartyAliasWriteRejected') {
-        assert.equal(failure.canonicalPartyRef.resourceId, partyC);
-      }
+      assert.ok(Schema.is(PartyAliasWriteRejected)(failure));
+      assert.equal(failure.canonicalPartyRef.resourceId, partyC);
       assert.deepEqual(subject.inserts, []);
       assert.deepEqual(subject.updates, []);
     }),
   ));
 
 test('future-effective evidence is rejected before a current decision or Party can be persisted', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* futureEffectiveEvidenceIsRejectedBeforeA() {
       const subject = harness();
       const failure = yield* Effect.flip(
         matchParty(subject.transaction, {
           actionInvocationId,
-          candidate: candidate({ validFrom: '2099-01-01T00:00:00.000Z' }),
+          candidate: candidate({ validFrom: DateTime.makeUnsafe('2099-01-01T00:00:00.000Z') }),
           tenantId,
         }),
       );
@@ -750,7 +750,7 @@ test('durable matching is an idempotent identity Action and the separate UX prev
 });
 
 test('weak exact canonical evidence produces review rather than automatic identity or NO_MATCH', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* weakExactCanonicalEvidenceProducesReviewRather() {
       const subject = harness(
         new Map<unknown, readonly Rows[]>([
@@ -773,7 +773,7 @@ test('weak exact canonical evidence produces review rather than automatic identi
               kind: 'ACTOR_ATTESTATION',
               observedSubject: 'PERSON',
               statement: 'Met this human',
-              subjectKey: 'one-subject',
+              subjectKey: partySubjectKeyFromString('one-subject'),
             },
           ],
         }),
@@ -793,7 +793,7 @@ test('weak exact canonical evidence produces review rather than automatic identi
   ));
 
 test('initial no-strong Create review captures relevant same-name canonical Parties in its immutable snapshot', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* initialNoStrongCreateReviewCapturesRelevant() {
       const subject = harness(
         new Map<unknown, readonly Rows[]>([
@@ -828,7 +828,7 @@ test('initial no-strong Create review captures relevant same-name canonical Part
   ));
 
 test('a new material evaluation creates a linked successor without rewriting the prior case', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* aNewMaterialEvaluationCreatesALinked() {
       const priorId = '30000000-0000-4000-8000-000000000099';
       const subject = harness(
@@ -869,7 +869,7 @@ test('a new material evaluation creates a linked successor without rewriting the
   ));
 
 test('explicit prior-case continuation rejects foreign or missing review references', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.forEach(
       [tenantId, '90000000-0000-4000-8000-000000000001'],
       (priorCaseTenantId) =>
@@ -909,7 +909,7 @@ test('equivalent Candidate property and evidence ordering has one deterministic 
 });
 
 test('insufficient typed evidence cannot persist a case or decision even with a verified identifier', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* denyUnevidencedSubject() {
       for (const operation of ['CREATE', 'MATCH'] as const) {
         const subject = harness();
@@ -929,7 +929,7 @@ test('insufficient typed evidence cannot persist a case or decision even with a 
   ));
 
 test('reviewer selection cannot waive missing subject/type evidence from a retained case', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* denyUnevidencedReview() {
       const row = caseRow();
       const subject = harness(

@@ -1,3 +1,4 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect } from 'effect';
@@ -27,7 +28,7 @@ const evidenceScope = {
 };
 
 test('reviewed Create records metadata-only invariant evidence and commits its created event', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* reviewedCreateEvidence() {
       const collector = createActionCollector(
         resolveDuplicateCandidateCreateAction.descriptor.domainEvents,
@@ -56,7 +57,7 @@ test('reviewed Create records metadata-only invariant evidence and commits its c
   ));
 
 test('reviewed duplicate confirmation records safe invariant evidence without executing merge', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* confirmationEvidence() {
       const collector = createActionCollector(
         confirmDuplicatePartiesAction.descriptor.domainEvents,

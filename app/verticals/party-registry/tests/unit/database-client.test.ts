@@ -1,4 +1,5 @@
-// @effect-diagnostics asyncFunction:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect } from 'effect';
@@ -6,7 +7,7 @@ import { acquirePoolResource, makePartyDatabase } from '../../src/db/client.ts';
 
 test('finalizes the Party Registry pool when its Effect scope closes', async () => {
   let finalized = false;
-  await Effect.runPromise(
+  await runEffectTestPromise(
     Effect.scoped(
       acquirePoolResource(() => ({
         end: () => {
@@ -20,7 +21,7 @@ test('finalizes the Party Registry pool when its Effect scope closes', async () 
 });
 
 test('keeps Party Registry pool acquisition failure in the typed error channel', async () => {
-  const error = await Effect.runPromise(
+  const error = await runEffectTestPromise(
     Effect.flip(
       Effect.scoped(
         makePartyDatabase(

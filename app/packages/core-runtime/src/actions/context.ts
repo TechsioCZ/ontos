@@ -14,14 +14,31 @@ export { TrustedPrincipalContextSchema } from './principal-context.ts';
 export type { TrustedPrincipalContext } from './principal-context.ts';
 
 const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
+const CorrelationIdSchema = nonEmptyString.pipe(
+  Schema.brand('CorrelationId'),
+  Schema.decodeTo(Schema.String),
+);
+const IdempotencyKeySchema = nonEmptyString.pipe(
+  Schema.brand('IdempotencyKey'),
+  Schema.decodeTo(Schema.String),
+);
+const TargetModuleKeySchema = nonEmptyString.pipe(
+  Schema.brand('TargetModuleKey'),
+  Schema.decodeTo(Schema.String),
+);
+const TargetResourceIdSchema = nonEmptyString.pipe(
+  Schema.brand('TargetResourceId'),
+  Schema.decodeTo(Schema.String),
+);
+const TraceIdSchema = nonEmptyString.pipe(Schema.brand('TraceId'), Schema.decodeTo(Schema.String));
 
 export const ActionTransportMetadataSchema = Schema.Struct({
-  correlationId: nonEmptyString,
-  idempotencyKey: Schema.optionalKey(nonEmptyString),
-  targetModuleKey: Schema.optionalKey(nonEmptyString),
-  targetResourceId: Schema.optionalKey(nonEmptyString),
+  correlationId: CorrelationIdSchema,
+  idempotencyKey: Schema.optionalKey(IdempotencyKeySchema),
+  targetModuleKey: Schema.optionalKey(TargetModuleKeySchema),
+  targetResourceId: Schema.optionalKey(TargetResourceIdSchema),
   targetResourceType: Schema.optionalKey(nonEmptyString),
-  traceId: Schema.optionalKey(nonEmptyString),
+  traceId: Schema.optionalKey(TraceIdSchema),
 });
 
 export type ActionTransportMetadata = Schema.Schema.Type<typeof ActionTransportMetadataSchema>;

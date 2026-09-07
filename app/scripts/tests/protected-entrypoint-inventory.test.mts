@@ -25,9 +25,9 @@ const entries = [
   },
 ];
 
-test('inventory normalization, hashing, and serialization are deterministic', () => {
+void test('inventory normalization, hashing, and serialization are deterministic', () => {
   const left = makeProtectedEntrypointInventory('revision', entries);
-  const right = makeProtectedEntrypointInventory('revision', entries.toReversed());
+  const right = makeProtectedEntrypointInventory('revision', [entries[1], entries[0]]);
   assert.equal(
     serializeProtectedEntrypointInventory(left),
     serializeProtectedEntrypointInventory(right),
@@ -39,27 +39,31 @@ test('inventory normalization, hashing, and serialization are deterministic', ()
   );
 });
 
-test('inventory rejects duplicate and unsafe entrypoint identities', () => {
+void test('inventory rejects duplicate and unsafe entrypoint identities', () => {
   assert.throws(
-    () => makeProtectedEntrypointInventory('revision', [...entries, entries[0]!]),
+    () => makeProtectedEntrypointInventory('revision', [...entries, entries[0]]),
     /duplicate protected entrypoint/u,
   );
   assert.throws(
     () =>
       makeProtectedEntrypointInventory('revision', [
-        { ...entries[0]!, entrypointKey: 'tenant@example.com' },
+        { ...entries[0], entrypointKey: 'tenant@example.com' },
       ]),
     /stable, non-sensitive identifier/u,
   );
 });
 
-test('inventory rejects malformed and excess authorization classification data', () => {
+void test('inventory rejects malformed and excess authorization classification data', () => {
+  const authorizationWithExcessData = {
+    kind: 'public' as const,
+    permission: 'tenant.access',
+  };
   assert.throws(
     () =>
       makeProtectedEntrypointInventory('revision', [
         {
-          ...entries[0]!,
-          authorization: { kind: 'public', permission: 'tenant.access' } as never,
+          ...entries[0],
+          authorization: authorizationWithExcessData,
         },
       ]),
     /classification is invalid/u,
@@ -68,9 +72,9 @@ test('inventory rejects malformed and excess authorization classification data',
     () =>
       makeProtectedEntrypointInventory('revision', [
         {
-          ...entries[0]!,
+          ...entries[0],
           authorization: { kind: 'context_permission', permission: 'tenant@example.com' },
-        } as never,
+        },
       ]),
     /classification is invalid/u,
   );

@@ -13,22 +13,43 @@ import type { OperationContextUnavailable } from '../operations/errors.ts';
 import type { ResourceAccessTarget, TenantPermissionKey } from '../permissions/context-access.ts';
 
 const actionRegistration: unique symbol = Symbol('@app/core-runtime/actions/registration');
-const actionHandler: unique symbol = Symbol('@app/core-runtime/actions/registration/handler');
-const actionServiceFactory: unique symbol = Symbol(
-  '@app/core-runtime/actions/registration/service-factory',
-);
 const actionResourcePermissionDeclaration: unique symbol = Symbol(
   '@app/core-runtime/actions/resource-permission',
 );
-const actionResourcePermissionResolver: unique symbol = Symbol(
-  '@app/core-runtime/actions/resource-permission/resolver',
-);
 
-export type ActionIdempotencyRule = 'optional' | 'required';
-export type ActionAuditProfile = 'minimal' | 'sensitive' | 'standard';
+class ActionPrivateStorage<Value> {
+  declare readonly [actionRegistration]?: true;
+  declare readonly [actionResourcePermissionDeclaration]?: true;
+  declare readonly descriptor?: unknown;
+  declare readonly kind?: 'resource';
+  readonly #value: Value;
+
+  constructor(value: Value) {
+    this.#value = value;
+  }
+
+  static create<Value, PublicFields extends object>(
+    value: Value,
+    publicFields: PublicFields,
+  ): ActionPrivateStorage<Value> & Readonly<PublicFields> {
+    const storage = Object.assign(new ActionPrivateStorage(value), publicFields);
+    Object.freeze(storage);
+    return storage;
+  }
+
+  static getValue<Value>(storage: ActionPrivateStorage<Value>): Value {
+    return storage.#value;
+  }
+}
+
+export const ActionIdempotencyRuleSchema = Schema.Literals(['optional', 'required']);
+export type ActionIdempotencyRule = typeof ActionIdempotencyRuleSchema.Type;
+export const ActionAuditProfileSchema = Schema.Literals(['minimal', 'sensitive', 'standard']);
+export type ActionAuditProfile = typeof ActionAuditProfileSchema.Type;
 export type ActionTenantPermission = Exclude<TenantPermissionKey, 'access' | 'read_party_identity'>;
 export type ActionLegalEntityPermission = 'manage_counterparty';
-export type ActionResourcePermission = 'read' | 'write';
+export const ActionResourcePermissionSchema = Schema.Literals(['read', 'write']);
+export type ActionResourcePermission = typeof ActionResourcePermissionSchema.Type;
 export interface ActionResourcePermissionTarget {
   readonly permission: ActionResourcePermission;
   readonly resource: ResourceAccessTarget;
@@ -37,39 +58,44 @@ export type ActionResourcePermissionTargetResolver<Payload> = (
   payload: Payload,
   scope: OperationalScope,
 ) => ActionResourcePermissionTarget;
-export interface ActionResourcePermissionDeclaration<Payload> {
+export type ActionResourcePermissionDeclaration<Payload> = ActionPrivateStorage<
+  ActionResourcePermissionTargetResolver<Payload>
+> & {
   readonly [actionResourcePermissionDeclaration]: true;
-  readonly [actionResourcePermissionResolver]: ActionResourcePermissionTargetResolver<Payload>;
   readonly kind: 'resource';
-}
+};
+
+const ActionDefinitionInvariantError = Schema.TaggedError<Error>()(
+  'ActionDefinitionInvariantError',
+  { message: Schema.String },
+);
+
+const failActionDefinition = (message: string): never => {
+  throw new ActionDefinitionInvariantError({ message });
+};
 
 /** Declares a private resolver for an additional Resource permission check. */
 export const defineActionResourcePermission = <Payload>(
   resolver: ActionResourcePermissionTargetResolver<Payload>,
 ): ActionResourcePermissionDeclaration<Payload> => {
   if (!Predicate.isFunction(resolver)) {
-    throw new TypeError('Action Resource permission resolver must be a function');
+    return failActionDefinition('Action Resource permission resolver must be a function');
   }
-  return Object.freeze({
+  return ActionPrivateStorage.create(resolver, {
     [actionResourcePermissionDeclaration]: true as const,
-    [actionResourcePermissionResolver]: resolver,
     kind: 'resource' as const,
   });
 };
 
-const isActionResourcePermissionDeclaration = (
-  declaration: ActionResourcePermissionDeclaration<never> | undefined,
-): declaration is ActionResourcePermissionDeclaration<never> => {
-  if (!Predicate.isObjectKeyword(declaration) || declaration === null) {
-    return false;
-  }
-  return (
-    declaration[actionResourcePermissionDeclaration] &&
-    Predicate.isFunction(declaration[actionResourcePermissionResolver]) &&
+const ActionResourcePermissionDeclarationSchema = Schema.instanceOf(ActionPrivateStorage).check(
+  Schema.makeFilter((declaration) =>
+    declaration[actionResourcePermissionDeclaration] === true &&
     declaration.kind === 'resource' &&
     Object.isFrozen(declaration)
-  );
-};
+      ? undefined
+      : 'Expected an immutable Action Resource permission declaration',
+  ),
+);
 
 export interface ActionDescriptor<
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
@@ -137,7 +163,26 @@ const emptyActionServices: EmptyActionServices = Object.freeze({});
 const emptyActionServiceFactory: ActionServiceFactory<EmptyActionServices> = () =>
   Effect.succeed(emptyActionServices);
 
-export interface ActionRegistration<
+type ActionRegistrationPrivateValue<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Services = Readonly<Record<string, never>>,
+  HandlerRequirements = never,
+> = readonly [
+  handler: ActionHandler<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Services,
+    HandlerRequirements
+  >,
+  serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
+];
+
+export type ActionRegistration<
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
@@ -145,23 +190,23 @@ export interface ActionRegistration<
   Owner extends string,
   Services = Readonly<Record<string, never>>,
   HandlerRequirements = never,
-> {
-  readonly _handlerRequirements?: HandlerRequirements;
-  readonly _services?: Services;
-  readonly [actionHandler]: ActionHandler<
+> = ActionPrivateStorage<
+  ActionRegistrationPrivateValue<
     PayloadSchema,
     ResultSchema,
     DomainErrorSchema,
     DomainEvents,
     Services,
     HandlerRequirements
-  >;
+  >
+> & {
+  readonly _handlerRequirements?: HandlerRequirements;
+  readonly _services?: Services;
   readonly [actionRegistration]: true;
-  readonly [actionServiceFactory]: ActionServiceFactory<Services, HandlerRequirements>;
   readonly descriptor: Readonly<
     ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>
   >;
-}
+};
 
 /**
  * Existential public view of an Action registration. Keeping only the deployment-contract
@@ -223,39 +268,45 @@ export const validateActionDescriptorInput = <Policy>(
       (descriptor.owningModuleKey.startsWith('core.') ? 'system' : 'tenant') ||
     !Object.isFrozen(descriptor.entrypoint)
   ) {
-    throw new TypeError(
+    return failActionDefinition(
       'Action entrypoint must be an immutable action/write descriptor with the required owner scope',
     );
   }
   if (!LEGAL_ENTITY_SCOPES.some((scope) => scope === descriptor.legalEntityScope)) {
-    throw new TypeError('Action legal-entity scope must be required, optional, or forbidden');
+    return failActionDefinition(
+      'Action legal-entity scope must be required, optional, or forbidden',
+    );
   }
   if (
     descriptor.legalEntityPermission !== undefined &&
     (descriptor.legalEntityPermission !== 'manage_counterparty' ||
       descriptor.legalEntityScope !== 'required')
   ) {
-    throw new TypeError(
+    return failActionDefinition(
       'Action Legal Entity permission must be supported and require trusted Legal Entity scope',
     );
   }
   if (!Array.isArray(descriptor.policies)) {
-    throw new TypeError('Action policies must be an explicit readonly array of Policy references');
+    return failActionDefinition(
+      'Action policies must be an explicit readonly array of Policy references',
+    );
   }
   if (
     (descriptor.resourcePermission !== undefined &&
-      !isActionResourcePermissionDeclaration(descriptor.resourcePermission)) ||
+      !Schema.is(ActionResourcePermissionDeclarationSchema)(descriptor.resourcePermission)) ||
     (descriptor.tenantPermission !== undefined &&
       !Predicate.isFunction(descriptor.tenantPermission))
   ) {
-    throw new TypeError('Action permission declarations and resolvers must be valid');
+    return failActionDefinition('Action permission declarations and resolvers must be valid');
   }
   for (const policy of descriptor.policies) {
     if (!isActionPolicy(policy)) {
-      throw new TypeError('Action policies must contain direct Policy object references');
+      return failActionDefinition('Action policies must contain direct Policy object references');
     }
     if (policy.scope === 'microvertical' && policy.owningModuleKey !== descriptor.owningModuleKey) {
-      throw new TypeError('A MicroVertical Policy must be owned by the Action owning module');
+      return failActionDefinition(
+        'A MicroVertical Policy must be owned by the Action owning module',
+      );
     }
   }
 };
@@ -296,15 +347,17 @@ export function defineAction<
   HandlerRequirements,
 >(
   descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
-  handler: ActionHandler<
-    PayloadSchema,
-    ResultSchema,
-    DomainErrorSchema,
-    DomainEvents,
-    Services,
-    HandlerRequirements
-  >,
-  serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
+  ...definition: readonly [
+    handler: ActionHandler<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Services,
+      HandlerRequirements
+    >,
+    serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
+  ]
 ): ActionRegistration<
   PayloadSchema,
   ResultSchema,
@@ -358,30 +411,31 @@ export function defineAction<
   });
   if (definition.length === 1) {
     const [handler] = definition;
-    return Object.freeze({
-      [actionHandler]: handler,
+    return ActionPrivateStorage.create([handler, emptyActionServiceFactory] as const, {
       [actionRegistration]: true as const,
-      [actionServiceFactory]: emptyActionServiceFactory,
       descriptor: frozenDescriptor,
     });
   }
   const [handler, serviceFactory] = definition;
-  return Object.freeze({
-    [actionHandler]: handler,
+  return ActionPrivateStorage.create([handler, serviceFactory] as const, {
     [actionRegistration]: true as const,
-    [actionServiceFactory]: serviceFactory,
     descriptor: frozenDescriptor,
   });
 }
 
+const AnyActionRegistrationSchema = Schema.instanceOf(ActionPrivateStorage).check(
+  Schema.makeFilter((registration) =>
+    registration[actionRegistration] === true &&
+    registration.descriptor !== undefined &&
+    Object.isFrozen(registration)
+      ? undefined
+      : 'Expected an immutable Action registration',
+  ),
+);
+
 /** Runtime guard for the opaque value created by defineAction. */
 export const isActionRegistration = <Value>(value: Value): value is Value & AnyActionRegistration =>
-  Predicate.isObjectKeyword(value) &&
-  value !== null &&
-  actionHandler in value &&
-  actionServiceFactory in value &&
-  actionRegistration in value &&
-  value[actionRegistration] === true;
+  Schema.is(AnyActionRegistrationSchema)(value);
 
 /** Internal Core runtime seam. Action handlers are intentionally absent from the public registration. */
 export const getActionHandler = <
@@ -409,7 +463,7 @@ export const getActionHandler = <
   DomainEvents,
   Services,
   HandlerRequirements
-> => registration[actionHandler];
+> => ActionPrivateStorage.getValue(registration)[0];
 
 export const getActionServiceFactory = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
@@ -429,7 +483,8 @@ export const getActionServiceFactory = <
     Services,
     HandlerRequirements
   >,
-): ActionServiceFactory<Services, HandlerRequirements> => registration[actionServiceFactory];
+): ActionServiceFactory<Services, HandlerRequirements> =>
+  ActionPrivateStorage.getValue(registration)[1];
 
 export const getActionResourcePermissionTargetResolver = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
@@ -450,7 +505,22 @@ export const getActionResourcePermissionTargetResolver = <
     HandlerRequirements
   >,
 ): ActionResourcePermissionTargetResolver<PayloadSchema['Type']> | undefined =>
-  registration.descriptor.resourcePermission?.[actionResourcePermissionResolver];
+  registration.descriptor.resourcePermission === undefined
+    ? undefined
+    : ActionPrivateStorage.getValue(registration.descriptor.resourcePermission);
+
+const preserveFailureCause = <Failure extends object>(
+  failure: Failure,
+  cause: unknown,
+): Failure => {
+  Object.defineProperty(failure, 'cause', {
+    configurable: false,
+    enumerable: false,
+    value: cause,
+    writable: false,
+  });
+  return failure;
+};
 
 export const decodeActionPayload = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
@@ -469,12 +539,14 @@ export const decodeActionPayload = <
   }
 
   return Schema.decodeUnknownEffect(schema)(payload).pipe(
-    Effect.mapError(
-      () =>
+    Effect.mapError((cause) =>
+      preserveFailureCause(
         new ActionPayloadValidationError({
           code: 'action_payload_invalid',
           reason: 'The Action payload does not match its declared schema',
         }),
+        cause,
+      ),
     ),
   );
 };
@@ -483,12 +555,17 @@ export const decodeActionResult = <ResultSchema extends Schema.ConstraintDecoder
   schema: ResultSchema,
   result: Result,
 ): Effect.Effect<ResultSchema['Type'], ActionResultValidationError> =>
-  Schema.decodeUnknownEffect(schema)(result).pipe(
-    Effect.mapError(
-      () =>
+  Schema.encodeUnknownEffect(Schema.make<Schema.ConstraintEncoder<unknown>>(schema.ast))(
+    result,
+  ).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(schema)),
+    Effect.mapError((cause) =>
+      preserveFailureCause(
         new ActionResultValidationError({
           code: 'action_result_invalid',
           reason: 'The Action result does not match its declared schema',
         }),
+        cause,
+      ),
     ),
   );

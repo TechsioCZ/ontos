@@ -1,4 +1,4 @@
-// @effect-diagnostics globalConsole:off strictEffectProvide:off
+// @effect-diagnostics globalConsole:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { DatabaseConfig, loadDatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { Effect, Layer, Schema } from 'effect';
@@ -51,6 +51,9 @@ const expectedColumns = [
   'person_engagement_profiles.tenant_id',
   'person_engagement_profiles.updated_at',
 ] as const;
+
+const organizationEngagementProfileRelation = `${CONTACTS_SCHEMA_NAME}.organization_engagement_profiles`;
+const personEngagementProfileRelation = `${CONTACTS_SCHEMA_NAME}.person_engagement_profiles`;
 
 const infrastructureMatches = (verified: InfrastructureCatalogRow, adminUser: string): boolean =>
   verified.organization_owner === adminUser &&
@@ -138,10 +141,10 @@ const verification = Effect.gen(function* verifyContactsDatabase() {
         (select count(*)::integer from pg_catalog.pg_policy as policy where policy.polrelid in (organization_profile.oid, person_profile.oid)) as policy_count,
         has_schema_privilege(${'ontos_runtime'}, ${CONTACTS_SCHEMA_NAME}, ${'CREATE'}) as runtime_create,
         has_schema_privilege(${'ontos_runtime'}, ${CONTACTS_SCHEMA_NAME}, ${'USAGE'}) as runtime_usage,
-        has_table_privilege(${'ontos_runtime'}, ${'contacts.organization_engagement_profiles'}, ${'SELECT'}) and has_table_privilege(${'ontos_runtime'}, ${'contacts.person_engagement_profiles'}, ${'SELECT'}) as runtime_select,
-        has_table_privilege(${'ontos_runtime'}, ${'contacts.organization_engagement_profiles'}, ${'INSERT'}) and has_table_privilege(${'ontos_runtime'}, ${'contacts.person_engagement_profiles'}, ${'INSERT'}) as runtime_insert,
-        has_table_privilege(${'ontos_runtime'}, ${'contacts.organization_engagement_profiles'}, ${'UPDATE'}) and has_table_privilege(${'ontos_runtime'}, ${'contacts.person_engagement_profiles'}, ${'UPDATE'}) as runtime_update,
-        has_table_privilege(${'ontos_runtime'}, ${'contacts.organization_engagement_profiles'}, ${'DELETE'}) and has_table_privilege(${'ontos_runtime'}, ${'contacts.person_engagement_profiles'}, ${'DELETE'}) as runtime_delete,
+        has_table_privilege(${'ontos_runtime'}, ${organizationEngagementProfileRelation}, ${'SELECT'}) and has_table_privilege(${'ontos_runtime'}, ${personEngagementProfileRelation}, ${'SELECT'}) as runtime_select,
+        has_table_privilege(${'ontos_runtime'}, ${organizationEngagementProfileRelation}, ${'INSERT'}) and has_table_privilege(${'ontos_runtime'}, ${personEngagementProfileRelation}, ${'INSERT'}) as runtime_insert,
+        has_table_privilege(${'ontos_runtime'}, ${organizationEngagementProfileRelation}, ${'UPDATE'}) and has_table_privilege(${'ontos_runtime'}, ${personEngagementProfileRelation}, ${'UPDATE'}) as runtime_update,
+        has_table_privilege(${'ontos_runtime'}, ${organizationEngagementProfileRelation}, ${'DELETE'}) and has_table_privilege(${'ontos_runtime'}, ${personEngagementProfileRelation}, ${'DELETE'}) as runtime_delete,
         runtime_role.rolsuper as role_super,
         runtime_role.rolbypassrls as role_bypass_rls,
         ((organization_profile.relrowsecurity and organization_profile.relforcerowsecurity)::integer + (person_profile.relrowsecurity and person_profile.relforcerowsecurity)::integer) as rls_count

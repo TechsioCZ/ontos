@@ -7,7 +7,7 @@ import {
   defineTenantModuleEntrypoint,
   OperationContextUnavailable,
 } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Match, Schema } from 'effect';
 import { CounterpartyAuditEvidenceSchema } from '../../shared/domain/counterparty-contract.ts';
 import {
   CounterpartyEvidenceInsufficient,
@@ -58,11 +58,11 @@ type CounterpartyCreateDomainEvents = Readonly<{
   'party.registry.counterparty-created.v1': typeof CounterpartyCreatedEventSchema;
 }>;
 
-const handleCounterpartyCreate = (
-  payload: CounterpartyCreatePayload,
-  context: ActionHandlerContext<CounterpartyCreateDomainEvents, CounterpartyCreateServices>,
-) =>
-  Effect.gen(function* createCounterparty() {
+const handleCounterpartyCreate = Effect.fn('CounterpartyCreateAction.handleCounterpartyCreate')(
+  function* createCounterparty(
+    payload: CounterpartyCreatePayload,
+    context: ActionHandlerContext<CounterpartyCreateDomainEvents, CounterpartyCreateServices>,
+  ) {
     if (!counterpartyContextEvidenceIsSufficient(payload.provenance.method)) {
       return yield* new CounterpartyEvidenceInsufficient({
         code: 'counterparty_evidence_insufficient',
@@ -76,29 +76,39 @@ const handleCounterpartyCreate = (
         reason: 'The Party reference must belong to the trusted Tenant',
       });
     }
-    const result = yield* context.services.create(payload, context);
-    if (result._tag === 'party_alias') {
-      return yield* new PartyAliasWriteRejected({
-        aliasPartyRef: result.aliasPartyRef,
-        canonicalPartyRef: result.canonicalPartyRef,
-        code: 'party_alias_write_rejected',
-        reason: 'Counterparty Create must explicitly target the canonical survivor Party',
-      });
-    }
-    if (result._tag === 'party_not_found') {
-      return yield* new CounterpartyPartyNotFound({
-        code: 'counterparty_party_not_found',
-        partyId: result.partyId,
-        reason: 'The Party does not exist in the trusted Tenant',
-      });
-    }
-    if (result._tag === 'party_archived') {
-      return yield* new CounterpartyPartyArchived({
-        code: 'counterparty_party_archived',
-        partyId: result.partyId,
-        reason: 'An archived Party cannot enter a new Counterparty context',
-      });
-    }
+    const persistenceResult = yield* context.services.create(payload, context);
+    const result = yield* Match.value(persistenceResult).pipe(
+      Match.tag('party_alias', ({ aliasPartyRef, canonicalPartyRef }) =>
+        Effect.fail(
+          new PartyAliasWriteRejected({
+            aliasPartyRef,
+            canonicalPartyRef,
+            code: 'party_alias_write_rejected',
+            reason: 'Counterparty Create must explicitly target the canonical survivor Party',
+          }),
+        ),
+      ),
+      Match.tag('party_not_found', ({ partyId }) =>
+        Effect.fail(
+          new CounterpartyPartyNotFound({
+            code: 'counterparty_party_not_found',
+            partyId,
+            reason: 'The Party does not exist in the trusted Tenant',
+          }),
+        ),
+      ),
+      Match.tag('party_archived', ({ partyId }) =>
+        Effect.fail(
+          new CounterpartyPartyArchived({
+            code: 'counterparty_party_archived',
+            partyId,
+            reason: 'An archived Party cannot enter a new Counterparty context',
+          }),
+        ),
+      ),
+      Match.tag('found', (found) => Effect.succeed(found)),
+      Match.exhaustive,
+    );
     yield* context.recordAuditEvidence({
       evidenceReference: payload.provenance.evidenceReference ?? null,
       provenanceMethod: payload.provenance.method,
@@ -139,7 +149,8 @@ const handleCounterpartyCreate = (
       legalEntityRef: result.legalEntityRef,
       partyRef: result.partyRef,
     };
-  });
+  },
+);
 
 export const counterpartyCreateAction = defineAction(
   {

@@ -1,7 +1,8 @@
-/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type, unicorn/no-thenable -- This focused harness models only the Drizzle fluent/PromiseLike surface exercised by Contact Point ending. */
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type, unicorn/no-thenable -- This focused harness models only the Drizzle fluent/PromiseLike surface exercised by Contact Point ending. expires: 2026-12-31. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import {
@@ -12,6 +13,7 @@ import {
 } from '../../src/services/party-contact-point-persistence.service.ts';
 import { makePartyAliasResolutionService } from '../../src/merge/party-alias-resolution.service.ts';
 import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
+import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const partyId = '20000000-0000-4000-8000-000000000001';
@@ -20,7 +22,7 @@ const actionInvocationId = '40000000-0000-4000-8000-000000000001';
 const principalId = '50000000-0000-4000-8000-000000000001';
 const instantAsDate = (instant: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(instant));
 const directAliases = makePartyAliasResolutionService({
-  findAlias: () => Effect.succeed(null),
+  findAlias: () => Effect.succeed(Option.none()),
   partyExists: () => Effect.succeed(true),
 });
 const addContactPointRecord = (
@@ -220,7 +222,7 @@ const wholeEndCommand = (effectiveEnd: string, reason = 'Party retired this mail
 });
 
 test('stores future end provenance while keeping the contact current until the boundary', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const effectiveEnd = '2099-01-01T00:00:00.000Z';
       const updated = contactRow({
@@ -259,7 +261,7 @@ test('stores future end provenance while keeping the contact current until the b
   ));
 
 test('stores end provenance on both a last ADDRESS purpose and its owning address', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const effectiveEnd = '2026-02-01T00:00:00.000Z';
       const address = contactRow({
@@ -327,7 +329,7 @@ test('stores end provenance on both a last ADDRESS purpose and its owning addres
   ));
 
 test('reuses only an exact end request and rejects changed evidence at the same boundary', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const effectiveEnd = '2026-02-01T00:00:00.000Z';
       const ended = contactRow({
@@ -366,7 +368,7 @@ test('reuses only an exact end request and rejects changed evidence at the same 
   ));
 
 test('stores correction end provenance on the preserved original Contact Point', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const original = contactRow();
       const corrected = contactRow({
@@ -438,7 +440,7 @@ const updateCommand = (change: Parameters<typeof updateContactPointRecord>[2]['c
 });
 
 test('re-adds a scheduled-ended purpose as a new period without reopening its history', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const stalePurpose = purposeRow({
         endEvidenceRefs: ['evidence:contact-end:1'],
@@ -486,7 +488,7 @@ test('re-adds a scheduled-ended purpose as a new period without reopening its hi
   ));
 
 test('rejects a REGISTERED context collision as a typed domain conflict before mutation', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const address = addressRow();
       const conflicting = purposeRow({
@@ -561,7 +563,7 @@ test('rejects a REGISTERED context collision as a typed domain conflict before m
   ));
 
 test('advances revisions on both the transferred purpose and its owning address', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const address = addressRow();
       const current = purposeRow({ preferred: false });
@@ -597,7 +599,7 @@ test('advances revisions on both the transferred purpose and its owning address'
   ));
 
 test('preserves original provenance evidence and appends deduplicated enrichment', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const row = contactRow({
         additionalEvidenceRefs: ['evidence:second'],
@@ -636,7 +638,7 @@ test('preserves original provenance evidence and appends deduplicated enrichment
   ));
 
 test('rejects invalid E.164 and oversized extensions through the service typed-error path', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.all(
       [
         { preferred: false, type: 'PHONE' as const, value: '+0123456789' },
@@ -679,27 +681,31 @@ test('rejects invalid E.164 and oversized extensions through the service typed-e
   ));
 
 test('rejects an explicit alias Party add but keeps durable ContactPoint updates readable through the full chain', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const intermediatePartyId = '20000000-0000-4000-8000-000000000002';
       const canonicalPartyId = '20000000-0000-4000-8000-000000000003';
       const aliases = makePartyAliasResolutionService({
         findAlias: (requestedTenantId, requestedPartyId) => {
           if (requestedPartyId === partyId) {
-            return Effect.succeed({
-              aliasPartyId: partyId,
-              canonicalPartyId: intermediatePartyId,
-              tenantId: requestedTenantId,
-            });
+            return Effect.succeed(
+              Option.some({
+                aliasPartyId: partyId,
+                canonicalPartyId: intermediatePartyId,
+                tenantId: requestedTenantId,
+              }),
+            );
           }
           if (requestedPartyId === intermediatePartyId) {
-            return Effect.succeed({
-              aliasPartyId: intermediatePartyId,
-              canonicalPartyId,
-              tenantId: requestedTenantId,
-            });
+            return Effect.succeed(
+              Option.some({
+                aliasPartyId: intermediatePartyId,
+                canonicalPartyId,
+                tenantId: requestedTenantId,
+              }),
+            );
           }
-          return Effect.succeed(null);
+          return Effect.succeed(Option.none());
         },
         partyExists: () => Effect.succeed(true),
       });
@@ -730,10 +736,8 @@ test('rejects an explicit alias Party add but keeps durable ContactPoint updates
           aliases,
         ),
       );
-      assert.equal(rejected._tag, 'PartyAliasWriteRejected');
-      if (rejected._tag === 'PartyAliasWriteRejected') {
-        assert.equal(rejected.canonicalPartyRef.resourceId, canonicalPartyId);
-      }
+      assert.ok(Schema.is(PartyAliasWriteRejected)(rejected));
+      assert.equal(rejected.canonicalPartyRef.resourceId, canonicalPartyId);
       assert.equal(addHarness.insertValues.length, 0);
 
       const row = contactRow();
@@ -764,8 +768,8 @@ test('rejects an explicit alias Party add but keeps durable ContactPoint updates
         contactPointId,
         aliases,
       );
-      assert.equal(detail?.partyRef.resourceId, canonicalPartyId);
-      assert.equal(detail?.storedPartyRef?.resourceId, partyId);
+      assert.equal(Option.getOrThrow(detail).partyRef.resourceId, canonicalPartyId);
+      assert.equal(Option.getOrThrow(detail).storedPartyRef.resourceId, partyId);
 
       const ended = contactRow({
         endEvidenceRefs: ['evidence:contact-end:1'],
@@ -797,7 +801,7 @@ test('rejects an explicit alias Party add but keeps durable ContactPoint updates
   ));
 
 test('advances the replaced channel preference revision as well as the selected contact', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const row = contactRow({ preferred: false });
       const harness = transactionHarness([
@@ -820,7 +824,7 @@ test('advances the replaced channel preference revision as well as the selected 
   ));
 
 test('persists bounded ARES provenance on the address and purpose without using observation time as effective time', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const externalEvidence = yield* Schema.decodeUnknownEffect(AresAppliedEvidenceSchema)({
         authorityPolicyKey: 'party_registry.ares_enrichment',
@@ -838,9 +842,11 @@ test('persists bounded ARES provenance on the address and purpose without using 
         reasonCode: 'selected_missing_fact_confirmed',
         servedAt: '2026-09-03T10:02:00.000Z',
       });
-      const address = addressRow({ externalEvidence });
+      const encodedExternalEvidence =
+        yield* Schema.encodeUnknownEffect(AresAppliedEvidenceSchema)(externalEvidence);
+      const address = addressRow({ externalEvidence: encodedExternalEvidence });
       const purpose = purposeRow({
-        externalEvidence,
+        externalEvidence: encodedExternalEvidence,
         jurisdiction: 'CZ',
         purposeKey: 'REGISTERED',
         registryContext: 'ARES',
@@ -877,13 +883,18 @@ test('persists bounded ARES provenance on the address and purpose without using 
         validFrom: '2026-08-01T00:00:00.000Z',
         verification: { state: 'UNVERIFIED' },
       });
-      assert.deepEqual(harness.insertValues[0]?.['externalEvidence'], externalEvidence);
-      assert.deepEqual(harness.insertValues[1]?.['externalEvidence'], externalEvidence);
+      assert.deepEqual(harness.insertValues[0]?.['externalEvidence'], encodedExternalEvidence);
+      assert.deepEqual(harness.insertValues[1]?.['externalEvidence'], encodedExternalEvidence);
       assert.deepEqual(
         harness.insertValues[0]?.['validFrom'],
         instantAsDate('2026-08-01T00:00:00.000Z'),
       );
-      assert.equal(result.provenance.externalEvidence?.observedAt, '2026-09-03T10:00:00.000Z');
+      assert.equal(
+        result.provenance.externalEvidence === undefined
+          ? undefined
+          : DateTime.formatIso(result.provenance.externalEvidence.observedAt),
+        '2026-09-03T10:00:00.000Z',
+      );
       assert.equal(result.value.type, 'ADDRESS');
       if (result.value.type === 'ADDRESS') {
         assert.deepEqual(result.value.purposes[0]?.provenance.externalEvidence, externalEvidence);
@@ -892,7 +903,7 @@ test('persists bounded ARES provenance on the address and purpose without using 
   ));
 
 test('treats PHONE extensions as distinct endpoints while rejecting an exact duplicate extension', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const existing = contactRow({
         contactPointType: 'PHONE',
@@ -941,7 +952,7 @@ test('treats PHONE extensions as distinct endpoints while rejecting an exact dup
   ));
 
 test('whole ADDRESS end preserves an earlier purpose end and its independent accepted evidence', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const address = addressRow();
       const earlierEndAudit = {
@@ -993,7 +1004,12 @@ test('whole ADDRESS end preserves an earlier purpose end and its independent acc
       assert.equal(harness.updateSets[1]?.['revision'], 2);
       if (result.contactPoint.value.type === 'ADDRESS') {
         const [preserved] = result.contactPoint.value.purposes;
-        assert.equal(preserved?.validTo, '2090-01-01T00:00:00.000Z');
+        assert.equal(
+          preserved?.validTo === null || preserved?.validTo === undefined
+            ? preserved?.validTo
+            : DateTime.formatIso(preserved.validTo),
+          '2090-01-01T00:00:00.000Z',
+        );
         assert.equal(preserved?.end?.reason, 'Independent delivery contract end');
         assert.deepEqual(preserved?.end?.provenance.evidenceReferences, [
           'evidence:delivery-contract-ended',

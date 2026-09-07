@@ -1,19 +1,21 @@
-// @effect-diagnostics asyncFunction:off
 import { v1 } from '@authzed/authzed-node';
-import { Context, Effect, Layer } from 'effect';
+import { Context, Effect, Layer, Result, Schema } from 'effect';
 import type { Scope } from 'effect';
 import {
   SPICEDB_CHECK_TIMEOUT_MS,
   acquireSpiceDbClientResource,
   createSpiceDbPermissionClient,
   fullyConsistent,
+  normalizeSpiceDbPermissionClientOperation,
+  spiceDbPermissionClientError,
 } from './client.ts';
 import type { SpiceDbPermissionClient } from './client.ts';
 import { loadSpiceDbConfig } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
 import type { SpiceDbConfigError } from './config-error.ts';
 
-export type ContextAccessDecision = 'allowed' | 'denied' | 'unavailable';
+export const ContextAccessDecisionSchema = Schema.Literals(['allowed', 'denied', 'unavailable']);
+export type ContextAccessDecision = typeof ContextAccessDecisionSchema.Type;
 
 export const TENANT_PERMISSION_KEYS = [
   'access',
@@ -87,6 +89,9 @@ interface BatchItem {
   readonly resourceType: string;
 }
 
+const ContextAccessObjectIdParts = Schema.fromJsonString(Schema.Array(Schema.String));
+const encodeContextAccessObjectIdParts = Schema.encodeResult(ContextAccessObjectIdParts);
+
 const principalReference = (principalId: string) =>
   v1.SubjectReference.create({
     object: v1.ObjectReference.create({ objectId: principalId, objectType: 'principal' }),
@@ -96,7 +101,8 @@ const encodeObjectId = (parts: readonly string[]): string | undefined => {
   if (parts.some((part) => part.length === 0)) {
     return undefined;
   }
-  const encoded = `ctx_${Buffer.from(JSON.stringify(parts), 'utf-8').toString('base64url')}`;
+  const encodedParts = Result.getOrThrow(encodeContextAccessObjectIdParts(parts));
+  const encoded = `ctx_${Buffer.from(encodedParts, 'utf-8').toString('base64url')}`;
   return encoded.length <= 1024 ? encoded : undefined;
 };
 
@@ -178,43 +184,39 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
       return Effect.succeed([]);
     }
     const requests = items.map((item) => makeRequestItem(item, principalId));
-    return Effect.tryPromise({
-      catch: () => null,
-      try: async () =>
-        await client.checkBulkPermissions(
-          v1.CheckBulkPermissionsRequest.create({
-            consistency: fullyConsistent,
-            items: requests,
-            withTracing: false,
-          }),
-        ),
-    }).pipe(
-      Effect.match({
-        onFailure: () => unavailable(keys),
-        onSuccess: (response) => {
-          if (response.pairs.length !== requests.length) {
-            return unavailable(keys);
+    return normalizeSpiceDbPermissionClientOperation(
+      client.checkBulkPermissions(
+        v1.CheckBulkPermissionsRequest.create({
+          consistency: fullyConsistent,
+          items: requests,
+          withTracing: false,
+        }),
+      ),
+    ).pipe(
+      Effect.map((response) => {
+        if (response.pairs.length !== requests.length) {
+          return unavailable(keys);
+        }
+        const seen = new Set<string>();
+        const decisions = response.pairs.map((pair, index) => {
+          const expected = requests[index];
+          const key = keys[index];
+          if (
+            expected === undefined ||
+            key === undefined ||
+            !sameRequest(expected, pair.request) ||
+            seen.has(key)
+          ) {
+            return null;
           }
-          const seen = new Set<string>();
-          const decisions = response.pairs.map((pair, index) => {
-            const expected = requests[index];
-            const key = keys[index];
-            if (
-              expected === undefined ||
-              key === undefined ||
-              !sameRequest(expected, pair.request) ||
-              seen.has(key)
-            ) {
-              return null;
-            }
-            seen.add(key);
-            return { decision: classifyPair(pair), key };
-          });
-          return decisions.every((decision): decision is ContextAccessResult => decision !== null)
-            ? decisions
-            : unavailable(keys);
-        },
+          seen.add(key);
+          return { decision: classifyPair(pair), key };
+        });
+        return decisions.every((decision): decision is ContextAccessResult => decision !== null)
+          ? decisions
+          : unavailable(keys);
       }),
+      Effect.catchTag('SpiceDbPermissionClientError', () => Effect.succeed(unavailable(keys))),
     );
   };
 
@@ -287,16 +289,19 @@ export const makeContextAccessLive = (
     SpiceDbConfigError
   > = loadSpiceDbConfig,
 ): Effect.Effect<ContextAccessService, never, Scope.Scope> =>
-  Effect.matchEffect(loadConfiguration(), {
-    onFailure: () => Effect.succeed(unavailableContextAccess()),
-    onSuccess: (configuration) =>
+  loadConfiguration().pipe(
+    Effect.flatMap((configuration) =>
       acquireSpiceDbClientResource(
         () => clientFactory(configuration, SPICEDB_CHECK_TIMEOUT_MS),
-        () => null,
+        spiceDbPermissionClientError,
       ).pipe(
         Effect.map(makeContextAccess),
-        Effect.orElseSucceed(() => unavailableContextAccess()),
+        Effect.catchTag('SpiceDbPermissionClientError', () =>
+          Effect.succeed(unavailableContextAccess()),
+        ),
       ),
-  });
+    ),
+    Effect.catchTag('SpiceDbConfigError', () => Effect.succeed(unavailableContextAccess())),
+  );
 
 export const ContextAccessLive = Layer.effect(ContextAccess, makeContextAccessLive());

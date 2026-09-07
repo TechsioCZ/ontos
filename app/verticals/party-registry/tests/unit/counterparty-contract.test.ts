@@ -32,6 +32,13 @@ import {
   CounterpartyRoleHistoryRequestSchema,
   CounterpartyRoleHistoryResponseSchema,
 } from '../../shared/apis/counterparty-role-history.ts';
+import {
+  CounterpartyAuditEvidenceSchema,
+  CounterpartyIsoTimestampSchema,
+  CounterpartyPartyProjectionSchema,
+  CounterpartyRolePeriodSchema,
+  LegalEntityRefSchema,
+} from '../../shared/domain/counterparty-contract.ts';
 import { OutboxPayloadSchema as CounterpartyCreatedOutboxPayloadSchema } from '../../shared/outbox/party-registry-counterparty-created-v1.ts';
 import { OutboxPayloadSchema as CounterpartyRoleAddedOutboxPayloadSchema } from '../../shared/outbox/party-registry-counterparty-role-added-v1.ts';
 import { OutboxPayloadSchema as CounterpartyRoleEndedOutboxPayloadSchema } from '../../shared/outbox/party-registry-counterparty-role-ended-v1.ts';
@@ -168,6 +175,81 @@ test('publishes only stable references and bounded lifecycle facts', () => {
     Schema.decodeUnknownSync(CounterpartyCreatedOutboxPayloadSchema, {
       onExcessProperty: 'error',
     })({ counterpartyRef, displayName: 'ACME', legalEntityRef, partyRef }),
+  );
+});
+
+test('preserves Counterparty JSON round trips for timestamps, references, and absence', () => {
+  const timestamp = '2026-09-03T10:00:00.000Z';
+  assert.equal(
+    Schema.encodeSync(CounterpartyIsoTimestampSchema)(
+      Schema.decodeUnknownSync(CounterpartyIsoTimestampSchema)(timestamp),
+    ),
+    timestamp,
+  );
+  assert.deepEqual(
+    Schema.encodeSync(LegalEntityRefSchema)(
+      Schema.decodeUnknownSync(LegalEntityRefSchema)(legalEntityRef),
+    ),
+    legalEntityRef,
+  );
+
+  const roleWithoutEndProvenance = {
+    provenance,
+    recordedAt: timestamp,
+    rolePeriodRef,
+    roleType: 'CUSTOMER' as const,
+    state: 'ACTIVE' as const,
+    validFrom: timestamp,
+    validTo: null,
+  };
+  assert.deepEqual(
+    Schema.encodeSync(CounterpartyRolePeriodSchema)(
+      Schema.decodeUnknownSync(CounterpartyRolePeriodSchema)(roleWithoutEndProvenance),
+    ),
+    roleWithoutEndProvenance,
+  );
+  assert.deepEqual(
+    Schema.encodeSync(CounterpartyRolePeriodSchema)(
+      Schema.decodeUnknownSync(CounterpartyRolePeriodSchema)({
+        ...roleWithoutEndProvenance,
+        endProvenance: null,
+      }),
+    ),
+    { ...roleWithoutEndProvenance, endProvenance: null },
+  );
+  assert.deepEqual(
+    Schema.encodeSync(CounterpartyAuditEvidenceSchema)(
+      Schema.decodeUnknownSync(CounterpartyAuditEvidenceSchema)({
+        evidenceReference: null,
+        provenanceMethod: provenance.method,
+        provenanceReason: provenance.reason,
+        provenanceSource: provenance.source,
+      }),
+    ),
+    {
+      evidenceReference: null,
+      provenanceMethod: provenance.method,
+      provenanceReason: provenance.reason,
+      provenanceSource: provenance.source,
+    },
+  );
+  assert.deepEqual(
+    Schema.encodeSync(CounterpartyPartyProjectionSchema)(
+      Schema.decodeUnknownSync(CounterpartyPartyProjectionSchema)({
+        archived: false,
+        canonicalPartyRef: partyRef,
+        displayName: null,
+        partyType: 'ORGANIZATION',
+        storedPartyRef: partyRef,
+      }),
+    ),
+    {
+      archived: false,
+      canonicalPartyRef: partyRef,
+      displayName: null,
+      partyType: 'ORGANIZATION',
+      storedPartyRef: partyRef,
+    },
   );
 });
 

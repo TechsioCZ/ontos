@@ -10,27 +10,33 @@ import type {
   AuthorizationReadinessInput,
 } from '../check-authorization-readiness.mts';
 
+const approvalReference = 'https://github.com/TechsioCZ/ontos/issues/169';
+const contactsCreateCustomerEntrypoint = 'contacts.create-customer';
+const contactsCustomerDetailEntrypoint = 'contacts.route.customer-detail';
+const contactsEventsWorkerEntrypoint = 'contacts.worker.events';
+const contactsOwner = 'contacts.core';
+
 const inventory: ProtectedEntrypointInventory = {
   entries: [
     {
       authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       deployment: 'contacts',
-      entrypointKey: 'contacts.create-customer',
-      owner: 'contacts.core',
+      entrypointKey: contactsCreateCustomerEntrypoint,
+      owner: contactsOwner,
       surface: 'action',
     },
     {
       authorization: { kind: 'context_permission', permission: 'view' },
       deployment: 'contacts',
-      entrypointKey: 'contacts.route.customer-detail',
-      owner: 'contacts.core',
+      entrypointKey: contactsCustomerDetailEntrypoint,
+      owner: contactsOwner,
       surface: 'route',
     },
     {
       authorization: { kind: 'owner_local_background' },
       deployment: 'contacts',
-      entrypointKey: 'contacts.worker.events',
-      owner: 'contacts.core',
+      entrypointKey: contactsEventsWorkerEntrypoint,
+      owner: contactsOwner,
       surface: 'worker',
     },
     {
@@ -70,7 +76,7 @@ const negativeSmokeHash = hashAuthorizationEvidence(negativeSmoke);
 
 const ready: AuthorizationReadinessInput = {
   context: {
-    approvalReference: 'https://github.com/TechsioCZ/ontos/issues/169',
+    approvalReference,
     approvalStatus: 'approved',
     environment: 'stage',
     gatewayAudiences: ['contacts'],
@@ -101,7 +107,7 @@ const ready: AuthorizationReadinessInput = {
   negativeSmokeHash,
   nowEpochMs: Date.parse('2026-09-10T00:00:00.000Z'),
   observation: {
-    approvalReference: 'https://github.com/TechsioCZ/ontos/issues/169',
+    approvalReference,
     environment: 'stage',
     gatewayAudiences: ['contacts'],
     gatewayIssuer: 'https://shell.stage.example.test',
@@ -113,14 +119,14 @@ const ready: AuthorizationReadinessInput = {
     schemaVersion: 1,
     sourceRevision: inventory.sourceRevision,
     spiceDbSchemaHash: 'e'.repeat(64),
-    verifiedActionEntrypoints: ['contacts.create-customer'],
+    verifiedActionEntrypoints: [contactsCreateCustomerEntrypoint],
     verifiedActiveModuleEntrypoints: [
-      'contacts.create-customer',
-      'contacts.route.customer-detail',
-      'contacts.worker.events',
+      contactsCreateCustomerEntrypoint,
+      contactsCustomerDetailEntrypoint,
+      contactsEventsWorkerEntrypoint,
     ],
-    verifiedContextPermissionEntrypoints: ['contacts.route.customer-detail'],
-    verifiedWorkerEntrypoints: ['contacts.worker.events'],
+    verifiedContextPermissionEntrypoints: [contactsCustomerDetailEntrypoint],
+    verifiedWorkerEntrypoints: [contactsEventsWorkerEntrypoint],
     workerOwnershipVersion: 'worker-owner-v1',
   },
   replayMigrationHash: 'd'.repeat(64),
@@ -129,7 +135,7 @@ const ready: AuthorizationReadinessInput = {
     baselineInventoryHash: inventory.inventoryHash,
     baselineSourceRevision: inventory.sourceRevision,
     compatibilityEligibleEntrypoints: [],
-    decisionReference: 'https://github.com/TechsioCZ/ontos/issues/169',
+    decisionReference: approvalReference,
     expiresAt: '2026-09-30T00:00:00.000Z',
     mode: 'report_only',
     schemaVersion: 1,
@@ -137,7 +143,7 @@ const ready: AuthorizationReadinessInput = {
   spiceDbSchemaHash: 'e'.repeat(64),
 };
 
-test('readiness emits deterministic evidence bound to the fixed context and exact build', () => {
+void test('readiness emits deterministic evidence bound to the fixed context and exact build', () => {
   const evidence = checkAuthorizationReadiness(ready);
   assert.equal(evidence.status, 'ready');
   assert.equal(evidence.inventoryHash, inventory.inventoryHash);
@@ -145,7 +151,7 @@ test('readiness emits deterministic evidence bound to the fixed context and exac
   assert.equal(evidence.negativeSmokeHash, negativeSmokeHash);
 });
 
-test('readiness rejects unapproved contexts and unresolved or stale impact evidence', () => {
+void test('readiness rejects unapproved contexts and unresolved or stale impact evidence', () => {
   assert.throws(
     () =>
       checkAuthorizationReadiness({
@@ -172,7 +178,7 @@ test('readiness rejects unapproved contexts and unresolved or stale impact evide
   );
 });
 
-test('readiness rejects missing relationships, module state, worker ownership, and replay migration', () => {
+void test('readiness rejects missing relationships, module state, worker ownership, and replay migration', () => {
   for (const key of [
     'verifiedActionEntrypoints',
     'verifiedActiveModuleEntrypoints',
@@ -198,7 +204,7 @@ test('readiness rejects missing relationships, module state, worker ownership, a
   );
 });
 
-test('readiness rejects incorrect issuer/audience topology, short observations, and smoke gaps', () => {
+void test('readiness rejects incorrect issuer/audience topology, short observations, and smoke gaps', () => {
   assert.throws(
     () =>
       checkAuthorizationReadiness({

@@ -1,4 +1,3 @@
-/* eslint-disable complexity, unicorn/switch-case-braces -- The strict Effect BFF keeps complete typed error mappings visible. */
 import { ActionRuntime } from '@app/core-runtime';
 import type {
   ActionCoreError,
@@ -12,10 +11,22 @@ import {
   HttpServerResponse,
   Layer,
 } from '@modern-js/plugin-bff/effect-edge';
-import { Config } from 'effect';
-import type { Schema } from 'effect';
+import { Cause, Exit, Match, Predicate, Redacted, Result, Schema } from 'effect';
 import { partyRegistryApi } from '../shared/api.ts';
-import type { ContactsProblem } from '../shared/engagement-profile-api.ts';
+import {
+  ContactsAuthenticationProblemSchema,
+  ContactsConflictProblemSchema,
+  ContactsForbiddenProblemSchema,
+  ContactsInternalProblemSchema,
+  ContactsInvalidRequestProblemSchema,
+  ContactsNotFoundProblemSchema,
+  ContactsPreconditionRequiredProblemSchema,
+  ContactsUnavailableProblemSchema,
+} from '../shared/engagement-profile-api.ts';
+import type {
+  ContactsMutationHeadersSchema,
+  ContactsProblem,
+} from '../shared/engagement-profile-api.ts';
 import type {
   EngagementProfileConflict,
   EngagementProfileNotFound,
@@ -33,75 +44,100 @@ import { organizationEngagementProfileReadApiLive } from './organization-engagem
 import { personEngagementProfileReadApiLive } from './person-engagement-profile-read-server.ts';
 
 const problem = {
-  authentication: (): ContactsProblem => ({
-    _tag: 'ContactsAuthenticationProblem',
-    detail: 'A valid audience-scoped Bearer assertion is required.',
-    status: 401,
-    title: 'Authentication required',
-    type: 'https://ontos.dev/problems/operation-authentication-required',
-  }),
+  authentication: () =>
+    Result.getOrThrow(
+      Schema.decodeUnknownResult(ContactsAuthenticationProblemSchema)({
+        _tag: 'ContactsAuthenticationProblem',
+        detail: 'A valid audience-scoped Bearer assertion is required.',
+        status: 401,
+        title: 'Authentication required',
+        type: 'https://ontos.dev/problems/operation-authentication-required',
+      }),
+    ),
   conflict: (
     code: Extract<ContactsProblem, { readonly _tag: 'ContactsConflictProblem' }>['code'],
-  ): ContactsProblem => ({
-    _tag: 'ContactsConflictProblem',
-    code,
-    detail: 'The engagement profile operation conflicts with the current state.',
-    status: 409,
-    title: 'Engagement profile conflict',
-    type: 'https://ontos.dev/problems/contacts-engagement-conflict',
-  }),
-  forbidden: (): ContactsProblem => ({
-    _tag: 'ContactsForbiddenProblem',
-    detail: 'The principal is not permitted to perform this Party Registry operation.',
-    status: 403,
-    title: 'Party Registry operation forbidden',
-    type: 'https://ontos.dev/problems/party-registry-forbidden',
-  }),
-  internal: (): Extract<ContactsProblem, { readonly _tag: 'ContactsInternalProblem' }> => ({
-    _tag: 'ContactsInternalProblem',
-    detail: 'The engagement profile operation could not be completed.',
-    status: 500,
-    title: 'Engagement profile operation failed',
-    type: 'https://ontos.dev/problems/party-registry-engagement-failed',
-  }),
-  invalid: (): ContactsProblem => ({
-    _tag: 'ContactsInvalidRequestProblem',
-    detail: 'The engagement profile operation request is invalid.',
-    status: 400,
-    title: 'Invalid engagement profile request',
-    type: 'https://ontos.dev/problems/party-registry-engagement-invalid',
-  }),
-  notFound: (): ContactsProblem => ({
-    _tag: 'ContactsNotFoundProblem',
-    detail: 'The requested engagement profile was not found.',
-    status: 404,
-    title: 'Engagement profile not found',
-    type: 'https://ontos.dev/problems/party-registry-engagement-not-found',
-  }),
-  precondition: (): ContactsProblem => ({
-    _tag: 'ContactsPreconditionRequiredProblem',
-    detail: 'An Idempotency-Key header is required.',
-    status: 428,
-    title: 'Idempotency key required',
-    type: 'https://ontos.dev/problems/idempotency-key-required',
-  }),
-  unavailable: (): ContactsProblem => ({
-    _tag: 'ContactsUnavailableProblem',
-    detail: 'The engagement profile operation is temporarily unavailable.',
-    retryable: true,
-    status: 503,
-    title: 'Engagement profile unavailable',
-    type: 'https://ontos.dev/problems/party-registry-engagement-unavailable',
-  }),
+  ) =>
+    Result.getOrThrow(
+      Schema.decodeUnknownResult(ContactsConflictProblemSchema)({
+        _tag: 'ContactsConflictProblem',
+        code,
+        detail: 'The engagement profile operation conflicts with the current state.',
+        status: 409,
+        title: 'Engagement profile conflict',
+        type: 'https://ontos.dev/problems/contacts-engagement-conflict',
+      }),
+    ),
+  forbidden: () =>
+    Result.getOrThrow(
+      Schema.decodeUnknownResult(ContactsForbiddenProblemSchema)({
+        _tag: 'ContactsForbiddenProblem',
+        detail: 'The principal is not permitted to perform this Party Registry operation.',
+        status: 403,
+        title: 'Party Registry operation forbidden',
+        type: 'https://ontos.dev/problems/party-registry-forbidden',
+      }),
+    ),
+  internal: () =>
+    Result.getOrThrow(
+      Schema.decodeUnknownResult(ContactsInternalProblemSchema)({
+        _tag: 'ContactsInternalProblem',
+        detail: 'The engagement profile operation could not be completed.',
+        status: 500,
+        title: 'Engagement profile operation failed',
+        type: 'https://ontos.dev/problems/party-registry-engagement-failed',
+      }),
+    ),
+  invalid: () =>
+    Result.getOrThrow(
+      Schema.decodeUnknownResult(ContactsInvalidRequestProblemSchema)({
+        _tag: 'ContactsInvalidRequestProblem',
+        detail: 'The engagement profile operation request is invalid.',
+        status: 400,
+        title: 'Invalid engagement profile request',
+        type: 'https://ontos.dev/problems/party-registry-engagement-invalid',
+      }),
+    ),
+  notFound: () =>
+    Result.getOrThrow(
+      Schema.decodeUnknownResult(ContactsNotFoundProblemSchema)({
+        _tag: 'ContactsNotFoundProblem',
+        detail: 'The requested engagement profile was not found.',
+        status: 404,
+        title: 'Engagement profile not found',
+        type: 'https://ontos.dev/problems/party-registry-engagement-not-found',
+      }),
+    ),
+  precondition: () =>
+    Result.getOrThrow(
+      Schema.decodeUnknownResult(ContactsPreconditionRequiredProblemSchema)({
+        _tag: 'ContactsPreconditionRequiredProblem',
+        detail: 'An Idempotency-Key header is required.',
+        status: 428,
+        title: 'Idempotency key required',
+        type: 'https://ontos.dev/problems/idempotency-key-required',
+      }),
+    ),
+  unavailable: () =>
+    Result.getOrThrow(
+      Schema.decodeUnknownResult(ContactsUnavailableProblemSchema)({
+        _tag: 'ContactsUnavailableProblem',
+        detail: 'The engagement profile operation is temporarily unavailable.',
+        retryable: true,
+        status: 503,
+        title: 'Engagement profile unavailable',
+        type: 'https://ontos.dev/problems/party-registry-engagement-unavailable',
+      }),
+    ),
 };
 
 const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
 );
 const failProblem = (mapped: ContactsProblem) =>
-  (mapped._tag === 'ContactsAuthenticationProblem' ? bearerChallenge : Effect.void).pipe(
-    Effect.andThen(Effect.fail(mapped)),
-  );
+  (Predicate.isTagged(mapped, 'ContactsAuthenticationProblem')
+    ? bearerChallenge
+    : Effect.void
+  ).pipe(Effect.andThen(Effect.fail(mapped)));
 
 type EngagementActionError =
   | ActionCoreError
@@ -114,78 +150,105 @@ type EngagementAttachProblem = Exclude<
   { readonly _tag: 'ContactsNotFoundProblem' }
 >;
 
-interface EngagementActionTransport {
+interface EngagementActionTransportRequest {
   readonly correlationId: string;
   idempotencyKey?: string;
   traceId?: string;
 }
 
-const isContactsProblem = (
-  error: EngagementActionError | ContactsProblem,
-): error is ContactsProblem => error._tag.startsWith('Contacts') && error._tag.endsWith('Problem');
+const ContactsProblemSchema = Schema.Union([
+  ContactsAuthenticationProblemSchema,
+  ContactsConflictProblemSchema,
+  ContactsForbiddenProblemSchema,
+  ContactsInternalProblemSchema,
+  ContactsInvalidRequestProblemSchema,
+  ContactsNotFoundProblemSchema,
+  ContactsPreconditionRequiredProblemSchema,
+  ContactsUnavailableProblemSchema,
+]);
+const isContactsProblem = Schema.is(ContactsProblemSchema);
 
-const actionProblem = (error: EngagementActionError): ContactsProblem => {
-  switch (error._tag) {
-    case 'ActionPayloadValidationError':
-      return problem.invalid();
-    case 'ActionTrustedContextValidationError':
-    case 'OperationAuthenticationRequired':
-      return problem.authentication();
-    case 'ActionIdempotencyKeyRequired':
-      return problem.precondition();
-    case 'ActionPermissionDenied':
-    case 'ModuleStateDeniedError':
-    case 'OperationContextDenied':
-    case 'OperationContextInvalid':
-      return problem.forbidden();
-    case 'ActionInvocationNotFound':
-    case 'EngagementProfileNotFound':
-      return problem.notFound();
-    case 'ActionAlreadyCommitted':
-    case 'ActionInvocationStateError':
-    case 'ActionRequestHashConflict':
-      return problem.conflict('contacts_engagement_profile_lifecycle_conflict');
-    case 'EngagementProfileConflict':
-      return problem.conflict(error.code);
-    case 'ActionCommitIndeterminate':
-    case 'ActionInvocationPersistenceError':
-    case 'ActionPermissionCheckError':
-    case 'ActionPolicyEvaluationError':
-    case 'ActionTransactionError':
-    case 'EngagementProfilePersistenceUnavailable':
-    case 'PartyRegistryReferenceUnavailable':
-    case 'ModuleStateCheckUnavailableError':
-    case 'OperationContextUnavailable':
-      return problem.unavailable();
-    case 'ActionCollectorError':
-    case 'ActionHandlerExecutionError':
-    case 'ActionResultValidationError':
-    case 'ActionPolicyDenied':
-      return problem.internal();
-    default: {
-      const exhaustive: never = error;
-      return exhaustive;
-    }
-  }
-};
+const actionProblem = (error: EngagementActionError): ContactsProblem =>
+  Match.value(error).pipe(
+    Match.tags({
+      ActionAlreadyCommitted: () =>
+        problem.conflict('contacts_engagement_profile_lifecycle_conflict'),
+      ActionCollectorError: problem.internal,
+      ActionCommitIndeterminate: problem.unavailable,
+      ActionHandlerExecutionError: problem.internal,
+      ActionIdempotencyKeyRequired: problem.precondition,
+      ActionInvocationNotFound: problem.notFound,
+      ActionInvocationPersistenceError: problem.unavailable,
+      ActionInvocationStateError: () =>
+        problem.conflict('contacts_engagement_profile_lifecycle_conflict'),
+      ActionPayloadValidationError: problem.invalid,
+      ActionPermissionCheckError: problem.unavailable,
+      ActionPermissionDenied: problem.forbidden,
+      ActionPolicyDenied: problem.internal,
+      ActionPolicyEvaluationError: problem.unavailable,
+      ActionRequestHashConflict: () =>
+        problem.conflict('contacts_engagement_profile_lifecycle_conflict'),
+      ActionResultValidationError: problem.internal,
+      ActionTransactionError: problem.unavailable,
+      ActionTrustedContextValidationError: problem.authentication,
+      EngagementProfileConflict: ({ code }) => problem.conflict(code),
+      EngagementProfileNotFound: problem.notFound,
+      EngagementProfilePersistenceUnavailable: problem.unavailable,
+      ModuleStateCheckUnavailableError: problem.unavailable,
+      ModuleStateDeniedError: problem.forbidden,
+      OperationAuthenticationRequired: problem.authentication,
+      OperationContextDenied: problem.forbidden,
+      OperationContextInvalid: problem.forbidden,
+      OperationContextUnavailable: problem.unavailable,
+      PartyRegistryReferenceUnavailable: problem.unavailable,
+    }),
+    Match.exhaustive,
+  );
 
-const verifyPrincipal = (authorization: string | undefined) =>
-  Config.all({
-    ONTOS_GATEWAY_ISSUER: Config.string('ONTOS_GATEWAY_ISSUER'),
-    ONTOS_GATEWAY_PUBLIC_JWKS: Config.string('ONTOS_GATEWAY_PUBLIC_JWKS'),
-  }).pipe(
-    Effect.mapError(() => problem.unavailable()),
-    Effect.flatMap((environment) => verifyOperationPrincipal(authorization, { environment })),
-    Effect.catch((error) => {
-      if ('_tag' in error && error._tag === 'ContactsUnavailableProblem') {
-        return Effect.fail(error);
-      }
-      return error._tag === 'ActionPrincipalConfigurationError' ||
-        error._tag === 'ActionPrincipalUnavailableError'
-        ? Effect.fail(problem.unavailable())
-        : failProblem(problem.authentication());
+const verifyPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
+  verifyOperationPrincipal(authorization).pipe(
+    Effect.catchTags({
+      ActionPrincipalConfigurationError: (_error) => Effect.fail(problem.unavailable()),
+      ActionPrincipalExpiredError: (_error) => failProblem(problem.authentication()),
+      ActionPrincipalInvalidError: (_error) => failProblem(problem.authentication()),
+      ActionPrincipalMissingError: (_error) => failProblem(problem.authentication()),
+      ActionPrincipalScopeError: (_error) => failProblem(problem.authentication()),
+      ActionPrincipalUnavailableError: (_error) => Effect.fail(problem.unavailable()),
     }),
   );
+
+const RequestHeadersSchema = Schema.Record(
+  Schema.String,
+  Schema.Union([Schema.String, Schema.Undefined]),
+);
+type RequestHeaders = Schema.Schema.Type<typeof RequestHeadersSchema>;
+type ContactsMutationHeaders = Schema.Schema.Type<typeof ContactsMutationHeadersSchema>;
+
+const recoverEngagementFailure = (error: EngagementActionError | ContactsProblem | undefined) => {
+  if (error === undefined) {
+    return failProblem(problem.internal());
+  }
+  return failProblem(isContactsProblem(error) ? error : actionProblem(error));
+};
+
+const recoverUnexpectedEngagementDefect = <Value, Failure, Requirements>(
+  effect: Effect.Effect<Value, Failure, Requirements>,
+): Effect.Effect<Value, Failure | ContactsProblem, Requirements> =>
+  Effect.exit(effect).pipe(
+    Effect.flatMap((exit): Effect.Effect<Value, Failure | ContactsProblem> => {
+      if (Exit.isSuccess(exit)) {
+        return Effect.succeed(exit.value);
+      }
+      return exit.cause.reasons.some(Cause.isDieReason)
+        ? Effect.logError('Unexpected engagement Action BFF defect', exit.cause).pipe(
+            Effect.andThen(Effect.fail(problem.internal())),
+          )
+        : Effect.failCause(exit.cause);
+    }),
+  );
+
+const mapAttachProblem = (error: ContactsProblem): EngagementAttachProblem =>
+  Predicate.isTagged(error, 'ContactsNotFoundProblem') ? problem.internal() : error;
 
 const runEngagementAction = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
@@ -205,41 +268,27 @@ const runEngagementAction = <
     never
   >,
   payload: Schema.Schema.Type<PayloadSchema>,
-  headers: Readonly<Record<string, string | undefined>>,
-  requestHeaders: Readonly<Record<string, string | undefined>>,
+  headers: ContactsMutationHeaders,
+  requestHeaders: RequestHeaders,
 ) =>
   Effect.gen(function* executeEngagementAction() {
     const correlationId = requestHeaders['x-correlation-id'];
     if (correlationId === undefined || correlationId.trim().length === 0) {
       return yield* failProblem(problem.invalid());
     }
-    const principal = yield* verifyPrincipal(requestHeaders['authorization']);
+    const principal = yield* verifyPrincipal(Redacted.make(requestHeaders['authorization']));
     const runtime = yield* ActionRuntime;
-    const transport: EngagementActionTransport = { correlationId };
     const idempotencyKey = headers['idempotency-key'];
+    const traceId = requestHeaders['x-trace-id'];
+    const transport: EngagementActionTransportRequest = { correlationId };
     if (idempotencyKey !== undefined) {
       transport.idempotencyKey = idempotencyKey;
     }
-    const traceId = requestHeaders['x-trace-id'];
     if (traceId !== undefined) {
       transport.traceId = traceId;
     }
     return yield* runtime.runAction({ payload, principal, registration, transport });
-  }).pipe(
-    Effect.catch((error: EngagementActionError | ContactsProblem) => {
-      if (isContactsProblem(error)) {
-        return failProblem(error);
-      }
-      const mapped = actionProblem(error);
-      return failProblem(mapped);
-    }),
-    Effect.catchDefect((defect) =>
-      Effect.annotateLogs(Effect.logError('Unexpected engagement Action BFF defect', defect), {
-        actionKey: registration.descriptor.actionKey,
-        correlationId: requestHeaders['x-correlation-id'] ?? 'unavailable',
-      }).pipe(Effect.andThen(Effect.fail(problem.internal()))),
-    ),
-  );
+  }).pipe(Effect.catchEager(recoverEngagementFailure), recoverUnexpectedEngagementDefect);
 
 const organizationEngagementMutationsLive = HttpApiBuilder.group(
   partyRegistryApi,
@@ -252,11 +301,7 @@ const organizationEngagementMutationsLive = HttpApiBuilder.group(
           payload,
           headers,
           request.headers,
-        ).pipe(
-          Effect.mapError((error): EngagementAttachProblem =>
-            error._tag === 'ContactsNotFoundProblem' ? problem.internal() : error,
-          ),
-        ),
+        ).pipe(Effect.mapError(mapAttachProblem)),
       )
       .handle('archive', ({ headers, payload, request }) =>
         runEngagementAction(archiveOrganizationEngagementAction, payload, headers, request.headers),
@@ -278,9 +323,7 @@ const personEngagementMutationsLive = HttpApiBuilder.group(
     handlers
       .handle('attach', ({ headers, payload, request }) =>
         runEngagementAction(attachPersonEngagementAction, payload, headers, request.headers).pipe(
-          Effect.mapError((error): EngagementAttachProblem =>
-            error._tag === 'ContactsNotFoundProblem' ? problem.internal() : error,
-          ),
+          Effect.mapError(mapAttachProblem),
         ),
       )
       .handle('archive', ({ headers, payload, request }) =>

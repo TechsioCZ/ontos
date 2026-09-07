@@ -1,11 +1,10 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect } from 'effect';
 import type { PartyRef } from '../../shared/party-registry-references.ts';
-import {
-  validatePartyRegistryReferences,
-  type PartyRegistryReferenceOperations,
-} from '../../src/services/engagement-reference-validation.service.ts';
+import { validatePartyRegistryReferences } from '../../src/services/engagement-reference-validation.service.ts';
+import type { PartyRegistryReferenceOperations } from '../../src/services/engagement-reference-validation.service.ts';
 
 const tenantId = 'c1000000-0000-4000-8000-000000000001';
 const partyRef: PartyRef = {
@@ -27,7 +26,7 @@ const operations: PartyRegistryReferenceOperations = {
 };
 
 test('validates engagement references through owner-local Party Registry operations', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     validatePartyRegistryReferences(
       operations,
       { partyRef },
@@ -36,12 +35,11 @@ test('validates engagement references through owner-local Party Registry operati
   ));
 
 test('rejects a profile whose Party type belongs to a different engagement kind', () =>
-  Effect.flip(
-    validatePartyRegistryReferences(operations, { partyRef }, { expectedPartyType: 'PERSON' }),
-  ).pipe(
-    Effect.tap((error) =>
-      Effect.sync(() => assert.equal(error.code, 'contacts_party_type_mismatch')),
-    ),
-    Effect.asVoid,
-    Effect.runPromise,
+  runEffectTestPromise(
+    Effect.gen(function* verifyPartyTypeMismatch() {
+      const error = yield* Effect.flip(
+        validatePartyRegistryReferences(operations, { partyRef }, { expectedPartyType: 'PERSON' }),
+      );
+      assert.equal(error.code, 'contacts_party_type_mismatch');
+    }),
   ));

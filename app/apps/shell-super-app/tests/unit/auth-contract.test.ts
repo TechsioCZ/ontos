@@ -1,5 +1,6 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { expect, test } from '@rstest/core';
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import {
   CurrentSessionSchema,
   AvailableLegalEntitiesResponseSchema,
@@ -98,10 +99,10 @@ test('publishes authentication, identity lifecycle, and gateway operations', () 
 
 test('decodes a missing identity idempotency header so handlers can return declared 428', async () => {
   await expect(
-    Effect.runPromise(Schema.decodeUnknownEffect(IdentityRequestHeadersSchema)({})),
+    runEffectTestPromise(Schema.decodeUnknownEffect(IdentityRequestHeadersSchema)({})),
   ).resolves.toEqual({});
   await expect(
-    Effect.runPromise(
+    runEffectTestPromise(
       Effect.flip(
         Schema.decodeUnknownEffect(IdentityRequestHeadersSchema)({
           'idempotency-key': '',
@@ -124,7 +125,7 @@ test('publishes exact legal-entity endpoints with an ID-only switch payload', as
   });
   const legalEntityId = '35000000-0000-4000-8000-000000000001';
   expect(
-    await Effect.runPromise(
+    await runEffectTestPromise(
       Schema.decodeUnknownEffect(SwitchLegalEntityPayloadSchema)({
         authorization: 'must-not-pass',
         legalEntityId,
@@ -133,7 +134,7 @@ test('publishes exact legal-entity endpoints with an ID-only switch payload', as
     ),
   ).toEqual({ legalEntityId });
   expect(
-    await Effect.runPromise(
+    await runEffectTestPromise(
       Schema.decodeUnknownEffect(AvailableLegalEntitiesResponseSchema)({
         legalEntities: [{ legalEntityId, legalName: 'Alpha', token: 'must-not-pass' }],
         selectedLegalEntityId: legalEntityId,
@@ -149,7 +150,7 @@ test('publishes exact legal-entity endpoints with an ID-only switch payload', as
 
 test('decodes an optional exact page entrypoint without accepting private routing fields', async () => {
   expect(
-    await Effect.runPromise(
+    await runEffectTestPromise(
       Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
         entrypointKey: 'contacts.core.page.customers',
         importPath: 'must-not-pass',
@@ -159,12 +160,12 @@ test('decodes an optional exact page entrypoint without accepting private routin
     ),
   ).toEqual({ entrypointKey: 'contacts.core.page.customers', moduleId: 'contacts.core' });
   expect(
-    await Effect.runPromise(
+    await runEffectTestPromise(
       Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({ moduleId: 'contacts.core' }),
     ),
   ).toEqual({ moduleId: 'contacts.core' });
   await expect(
-    Effect.runPromise(
+    runEffectTestPromise(
       Effect.flip(
         Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
           entrypointKey: '../private-page',
@@ -202,7 +203,7 @@ test('publishes the exhaustive identity failure status contract', () => {
 test('validates tenant UUIDs and strips all non-contract fields', async () => {
   const tenantId = '30000000-0000-4000-8000-000000000001';
   expect(
-    await Effect.runPromise(
+    await runEffectTestPromise(
       Schema.decodeUnknownEffect(AvailableTenantsResponseSchema)({
         tenants: [
           {
@@ -218,7 +219,7 @@ test('validates tenant UUIDs and strips all non-contract fields', async () => {
     ),
   ).toEqual({ tenants: [{ name: 'Alpha tenant', tenantId }] });
   expect(
-    await Effect.runPromise(
+    await runEffectTestPromise(
       Schema.decodeUnknownEffect(SwitchTenantResponseSchema)({
         principalId: 'must-not-pass',
         selectedTenantId: tenantId,
@@ -227,16 +228,16 @@ test('validates tenant UUIDs and strips all non-contract fields', async () => {
     ),
   ).toEqual({ selectedTenantId: tenantId });
   expect(
-    await Effect.runPromise(Schema.decodeUnknownEffect(SwitchTenantPayloadSchema)({ tenantId })),
+    await runEffectTestPromise(Schema.decodeUnknownEffect(SwitchTenantPayloadSchema)({ tenantId })),
   ).toEqual({ tenantId });
-  const invalidPayload = await Effect.runPromise(
+  const invalidPayload = await runEffectTestPromise(
     Effect.flip(Schema.decodeUnknownEffect(SwitchTenantPayloadSchema)({ tenantId: 'not-a-uuid' })),
   );
   expect(invalidPayload._tag).toBe('SchemaError');
 });
 
 test('rejects malformed credentials through Effect Schema', async () => {
-  const error = await Effect.runPromise(
+  const error = await runEffectTestPromise(
     Effect.flip(
       Schema.decodeUnknownEffect(SignInPayloadSchema)({
         email: '',
@@ -250,7 +251,8 @@ test('rejects malformed credentials through Effect Schema', async () => {
 test('requires lifecycle reasons and strips provider-private API key identifiers', async () => {
   const principalId = '00000000-0000-4000-8000-000000000001';
   const authBindingId = '00000000-0000-4000-8000-000000000002';
-  const missingPrincipalReason = await Effect.runPromise(
+  const createdAt = '2026-08-09T00:00:00.000Z';
+  const missingPrincipalReason = await runEffectTestPromise(
     Effect.flip(
       Schema.decodeUnknownEffect(ChangePrincipalStatusPayloadSchema)({
         expectedStatus: 'active',
@@ -259,7 +261,7 @@ test('requires lifecycle reasons and strips provider-private API key identifiers
       }),
     ),
   );
-  const missingRevocationReason = await Effect.runPromise(
+  const missingRevocationReason = await runEffectTestPromise(
     Effect.flip(
       Schema.decodeUnknownEffect(SetApiKeyStatusPayloadSchema)({
         authBindingId,
@@ -271,24 +273,34 @@ test('requires lifecycle reasons and strips provider-private API key identifiers
   expect(missingPrincipalReason._tag).toBe('SchemaError');
   expect(missingRevocationReason._tag).toBe('SchemaError');
 
+  const lifecycle = await runEffectTestPromise(
+    Schema.decodeUnknownEffect(ApiKeyLifecycleResponseSchema)({
+      authBindingId,
+      cleanupPending: false,
+      createdAt,
+      enabled: true,
+      expiresAt: null,
+      id: 'private-provider-key-id',
+      name: null,
+      providerKeyId: 'private-provider-key-id',
+      start: 'onto',
+    }),
+  );
+  expect(lifecycle).toEqual({
+    authBindingId,
+    cleanupPending: false,
+    createdAt: DateTime.makeUnsafe(createdAt),
+    enabled: true,
+    expiresAt: null,
+    name: null,
+    start: 'onto',
+  });
   expect(
-    await Effect.runPromise(
-      Schema.decodeUnknownEffect(ApiKeyLifecycleResponseSchema)({
-        authBindingId,
-        cleanupPending: false,
-        createdAt: '2026-08-09T00:00:00.000Z',
-        enabled: true,
-        expiresAt: null,
-        id: 'private-provider-key-id',
-        name: null,
-        providerKeyId: 'private-provider-key-id',
-        start: 'onto',
-      }),
-    ),
+    await runEffectTestPromise(Schema.encodeEffect(ApiKeyLifecycleResponseSchema)(lifecycle)),
   ).toEqual({
     authBindingId,
     cleanupPending: false,
-    createdAt: '2026-08-09T00:00:00.000Z',
+    createdAt,
     enabled: true,
     expiresAt: null,
     name: null,
@@ -297,7 +309,7 @@ test('requires lifecycle reasons and strips provider-private API key identifiers
 });
 
 test('decodes only safe current-session identity fields', async () => {
-  const session = await Effect.runPromise(
+  const session = await runEffectTestPromise(
     Schema.decodeUnknownEffect(CurrentSessionSchema)({
       identity: {
         displayName: 'Ada',

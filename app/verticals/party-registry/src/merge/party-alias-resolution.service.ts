@@ -1,5 +1,5 @@
 import { and, eq } from 'drizzle-orm';
-import { Effect } from 'effect';
+import { Context, Duration, Effect, Option } from 'effect';
 import {
   PartyAliasResolutionBrokenChain,
   PartyAliasResolutionCrossTenant,
@@ -22,7 +22,7 @@ export interface PartyAliasLookup {
   readonly findAlias: (
     tenantId: string,
     aliasPartyId: string,
-  ) => Effect.Effect<PartyAliasLookupRow | null, PartyAliasResolutionUnavailable>;
+  ) => Effect.Effect<Option.Option<PartyAliasLookupRow>, PartyAliasResolutionUnavailable>;
   readonly partyExists: (
     tenantId: string,
     partyId: string,
@@ -47,6 +47,11 @@ export interface PartyAliasResolutionService {
   ) => Effect.Effect<ResolvedPartyAlias, PartyAliasResolutionError>;
 }
 
+export class PartyAliasResolution extends Context.Service<
+  PartyAliasResolution,
+  PartyAliasResolutionService
+>()('@app/party-registry/merge/party-alias-resolution.service/PartyAliasResolution') {}
+
 const partyRef = (tenantId: string, resourceId: string): PartyRef => ({
   moduleId: 'party.registry',
   resourceId,
@@ -57,55 +62,69 @@ const partyRef = (tenantId: string, resourceId: string): PartyRef => ({
 export const makePartyAliasResolutionService = (
   lookup: PartyAliasLookup,
 ): PartyAliasResolutionService => {
-  const resolvePartyAlias = (
+  type ResolveFrom = (
     tenantId: string,
-    partyId: string,
-  ): Effect.Effect<ResolvedPartyAlias, PartyAliasResolutionError> =>
-    Effect.gen(function* resolveCompleteAliasChain() {
-      const seen = new Set<string>();
-      const traversedAliasIds: string[] = [];
-      let currentPartyId = partyId;
-
-      for (;;) {
-        if (seen.has(currentPartyId)) {
-          return yield* new PartyAliasResolutionCycle({
-            code: 'party_alias_resolution_cycle',
-            partyId: currentPartyId,
-            reason: 'Party Alias chain contains a cycle',
-            tenantId,
-          });
-        }
-        const alias = yield* lookup.findAlias(tenantId, currentPartyId);
-        if (alias === null) {
-          const exists = yield* lookup.partyExists(tenantId, currentPartyId);
-          if (!exists) {
-            return yield* new PartyAliasResolutionBrokenChain({
-              code: 'party_alias_resolution_broken_chain',
-              missingPartyId: currentPartyId,
-              reason: 'Party Alias chain does not terminate at a canonical Party',
-              tenantId,
-            });
-          }
-          return {
-            canonicalPartyId: currentPartyId,
-            requestedPartyId: partyId,
-            traversedAliasIds,
-            wasAlias: traversedAliasIds.length > 0,
-          };
-        }
-        if (alias.tenantId !== tenantId || alias.aliasPartyId !== currentPartyId) {
-          return yield* new PartyAliasResolutionCrossTenant({
-            aliasPartyId: currentPartyId,
-            code: 'party_alias_resolution_cross_tenant',
-            reason: 'Party Alias lookup crossed its trusted tenant boundary',
-            tenantId,
-          });
-        }
-        seen.add(currentPartyId);
-        traversedAliasIds.push(currentPartyId);
-        currentPartyId = alias.canonicalPartyId;
-      }
-    });
+    requestedPartyId: string,
+    currentPartyId: string,
+    seen: ReadonlySet<string>,
+    traversedAliasIds: readonly string[],
+  ) => Effect.Effect<ResolvedPartyAlias, PartyAliasResolutionError>;
+  const resolveFrom: ResolveFrom = Effect.fn(
+    'makePartyAliasResolutionService.resolvePartyAlias.step',
+  )((tenantId, requestedPartyId, currentPartyId, seen, traversedAliasIds) => {
+    if (seen.has(currentPartyId)) {
+      return new PartyAliasResolutionCycle({
+        code: 'party_alias_resolution_cycle',
+        partyId: currentPartyId,
+        reason: 'Party Alias chain contains a cycle',
+        tenantId,
+      });
+    }
+    return lookup.findAlias(tenantId, currentPartyId).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            lookup.partyExists(tenantId, currentPartyId).pipe(
+              Effect.flatMap((exists) =>
+                exists
+                  ? Effect.succeed({
+                      canonicalPartyId: currentPartyId,
+                      requestedPartyId,
+                      traversedAliasIds,
+                      wasAlias: traversedAliasIds.length > 0,
+                    })
+                  : new PartyAliasResolutionBrokenChain({
+                      code: 'party_alias_resolution_broken_chain',
+                      missingPartyId: currentPartyId,
+                      reason: 'Party Alias chain does not terminate at a canonical Party',
+                      tenantId,
+                    }),
+              ),
+            ),
+          onSome: (alias) =>
+            alias.tenantId !== tenantId || alias.aliasPartyId !== currentPartyId
+              ? new PartyAliasResolutionCrossTenant({
+                  aliasPartyId: currentPartyId,
+                  code: 'party_alias_resolution_cross_tenant',
+                  reason: 'Party Alias lookup crossed its trusted tenant boundary',
+                  tenantId,
+                })
+              : Effect.suspend(() =>
+                  resolveFrom(
+                    tenantId,
+                    requestedPartyId,
+                    alias.canonicalPartyId,
+                    new Set([...seen, currentPartyId]),
+                    [...traversedAliasIds, currentPartyId],
+                  ),
+                ),
+        }),
+      ),
+    );
+  });
+  const resolvePartyAlias = Effect.fn('makePartyAliasResolutionService.resolvePartyAlias')(
+    (tenantId: string, partyId: string) => resolveFrom(tenantId, partyId, partyId, new Set(), []),
+  );
 
   return {
     requireCanonicalWriteTarget: (tenantId, requestedPartyId) =>
@@ -127,13 +146,24 @@ export const makePartyAliasResolutionService = (
 
 type AliasTransaction = Pick<PartyTransaction, 'select'>;
 
-const unavailable = () =>
-  new PartyAliasResolutionUnavailable({
-    code: 'party_alias_resolution_unavailable',
-    reason: 'Party Alias resolution is temporarily unavailable',
-  });
+const attachCause = <Failure extends object>(failure: Failure, cause: unknown): Failure =>
+  cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
+const unavailable = (cause?: unknown) =>
+  attachCause(
+    new PartyAliasResolutionUnavailable({
+      code: 'party_alias_resolution_unavailable',
+      reason: 'Party Alias resolution is temporarily unavailable',
+    }),
+    cause,
+  );
+const ALIAS_LOOKUP_TIMEOUT = Duration.seconds(30);
 const attempt = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: unavailable, try: operation });
+  Effect.tryPromise({ catch: unavailable, try: operation }).pipe(
+    Effect.timeoutOrElse({
+      duration: ALIAS_LOOKUP_TIMEOUT,
+      orElse: () => Effect.fail(unavailable()),
+    }),
+  );
 
 export const makeTransactionPartyAliasResolutionService = (
   transaction: AliasTransaction,
@@ -152,7 +182,7 @@ export const makeTransactionPartyAliasResolutionService = (
             and(eq(partyAliases.tenantId, tenantId), eq(partyAliases.aliasPartyId, aliasPartyId)),
           )
           .limit(1),
-      ).pipe(Effect.map(([alias]) => alias ?? null)),
+      ).pipe(Effect.map(([alias]) => Option.fromNullishOr(alias))),
     partyExists: (tenantId, partyId) =>
       attempt(() =>
         transaction

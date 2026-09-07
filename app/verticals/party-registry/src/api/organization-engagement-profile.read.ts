@@ -7,7 +7,7 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, Match } from 'effect';
 import {
   OrganizationEngagementProfileRequestSchema,
   OrganizationEngagementProfileResponseSchema,
@@ -36,6 +36,16 @@ interface Services {
   >;
 }
 
+const organizationProfileUnavailable = (cause: unknown) =>
+  Object.defineProperty(
+    new ReadHandlerUnavailable({
+      code: 'read_handler_unavailable',
+      reason: 'Contacts engagement persistence is temporarily unavailable',
+    }),
+    'cause',
+    { value: cause },
+  );
+
 export const organizationEngagementProfileRead = defineRead(
   {
     accessKind: 'detail',
@@ -55,22 +65,22 @@ export const organizationEngagementProfileRead = defineRead(
   },
   (input, context: ReadHandlerContext<Services>) =>
     context.services.find(input.profileRef.resourceId).pipe(
-      Effect.mapError(
-        () =>
-          new ReadHandlerUnavailable({
-            code: 'read_handler_unavailable',
-            reason: 'Contacts engagement persistence is temporarily unavailable',
-          }),
-      ),
+      Effect.mapError(organizationProfileUnavailable),
       Effect.flatMap((result) =>
-        result._tag === 'found'
-          ? Effect.succeed({ evidence: { resultCount: 1 }, result: result.value })
-          : Effect.fail(
+        Match.value(result).pipe(
+          Match.tag('found', ({ value }) =>
+            Effect.succeed({ evidence: { resultCount: 1 }, result: value }),
+          ),
+          Match.tag('not_found', () =>
+            Effect.fail(
               new ReadHandlerNotFound({
                 code: 'read_handler_not_found',
                 reason: 'The organization engagement profile does not exist',
               }),
             ),
+          ),
+          Match.exhaustive,
+        ),
       ),
     ),
   (transaction, scope) => {

@@ -1,11 +1,14 @@
-/* eslint-disable unicorn/prefer-export-from -- Generated action aliases intentionally bind stable action-specific names. */
+/* eslint-disable unicorn/prefer-export-from -- Generated action aliases intentionally bind stable action-specific names. expires: 2026-12-31. */
 import type { OutboxMessage } from '@app/core-runtime';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/party-registry/outbox/party-registry-relationship-ended-v1';
-import type { OutboxPayload } from '@app/party-registry/outbox/party-registry-relationship-ended-v1';
+import type {
+  OutboxPayload,
+  OutboxPayloadJson,
+} from '@app/party-registry/outbox/party-registry-relationship-ended-v1';
 
 export const EndPartyRelationshipPartyRegistryRelationshipEndedV1OutboxPayloadSchema =
   OutboxPayloadSchema;
@@ -15,7 +18,7 @@ export const EndPartyRelationshipPartyRegistryRelationshipEndedV1OutboxProducerM
 export const EndPartyRelationshipPartyRegistryRelationshipEndedV1OutboxTopic = outboxTopic;
 
 export const createEndPartyRelationshipPartyRegistryRelationshipEndedV1OutboxMessage = (
-  payload: OutboxPayload,
+  payload: OutboxPayloadJson,
 ): OutboxMessage => ({
   payloadJson: payload,
   producerModuleKey: EndPartyRelationshipPartyRegistryRelationshipEndedV1OutboxProducerModuleKey,

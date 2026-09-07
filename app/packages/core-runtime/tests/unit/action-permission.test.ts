@@ -1,4 +1,5 @@
-// @effect-diagnostics asyncFunction:off missingEffectError:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off missingEffectError:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { v1 } from '@authzed/authzed-node';
@@ -55,7 +56,7 @@ test('loads the root SpiceDB environment independently of the invocation directo
 
   try {
     process.chdir('/');
-    const configuration = await Effect.runPromise(
+    const configuration = await runEffectTestPromise(
       loadSpiceDbConfig({ environment: {}, envPath: rootExamplePath }),
     );
 
@@ -71,7 +72,7 @@ test('loads the root SpiceDB environment independently of the invocation directo
 });
 
 test('requires complete configuration and explicit secure or localhost-insecure transport', async () => {
-  const validSecure = await Effect.runPromise(
+  const validSecure = await runEffectTestPromise(
     parseSpiceDbConfig({
       SPICEDB_ENDPOINT: 'spicedb.internal.example:443',
       SPICEDB_INSECURE: 'false',
@@ -111,7 +112,8 @@ test('requires complete configuration and explicit secure or localhost-insecure 
         SPICEDB_PRESHARED_KEY: '   ',
       },
     ].map(
-      async (environment) => await Effect.runPromise(Effect.flip(parseSpiceDbConfig(environment))),
+      async (environment) =>
+        await runEffectTestPromise(Effect.flip(parseSpiceDbConfig(environment))),
     ),
   );
 
@@ -131,7 +133,7 @@ test('requires complete configuration and explicit secure or localhost-insecure 
 });
 
 test('allows insecure transport only for the exact Zerops stage private endpoint', async () => {
-  const stage = await Effect.runPromise(
+  const stage = await runEffectTestPromise(
     parseSpiceDbConfig({
       SPICEDB_ENDPOINT: 'spicedb:50051',
       SPICEDB_INSECURE: 'true',
@@ -159,7 +161,8 @@ test('allows insecure transport only for the exact Zerops stage private endpoint
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'production',
       },
     ].map(
-      async (environment) => await Effect.runPromise(Effect.flip(parseSpiceDbConfig(environment))),
+      async (environment) =>
+        await runEffectTestPromise(Effect.flip(parseSpiceDbConfig(environment))),
     ),
   );
 
@@ -181,7 +184,7 @@ test('losslessly maps Action keys and exact principal identities using fully con
     makeClient([response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION)], requests),
   );
 
-  const decision = await Effect.runPromise(service.checkActionPermission(input));
+  const decision = await runEffectTestPromise(service.checkActionPermission(input));
 
   assert.equal(decision, 'allowed');
   assert.equal(requests.length, 1);
@@ -216,8 +219,8 @@ test('classifies fully consistent execute permission as allowed or denied with o
     makeClient([response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION)], deniedRequests),
   );
 
-  assert.equal(await Effect.runPromise(allowed.checkActionPermission(input)), 'allowed');
-  assert.equal(await Effect.runPromise(denied.checkActionPermission(input)), 'denied');
+  assert.equal(await runEffectTestPromise(allowed.checkActionPermission(input)), 'allowed');
+  assert.equal(await runEffectTestPromise(denied.checkActionPermission(input)), 'denied');
   assert.equal(deniedRequests.length, 1);
 });
 
@@ -249,7 +252,7 @@ test('report-only compatibility distinguishes missing policy from an explicit re
       rollout,
     },
   );
-  assert.equal(await Effect.runPromise(missing.checkActionPermission(input)), 'allowed');
+  assert.equal(await runEffectTestPromise(missing.checkActionPermission(input)), 'allowed');
   assert.deepEqual(
     missingRequests.map(({ permission }) => permission),
     [SPICEDB_EXECUTE_PERMISSION, SPICEDB_RESTRICTION_PERMISSION],
@@ -263,7 +266,7 @@ test('report-only compatibility distinguishes missing policy from an explicit re
     ]),
     { emit: () => assert.fail(), nowEpochMs: () => nowEpochMs, rollout },
   );
-  assert.equal(await Effect.runPromise(restricted.checkActionPermission(input)), 'denied');
+  assert.equal(await runEffectTestPromise(restricted.checkActionPermission(input)), 'denied');
 });
 
 test('fails closed for conditional, unspecified, malformed, and client failures', async () => {
@@ -275,7 +278,7 @@ test('fails closed for conditional, unspecified, malformed, and client failures'
       makeClient([new Error('ontos-local-development-key unavailable at internal host')]),
     ].map(
       async (client) =>
-        await Effect.runPromise(
+        await runEffectTestPromise(
           Effect.flip(makeActionPermissionService(client).checkActionPermission(input)),
         ),
     ),
@@ -298,7 +301,7 @@ test('constructs the live client with a bounded deadline and finalizes it with t
     preSharedKey: 'test-key',
   } as const;
 
-  await Effect.runPromise(
+  await runEffectTestPromise(
     Effect.scoped(
       makeActionPermissionLive(
         (_configuration, timeoutMilliseconds) => {
@@ -321,7 +324,7 @@ test('constructs the live client with a bounded deadline and finalizes it with t
 });
 
 test('turns missing live configuration into a fail-closed permission service', async () => {
-  const failure = await Effect.runPromise(
+  const failure = await runEffectTestPromise(
     Effect.scoped(
       makeActionPermissionLive(
         () => {
@@ -341,7 +344,7 @@ test('turns missing live configuration into a fail-closed permission service', a
 
 test('finalizes an acquired client even when its scoped use fails', async () => {
   let finalized = false;
-  const failure = await Effect.runPromise(
+  const failure = await runEffectTestPromise(
     Effect.flip(
       Effect.scoped(
         acquirePermissionClientResource(() => ({

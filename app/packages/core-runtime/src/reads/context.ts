@@ -41,11 +41,20 @@ const evidenceKeys = new Set([
   'resultFingerprintHash',
   'resultFingerprintSchema',
 ]);
-const invalidEvidence = () =>
-  new ReadEvidenceValidationError({
+const invalidEvidence = (cause?: unknown): ReadEvidenceValidationError => {
+  const failure = new ReadEvidenceValidationError({
     code: 'read_evidence_invalid',
     reason: 'The read evidence does not match its declared capture policy',
   });
+  return cause === undefined
+    ? failure
+    : Object.defineProperty(failure, 'cause', {
+        configurable: false,
+        enumerable: false,
+        value: cause,
+        writable: false,
+      });
+};
 const ReadEvidenceCandidateSchema = Schema.Struct({
   queryHash: Schema.optional(Schema.Unknown),
   resultCount: Schema.Unknown,

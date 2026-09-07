@@ -1,8 +1,19 @@
-/* eslint-disable max-classes-per-file -- This closed contract owns the complete Relationship failure vocabulary. */
-import { DateTime, Option, Schema } from 'effect';
-import { PartyAliasWriteRejected } from './merge-alias-resolution.ts';
+import { DateTime, Option, Schema, SchemaGetter } from 'effect';
 import { PartyRefSchema } from '../resources/party.ts';
 import { PartyRelationshipRefSchema } from '../resources/party-relationship.ts';
+
+export {
+  PartyRelationshipCorrectionRequired,
+  PartyRelationshipEndpointNotFound,
+  PartyRelationshipEndpointTypeMismatch,
+  PartyRelationshipInvalidInterval,
+  PartyRelationshipMutationErrorSchema,
+  PartyRelationshipNotFound,
+  PartyRelationshipOverlapConflict,
+  PartyRelationshipPersistenceUnavailable,
+  PartyRelationshipRevisionConflict,
+  PartyRelationshipTypeUnsupported,
+} from './relationship-errors/index.ts';
 
 export const ContactPersonOfRelationshipType = 'CONTACT_PERSON_OF' as const;
 export const PartyRelationshipTypeSchema = Schema.Literal(ContactPersonOfRelationshipType);
@@ -15,13 +26,19 @@ export const RelationshipPartyTypeSchema = Schema.Literals([
 ]);
 export type RelationshipPartyType = typeof RelationshipPartyTypeSchema.Type;
 
-export const RelationshipIsoTimestampSchema = Schema.String.check(
-  Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u),
-  Schema.makeFilter((value) => {
-    const parsed = DateTime.make(value);
-    return Option.isNone(parsed) || DateTime.formatIso(parsed.value) !== value
-      ? 'timestamp must be one canonical UTC instant with millisecond precision'
-      : undefined;
+export const RelationshipIsoTimestampSchema = Schema.String.pipe(
+  Schema.check(
+    Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u),
+    Schema.makeFilter((value) => {
+      const parsed = DateTime.make(value);
+      return Option.isNone(parsed) || DateTime.formatIso(parsed.value) !== value
+        ? 'timestamp must be one canonical UTC instant with millisecond precision'
+        : undefined;
+    }),
+  ),
+  Schema.decodeTo(Schema.toType(Schema.DateTimeUtc), {
+    decode: SchemaGetter.transform(DateTime.makeUnsafe),
+    encode: SchemaGetter.transform(DateTime.formatIso),
   }),
 );
 export type RelationshipIsoTimestamp = typeof RelationshipIsoTimestampSchema.Type;
@@ -44,8 +61,8 @@ const createPayloadFields = {
   provenance: PartyRelationshipProvenanceSchema,
   relationshipType: PartyRelationshipTypeSchema,
   toPartyRef: PartyRefSchema,
-  validFrom: Schema.NullOr(RelationshipIsoTimestampSchema),
-  validTo: Schema.NullOr(RelationshipIsoTimestampSchema),
+  validFrom: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
+  validTo: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
 } as const;
 
 export const CreatePartyRelationshipPayloadSchema = Schema.Struct(createPayloadFields).check(
@@ -56,9 +73,9 @@ export const CreatePartyRelationshipPayloadSchema = Schema.Struct(createPayloadF
     ) {
       return 'relationship endpoints must be distinct Parties in the same Tenant';
     }
-    return payload.validFrom === null ||
-      payload.validTo === null ||
-      payload.validTo > payload.validFrom
+    return Option.isNone(payload.validFrom) ||
+      Option.isNone(payload.validTo) ||
+      DateTime.Order(payload.validTo.value, payload.validFrom.value) > 0
       ? undefined
       : 'validTo must be later than validFrom for the exclusive [from,to) interval';
   }),
@@ -71,7 +88,7 @@ export const UpdatePartyRelationshipPayloadSchema = Schema.Struct({
   provenance: PartyRelationshipProvenanceSchema,
   relationshipRef: PartyRelationshipRefSchema,
   validFrom: Schema.optionalKey(RelationshipIsoTimestampSchema),
-  validTo: Schema.optionalKey(Schema.NullOr(RelationshipIsoTimestampSchema)),
+  validTo: Schema.optionalKey(Schema.OptionFromNullOr(RelationshipIsoTimestampSchema)),
 });
 export type UpdatePartyRelationshipPayload = typeof UpdatePartyRelationshipPayloadSchema.Type;
 
@@ -86,7 +103,7 @@ export type EndPartyRelationshipPayload = typeof EndPartyRelationshipPayloadSche
 
 export const RelationshipStoredEndpointSchema = Schema.Struct({
   canonicalPartyRef: PartyRefSchema,
-  requestedAlias: Schema.NullOr(PartyRefSchema),
+  requestedAlias: Schema.OptionFromNullOr(PartyRefSchema),
   storedPartyRef: PartyRefSchema,
 });
 export type RelationshipStoredEndpoint = typeof RelationshipStoredEndpointSchema.Type;
@@ -105,7 +122,7 @@ export type PartyRelationshipAssertionState = typeof PartyRelationshipAssertionS
 export const RelationshipEndEvidenceSchema = Schema.Struct({
   effectiveAt: RelationshipIsoTimestampSchema,
   provenance: PartyRelationshipProvenanceSchema,
-  reason: Schema.NullOr(ReasonSchema),
+  reason: Schema.OptionFromNullOr(ReasonSchema),
   recordedAt: RelationshipIsoTimestampSchema,
 });
 export type RelationshipEndEvidence = typeof RelationshipEndEvidenceSchema.Type;
@@ -114,21 +131,27 @@ export const UpdateRelationshipAuditEvidenceSchema = Schema.Struct({
   changeReason: ReasonSchema,
   newEndHistory: Schema.Array(RelationshipEndEvidenceSchema),
   newProvenance: PartyRelationshipProvenanceSchema,
-  newValidFrom: Schema.NullOr(RelationshipIsoTimestampSchema),
-  newValidTo: Schema.NullOr(RelationshipIsoTimestampSchema),
+  newValidFrom: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
+  newValidTo: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
   previousEndHistory: Schema.Array(RelationshipEndEvidenceSchema),
   previousProvenance: PartyRelationshipProvenanceSchema,
-  previousValidFrom: Schema.NullOr(RelationshipIsoTimestampSchema),
-  previousValidTo: Schema.NullOr(RelationshipIsoTimestampSchema),
+  previousValidFrom: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
+  previousValidTo: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
   relationshipRef: PartyRelationshipRefSchema,
 });
+export const UpdateRelationshipAuditEvidenceJsonSchema = Schema.toEncoded(
+  UpdateRelationshipAuditEvidenceSchema,
+);
 export const EndRelationshipAuditEvidenceSchema = Schema.Struct({
   effectiveAt: RelationshipIsoTimestampSchema,
   newProvenance: PartyRelationshipProvenanceSchema,
-  previousValidTo: Schema.NullOr(RelationshipIsoTimestampSchema),
-  reason: Schema.NullOr(ReasonSchema),
+  previousValidTo: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
+  reason: Schema.OptionFromNullOr(ReasonSchema),
   relationshipRef: PartyRelationshipRefSchema,
 });
+export const EndRelationshipAuditEvidenceJsonSchema = Schema.toEncoded(
+  EndRelationshipAuditEvidenceSchema,
+);
 
 export const PartyRelationshipDetailSchema = Schema.Struct({
   assertionState: PartyRelationshipAssertionStateSchema,
@@ -141,8 +164,8 @@ export const PartyRelationshipDetailSchema = Schema.Struct({
   revision: PositiveRevisionSchema,
   state: PartyRelationshipStateSchema,
   to: RelationshipStoredEndpointSchema,
-  validFrom: Schema.NullOr(RelationshipIsoTimestampSchema),
-  validTo: Schema.NullOr(RelationshipIsoTimestampSchema),
+  validFrom: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
+  validTo: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
 });
 export type PartyRelationshipDetail = typeof PartyRelationshipDetailSchema.Type;
 
@@ -158,115 +181,22 @@ export const ChangePartyRelationshipResultSchema = Schema.Struct({
 });
 export type ChangePartyRelationshipResult = typeof ChangePartyRelationshipResultSchema.Type;
 
-const RelationshipErrorBase = {
-  reason: Schema.String,
-} as const;
-
-export class PartyRelationshipNotFound extends Schema.TaggedError<PartyRelationshipNotFound>()(
-  'PartyRelationshipNotFound',
-  {
-    ...RelationshipErrorBase,
-    code: Schema.Literal('party_relationship_not_found'),
-  },
-) {}
-
-export class PartyRelationshipEndpointNotFound extends Schema.TaggedError<PartyRelationshipEndpointNotFound>()(
-  'PartyRelationshipEndpointNotFound',
-  {
-    ...RelationshipErrorBase,
-    code: Schema.Literal('party_relationship_endpoint_not_found'),
-    endpoint: Schema.Literals(['from', 'to']),
-    partyRef: PartyRefSchema,
-  },
-) {}
-
-export class PartyRelationshipEndpointTypeMismatch extends Schema.TaggedError<PartyRelationshipEndpointTypeMismatch>()(
-  'PartyRelationshipEndpointTypeMismatch',
-  {
-    ...RelationshipErrorBase,
-    actualPartyType: RelationshipPartyTypeSchema,
-    code: Schema.Literal('party_relationship_endpoint_type_mismatch'),
-    endpoint: Schema.Literals(['from', 'to']),
-    expectedPartyType: RelationshipPartyTypeSchema,
-  },
-) {}
-
-export class PartyRelationshipTypeUnsupported extends Schema.TaggedError<PartyRelationshipTypeUnsupported>()(
-  'PartyRelationshipTypeUnsupported',
-  {
-    ...RelationshipErrorBase,
-    code: Schema.Literal('party_relationship_type_unsupported'),
-  },
-) {}
-
-export class PartyRelationshipOverlapConflict extends Schema.TaggedError<PartyRelationshipOverlapConflict>()(
-  'PartyRelationshipOverlapConflict',
-  {
-    ...RelationshipErrorBase,
-    code: Schema.Literal('party_relationship_overlap_conflict'),
-    conflictingRelationshipRef: Schema.optionalKey(PartyRelationshipRefSchema),
-  },
-) {}
-
-export class PartyRelationshipRevisionConflict extends Schema.TaggedError<PartyRelationshipRevisionConflict>()(
-  'PartyRelationshipRevisionConflict',
-  {
-    ...RelationshipErrorBase,
-    actualRevision: PositiveRevisionSchema,
-    code: Schema.Literal('party_relationship_revision_conflict'),
-    expectedRevision: PositiveRevisionSchema,
-  },
-) {}
-
-export class PartyRelationshipCorrectionRequired extends Schema.TaggedError<PartyRelationshipCorrectionRequired>()(
-  'PartyRelationshipCorrectionRequired',
-  {
-    ...RelationshipErrorBase,
-    code: Schema.Literal('party_relationship_correction_required'),
-    fact: Schema.Literals(['endpoint', 'relationshipType', 'validFrom', 'validTo']),
-  },
-) {}
-
-export class PartyRelationshipInvalidInterval extends Schema.TaggedError<PartyRelationshipInvalidInterval>()(
-  'PartyRelationshipInvalidInterval',
-  {
-    ...RelationshipErrorBase,
-    code: Schema.Literal('party_relationship_invalid_interval'),
-  },
-) {}
-
-export class PartyRelationshipPersistenceUnavailable extends Schema.TaggedError<PartyRelationshipPersistenceUnavailable>()(
-  'PartyRelationshipPersistenceUnavailable',
-  {
-    ...RelationshipErrorBase,
-    code: Schema.Literal('party_relationship_persistence_unavailable'),
-  },
-) {}
-
-export const PartyRelationshipMutationErrorSchema = Schema.Union([
-  PartyAliasWriteRejected,
-  PartyRelationshipNotFound,
-  PartyRelationshipEndpointNotFound,
-  PartyRelationshipEndpointTypeMismatch,
-  PartyRelationshipTypeUnsupported,
-  PartyRelationshipOverlapConflict,
-  PartyRelationshipRevisionConflict,
-  PartyRelationshipCorrectionRequired,
-  PartyRelationshipInvalidInterval,
-  PartyRelationshipPersistenceUnavailable,
-]);
-
 export const PartyRelationshipLifecycleEventPayloadSchema = Schema.Struct({
   fromPartyRef: PartyRefSchema,
   relationshipRef: PartyRelationshipRefSchema,
   relationshipType: PartyRelationshipTypeSchema,
   revision: PositiveRevisionSchema,
   toPartyRef: PartyRefSchema,
-  validFrom: Schema.NullOr(RelationshipIsoTimestampSchema),
-  validTo: Schema.NullOr(RelationshipIsoTimestampSchema),
+  validFrom: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
+  validTo: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
 });
 export type PartyRelationshipLifecycleEventPayload =
   typeof PartyRelationshipLifecycleEventPayloadSchema.Type;
+export const PartyRelationshipLifecycleEventPayloadJsonSchema = Schema.toEncoded(
+  PartyRelationshipLifecycleEventPayloadSchema,
+);
+export type PartyRelationshipLifecycleEventPayloadJson =
+  typeof PartyRelationshipLifecycleEventPayloadJsonSchema.Type;
 
 export const partyRef = (tenantId: string, resourceId: string) => ({
   moduleId: 'party.registry' as const,

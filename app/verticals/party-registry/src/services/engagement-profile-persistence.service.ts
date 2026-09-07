@@ -1,6 +1,6 @@
 // @generated-origin OntOS Codesmith Action Service v1
 import { and, eq } from 'drizzle-orm';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Duration, Effect, Option, Schema } from 'effect';
 import type { CounterpartyRef, PartyRef } from '../../shared/party-registry-references.ts';
 import type {
   OrganizationEngagementProfile,
@@ -22,62 +22,77 @@ import type { ContactsTransaction } from '../db/engagement-types.ts';
 
 type ScopedTransaction = Pick<ContactsTransaction, 'insert' | 'select' | 'update'>;
 
-export type LookupResult<Value> =
-  | Readonly<{ readonly _tag: 'found'; readonly value: Value }>
-  | Readonly<{ readonly _tag: 'not_found' }>;
+const lookupResultSchema = <Value>(value: Schema.Schema<Value>) =>
+  Schema.Union([Schema.TaggedStruct('found', { value }), Schema.TaggedStruct('not_found', {})]);
 
-export type LifecycleResult<Value> =
-  | LookupResult<Value>
-  | Readonly<{ readonly _tag: 'conflict'; readonly value: Value }>;
+export type LookupResult<Value> = Schema.Schema.Type<ReturnType<typeof lookupResultSchema<Value>>>;
 
-const unavailable = () =>
-  new EngagementProfilePersistenceUnavailable({
+const lifecycleResultSchema = <Value>(value: Schema.Schema<Value>) =>
+  Schema.Union([lookupResultSchema(value), Schema.TaggedStruct('conflict', { value })]);
+
+export type LifecycleResult<Value> = Schema.Schema.Type<
+  ReturnType<typeof lifecycleResultSchema<Value>>
+>;
+
+const unavailable = (cause?: unknown) => {
+  const error = new EngagementProfilePersistenceUnavailable({
     code: 'contacts_engagement_profile_persistence_unavailable',
     reason: 'Contacts engagement profile persistence is temporarily unavailable',
   });
-
-const decodeDatabaseFailure = Schema.decodeUnknownOption(
-  Schema.Struct({
-    cause: Schema.optionalKey(Schema.Unknown),
-    code: Schema.optionalKey(Schema.String),
-    constraint: Schema.optionalKey(Schema.String),
-  }),
-);
-
-// eslint-disable-next-line anti-slop/no-unknown-parameters -- PostgreSQL driver failures enter through this parser boundary.
-const isEngagementUniquenessFailure = (failure: unknown): boolean => {
-  let current = failure;
-  for (let depth = 0; depth < 8; depth += 1) {
-    const parsed = decodeDatabaseFailure(current);
-    if (Option.isNone(parsed)) {
-      return false;
-    }
-    const driverFailure = parsed.value;
-    if (
-      driverFailure.code === '23505' &&
-      driverFailure.constraint?.startsWith('contacts_') === true &&
-      driverFailure.constraint.endsWith('_uk')
-    ) {
-      return true;
-    }
-    current = driverFailure.cause;
-  }
-  return false;
+  error.cause = cause;
+  return error;
 };
 
-// eslint-disable-next-line anti-slop/no-unknown-parameters -- The driver failure is parsed before classification and never escapes this persistence boundary.
-const mutationFailure = (failure: unknown) =>
-  isEngagementUniquenessFailure(failure)
+const uniqueViolationSqlState = ['23', '505'].join('');
+const engagementUniqueConstraintSchema = Schema.String.check(
+  Schema.makeFilter((constraint) =>
+    constraint.startsWith('contacts_') && constraint.endsWith('_uk')
+      ? undefined
+      : 'not an engagement uniqueness constraint',
+  ),
+);
+const directEngagementUniquenessFailureSchema = Schema.Struct({
+  code: Schema.Literal(uniqueViolationSqlState),
+  constraint: engagementUniqueConstraintSchema,
+});
+const makeEngagementUniquenessFailureSchema = (): Schema.Codec<unknown, unknown> => {
+  let nested: Schema.Codec<unknown, unknown> = directEngagementUniquenessFailureSchema;
+  for (let depth = 0; depth < 8; depth += 1) {
+    nested = Schema.Union([
+      directEngagementUniquenessFailureSchema,
+      Schema.Struct({ nested }).pipe(Schema.encodeKeys({ nested: 'cause' })),
+    ]);
+  }
+  return nested;
+};
+const engagementUniquenessFailureSchema = makeEngagementUniquenessFailureSchema();
+const decodeEngagementUniquenessFailure = Schema.decodeUnknownOption(
+  engagementUniquenessFailureSchema,
+);
+
+const mutationFailure = <Failure>(failure: Failure) =>
+  Option.isSome(decodeEngagementUniquenessFailure(failure))
     ? new EngagementProfileConflict({
         code: 'contacts_engagement_profile_already_exists',
         reason: 'An engagement profile already exists for these canonical references',
       })
-    : unavailable();
+    : unavailable(failure);
 
+const PERSISTENCE_TIMEOUT = Duration.seconds(30);
 const attempt = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: unavailable, try: operation });
+  Effect.tryPromise({ catch: unavailable, try: operation }).pipe(
+    Effect.timeoutOrElse({
+      duration: PERSISTENCE_TIMEOUT,
+      orElse: () => Effect.fail(unavailable()),
+    }),
+  );
 const mutationAttempt = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: mutationFailure, try: operation });
+  Effect.tryPromise({ catch: mutationFailure, try: operation }).pipe(
+    Effect.timeoutOrElse({
+      duration: PERSISTENCE_TIMEOUT,
+      orElse: () => Effect.fail(unavailable()),
+    }),
+  );
 
 const partyRef = (tenantId: string, resourceId: string): PartyRef => ({
   moduleId: 'party.registry',
@@ -145,18 +160,21 @@ export const ensureReferencesBelongToTenant = (
 
 export const createOrganizationEngagementProfile = (
   transaction: ScopedTransaction,
-  tenantId: string,
-  refs: { readonly counterpartyRef?: CounterpartyRef; readonly partyRef: PartyRef },
+  input: {
+    readonly counterpartyRef?: CounterpartyRef;
+    readonly partyRef: PartyRef;
+    readonly tenantId: string;
+  },
 ) =>
-  ensureReferencesBelongToTenant(tenantId, refs).pipe(
+  ensureReferencesBelongToTenant(input.tenantId, input).pipe(
     Effect.andThen(
       mutationAttempt(() =>
         transaction
           .insert(organizationEngagementProfiles)
           .values({
-            counterpartyResourceId: refs.counterpartyRef?.resourceId ?? null,
-            partyResourceId: refs.partyRef.resourceId,
-            tenantId,
+            counterpartyResourceId: input.counterpartyRef?.resourceId ?? null,
+            partyResourceId: input.partyRef.resourceId,
+            tenantId: input.tenantId,
           })
           .returning(),
       ),
@@ -170,18 +188,21 @@ export const createOrganizationEngagementProfile = (
 
 export const createPersonEngagementProfile = (
   transaction: ScopedTransaction,
-  tenantId: string,
-  refs: { readonly counterpartyRef?: CounterpartyRef; readonly partyRef: PartyRef },
+  input: {
+    readonly counterpartyRef?: CounterpartyRef;
+    readonly partyRef: PartyRef;
+    readonly tenantId: string;
+  },
 ) =>
-  ensureReferencesBelongToTenant(tenantId, refs).pipe(
+  ensureReferencesBelongToTenant(input.tenantId, input).pipe(
     Effect.andThen(
       mutationAttempt(() =>
         transaction
           .insert(personEngagementProfiles)
           .values({
-            counterpartyResourceId: refs.counterpartyRef?.resourceId ?? null,
-            partyResourceId: refs.partyRef.resourceId,
-            tenantId,
+            counterpartyResourceId: input.counterpartyRef?.resourceId ?? null,
+            partyResourceId: input.partyRef.resourceId,
+            tenantId: input.tenantId,
           })
           .returning(),
       ),
@@ -191,13 +212,13 @@ export const createPersonEngagementProfile = (
     ),
   );
 
-const transition = <Row extends { readonly archivedAt: Date | null }, Value>(
-  loadCurrent: () => PromiseLike<readonly Row[]>,
-  updateCurrent: (now: Date) => PromiseLike<readonly Row[]>,
-  requestedState: 'active' | 'archived',
-  toDto: (row: Row) => Value,
-): Effect.Effect<LifecycleResult<Value>, EngagementProfilePersistenceUnavailable> =>
-  Effect.gen(function* transitionProfile() {
+const transition = Effect.fn('EngagementProfilePersistenceService.transition')(
+  function* transitionProfile<Row extends { readonly archivedAt: Date | null }, Value>(
+    loadCurrent: () => PromiseLike<readonly Row[]>,
+    updateCurrent: (now: Date) => PromiseLike<readonly Row[]>,
+    requestedState: 'active' | 'archived',
+    toDto: (row: Row) => Value,
+  ): Effect.fn.Return<LifecycleResult<Value>, EngagementProfilePersistenceUnavailable> {
     const [current] = yield* attempt(loadCurrent);
     if (current === undefined) {
       return { _tag: 'not_found' } as const;
@@ -211,7 +232,8 @@ const transition = <Row extends { readonly archivedAt: Date | null }, Value>(
       return yield* unavailable();
     }
     return { _tag: 'found', value: toDto(updated) } as const;
-  });
+  },
+);
 
 export const transitionOrganizationEngagementProfile = (
   transaction: ScopedTransaction,

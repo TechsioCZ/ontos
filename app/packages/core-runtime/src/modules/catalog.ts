@@ -1,6 +1,5 @@
-/* eslint-disable max-classes-per-file -- Catalog validation and access failures are separate public contracts. */
 import { Context, Schema } from 'effect';
-import type { Effect } from 'effect';
+import type { Cause, Effect } from 'effect';
 import type {
   OntosDeploymentAppId,
   OntosModuleDeploymentContract,
@@ -11,20 +10,36 @@ import { decodeOntosModuleDeploymentContract } from './manifest.ts';
 import { validateShellContributions } from './shell-contribution.ts';
 import type { TenantModuleStateValidationUnavailableError } from './tenant-module-state-errors.ts';
 
-export class OntosModuleCatalogValidationError extends Schema.TaggedError<OntosModuleCatalogValidationError>()(
+const OntosModuleCatalogValidationErrorContract = Schema.TaggedStruct(
   'OntosModuleCatalogValidationError',
   {
     code: Schema.Literal('ontos_module_catalog_invalid'),
     reason: Schema.String,
   },
-) {}
+);
+type OntosModuleCatalogValidationErrorSelf = typeof OntosModuleCatalogValidationErrorContract.Type &
+  Cause.YieldableError;
+const OntosModuleCatalogValidationErrorValue =
+  Schema.TaggedError<OntosModuleCatalogValidationErrorSelf>()('OntosModuleCatalogValidationError', {
+    code: Schema.Literal('ontos_module_catalog_invalid'),
+    reason: Schema.String,
+  });
+export type OntosModuleCatalogValidationError = InstanceType<
+  typeof OntosModuleCatalogValidationErrorValue
+>;
+export { OntosModuleCatalogValidationErrorValue as OntosModuleCatalogValidationError };
 
 export interface InstalledDeploymentContractInput {
   readonly contract: unknown;
   readonly expectedAppId: OntosDeploymentAppId;
 }
 
-export type InstalledDeploymentFailureReason = 'incompatible' | 'timeout' | 'unavailable';
+export const InstalledDeploymentFailureReasonSchema = Schema.Literals([
+  'incompatible',
+  'timeout',
+  'unavailable',
+]);
+export type InstalledDeploymentFailureReason = typeof InstalledDeploymentFailureReasonSchema.Type;
 
 export type InstalledDeploymentStatus =
   | {

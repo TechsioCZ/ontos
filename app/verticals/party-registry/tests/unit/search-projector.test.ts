@@ -1,6 +1,7 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect } from 'effect';
+import { Effect, Exit, Match } from 'effect';
 import {
   makeCoreSearchQueryRuntime,
   makeCoreSearchIngestion,
@@ -68,7 +69,7 @@ const snapshot: PartySearchSourceSnapshot = {
   tenantId,
 };
 test('post-commit projection makes only active permission-safe identity evidence searchable', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* testScenario() {
       const documents = yield* buildPartySearchDocuments(snapshot);
       const store = makeInMemoryCoreSearchProjectionStore();
@@ -100,7 +101,7 @@ test('post-commit projection makes only active permission-safe identity evidence
     }),
   ));
 test('aliases collapse to canonical identity and only alias-only evidence labels the match', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* testScenario() {
       const [party] = snapshot.parties;
       assert.ok(party);
@@ -158,7 +159,7 @@ const context: OutboxWorkerHandlerContext = {
   workerKey: 'party.registry.project-party-updated-to-search',
 };
 test('snapshot-generation replay is idempotent, archive/unarchive refreshes and older delivery cannot resurrect a tombstone', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* testScenario() {
       const store = makeInMemoryCoreSearchProjectionStore();
       let current = snapshot;
@@ -217,7 +218,7 @@ test('snapshot-generation replay is idempotent, archive/unarchive refreshes and 
     }),
   ));
 test('future-ended contact disappears at its period boundary without another lifecycle message', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* testScenario() {
       const [party] = snapshot.parties;
       assert.ok(party);
@@ -261,7 +262,7 @@ test('future-ended contact disappears at its period boundary without another lif
     }),
   ));
 test('Counterparty identity survives aliases, current-role expiry and canonical-party collisions', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* testScenario() {
       const legalEntityId = '20000000-0000-4000-8000-000000000002';
       const [party] = snapshot.parties;
@@ -327,14 +328,15 @@ test('Counterparty identity survives aliases, current-role expiry and canonical-
         ['cp-1', 'cp-2'],
       );
       const normalized = normalizeCounterpartySearchHits(input, hits);
-      assert.equal(normalized._tag, 'SearchResults');
-      if (normalized._tag === 'SearchResults') {
-        assert.equal(
-          normalized.items[0]?.collision?.kind,
-          'CANONICAL_PARTY_COUNTERPARTY_COLLISION',
-        );
-        assert.equal(normalized.items[0]?.party.matchedViaAlias, true);
-      }
+      const normalizedItems = Match.value(normalized).pipe(
+        Match.tag('SearchResults', ({ items }) => items),
+        Match.tag('SearchProjectionViolation', ({ reason }) =>
+          assert.fail(`Expected normalized search results: ${reason}`),
+        ),
+        Match.exhaustive,
+      );
+      assert.equal(normalizedItems[0]?.collision?.kind, 'CANONICAL_PARTY_COUNTERPARTY_COLLISION');
+      assert.equal(normalizedItems[0]?.party.matchedViaAlias, true);
       assert.deepEqual(
         yield* gateway.searchCounterparties({
           ...input,
@@ -345,7 +347,7 @@ test('Counterparty identity survives aliases, current-role expiry and canonical-
     }),
   ));
 test('shared public contact returns multiple Parties without uniqueness or matching authority', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* testScenario() {
       const store = makeInMemoryCoreSearchProjectionStore();
       const [party] = snapshot.parties;
@@ -383,7 +385,7 @@ test('shared public contact returns multiple Parties without uniqueness or match
     }),
   ));
 test('rebuild reconciles omitted documents and preserves tombstones against stale lifecycle delivery', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* testScenario() {
       const store = makeInMemoryCoreSearchProjectionStore();
       let current = snapshot;
@@ -425,7 +427,7 @@ test('rebuild reconciles omitted documents and preserves tombstones against stal
     }),
   ));
 test('source failure is sanitized and leaves previously searchable state intact for retry', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* testScenario() {
       const store = makeInMemoryCoreSearchProjectionStore();
       let fail = false;
@@ -465,7 +467,7 @@ test('source failure is sanitized and leaves previously searchable state intact 
     }),
   ));
 test('zero-length cancelled periods are never searchable and do not poison projection delivery', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* testScenario() {
       const [party] = snapshot.parties;
       assert.ok(party);
@@ -508,18 +510,16 @@ test('zero-length cancelled periods are never searchable and do not poison proje
           ],
         }),
       );
-      assert.equal(result._tag, 'Success');
-      if (result._tag === 'Success') {
-        assert.deepEqual(
-          result.value[0]?.temporalSearchableText?.filter((entry) => entry.value === 'cancelled'),
-          [],
-        );
-        assert.deepEqual(result.value[1]?.temporalFacets, []);
-      }
+      assert.ok(Exit.isSuccess(result));
+      assert.deepEqual(
+        result.value[0]?.temporalSearchableText?.filter((entry) => entry.value === 'cancelled'),
+        [],
+      );
+      assert.deepEqual(result.value[1]?.temporalFacets, []);
     }),
   ));
 test('projection generation is independent of an out-of-order business event sequence', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* testScenario() {
       const store = makeInMemoryCoreSearchProjectionStore();
       const projector = makePartySearchProjector(
@@ -553,7 +553,7 @@ test('projection generation is independent of an out-of-order business event seq
     }),
   ));
 test('correction and identifier/contact changes replace obsolete evidence instead of accumulating history', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* testScenario() {
       const [party] = snapshot.parties;
       assert.ok(party);
@@ -606,7 +606,7 @@ test('correction and identifier/contact changes replace obsolete evidence instea
     }),
   ));
 test('a complete empty rebuild also rejects delayed evidence for a never-before-indexed Party', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* testScenario() {
       const store = makeInMemoryCoreSearchProjectionStore();
       let current: PartySearchSourceSnapshot = {

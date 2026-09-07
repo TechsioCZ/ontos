@@ -3,15 +3,16 @@
 // @ontos-resource-slug organization-engagement-profile
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
-
-const ResourceIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const TenantIdSchema = Schema.String.check(Schema.isUUID());
+import {
+  PartyRegistryResourceIdJsonSchema,
+  PartyRegistryTenantIdJsonSchema,
+} from './resource-ref-identifiers.ts';
 
 export const OrganizationEngagementProfileRefSchema = Schema.Struct({
   moduleId: Schema.Literal('party.registry'),
-  resourceId: ResourceIdSchema,
+  resourceId: PartyRegistryResourceIdJsonSchema,
   resourceType: Schema.Literal('party.registry.organization-engagement-profile'),
-  tenantId: TenantIdSchema,
+  tenantId: PartyRegistryTenantIdJsonSchema,
 });
 export type OrganizationEngagementProfileRef = typeof OrganizationEngagementProfileRefSchema.Type;
 

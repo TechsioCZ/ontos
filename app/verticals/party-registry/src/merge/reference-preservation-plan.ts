@@ -1,16 +1,23 @@
 import type { PartyAlias } from '../../shared/resources/party-alias.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
+import { Match, Option, Schema } from 'effect';
 import { resolveCanonicalPartyRef } from './party-alias-resolution.ts';
 
-export type SupportedReferenceClass =
-  | 'COMMERCE_PROFILE'
-  | 'CONNECTOR_CORRELATION'
-  | 'COUNTERPARTY'
-  | 'ENGAGEMENT_PROFILE'
-  | 'DIRECT_RESOURCE_REF'
-  | 'EVENT_OR_OUTBOX_PAYLOAD'
-  | 'HISTORICAL_DOCUMENT';
-export type ReferenceClass = SupportedReferenceClass | 'UNSUPPORTED';
+export const SupportedReferenceClassSchema = Schema.Literals([
+  'COMMERCE_PROFILE',
+  'CONNECTOR_CORRELATION',
+  'COUNTERPARTY',
+  'ENGAGEMENT_PROFILE',
+  'DIRECT_RESOURCE_REF',
+  'EVENT_OR_OUTBOX_PAYLOAD',
+  'HISTORICAL_DOCUMENT',
+]);
+export type SupportedReferenceClass = typeof SupportedReferenceClassSchema.Type;
+export const ReferenceClassSchema = Schema.Union([
+  SupportedReferenceClassSchema,
+  Schema.Literal('UNSUPPORTED'),
+]);
+export type ReferenceClass = typeof ReferenceClassSchema.Type;
 export interface HistoricalPartySnapshot {
   readonly address?: string;
   readonly name?: string;
@@ -90,23 +97,39 @@ export const planReferencePreservation = (
     if (reference.class === 'UNSUPPORTED') {
       continue;
     }
+    const supportedReferenceClass: SupportedReferenceClass = reference.class;
     const resolution = resolveCanonicalPartyRef(reference.partyRef, input.aliases);
-    if (resolution._tag !== 'CanonicalPartyResolved') {
-      blockers.push({ code: resolution._tag, ownerKey: reference.ownerKey });
-      continue;
-    }
-    const planned = {
-      canonicalPartyRef: resolution.canonicalPartyRef,
-      class: reference.class,
-      originalPartyRef: reference.partyRef,
-      ownerKey: reference.ownerKey,
-      physicalRewriteRequired: false as const,
-    };
-    references.push(
-      reference.historicalSnapshot === undefined
-        ? planned
-        : { ...planned, historicalSnapshot: reference.historicalSnapshot },
+    const planned = Match.value(resolution).pipe(
+      Match.tag('CanonicalPartyResolved', ({ canonicalPartyRef }) =>
+        Option.some({
+          canonicalPartyRef,
+          class: supportedReferenceClass,
+          originalPartyRef: reference.partyRef,
+          ownerKey: reference.ownerKey,
+          physicalRewriteRequired: false as const,
+        }),
+      ),
+      Match.tag('PartyAliasCycleRejected', ({ _tag }) => {
+        blockers.push({ code: _tag, ownerKey: reference.ownerKey });
+        return Option.none<PlannedPartyReference>();
+      }),
+      Match.tag('PartyAliasSelfReferenceRejected', ({ _tag }) => {
+        blockers.push({ code: _tag, ownerKey: reference.ownerKey });
+        return Option.none<PlannedPartyReference>();
+      }),
+      Match.tag('PartyAliasCrossTenantRejected', ({ _tag }) => {
+        blockers.push({ code: _tag, ownerKey: reference.ownerKey });
+        return Option.none<PlannedPartyReference>();
+      }),
+      Match.exhaustive,
     );
+    if (Option.isSome(planned)) {
+      references.push(
+        reference.historicalSnapshot === undefined
+          ? planned.value
+          : { ...planned.value, historicalSnapshot: reference.historicalSnapshot },
+      );
+    }
   }
   if (blockers.length > 0) {
     return { _tag: 'ReferencePreservationBlocked', blockers } as const;

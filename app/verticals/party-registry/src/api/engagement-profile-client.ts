@@ -1,18 +1,10 @@
 /* eslint-disable oxc/no-barrel-file -- This is the generated client aggregate; remove-when: Codesmith emits direct re-exports. */
 import type { GatewayContextClientOptions } from '@app/shared-contracts';
-import { Effect, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
-import type {
-  HttpApi,
-  HttpApiClient,
-  HttpApiGroup,
-  HttpClientError,
-  Schema,
-} from '@modern-js/plugin-bff/effect-client';
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { Effect } from '@modern-js/plugin-bff/effect-client';
+import type { HttpClientError, Schema } from '@modern-js/plugin-bff/effect-client';
+import { Redacted } from 'effect';
 import {
   engagementProfileOperationContexts,
-  partyRegistryApi,
-  partyRegistryApiContract,
   partyRegistryOperationContexts,
 } from '../../shared/api.ts';
 import type {
@@ -24,92 +16,46 @@ import type {
   PersonEngagementLifecyclePayload,
 } from '../../shared/api.ts';
 import { actionGateway } from './action-gateway.ts';
+import {
+  authenticatePartyRegistryHttpRequest,
+  createPartyRegistryHttpClient,
+  invokePartyRegistryHttpClient,
+  partyRegistryHttpRequestContext,
+} from './party-registry-http-client.ts';
+import type { PartyRegistryHttpClient } from './party-registry-http-client.ts';
 
 export * from './organization-engagement-profile-client.ts';
 export * from './person-engagement-profile-client.ts';
-export { Effect, runEffectRequest } from '@modern-js/plugin-bff/effect-client';
+export { Effect } from '@modern-js/plugin-bff/effect-client';
 
-type ContactsApiGroups =
-  typeof partyRegistryApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;
-
-export type ContactsClient = HttpApiClient.Client<
-  Extract<ContactsApiGroups, HttpApiGroup.Constraint>
->;
+export type ContactsClient = PartyRegistryHttpClient;
 export type ContactsClientError = HttpClientError.HttpClientError | Schema.SchemaError;
 export type ContactsClientEffect<Success> = Effect.Effect<Success, ContactsClientError>;
+
+const correlationIdOption = 'correlationId' as const;
+const traceIdOption = 'traceId' as const;
+const traceparentOption = 'traceparent' as const;
 
 export interface ContactsClientOptions {
   readonly baseUrl?: string | URL;
   readonly locale?: string;
   readonly operationContext?: OperationContext;
-  readonly traceparent?: string;
+  readonly [traceparentOption]?: string;
 }
 
 export interface ContactsOperationOptions extends ContactsClientOptions {
-  readonly correlationId: string;
+  readonly [correlationIdOption]: string;
   readonly gateway?: GatewayContextClientOptions;
-  readonly traceId?: string;
+  readonly [traceIdOption]?: string;
 }
 
 export interface ContactsMutationOptions extends ContactsOperationOptions {
   readonly idempotencyKey: string;
 }
 
-interface ContactsClientAuthorization {
-  readonly authorization: string;
-  readonly correlationId: string;
-  readonly traceId?: string;
-}
-
-interface ContactsClientRequestContext {
-  locale?: string;
-  operationContext?: OperationContext;
-  traceparent?: string;
-}
-
-interface ContactsClientHeaders extends Readonly<Record<string, string | undefined>> {
-  authorization: string;
-  'x-correlation-id': string;
-  'x-trace-id'?: string;
-}
-
-const makeClient = (
-  options: ContactsClientOptions,
-  authentication?: ContactsClientAuthorization,
-) => {
-  const requestContext: ContactsClientRequestContext = {};
-  if (options.locale !== undefined) {
-    requestContext.locale = options.locale;
-  }
-  if (options.operationContext !== undefined) {
-    requestContext.operationContext = options.operationContext;
-  }
-  if (options.traceparent !== undefined) {
-    requestContext.traceparent = options.traceparent;
-  }
-  const config = {
-    baseUrl: options.baseUrl ?? partyRegistryApiContract.apiPrefix,
-    requestContext,
-  };
-  if (authentication === undefined) {
-    return makeEffectHttpApiClient(partyRegistryApi, config);
-  }
-  const headers: ContactsClientHeaders = {
-    authorization: authentication.authorization,
-    'x-correlation-id': authentication.correlationId,
-  };
-  if (authentication.traceId !== undefined) {
-    headers['x-trace-id'] = authentication.traceId;
-  }
-  return makeEffectHttpApiClient(partyRegistryApi, {
-    ...config,
-    transformClient: HttpClient.mapRequest(HttpClientRequest.setHeaders(headers)),
-  });
-};
-
 export const createContactsClient = (
   options: ContactsClientOptions = {},
-): ContactsClientEffect<ContactsClient> => makeClient(options);
+): ContactsClientEffect<ContactsClient> => createPartyRegistryHttpClient(options);
 
 const invoke = <Success, Failure>(
   options: ContactsOperationOptions,
@@ -117,16 +63,15 @@ const invoke = <Success, Failure>(
   operation: (client: ContactsClient) => Effect.Effect<Success, Failure>,
 ) =>
   actionGateway.invoke((authorization) => {
-    const operationContext =
-      options.operationContext ??
-      (options.traceId === undefined ? context : { ...context, traceId: options.traceId });
-    const authentication =
-      options.traceId === undefined
-        ? { authorization, correlationId: options.correlationId }
-        : { authorization, correlationId: options.correlationId, traceId: options.traceId };
-    return makeClient({ ...options, operationContext }, authentication).pipe(
-      Effect.flatMap(operation),
+    const operationContext = options.operationContext ?? context;
+    const requestContext = authenticatePartyRegistryHttpRequest(
+      partyRegistryHttpRequestContext({ ...options, operationContext }),
+      Redacted.make(authorization),
+      options[correlationIdOption],
+      'x-correlation-id',
+      options[traceIdOption],
     );
+    return invokePartyRegistryHttpClient(requestContext, operation);
   }, options.gateway);
 
 const mutationHeaders = (options: ContactsMutationOptions) => ({

@@ -22,6 +22,14 @@ export const partyOfficialIdentifierHistoryEntrypoint = defineTenantModuleEntryp
 interface Services {
   readonly list: (partyId: string) => ReturnType<typeof listOfficialIdentifierHistory>;
 }
+const unavailable = (cause: unknown) => {
+  const failure = new ReadHandlerUnavailable({
+    code: 'read_handler_unavailable',
+    reason: 'Official Identifier history is unavailable',
+  });
+  Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+  return failure;
+};
 export const partyOfficialIdentifierHistoryRead = defineRead(
   {
     accessKind: 'list',
@@ -41,13 +49,7 @@ export const partyOfficialIdentifierHistoryRead = defineRead(
   },
   (input, context: ReadHandlerContext<Services>) =>
     context.services.list(input.partyRef.resourceId).pipe(
-      Effect.mapError(
-        () =>
-          new ReadHandlerUnavailable({
-            code: 'read_handler_unavailable',
-            reason: 'Official Identifier history is unavailable',
-          }),
-      ),
+      Effect.mapError(unavailable),
       Effect.map((items) => ({ evidence: { resultCount: items.length }, result: { items } })),
     ),
   (transaction, scope) =>

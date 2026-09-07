@@ -7,143 +7,148 @@ import {
   HttpEffect,
   HttpServerResponse,
 } from '@modern-js/plugin-bff/effect-edge';
-import { Config } from 'effect';
+import { Match, Redacted, Schema } from 'effect';
 import { partyRegistryApi } from '../shared/api.ts';
+import {
+  PartyMergeReadinessAuthenticationProblemSchema,
+  PartyMergeReadinessForbiddenProblemSchema,
+  PartyMergeReadinessInternalProblemSchema,
+  PartyMergeReadinessInvalidProblemSchema,
+  PartyMergeReadinessNotFoundProblemSchema,
+  PartyMergeReadinessPolicyConflictProblemSchema,
+  PartyMergeReadinessPolicyProblemSchema,
+  PartyMergeReadinessUnavailableProblemSchema,
+} from '../shared/apis/party-merge-readiness.ts';
 import { partyMergeReadinessRead } from '../src/api/party-merge-readiness.read.ts';
 import { verifyOperationPrincipal } from './auth/action-principal.ts';
+import { governedReadProblemStatus } from './read-server-support.ts';
 
-const authenticationProblem = () => ({
-  _tag: 'PartyMergeReadinessAuthenticationProblem' as const,
-  detail: 'A valid audience-scoped Bearer assertion is required.',
-  status: 401 as const,
-  title: 'Authentication required',
-  type: 'https://ontos.dev/problems/operation-authentication-required',
-});
-const unavailableProblem = () => ({
-  _tag: 'PartyMergeReadinessUnavailableProblem' as const,
-  detail: 'The governed read is temporarily unavailable.',
-  retryable: true as const,
-  status: 503 as const,
-  title: 'Read unavailable',
-  type: 'https://ontos.dev/problems/read-unavailable',
-});
-const invalidProblem = () => ({
-  _tag: 'PartyMergeReadinessInvalidProblem' as const,
-  detail: 'The governed read request is invalid.',
-  status: 400 as const,
-  title: 'Invalid read request',
-  type: 'https://ontos.dev/problems/read-invalid',
-});
-const forbiddenProblem = () => ({
-  _tag: 'PartyMergeReadinessForbiddenProblem' as const,
-  detail: 'The principal is not permitted to perform this read.',
-  status: 403 as const,
-  title: 'Read forbidden',
-  type: 'https://ontos.dev/problems/read-forbidden',
-});
-const notFoundProblem = () => ({
-  _tag: 'PartyMergeReadinessNotFoundProblem' as const,
-  detail: 'The requested resource was not found.',
-  status: 404 as const,
-  title: 'Resource not found',
-  type: 'https://ontos.dev/problems/read-not-found',
-});
+const authenticationProblem = () =>
+  PartyMergeReadinessAuthenticationProblemSchema.make({
+    detail: 'A valid audience-scoped Bearer assertion is required.',
+    status: governedReadProblemStatus.authentication,
+    title: 'Authentication required',
+    type: 'https://ontos.dev/problems/operation-authentication-required',
+  });
+const unavailableProblem = () =>
+  PartyMergeReadinessUnavailableProblemSchema.make({
+    detail: 'The governed read is temporarily unavailable.',
+    retryable: true,
+    status: governedReadProblemStatus.unavailable,
+    title: 'Read unavailable',
+    type: 'https://ontos.dev/problems/read-unavailable',
+  });
+const invalidProblem = () =>
+  PartyMergeReadinessInvalidProblemSchema.make({
+    detail: 'The governed read request is invalid.',
+    status: governedReadProblemStatus.invalid,
+    title: 'Invalid read request',
+    type: 'https://ontos.dev/problems/read-invalid',
+  });
+const forbiddenProblem = () =>
+  PartyMergeReadinessForbiddenProblemSchema.make({
+    detail: 'The principal is not permitted to perform this read.',
+    status: governedReadProblemStatus.forbidden,
+    title: 'Read forbidden',
+    type: 'https://ontos.dev/problems/read-forbidden',
+  });
+const notFoundProblem = () =>
+  PartyMergeReadinessNotFoundProblemSchema.make({
+    detail: 'The requested resource was not found.',
+    status: governedReadProblemStatus.notFound,
+    title: 'Resource not found',
+    type: 'https://ontos.dev/problems/read-not-found',
+  });
 const policyProblem = (status: 409 | 422) =>
   status === 409
-    ? {
-        _tag: 'PartyMergeReadinessPolicyConflictProblem' as const,
+    ? PartyMergeReadinessPolicyConflictProblemSchema.make({
         detail: 'The read conflicts with the current business state.',
-        status: 409 as const,
+        status: governedReadProblemStatus.policyConflict,
         title: 'Read conflict',
         type: 'https://ontos.dev/problems/read-policy-conflict',
-      }
-    : {
-        _tag: 'PartyMergeReadinessPolicyProblem' as const,
+      })
+    : PartyMergeReadinessPolicyProblemSchema.make({
         detail: 'The read is not eligible under the current business policy.',
-        status: 422 as const,
+        status: governedReadProblemStatus.policyDenied,
         title: 'Read ineligible',
         type: 'https://ontos.dev/problems/read-policy-denied',
-      };
-const internalProblem = () => ({
-  _tag: 'PartyMergeReadinessInternalProblem' as const,
-  detail: 'The governed read could not be completed.',
-  status: 500 as const,
-  title: 'Read failed',
-  type: 'https://ontos.dev/problems/read-failed',
-});
+      });
+const internalProblem = () =>
+  PartyMergeReadinessInternalProblemSchema.make({
+    detail: 'The governed read could not be completed.',
+    status: governedReadProblemStatus.internal,
+    title: 'Read failed',
+    type: 'https://ontos.dev/problems/read-failed',
+  });
 const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
 );
+const isAuthenticationProblem = Schema.is(PartyMergeReadinessAuthenticationProblemSchema);
 type VerificationProblem =
   | ReturnType<typeof authenticationProblem>
   | ReturnType<typeof unavailableProblem>;
-const readProblem = (error: ReadCoreError) => {
-  switch (error._tag) {
-    case 'ReadInputValidationError': {
-      return invalidProblem();
-    }
-    case 'OperationAuthenticationRequired': {
-      return authenticationProblem();
-    }
-    case 'ModuleStateDeniedError':
-    case 'OperationContextDenied':
-    case 'OperationContextInvalid':
-    case 'ReadPermissionDenied': {
-      return forbiddenProblem();
-    }
-    case 'ReadHandlerNotFound': {
-      return notFoundProblem();
-    }
-    case 'ReadPolicyDenied': {
-      return policyProblem(error.httpStatus);
-    }
-    case 'ModuleStateCheckUnavailableError':
-    case 'OperationContextUnavailable':
-    case 'ReadEvidencePersistenceError':
-    case 'ReadHandlerUnavailable':
-    case 'ReadPermissionUnavailable':
-    case 'ReadPolicyEvaluationError': {
-      return unavailableProblem();
-    }
-    case 'ReadEvidenceValidationError':
-    case 'ReadHandlerExecutionError':
-    case 'ReadResultValidationError': {
-      return internalProblem();
-    }
-    default: {
-      const exhaustive: never = error;
-      return exhaustive;
-    }
-  }
-};
+const readProblem = (error: ReadCoreError) =>
+  Match.value(error).pipe(
+    Match.tags({
+      ModuleStateCheckUnavailableError: unavailableProblem,
+      ModuleStateDeniedError: forbiddenProblem,
+      OperationAuthenticationRequired: authenticationProblem,
+      OperationContextDenied: forbiddenProblem,
+      OperationContextInvalid: forbiddenProblem,
+      OperationContextUnavailable: unavailableProblem,
+      ReadEvidencePersistenceError: unavailableProblem,
+      ReadEvidenceValidationError: internalProblem,
+      ReadHandlerExecutionError: internalProblem,
+      ReadHandlerNotFound: notFoundProblem,
+      ReadHandlerUnavailable: unavailableProblem,
+      ReadInputValidationError: invalidProblem,
+      ReadPermissionDenied: forbiddenProblem,
+      ReadPermissionUnavailable: unavailableProblem,
+      ReadPolicyDenied: (failure) => policyProblem(failure.httpStatus),
+      ReadPolicyEvaluationError: unavailableProblem,
+      ReadResultValidationError: internalProblem,
+    }),
+    Match.exhaustive,
+  );
 
 export const partyMergeReadinessReadApiLive = HttpApiBuilder.group(
   partyRegistryApi,
   'partyMergeReadiness',
   (handlers) =>
-    handlers.handle('execute', ({ payload, request }) =>
-      Effect.gen(function* governedProviderRead() {
+    handlers.handle(
+      'execute',
+      Effect.fn('partyMergeReadinessReadApiLive.execute')(function* executeRead({
+        payload,
+        request,
+      }) {
         const correlationId = request.headers['x-correlation-id'];
         if (correlationId === undefined || correlationId.trim().length === 0) {
           return yield* Effect.fail(invalidProblem());
         }
-        const environment = yield* Config.all({
-          ONTOS_GATEWAY_ISSUER: Config.string('ONTOS_GATEWAY_ISSUER'),
-          ONTOS_GATEWAY_PUBLIC_JWKS: Config.string('ONTOS_GATEWAY_PUBLIC_JWKS'),
-        }).pipe(Effect.mapError(unavailableProblem));
-        const principal = yield* verifyOperationPrincipal(request.headers['authorization'], {
-          environment,
-        }).pipe(
-          Effect.catch((error) => {
-            if (
-              error._tag === 'ActionPrincipalConfigurationError' ||
-              error._tag === 'ActionPrincipalUnavailableError'
-            ) {
-              return Effect.fail<VerificationProblem>(unavailableProblem());
-            }
-            return bearerChallenge.pipe(
-              Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
-            );
+        const principal = yield* verifyOperationPrincipal(
+          Redacted.make(request.headers['authorization']),
+        ).pipe(
+          Effect.catchTags({
+            ActionPrincipalConfigurationError: () =>
+              Effect.fail<VerificationProblem>(unavailableProblem()),
+            ActionPrincipalExpiredError: () =>
+              bearerChallenge.pipe(
+                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
+              ),
+            ActionPrincipalInvalidError: () =>
+              bearerChallenge.pipe(
+                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
+              ),
+            ActionPrincipalMissingError: () =>
+              bearerChallenge.pipe(
+                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
+              ),
+            ActionPrincipalScopeError: () =>
+              bearerChallenge.pipe(
+                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
+              ),
+            ActionPrincipalUnavailableError: () =>
+              Effect.fail<VerificationProblem>(unavailableProblem()),
           }),
         );
         const runtime = yield* ReadRuntime;
@@ -157,7 +162,7 @@ export const partyMergeReadinessReadApiLive = HttpApiBuilder.group(
           .pipe(
             Effect.catch((error) => {
               const problem = readProblem(error);
-              return (problem.status === 401 ? bearerChallenge : Effect.void).pipe(
+              return (isAuthenticationProblem(problem) ? bearerChallenge : Effect.void).pipe(
                 Effect.andThen(Effect.fail(problem)),
               );
             }),

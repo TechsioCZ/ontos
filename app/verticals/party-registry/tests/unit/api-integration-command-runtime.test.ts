@@ -1,9 +1,8 @@
-// @effect-diagnostics asyncFunction:off nodeBuiltinImport:off
-/* eslint-disable no-await-in-loop, unicorn/no-await-expression-member -- Mounted HTTP lifecycle scenarios are intentionally sequential and assert decoded responses directly. */
+// @effect-diagnostics asyncFunction:off nodeBuiltinImport:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { ConfigProvider, Effect, Layer, Schema } from 'effect';
+import { ConfigProvider, Context, Effect, Layer, Schema } from 'effect';
 import {
   ReadRuntime,
   ReadHandlerNotFound,
@@ -20,15 +19,18 @@ import {
   partyRegistryCommandRecoveryLive,
   partyRegistryCommandsLive,
 } from '../../api/party-command-server.ts';
+import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
 import { archivePartyAction } from '../../src/actions/archive-party.action.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import {
   PartyEvidenceInsufficient,
   PartyPersistenceUnavailable,
+  PartySchema,
 } from '../../shared/domain/identity-contracts.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 import { partyMatchDecisionReadApiLive } from '../../api/party-match-decision-read-server.ts';
 import { PartyMatchDecisionRequestSchema } from '../../shared/apis/party-match-decision.ts';
+import { RuleKeySchema } from '../../shared/domain/matching-contracts.ts';
 import type { PartyMatchDecisionRecordSchema } from '../../shared/domain/matching-contracts.ts';
 
 const principal = {
@@ -45,7 +47,7 @@ const partyRef = {
   tenantId: principal.tenantId,
 } as const;
 const archivePayload = { expectedRevision: 1, partyRef, reason: 'No longer active' };
-const archivedParty = {
+const archivedParty = Schema.decodeUnknownSync(PartySchema)({
   archivedAt: '2026-09-01T00:00:00.000Z',
   createdAt: '2026-09-01T00:00:00.000Z',
   displayName: 'Example organization',
@@ -53,7 +55,7 @@ const archivedParty = {
   partyType: 'ORGANIZATION' as const,
   revision: 1,
   updatedAt: '2026-09-01T00:00:00.000Z',
-};
+});
 const createPayload = {
   candidate: {
     displayName: 'Example organization',
@@ -186,6 +188,7 @@ const mounted = (
     partyRegistryCommandRecoveryLive,
     partyMatchDecisionReadApiLive,
   ).pipe(
+    Layer.provide(ActionPrincipalVerifierLive),
     Layer.provide(harness.layer),
     Layer.provide(readLayer),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
@@ -199,6 +202,24 @@ const mounted = (
     ),
     { disableLogger: true },
   );
+};
+
+// The mounted layers provide every runtime service; the handler's conservative unknown requirement
+// still requires an explicitly empty per-request context.
+const emptyRequestContext = Context.makeUnsafe<unknown>(new Map());
+const handle = (app: ReturnType<typeof mounted>, request: Request) =>
+  app.handler(request, emptyRequestContext);
+
+const forEachSequential = <Item>(
+  items: Iterable<Item>,
+  run: (item: Item) => Promise<void>,
+): Promise<void> => {
+  const iterator = items[Symbol.iterator]();
+  const advance = (): Promise<void> => {
+    const item = iterator.next();
+    return item.done === true ? Promise.resolve() : run(item.value).then(advance);
+  };
+  return advance();
 };
 
 const recoveryRequest = (invocationId: string, token?: string) => {
@@ -268,32 +289,37 @@ test('every registered command is mounted and rejects missing structural input o
         .toSorted(),
       actionSlugs.map((slug) => `/party-registry/actions/${slug}`).toSorted(),
     );
-    for (const endpoint of Object.values(partyRegistryApi.groups.partyCommands.endpoints)) {
-      const response = await app.handler(
-        new Request(`https://party.ontos.test${endpoint.path}`, {
-          method: 'POST',
-          body: '{}',
-          headers: {
-            'content-type': 'application/json',
-            'x-correlation-id': 'mounted-command-test',
-          },
-        }),
-      );
-      assert.ok(
-        response.status === 400 || response.status === 401,
-        `${endpoint.path}: ${response.status}`,
-      );
-      assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
-      const body = await response.json();
-      assert.equal(
-        body._tag,
-        response.status === 400
-          ? 'PartyCommandInvalidRequestProblem'
-          : 'PartyCommandAuthenticationProblem',
-      );
-      assert.equal(body.status, response.status);
-    }
-    const malformed = await app.handler(
+    await forEachSequential(
+      Object.values(partyRegistryApi.groups.partyCommands.endpoints),
+      async (endpoint) => {
+        const response = await handle(
+          app,
+          new Request(`https://party.ontos.test${endpoint.path}`, {
+            method: 'POST',
+            body: '{}',
+            headers: {
+              'content-type': 'application/json',
+              'x-correlation-id': 'mounted-command-test',
+            },
+          }),
+        );
+        assert.ok(
+          response.status === 400 || response.status === 401,
+          `${endpoint.path}: ${response.status}`,
+        );
+        assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
+        const body = await response.json();
+        assert.equal(
+          body._tag,
+          response.status === 400
+            ? 'PartyCommandInvalidRequestProblem'
+            : 'PartyCommandAuthenticationProblem',
+        );
+        assert.equal(body.status, response.status);
+      },
+    );
+    const malformed = await handle(
+      app,
       new Request('https://party.ontos.test/party-registry/actions/archive-party', {
         body: '{not-json',
         headers: {
@@ -305,7 +331,8 @@ test('every registered command is mounted and rejects missing structural input o
     );
     assert.equal(malformed.status, 400);
     assert.match(malformed.headers.get('content-type') ?? '', /application\/problem\+json/u);
-    assert.equal((await malformed.json())._tag, 'PartyCommandInvalidRequestProblem');
+    const malformedBody = await malformed.json();
+    assert.equal(malformedBody._tag, 'PartyCommandInvalidRequestProblem');
     assert.equal(harness.snapshot().invocations.length, 0);
   } finally {
     await app.dispose();
@@ -313,14 +340,15 @@ test('every registered command is mounted and rejects missing structural input o
 });
 
 test('missing, malformed, and wrong-audience assertions are challenged without creating invocations', async () => {
-  for (const audience of ['party-registry', 'contacts']) {
+  await forEachSequential(['party-registry', 'contacts'], async (audience) => {
     const assertion = await makeAssertion(audience);
     const harness = makeActionTestHarness();
     const app = mounted(harness, assertion.environment);
     try {
       const tokens = audience === 'contacts' ? [assertion.token] : [undefined, 'not-a-jwt'];
-      for (const token of tokens) {
-        const response = await app.handler(
+      await forEachSequential(tokens, async (token) => {
+        const response = await handle(
+          app,
           commandRequest('request-search-rebuild', {}, token, {
             'idempotency-key': 'authentication-test',
           }),
@@ -332,12 +360,12 @@ test('missing, malformed, and wrong-audience assertions are challenged without c
         assert.equal(body._tag, 'PartyCommandAuthenticationProblem');
         assert.equal(body.status, 401);
         assert.equal(JSON.stringify(body).includes(assertion.token), false);
-      }
+      });
       assert.equal(harness.snapshot().invocations.length, 0);
     } finally {
       await app.dispose();
     }
-  }
+  });
 });
 
 test('verification configuration unavailability is retryable and never reaches the lifecycle', async () => {
@@ -345,7 +373,8 @@ test('verification configuration unavailability is retryable and never reaches t
   const harness = makeActionTestHarness();
   const app = mounted(harness, {});
   try {
-    const response = await app.handler(
+    const response = await handle(
+      app,
       commandRequest('request-search-rebuild', {}, assertion.token, {
         'idempotency-key': 'configuration-test',
       }),
@@ -366,19 +395,23 @@ test('correlation and idempotency are mandatory before the Core Action lifecycle
   const harness = makeActionTestHarness();
   const app = mounted(harness, assertion.environment);
   try {
-    const missingKey = await app.handler(
+    const missingKey = await handle(
+      app,
       commandRequest('request-search-rebuild', {}, assertion.token),
     );
     assert.equal(missingKey.status, 428);
-    assert.equal((await missingKey.json())._tag, 'PartyCommandPreconditionRequiredProblem');
-    const missingCorrelation = await app.handler(
+    const missingKeyBody = await missingKey.json();
+    assert.equal(missingKeyBody._tag, 'PartyCommandPreconditionRequiredProblem');
+    const missingCorrelation = await handle(
+      app,
       commandRequest('request-search-rebuild', {}, assertion.token, {
         'idempotency-key': 'correlation-test',
         'x-correlation-id': '',
       }),
     );
     assert.equal(missingCorrelation.status, 400);
-    assert.equal((await missingCorrelation.json())._tag, 'PartyCommandInvalidRequestProblem');
+    const missingCorrelationBody = await missingCorrelation.json();
+    assert.equal(missingCorrelationBody._tag, 'PartyCommandInvalidRequestProblem');
     assert.equal(harness.snapshot().invocations.length, 0);
   } finally {
     await app.dispose();
@@ -393,13 +426,15 @@ test('real Core permission denial is a durable 403 and does not execute the comm
   });
   const app = mounted(harness, assertion.environment);
   try {
-    const response = await app.handler(
+    const response = await handle(
+      app,
       commandRequest('request-search-rebuild', {}, assertion.token, {
         'idempotency-key': 'permission-test',
       }),
     );
     assert.equal(response.status, 403);
-    assert.equal((await response.json())._tag, 'PartyCommandForbiddenProblem');
+    const body = await response.json();
+    assert.equal(body._tag, 'PartyCommandForbiddenProblem');
     assert.equal(harness.snapshot().invocations.length, 1);
     assert.equal(harness.snapshot().permissionDenials.length, 1);
   } finally {
@@ -420,7 +455,8 @@ test('the real handler translates domain conflicts and rolls back without succes
   });
   const app = mounted(harness, assertion.environment);
   try {
-    const response = await app.handler(
+    const response = await handle(
+      app,
       commandRequest('archive-party', archivePayload, assertion.token, {
         'idempotency-key': 'conflict-test',
       }),
@@ -458,7 +494,8 @@ test('alias conflicts preserve only safe canonical recovery metadata', async () 
   });
   const app = mounted(harness, assertion.environment);
   try {
-    const response = await app.handler(
+    const response = await handle(
+      app,
       commandRequest('archive-party', archivePayload, assertion.token, {
         'idempotency-key': 'alias-test',
       }),
@@ -483,7 +520,8 @@ test('committed request replay stays a terminal 409 and does not execute or emit
   });
   const app = mounted(harness, assertion.environment);
   try {
-    const first = await app.handler(
+    const first = await handle(
+      app,
       commandRequest('request-search-rebuild', {}, assertion.token, {
         'idempotency-key': 'replay-test',
       }),
@@ -493,7 +531,8 @@ test('committed request replay stays a terminal 409 and does not execute or emit
     assert.equal(result.status, 'QUEUED');
     const { committed } = harness.snapshot();
     assert.equal(committed.length, 1);
-    const replay = await app.handler(
+    const replay = await handle(
+      app,
       commandRequest('request-search-rebuild', {}, assertion.token, {
         'idempotency-key': 'replay-test',
       }),
@@ -543,7 +582,7 @@ test('declared not-found, capability-unavailable and unexpected defects retain s
       }),
     },
   ];
-  for (const item of cases) {
+  await forEachSequential(cases, async (item) => {
     const harness = makeActionTestHarness({
       actionPermission: 'allowed',
       tenantPermission: 'allowed',
@@ -551,7 +590,8 @@ test('declared not-found, capability-unavailable and unexpected defects retain s
     });
     const app = mounted(harness, assertion.environment);
     try {
-      const response = await app.handler(
+      const response = await handle(
+        app,
         commandRequest('archive-party', archivePayload, assertion.token, {
           'idempotency-key': `failure-${item.status}`,
         }),
@@ -569,7 +609,7 @@ test('declared not-found, capability-unavailable and unexpected defects retain s
     } finally {
       await app.dispose();
     }
-  }
+  });
 });
 
 test('semantically insufficient Party evidence is a declared 422, not a server defect', async () => {
@@ -591,7 +631,8 @@ test('semantically insufficient Party evidence is a declared 422, not a server d
   });
   const app = mounted(harness, assertion.environment);
   try {
-    const response = await app.handler(
+    const response = await handle(
+      app,
       commandRequest('create-party', createPayload, assertion.token, {
         'idempotency-key': 'evidence-test',
       }),
@@ -632,13 +673,15 @@ test('the Core request hash rejects reuse of an idempotency key for a different 
   });
   const app = mounted(harness, assertion.environment);
   try {
-    const first = await app.handler(
+    const first = await handle(
+      app,
       commandRequest('create-party', createPayload, assertion.token, {
         'idempotency-key': 'hash-test',
       }),
     );
     assert.equal(first.status, 200);
-    const changed = await app.handler(
+    const changed = await handle(
+      app,
       commandRequest(
         'create-party',
         { candidate: { ...createPayload.candidate, displayName: 'Different organization' } },
@@ -647,7 +690,8 @@ test('the Core request hash rejects reuse of an idempotency key for a different 
       ),
     );
     assert.equal(changed.status, 409);
-    assert.equal((await changed.json()).code, 'action_request_hash_conflict');
+    const changedBody = await changed.json();
+    assert.equal(changedBody.code, 'action_request_hash_conflict');
     assert.equal(executions, 1);
     assert.equal(harness.snapshot().committed.length, 1);
   } finally {
@@ -660,13 +704,14 @@ test('commit resolution requires authentication and a valid invocation without c
   const harness = makeActionTestHarness();
   const app = mounted(harness, assertion.environment);
   try {
-    const missingAuth = await app.handler(recoveryRequest(randomUUID()));
+    const missingAuth = await handle(app, recoveryRequest(randomUUID()));
     assert.equal(missingAuth.status, 401);
     assert.equal(missingAuth.headers.get('www-authenticate'), 'Bearer');
-    const malformed = await app.handler(recoveryRequest('not-an-id', assertion.token));
+    const malformed = await handle(app, recoveryRequest('not-an-id', assertion.token));
     assert.equal(malformed.status, 400);
-    assert.equal((await malformed.json())._tag, 'PartyCommandInvalidRequestProblem');
-    const absent = await app.handler(recoveryRequest(randomUUID(), assertion.token));
+    const malformedBody = await malformed.json();
+    assert.equal(malformedBody._tag, 'PartyCommandInvalidRequestProblem');
+    const absent = await handle(app, recoveryRequest(randomUUID(), assertion.token));
     assert.equal(absent.status, 404);
     assert.equal(harness.snapshot().invocations.length, 0);
   } finally {
@@ -687,7 +732,8 @@ test('an open invocation resolves explicitly without authorizing automatic comma
   });
   const app = mounted(harness, assertion.environment);
   try {
-    const failed = await app.handler(
+    const failed = await handle(
+      app,
       commandRequest('archive-party', archivePayload, assertion.token, {
         'idempotency-key': 'pending-resolution',
       }),
@@ -695,7 +741,7 @@ test('an open invocation resolves explicitly without authorizing automatic comma
     assert.equal(failed.status, 409);
     const invocationId = harness.snapshot().invocations[0]?.actionInvocationId;
     assert.ok(invocationId);
-    const resolution = await app.handler(recoveryRequest(invocationId, assertion.token));
+    const resolution = await handle(app, recoveryRequest(invocationId, assertion.token));
     assert.equal(resolution.status, 200);
     assert.deepEqual(await resolution.json(), {
       _tag: 'PartyCommandCommitResolution',
@@ -730,12 +776,18 @@ test('actual Core commit acknowledgement loss resolves and the mounted governed 
             };
             decisions.set(actionInvocationId, {
               caseRef: null,
+              committedCreateOutcome: 'CREATED',
               decidedAt: '2026-09-01T00:00:00.000Z',
               decisionRef,
+              evidenceEvaluation: null,
               evidenceExplanation: [
-                { reason: 'Verified creation evidence', ruleKey: 'creation-evidence' },
+                {
+                  reason: 'Verified creation evidence',
+                  ruleKey: RuleKeySchema.make('creation-evidence'),
+                },
               ],
               matchRuleVersion: 'test-original-rule-v1',
+              operation: 'CREATE',
               outcome: 'CREATED',
               partyRef,
             });
@@ -799,7 +851,8 @@ test('actual Core commit acknowledgement loss resolves and the mounted governed 
   };
   const app = mounted(harness, assertion.environment, reads);
   try {
-    const uncertain = await app.handler(
+    const uncertain = await handle(
+      app,
       commandRequest('create-party', createPayload, assertion.token, {
         'idempotency-key': 'uncertain-create',
       }),
@@ -814,9 +867,9 @@ test('actual Core commit acknowledgement loss resolves and the mounted governed 
     assert.equal(body.invocationId, invocationId);
     assert.equal(harness.snapshot().committed.length, 1);
     const committedSnapshot = harness.snapshot();
-    const deniedRecovery = await app.handler(recoveryRequest(invocationId, assertion.otherToken));
+    const deniedRecovery = await handle(app, recoveryRequest(invocationId, assertion.otherToken));
     assert.equal(deniedRecovery.status, 404);
-    const resolution = await app.handler(recoveryRequest(invocationId, assertion.token));
+    const resolution = await handle(app, recoveryRequest(invocationId, assertion.token));
     assert.equal(resolution.status, 200);
     assert.deepEqual(await resolution.json(), {
       _tag: 'PartyCommandCommitResolution',
@@ -824,14 +877,15 @@ test('actual Core commit acknowledgement loss resolves and the mounted governed 
       retryCommand: false,
       state: 'COMMITTED',
     });
-    const missingReadAuth = await app.handler(decisionRequest(invocationId));
+    const missingReadAuth = await handle(app, decisionRequest(invocationId));
     assert.equal(missingReadAuth.status, 401);
-    const deniedRead = await app.handler(decisionRequest(invocationId, assertion.otherToken));
+    const deniedRead = await handle(app, decisionRequest(invocationId, assertion.otherToken));
     assert.equal(deniedRead.status, 403);
-    const recovered = await app.handler(decisionRequest(invocationId, assertion.token));
+    const recovered = await handle(app, decisionRequest(invocationId, assertion.token));
     assert.equal(recovered.status, 200);
     assert.deepEqual(await recovered.json(), decisions.get(invocationId));
-    const replay = await app.handler(
+    const replay = await handle(
+      app,
       commandRequest('create-party', createPayload, assertion.token, {
         'idempotency-key': 'uncertain-create',
       }),

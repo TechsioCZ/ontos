@@ -5,19 +5,22 @@ import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
 import { IsoTimestampSchema } from '../domain/identity-contracts.ts';
 import {
+  ConfirmedDuplicateDecisionIdSchema,
+  DecisionActorPrincipalIdSchema,
   MergeSelectionEvidenceStepSchema,
   MergeSurvivorSelectionReasonSchema,
 } from '../domain/merge-selection.ts';
 import { PartyRefSchema } from './party.ts';
-
-const ResourceIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const TenantIdSchema = Schema.String.check(Schema.isUUID());
+import {
+  PartyRegistryResourceIdJsonSchema,
+  PartyRegistryTenantIdJsonSchema,
+} from './resource-ref-identifiers.ts';
 
 export const PartyMergeRefSchema = Schema.Struct({
   moduleId: Schema.Literal('party.registry'),
-  resourceId: ResourceIdSchema,
+  resourceId: PartyRegistryResourceIdJsonSchema,
   resourceType: Schema.Literal('party.registry.party-merge'),
-  tenantId: TenantIdSchema,
+  tenantId: PartyRegistryTenantIdJsonSchema,
 });
 export type PartyMergeRef = typeof PartyMergeRefSchema.Type;
 
@@ -27,11 +30,15 @@ export type PartyMergeRef = typeof PartyMergeRefSchema.Type;
  */
 export const PartyMergeSchema = Schema.Struct({
   absorbedPartyRefs: Schema.Array(PartyRefSchema).check(Schema.isMinLength(1)),
-  confirmedDuplicateDecisionId: ResourceIdSchema,
+  confirmedDuplicateDecisionId: Schema.toEncoded(ConfirmedDuplicateDecisionIdSchema).check(
+    Schema.isMaxLength(300),
+  ),
   createdAt: IsoTimestampSchema,
-  decisionActorPrincipalId: ResourceIdSchema,
+  decisionActorPrincipalId: Schema.toEncoded(DecisionActorPrincipalIdSchema).check(
+    Schema.isMaxLength(300),
+  ),
   mergeRef: PartyMergeRefSchema,
-  policyVersion: ResourceIdSchema,
+  policyVersion: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
   selectionEvidenceChain: Schema.Array(MergeSelectionEvidenceStepSchema).check(
     Schema.isMinLength(3),
   ),

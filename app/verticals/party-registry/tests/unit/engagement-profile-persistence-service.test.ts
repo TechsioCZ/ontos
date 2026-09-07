@@ -1,4 +1,5 @@
-// @effect-diagnostics asyncFunction:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DateTime, Effect } from 'effect';
@@ -48,7 +49,7 @@ test('reconstructs typed references from the owner-local persistence record', ()
 });
 
 test('fails closed when a caller-supplied ref crosses the trusted tenant', async () => {
-  const failure = await Effect.runPromise(
+  const failure = await runEffectTestPromise(
     Effect.flip(
       ensureReferencesBelongToTenant(tenantId, {
         ...refs,

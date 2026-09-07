@@ -1,15 +1,24 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { afterEach, beforeEach, expect, rstest, test } from '@rstest/core';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import type { ReactNode } from 'react';
+import {
+  AppIdSchema,
+  GroupKeySchema,
+  LegalEntityIdSchema,
+  ModuleIdSchema,
+  PrincipalIdSchema,
+  TenantIdSchema,
+} from '../../../../shared/api.ts';
 import { HomeView } from '../../../../src/routes/[lang]/page.tsx';
 import type { HomePageModel } from '../../../../src/routes/[lang]/page.data.ts';
 
-const { navigateMock, runEffectRequestMock, signOutMock, switchLegalEntityMock, switchTenantMock } =
+const { navigateMock, runBrowserEffectMock, signOutMock, switchLegalEntityMock, switchTenantMock } =
   rstest.hoisted(() => ({
     navigateMock: rstest.fn(),
-    runEffectRequestMock: rstest.fn(),
+    runBrowserEffectMock: rstest.fn(),
     signOutMock: rstest.fn(),
     switchLegalEntityMock: rstest.fn(),
     switchTenantMock: rstest.fn(),
@@ -69,36 +78,54 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
 }));
 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({
-  runEffectRequest: runEffectRequestMock,
   signOut: signOutMock,
   switchLegalEntity: switchLegalEntityMock,
   switchTenant: switchTenantMock,
 }));
+
+rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
+  runBrowserEffect: runBrowserEffectMock,
+}));
+
+const principalId = Schema.decodeUnknownSync(PrincipalIdSchema)(
+  '00000000-0000-4000-8000-000000000001',
+);
+const tenantId1 = Schema.decodeUnknownSync(TenantIdSchema)('00000000-0000-4000-8000-000000000101');
+const tenantId2 = Schema.decodeUnknownSync(TenantIdSchema)('00000000-0000-4000-8000-000000000102');
+const legalEntityId1 = Schema.decodeUnknownSync(LegalEntityIdSchema)(
+  '00000000-0000-4000-8000-000000000201',
+);
+const legalEntityId2 = Schema.decodeUnknownSync(LegalEntityIdSchema)(
+  '00000000-0000-4000-8000-000000000202',
+);
+const inventoryAppId = Schema.decodeUnknownSync(AppIdSchema)('inventory-app');
+const navigationGroupKey = Schema.decodeUnknownSync(GroupKeySchema)('shell.navigation.modules');
+const inventoryModuleId = Schema.decodeUnknownSync(ModuleIdSchema)('inventory.stock');
 
 const authenticatedModel = (): HomePageModel => ({
   contextState: 'authenticated',
   identity: {
     displayName: 'Ada Lovelace',
     email: 'ada@example.test',
-    principalId: 'principal-1',
-    tenantId: 'tenant-1',
+    principalId,
+    tenantId: tenantId1,
   },
   legalEntities: {
     items: [
-      { legalEntityId: 'legal-1', legalName: 'Alpha company' },
-      { legalEntityId: 'legal-2', legalName: 'Beta company' },
+      { legalEntityId: legalEntityId1, legalName: 'Alpha company' },
+      { legalEntityId: legalEntityId2, legalName: 'Beta company' },
     ],
     state: 'available',
   },
   navigation: {
     items: [
       {
-        appId: 'inventory-app',
+        appId: inventoryAppId,
         enabled: true,
-        groupKey: 'shell.navigation.modules',
+        groupKey: navigationGroupKey,
         href: '/modules/inventory.stock',
         label: 'Inventory',
-        moduleId: 'inventory.stock',
+        moduleId: inventoryModuleId,
         order: 10,
         state: 'read_only',
         unavailable: false,
@@ -108,12 +135,12 @@ const authenticatedModel = (): HomePageModel => ({
     state: 'available',
     unavailableDeployments: [],
   },
-  selectedLegalEntityId: 'legal-1',
+  selectedLegalEntityId: legalEntityId1,
   state: 'authenticated',
   tenants: {
     items: [
-      { name: 'Alpha tenant', tenantId: 'tenant-1' },
-      { name: 'Zeta tenant', tenantId: 'tenant-2' },
+      { name: 'Alpha tenant', tenantId: tenantId1 },
+      { name: 'Zeta tenant', tenantId: tenantId2 },
     ],
     state: 'available',
   },
@@ -121,12 +148,12 @@ const authenticatedModel = (): HomePageModel => ({
 
 beforeEach(() => {
   navigateMock.mockResolvedValue(undefined);
-  runEffectRequestMock.mockImplementation(
-    async (effect: Effect.Effect<unknown, unknown>) => await Effect.runPromise(effect),
+  runBrowserEffectMock.mockImplementation(
+    async (effect: Effect.Effect<unknown, unknown>) => await runEffectTestPromise(effect),
   );
   signOutMock.mockReturnValue(Effect.succeed({ signedOut: true }));
-  switchTenantMock.mockReturnValue(Effect.succeed({ selectedTenantId: 'tenant-2' }));
-  switchLegalEntityMock.mockReturnValue(Effect.succeed({ selectedLegalEntityId: 'legal-2' }));
+  switchTenantMock.mockReturnValue(Effect.succeed({ selectedTenantId: tenantId2 }));
+  switchLegalEntityMock.mockReturnValue(Effect.succeed({ selectedLegalEntityId: legalEntityId2 }));
 });
 
 afterEach(() => {
@@ -146,7 +173,7 @@ test('authenticated home renders server-composed navigation and selected legal c
     '/en/modules/inventory.stock',
   );
   expect(screen.getByText('Read only')).toBeTruthy();
-  expect(screen.getByText('legal-1')).toBeTruthy();
+  expect(screen.getByText(legalEntityId1)).toBeTruthy();
   expect(screen.queryByText('inventory.stock')).toBeNull();
 });
 
@@ -156,7 +183,7 @@ test('successful tenant switch performs a full document reload', async () => {
   await user.click(screen.getByRole('combobox', { name: 'Current tenant' }));
   await user.click(await screen.findByRole('option', { name: 'Zeta tenant' }));
   await waitFor(() =>
-    expect(switchTenantMock).toHaveBeenCalledWith({ tenantId: 'tenant-2' }, { locale: 'en' }),
+    expect(switchTenantMock).toHaveBeenCalledWith({ tenantId: tenantId2 }, { locale: 'en' }),
   );
   await waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' }));
 });
@@ -168,7 +195,7 @@ test('successful legal-entity switch performs a full document reload', async () 
   await user.click(await screen.findByRole('option', { name: 'Beta company' }));
   await waitFor(() =>
     expect(switchLegalEntityMock).toHaveBeenCalledWith(
-      { legalEntityId: 'legal-2' },
+      { legalEntityId: legalEntityId2 },
       { locale: 'en' },
     ),
   );

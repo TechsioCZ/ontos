@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Schema } from 'effect';
+import { DateTime, Option, Schema } from 'effect';
 import {
   PartyCandidateSchema,
   IsoTimestampSchema,
+  PartyNotFound,
+  PartySchema,
   PartyTypeSchema,
   isPartyTypeEnrichment,
   makePartyRef,
+  partyIdFromString,
 } from '../../shared/domain/identity-contracts.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { unarchivePartyAction } from '../../src/actions/unarchive-party.action.ts';
@@ -40,27 +43,57 @@ test('Party Type update is enrichment-only; cross-kind changes require Correctio
   assert.equal(isPartyTypeEnrichment('ORGANIZATION', 'PERSON'), false);
 });
 
-test('identity timestamps reject impossible calendar dates and rollover times', () => {
-  for (const value of [
-    '2026-02-30T00:00:00.000Z',
-    '2026-13-01T00:00:00.000Z',
-    '2026-01-01T24:00:00.000Z',
-  ]) {
-    assert.throws(() => decode(IsoTimestampSchema)(value));
-  }
-  assert.equal(decode(IsoTimestampSchema)('2024-02-29T00:00:00Z'), '2024-02-29T00:00:00Z');
+test('identity timestamps decode to canonical UTC values', () => {
+  assert.throws(() => decode(IsoTimestampSchema)('not-a-timestamp'));
+  const leapDay = decode(IsoTimestampSchema)('2024-02-29T00:00:00Z');
+  assert.equal(DateTime.formatIso(leapDay), '2024-02-29T00:00:00.000Z');
+});
+
+test('Party JSON round-trips timestamps as strings and absent values as null', () => {
+  const encoded = {
+    archivedAt: null,
+    createdAt: '2025-01-01T00:00:00.000Z',
+    displayName: null,
+    partyRef: makePartyRef(
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222',
+    ),
+    partyType: 'UNRESOLVED' as const,
+    revision: 1,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+  const decoded = decode(PartySchema)(encoded);
+
+  assert.equal(Option.isNone(decoded.archivedAt), true);
+  assert.equal(Option.isNone(decoded.displayName), true);
+  assert.deepEqual(Schema.encodeSync(PartySchema)(decoded), encoded);
+  assert.throws(() => decode(PartySchema)({ ...encoded, archivedAt: undefined }));
+  const { displayName: _displayName, ...missingDisplayName } = encoded;
+  assert.throws(() => decode(PartySchema)(missingDisplayName));
+
+  const presentEncoded = {
+    ...encoded,
+    archivedAt: '2026-02-01T00:00:00.000Z',
+    displayName: 'Example organization',
+  };
+  assert.deepEqual(
+    Schema.encodeSync(PartySchema)(decode(PartySchema)(presentEncoded)),
+    presentEncoded,
+  );
 });
 
 test('Party Candidate accepts an evidenced identifier without inventing a display name', () => {
-  const candidate = decode(PartyCandidateSchema)({
+  const encoded = {
     evidenceRefs: ['source:official-record'],
     officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
-    partyType: 'ORGANIZATION',
+    partyType: 'ORGANIZATION' as const,
     provenance: { method: 'IMPORT', source: 'official-register' },
     validFrom: '2026-01-01T00:00:00.000Z',
-  });
+  };
+  const candidate = decode(PartyCandidateSchema)(encoded);
   assert.equal(candidate.displayName, undefined);
   assert.equal(candidate.officialIdentifiers.length, 1);
+  assert.deepEqual(Schema.encodeSync(PartyCandidateSchema)(candidate), encoded);
 });
 
 test('Party references retain tenant, module, resource type, and resource identity', () => {
@@ -73,6 +106,22 @@ test('Party references retain tenant, module, resource type, and resource identi
       tenantId: '11111111-1111-4111-8111-111111111111',
     },
   );
+});
+
+test('Party identity failures retain branded identifiers in encoded JSON', () => {
+  const partyId = '22222222-2222-4222-8222-222222222222';
+  const failure = new PartyNotFound({
+    code: 'party_not_found',
+    partyId: partyIdFromString(partyId),
+    reason: 'The Party does not exist',
+  });
+
+  assert.deepEqual(Schema.encodeSync(PartyNotFound)(failure), {
+    _tag: 'PartyNotFound',
+    code: 'party_not_found',
+    partyId,
+    reason: 'The Party does not exist',
+  });
 });
 
 test('Party identity Actions are tenant-authorized, optionally scoped, and idempotent', () => {

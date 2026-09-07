@@ -6,7 +6,7 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, Option } from 'effect';
 import {
   PartyContactPointDetailRequestSchema,
   PartyContactPointDetailResponseSchema,
@@ -26,7 +26,7 @@ export const partyContactPointDetailEntrypoint = defineTenantModuleEntrypoint({
 interface Services {
   readonly find: (
     contactPointId: string,
-  ) => Effect.Effect<null | PartyContactPoint, PartyContactPointPersistenceUnavailable>;
+  ) => Effect.Effect<Option.Option<PartyContactPoint>, PartyContactPointPersistenceUnavailable>;
 }
 
 export const partyContactPointDetailRead = defineRead(
@@ -48,22 +48,24 @@ export const partyContactPointDetailRead = defineRead(
   },
   (input, context: ReadHandlerContext<Services>) =>
     context.services.find(input.contactPointRef.resourceId).pipe(
-      Effect.mapError(
-        () =>
+      Effect.mapError((cause) =>
+        Object.assign(
           new ReadHandlerUnavailable({
             code: 'read_handler_unavailable',
             reason: 'Party Contact Point persistence is temporarily unavailable',
           }),
+          { cause },
+        ),
       ),
       Effect.flatMap((contactPoint) =>
-        contactPoint === null
+        Option.isNone(contactPoint)
           ? Effect.fail(
               new ReadHandlerNotFound({
                 code: 'read_handler_not_found',
                 reason: 'The requested Party Contact Point does not exist',
               }),
             )
-          : Effect.succeed({ evidence: { resultCount: 1 }, result: contactPoint }),
+          : Effect.succeed({ evidence: { resultCount: 1 }, result: contactPoint.value }),
       ),
     ),
   (transaction, scope) =>

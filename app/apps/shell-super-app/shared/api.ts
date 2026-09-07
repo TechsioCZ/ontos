@@ -7,214 +7,67 @@ import {
 } from '@modern-js/plugin-bff/effect-client';
 import { GatewayContextApiGroup } from '@app/shared-contracts';
 
-export interface SafeTenantIdentity {
-  readonly displayName: string;
-  readonly email: string;
-  readonly impersonating?: true;
-  readonly principalId: string;
-  readonly tenantId: string;
-}
+export type SafeTenantIdentity = typeof SafeTenantIdentitySchema.Type;
+export type SafeAuthenticatedIdentity = typeof SafeAuthenticatedIdentitySchema.Type;
+export type AnonymousSession = typeof AnonymousSessionSchema.Type;
+export type AuthenticatedSession = typeof AuthenticatedSessionSchema.Type;
+export type LegalEntityChoice = typeof LegalEntityChoiceSchema.Type;
+export type SelectionRequiredSession = typeof SelectionRequiredSessionSchema.Type;
+export type AccessBlockedSession = typeof AccessBlockedSessionSchema.Type;
+export type CurrentSession = typeof CurrentSessionSchema.Type;
+export type SignInPayload = typeof SignInPayloadSchema.Type;
+export type SignInResponse = typeof SignInResponseSchema.Type;
+export type SignOutResponse = typeof SignOutResponseSchema.Type;
+export type AvailableTenant = typeof AvailableTenantSchema.Type;
+export type AvailableTenantsResponse = typeof AvailableTenantsResponseSchema.Type;
+export type SwitchTenantPayload = typeof SwitchTenantPayloadSchema.Type;
+export type SwitchTenantResponse = typeof SwitchTenantResponseSchema.Type;
+export type AvailableLegalEntitiesResponse = typeof AvailableLegalEntitiesResponseSchema.Type;
+export type SwitchLegalEntityPayload = typeof SwitchLegalEntityPayloadSchema.Type;
+export type SwitchLegalEntityResponse = typeof SwitchLegalEntityResponseSchema.Type;
+export type ShellNavigationItem = typeof ShellNavigationItemSchema.Type;
+export type ShellUnavailableDeployment = typeof ShellUnavailableDeploymentSchema.Type;
+export type ShellComposition = typeof ShellCompositionSchema.Type;
+export type ResolveModuleTargetPayload = typeof ResolveModuleTargetPayloadSchema.Type;
+export type ResolvedModuleTarget = typeof ResolvedModuleTargetSchema.Type;
+export type ResourceRef = typeof ResourceRefSchema.Type;
+export type ShellSearchResult = typeof ShellSearchResultSchema.Type;
+export type ShellSearchPayload = typeof ShellSearchPayloadSchema.Type;
+export type ShellSearchResponse = typeof ShellSearchResponseSchema.Type;
+export type ShellResourceDetailField = typeof ShellResourceDetailFieldSchema.Type;
+export type ShellTimelineEntry = typeof ShellTimelineEntrySchema.Type;
+export type ShellResourceResponse = typeof ShellResourceResponseSchema.Type;
+export type MediaAttachmentResponse = typeof MediaAttachmentResponseSchema.Type;
 
-export interface SafeAuthenticatedIdentity extends SafeTenantIdentity {
-  readonly legalEntityId: string;
-  readonly legalName: string;
-}
-
-export interface AnonymousSession {
-  readonly state: 'anonymous';
-}
-
-export interface AuthenticatedSession {
-  readonly identity: SafeAuthenticatedIdentity;
-  readonly state: 'authenticated';
-}
-
-export interface LegalEntityChoice {
-  readonly legalEntityId: string;
-  readonly legalName: string;
-}
-
-export interface SelectionRequiredSession {
-  readonly availableLegalEntities: readonly LegalEntityChoice[];
-  readonly identity: SafeTenantIdentity;
-  readonly state: 'selection_required';
-}
-
-export interface AccessBlockedSession {
-  readonly identity: SafeTenantIdentity;
-  readonly state: 'access_blocked';
-}
-
-export type CurrentSession =
-  | AccessBlockedSession
-  | AnonymousSession
-  | AuthenticatedSession
-  | SelectionRequiredSession;
-
-export interface SignInPayload {
-  readonly email: string;
-  readonly password: string;
-}
-
-export interface SignInResponse {
-  readonly identity: SafeTenantIdentity;
-}
-
-export interface SignOutResponse {
-  readonly signedOut: true;
-}
-
-export interface AvailableTenant {
-  readonly name: string;
-  readonly tenantId: string;
-}
-
-export interface AvailableTenantsResponse {
-  readonly tenants: readonly AvailableTenant[];
-}
-
-export interface SwitchTenantPayload {
-  readonly tenantId: string;
-}
-
-export interface SwitchTenantResponse {
-  readonly selectedTenantId: string;
-}
-
-export interface AvailableLegalEntitiesResponse {
-  readonly legalEntities: readonly LegalEntityChoice[];
-  readonly selectedLegalEntityId?: string;
-  readonly state: 'access_blocked' | 'authenticated' | 'selection_required';
-}
-
-export interface SwitchLegalEntityPayload {
-  readonly legalEntityId: string;
-}
-
-export interface SwitchLegalEntityResponse {
-  readonly selectedLegalEntityId: string;
-}
-
-export interface ShellNavigationItem {
-  readonly appId: string;
-  readonly enabled: boolean;
-  readonly groupKey: string;
-  readonly href?: string;
-  readonly label: string;
-  readonly moduleId: string;
-  readonly order: number;
-  readonly state: 'active' | 'deprecated' | 'read_only';
-  readonly unavailable: boolean;
-  readonly writable: boolean;
-}
-
-export type ShellUnavailableDeployment =
-  | { readonly appId: string; readonly status: 'disabled' | 'revoked' }
-  | {
-      readonly appId: string;
-      readonly reason: 'incompatible' | 'timeout' | 'unavailable';
-      readonly status: 'unavailable';
-    };
-
-export type ShellComposition =
-  | { readonly navigation: readonly []; readonly state: 'access_blocked' }
-  | { readonly navigation: readonly []; readonly state: 'selection_required' }
-  | {
-      readonly navigation: readonly ShellNavigationItem[];
-      readonly state: 'available';
-      readonly unavailableDeployments: readonly ShellUnavailableDeployment[];
-    };
-
-export interface ResolveModuleTargetPayload {
-  readonly entrypointKey?: string;
-  readonly moduleId: string;
-}
-
-export interface ResolvedModuleTarget {
-  readonly appId: string;
-  readonly componentKey: string;
-  readonly entrypointKey: string;
-  readonly moduleId: string;
-  readonly writable: boolean;
-}
-
-export interface ResourceRef {
-  readonly moduleId: string;
-  readonly resourceId: string;
-  readonly resourceType: string;
-  readonly tenantId?: string;
-}
-
-export type ShellSearchResult =
-  | {
-      readonly kind: 'resource';
-      readonly ref: ResourceRef;
-      readonly title: string;
-    }
-  | {
-      readonly archived: boolean;
-      readonly kind: 'party';
-      readonly matchedViaAlias: boolean;
-      readonly ref: ResourceRef;
-      readonly title: string;
-    }
-  | {
-      readonly collision?: {
-        readonly counterpartyRefs: readonly ResourceRef[];
-        readonly kind: 'CANONICAL_PARTY_COUNTERPARTY_COLLISION';
-      };
-      readonly currentRoles: readonly ('CUSTOMER' | 'SUPPLIER')[];
-      readonly kind: 'counterparty';
-      readonly legalEntity: { readonly legalEntityId: string; readonly tenantId: string };
-      readonly party: {
-        readonly archived: boolean;
-        readonly matchedViaAlias: boolean;
-        readonly ref: ResourceRef;
-        readonly title: string;
-      };
-      readonly ref: ResourceRef;
-      readonly title: string;
-    };
-
-export interface ShellSearchPayload {
-  readonly includeArchived?: boolean;
-  readonly query: string;
-  readonly role?: 'CUSTOMER' | 'SUPPLIER';
-}
-
-export interface ShellSearchResponse {
-  readonly partial: boolean;
-  readonly results: readonly ShellSearchResult[];
-}
-
-export interface ShellResourceDetailField {
-  readonly label: string;
-  readonly value: string;
-}
-
-export interface ShellTimelineEntry {
-  readonly occurredAt: string;
-  readonly summary: string;
-  readonly timelineEntryId: string;
-}
-
-export interface ShellResourceResponse {
-  readonly detail: {
-    readonly fields: readonly ShellResourceDetailField[];
-    readonly title: string;
-  };
-  readonly media: {
-    readonly enabled: boolean;
-    readonly reason: 'absent' | 'available' | 'forbidden' | 'read_only' | 'unavailable';
-  };
-  readonly projectionLagging: boolean;
-  readonly ref: ResourceRef;
-  readonly timeline: readonly ShellTimelineEntry[];
-}
-
-export interface MediaAttachmentResponse {
-  readonly attached: true;
-}
+const SafePrincipalIdSchema = Schema.String.pipe(Schema.brand('PrincipalId'));
+export const PrincipalIdSchema = SafePrincipalIdSchema.check(Schema.isUUID());
+export const AuthBindingIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('AuthBindingId'),
+);
+const SafeTenantIdSchema = Schema.String.pipe(Schema.brand('TenantId'));
+export const TenantIdSchema = SafeTenantIdSchema.check(Schema.isUUID());
+export const LegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('LegalEntityId'),
+);
+export const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
+export const GroupKeySchema = Schema.String.pipe(Schema.brand('GroupKey'));
+export const ModuleIdSchema = Schema.String.check(Schema.isMinLength(3)).pipe(
+  Schema.brand('ModuleId'),
+);
+export const ComponentKeySchema = Schema.String.pipe(Schema.brand('ComponentKey'));
+export const EntrypointKeySchema = Schema.String.check(
+  Schema.isMinLength(3),
+  Schema.isMaxLength(200),
+  Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
+).pipe(Schema.brand('EntrypointKey'));
+export const ResourceIdSchema = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(300),
+).pipe(Schema.brand('ResourceId'));
+export const TimelineEntryIdSchema = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(300),
+).pipe(Schema.brand('TimelineEntryId'));
 
 export const IdentityRequestHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(
@@ -231,13 +84,13 @@ export const ChangePrincipalStatusPayloadSchema = Schema.Union([
   Schema.Struct({
     expectedStatus: principalStatus,
     newStatus: Schema.Literal('active'),
-    principalId: Schema.String.check(Schema.isUUID()),
+    principalId: PrincipalIdSchema,
     reason: Schema.optionalKey(identityReason),
   }),
   Schema.Struct({
     expectedStatus: principalStatus,
     newStatus: Schema.Literals(['disabled', 'archived']),
-    principalId: Schema.String.check(Schema.isUUID()),
+    principalId: PrincipalIdSchema,
     reason: identityReason,
   }),
 ]);
@@ -246,17 +99,17 @@ export const IssueApiKeyPayloadSchema = Schema.Struct({
 });
 export const IssueManagedApiKeyPayloadSchema = Schema.Struct({
   ...IssueApiKeyPayloadSchema.fields,
-  principalId: Schema.String.check(Schema.isUUID()),
+  principalId: PrincipalIdSchema,
 });
 const MutableApiKeyBindingStatusSchema = Schema.Literals(['active', 'disabled']);
 const apiKeyStatusFields = {
-  authBindingId: Schema.String.check(Schema.isUUID()),
+  authBindingId: AuthBindingIdSchema,
   expectedStatus: MutableApiKeyBindingStatusSchema,
 };
 export const SetApiKeyStatusPayloadSchema = Schema.Union([
   Schema.Struct({
     ...apiKeyStatusFields,
-    newStatus: Schema.Literals(['active', 'disabled']),
+    newStatus: MutableApiKeyBindingStatusSchema,
     reason: Schema.optionalKey(identityReason),
   }),
   Schema.Struct({
@@ -268,38 +121,38 @@ export const SetApiKeyStatusPayloadSchema = Schema.Union([
 export const SetManagedApiKeyStatusPayloadSchema = Schema.Union([
   Schema.Struct({
     ...apiKeyStatusFields,
-    newStatus: Schema.Literals(['active', 'disabled']),
-    principalId: Schema.String.check(Schema.isUUID()),
+    newStatus: MutableApiKeyBindingStatusSchema,
+    principalId: PrincipalIdSchema,
     reason: Schema.optionalKey(identityReason),
   }),
   Schema.Struct({
     ...apiKeyStatusFields,
     newStatus: Schema.Literal('revoked'),
-    principalId: Schema.String.check(Schema.isUUID()),
+    principalId: PrincipalIdSchema,
     reason: identityReason,
   }),
 ]);
 export const RotateApiKeyPayloadSchema = Schema.Struct({
   name: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32))),
-  oldAuthBindingId: Schema.String.check(Schema.isUUID()),
+  oldAuthBindingId: AuthBindingIdSchema,
   reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
 });
 export const RotateManagedApiKeyPayloadSchema = Schema.Struct({
   ...RotateApiKeyPayloadSchema.fields,
-  principalId: Schema.String.check(Schema.isUUID()),
+  principalId: PrincipalIdSchema,
 });
 export const ApiKeyLifecycleResponseSchema = Schema.Struct({
-  authBindingId: Schema.String.check(Schema.isUUID()),
+  authBindingId: AuthBindingIdSchema,
   cleanupPending: Schema.Boolean,
-  createdAt: Schema.String,
+  createdAt: Schema.DateTimeUtcFromString,
   enabled: Schema.Boolean,
-  expiresAt: Schema.NullOr(Schema.String),
-  name: Schema.NullOr(Schema.String),
-  start: Schema.NullOr(Schema.String),
+  expiresAt: Schema.Union([Schema.Null, Schema.DateTimeUtcFromString]),
+  name: Schema.Union([Schema.Null, Schema.String]),
+  start: Schema.Union([Schema.Null, Schema.String]),
 });
 export const ApiKeyIssueResponseSchema = Schema.Struct({
   ...ApiKeyLifecycleResponseSchema.fields,
-  secret: Schema.String.check(Schema.isMinLength(1)),
+  secret: Schema.Redacted(Schema.String.check(Schema.isMinLength(1))),
 });
 export const IdentityListPayloadSchema = Schema.Struct({
   limit: Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 100, minimum: 1 })),
@@ -307,30 +160,30 @@ export const IdentityListPayloadSchema = Schema.Struct({
 });
 export const SelfApiKeyListResponseSchema = Schema.Struct({
   items: Schema.Array(ApiKeyLifecycleResponseSchema),
-  nextOffset: Schema.NullOr(Schema.Finite),
+  nextOffset: Schema.Union([Schema.Null, Schema.Finite]),
 });
 export const ManagedApiKeyListItemSchema = Schema.Struct({
   displayName: Schema.String,
-  key: Schema.NullOr(ApiKeyLifecycleResponseSchema),
+  key: Schema.Union([Schema.Null, ApiKeyLifecycleResponseSchema]),
   kind: Schema.Literals(['service', 'integration']),
-  principalId: Schema.String.check(Schema.isUUID()),
-  principalStatus: Schema.Literals(['active', 'disabled', 'archived']),
+  principalId: PrincipalIdSchema,
+  principalStatus,
 });
 export const ManagedApiKeyListResponseSchema = Schema.Struct({
   items: Schema.Array(ManagedApiKeyListItemSchema),
-  nextOffset: Schema.NullOr(Schema.Finite),
+  nextOffset: Schema.Union([Schema.Null, Schema.Finite]),
 });
 export const PrincipalMutationResponseSchema = Schema.Struct({
-  principalId: Schema.optionalKey(Schema.String.check(Schema.isUUID())),
+  principalId: Schema.optionalKey(PrincipalIdSchema),
   status: Schema.String,
 });
 export const StartSupportImpersonationPayloadSchema = Schema.Struct({
   reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
-  targetPrincipalId: Schema.String.check(Schema.isUUID()),
+  targetPrincipalId: PrincipalIdSchema,
 });
 export const SupportImpersonationResponseSchema = Schema.Struct({
   active: Schema.Boolean,
-  targetPrincipalId: Schema.optionalKey(Schema.String.check(Schema.isUUID())),
+  targetPrincipalId: Schema.optionalKey(PrincipalIdSchema),
 });
 
 export type CreateNonHumanPrincipalPayload = Schema.Schema.Type<
@@ -362,28 +215,10 @@ export type SupportImpersonationResponse = Schema.Schema.Type<
   typeof SupportImpersonationResponseSchema
 >;
 
-interface ProblemDetails {
-  readonly detail: string;
-  readonly status: number;
-  readonly title: string;
-  readonly type: string;
-}
-
-export interface InvalidCredentialsProblem extends ProblemDetails {
-  readonly _tag: 'InvalidCredentialsProblem';
-}
-
-export interface OntosIdentityForbiddenProblem extends ProblemDetails {
-  readonly _tag: 'OntosIdentityForbiddenProblem';
-}
-
-export interface AuthenticationUnavailableProblem extends ProblemDetails {
-  readonly _tag: 'AuthenticationUnavailableProblem';
-}
-
-export interface AuthenticationInternalProblem extends ProblemDetails {
-  readonly _tag: 'AuthenticationInternalProblem';
-}
+export type InvalidCredentialsProblem = typeof InvalidCredentialsProblemSchema.Type;
+export type OntosIdentityForbiddenProblem = typeof OntosIdentityForbiddenProblemSchema.Type;
+export type AuthenticationUnavailableProblem = typeof AuthenticationUnavailableProblemSchema.Type;
+export type AuthenticationInternalProblem = typeof AuthenticationInternalProblemSchema.Type;
 
 export type AuthenticationProblem =
   | InvalidCredentialsProblem
@@ -391,22 +226,12 @@ export type AuthenticationProblem =
   | AuthenticationUnavailableProblem
   | AuthenticationInternalProblem;
 
-export interface TenantAuthenticationRequiredProblem extends ProblemDetails {
-  readonly _tag: 'TenantAuthenticationRequiredProblem';
-}
-
-export interface TenantAccessForbiddenProblem extends ProblemDetails {
-  readonly _tag: 'TenantAccessForbiddenProblem';
-}
-
-export interface TenantCapabilityUnavailableProblem extends ProblemDetails {
-  readonly _tag: 'TenantCapabilityUnavailableProblem';
-  readonly retryable: true;
-}
-
-export interface TenantInternalProblem extends ProblemDetails {
-  readonly _tag: 'TenantInternalProblem';
-}
+export type TenantAuthenticationRequiredProblem =
+  typeof TenantAuthenticationRequiredProblemSchema.Type;
+export type TenantAccessForbiddenProblem = typeof TenantAccessForbiddenProblemSchema.Type;
+export type TenantCapabilityUnavailableProblem =
+  typeof TenantCapabilityUnavailableProblemSchema.Type;
+export type TenantInternalProblem = typeof TenantInternalProblemSchema.Type;
 
 export type AvailableTenantsProblem =
   | TenantAuthenticationRequiredProblem
@@ -415,56 +240,22 @@ export type AvailableTenantsProblem =
 
 export type SwitchTenantProblem = AvailableTenantsProblem | TenantAccessForbiddenProblem;
 
-export interface LegalEntityAccessForbiddenProblem extends ProblemDetails {
-  readonly _tag: 'LegalEntityAccessForbiddenProblem';
-}
+export type LegalEntityAccessForbiddenProblem = typeof LegalEntityAccessForbiddenProblemSchema.Type;
 
 export type LegalEntityProblem = AvailableTenantsProblem | LegalEntityAccessForbiddenProblem;
 
-export interface ShellAuthenticationRequiredProblem extends ProblemDetails {
-  readonly _tag: 'ShellAuthenticationRequiredProblem';
-}
-
-export interface ShellTargetForbiddenProblem extends ProblemDetails {
-  readonly _tag: 'ShellTargetForbiddenProblem';
-}
-
-export interface ShellTargetNotFoundProblem extends ProblemDetails {
-  readonly _tag: 'ShellTargetNotFoundProblem';
-}
-
-export interface ShellSelectionRequiredProblem extends ProblemDetails {
-  readonly _tag: 'ShellSelectionRequiredProblem';
-}
-
-export interface ShellPolicyConflictProblem extends ProblemDetails {
-  readonly _tag: 'ShellPolicyConflictProblem';
-}
-
-export interface ShellPolicyUnprocessableProblem extends ProblemDetails {
-  readonly _tag: 'ShellPolicyUnprocessableProblem';
-}
-
-export interface ShellInvalidRequestProblem extends ProblemDetails {
-  readonly _tag: 'ShellInvalidRequestProblem';
-}
-
-export interface ShellPreconditionRequiredProblem extends ProblemDetails {
-  readonly _tag: 'ShellPreconditionRequiredProblem';
-}
-
-export interface ShellCapabilityUnavailableProblem extends ProblemDetails {
-  readonly _tag: 'ShellCapabilityUnavailableProblem';
-  readonly retryable: true;
-}
-
-export interface ShellInternalProblem extends ProblemDetails {
-  readonly _tag: 'ShellInternalProblem';
-}
-export interface ShellRateLimitedProblem extends ProblemDetails {
-  readonly _tag: 'ShellRateLimitedProblem';
-  readonly retryAfterSeconds: number;
-}
+export type ShellAuthenticationRequiredProblem =
+  typeof ShellAuthenticationRequiredProblemSchema.Type;
+export type ShellTargetForbiddenProblem = typeof ShellTargetForbiddenProblemSchema.Type;
+export type ShellTargetNotFoundProblem = typeof ShellTargetNotFoundProblemSchema.Type;
+export type ShellSelectionRequiredProblem = typeof ShellSelectionRequiredProblemSchema.Type;
+export type ShellPolicyConflictProblem = typeof ShellPolicyConflictProblemSchema.Type;
+export type ShellPolicyUnprocessableProblem = typeof ShellPolicyUnprocessableProblemSchema.Type;
+export type ShellInvalidRequestProblem = typeof ShellInvalidRequestProblemSchema.Type;
+export type ShellPreconditionRequiredProblem = typeof ShellPreconditionRequiredProblemSchema.Type;
+export type ShellCapabilityUnavailableProblem = typeof ShellCapabilityUnavailableProblemSchema.Type;
+export type ShellInternalProblem = typeof ShellInternalProblemSchema.Type;
+export type ShellRateLimitedProblem = typeof ShellRateLimitedProblemSchema.Type;
 
 export type IdentityProblem =
   | ShellAuthenticationRequiredProblem
@@ -497,130 +288,117 @@ const safeTenantIdentityFields = {
   displayName: Schema.String,
   email: Schema.String,
   impersonating: Schema.optionalKey(Schema.Literal(true)),
-  principalId: Schema.String,
-  tenantId: Schema.String,
+  principalId: SafePrincipalIdSchema,
+  tenantId: SafeTenantIdSchema,
 };
 
-export const SafeTenantIdentitySchema: Schema.Codec<SafeTenantIdentity> =
-  Schema.Struct(safeTenantIdentityFields);
+export const SafeTenantIdentitySchema = Schema.Struct(safeTenantIdentityFields);
 
-export const SafeAuthenticatedIdentitySchema: Schema.Codec<SafeAuthenticatedIdentity> =
-  Schema.Struct({
-    ...safeTenantIdentityFields,
-    legalEntityId: Schema.String.check(Schema.isUUID()),
-    legalName: Schema.String.check(Schema.isMinLength(1)),
-  });
-
-export const LegalEntityChoiceSchema: Schema.Codec<LegalEntityChoice> = Schema.Struct({
-  legalEntityId: Schema.String.check(Schema.isUUID()),
+export const SafeAuthenticatedIdentitySchema = Schema.Struct({
+  ...safeTenantIdentityFields,
+  legalEntityId: LegalEntityIdSchema,
   legalName: Schema.String.check(Schema.isMinLength(1)),
 });
 
-export const AnonymousSessionSchema: Schema.Codec<AnonymousSession> = Schema.Struct({
+export const LegalEntityChoiceSchema = Schema.Struct({
+  legalEntityId: LegalEntityIdSchema,
+  legalName: Schema.String.check(Schema.isMinLength(1)),
+});
+
+export const AnonymousSessionSchema = Schema.Struct({
   state: Schema.Literal('anonymous'),
 });
 
-export const AuthenticatedSessionSchema: Schema.Codec<AuthenticatedSession> = Schema.Struct({
+export const AuthenticatedSessionSchema = Schema.Struct({
   identity: SafeAuthenticatedIdentitySchema,
   state: Schema.Literal('authenticated'),
 });
 
-export const SelectionRequiredSessionSchema: Schema.Codec<SelectionRequiredSession> = Schema.Struct(
-  {
-    availableLegalEntities: Schema.Array(LegalEntityChoiceSchema),
-    identity: SafeTenantIdentitySchema,
-    state: Schema.Literal('selection_required'),
-  },
-);
+export const SelectionRequiredSessionSchema = Schema.Struct({
+  availableLegalEntities: Schema.Array(LegalEntityChoiceSchema),
+  identity: SafeTenantIdentitySchema,
+  state: Schema.Literal('selection_required'),
+});
 
-export const AccessBlockedSessionSchema: Schema.Codec<AccessBlockedSession> = Schema.Struct({
+export const AccessBlockedSessionSchema = Schema.Struct({
   identity: SafeTenantIdentitySchema,
   state: Schema.Literal('access_blocked'),
 });
 
-export const CurrentSessionSchema: Schema.Codec<CurrentSession> = Schema.Union([
+export const CurrentSessionSchema = Schema.Union([
   AnonymousSessionSchema,
   AuthenticatedSessionSchema,
   SelectionRequiredSessionSchema,
   AccessBlockedSessionSchema,
 ]);
 
-export const SignInPayloadSchema: Schema.Codec<SignInPayload> = Schema.Struct({
+export const SignInPayloadSchema = Schema.Struct({
   email: Schema.String.check(Schema.isMinLength(1)),
-  password: Schema.String.check(Schema.isMinLength(1)),
+  password: Schema.Redacted(Schema.String.check(Schema.isMinLength(1))),
 });
 
-export const SignInResponseSchema: Schema.Codec<SignInResponse> = Schema.Struct({
+export const SignInResponseSchema = Schema.Struct({
   identity: SafeTenantIdentitySchema,
 });
 
-export const SignOutResponseSchema: Schema.Codec<SignOutResponse> = Schema.Struct({
+export const SignOutResponseSchema = Schema.Struct({
   signedOut: Schema.Literal(true),
 });
 
-const TenantIdSchema = Schema.String.check(Schema.isUUID());
-
-export const AvailableTenantSchema: Schema.Codec<AvailableTenant> = Schema.Struct({
+export const AvailableTenantSchema = Schema.Struct({
   name: Schema.String,
   tenantId: TenantIdSchema,
 });
 
-export const AvailableTenantsResponseSchema: Schema.Codec<AvailableTenantsResponse> = Schema.Struct(
-  {
-    tenants: Schema.Array(AvailableTenantSchema),
-  },
-);
+export const AvailableTenantsResponseSchema = Schema.Struct({
+  tenants: Schema.Array(AvailableTenantSchema),
+});
 
-export const SwitchTenantPayloadSchema: Schema.Codec<SwitchTenantPayload> = Schema.Struct({
+export const SwitchTenantPayloadSchema = Schema.Struct({
   tenantId: TenantIdSchema,
 });
 
-export const SwitchTenantResponseSchema: Schema.Codec<SwitchTenantResponse> = Schema.Struct({
+export const SwitchTenantResponseSchema = Schema.Struct({
   selectedTenantId: TenantIdSchema,
 });
 
-export const AvailableLegalEntitiesResponseSchema: Schema.Codec<AvailableLegalEntitiesResponse> =
-  Schema.Struct({
-    legalEntities: Schema.Array(LegalEntityChoiceSchema),
-    selectedLegalEntityId: Schema.optionalKey(TenantIdSchema),
-    state: Schema.Literals(['access_blocked', 'authenticated', 'selection_required']),
-  });
+export const AvailableLegalEntitiesResponseSchema = Schema.Struct({
+  legalEntities: Schema.Array(LegalEntityChoiceSchema),
+  selectedLegalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+  state: Schema.Literals(['access_blocked', 'authenticated', 'selection_required']),
+});
 
-export const SwitchLegalEntityPayloadSchema: Schema.Codec<SwitchLegalEntityPayload> = Schema.Struct(
-  {
-    legalEntityId: TenantIdSchema,
-  },
-);
+export const SwitchLegalEntityPayloadSchema = Schema.Struct({
+  legalEntityId: LegalEntityIdSchema,
+});
 
-export const SwitchLegalEntityResponseSchema: Schema.Codec<SwitchLegalEntityResponse> =
-  Schema.Struct({
-    selectedLegalEntityId: TenantIdSchema,
-  });
+export const SwitchLegalEntityResponseSchema = Schema.Struct({
+  selectedLegalEntityId: LegalEntityIdSchema,
+});
 
-export const ShellNavigationItemSchema: Schema.Codec<ShellNavigationItem> = Schema.Struct({
-  appId: Schema.String,
+export const ShellNavigationItemSchema = Schema.Struct({
+  appId: AppIdSchema,
   enabled: Schema.Boolean,
-  groupKey: Schema.String,
+  groupKey: GroupKeySchema,
   href: Schema.optionalKey(Schema.String),
   label: Schema.String,
-  moduleId: Schema.String,
+  moduleId: ModuleIdSchema,
   order: Schema.Finite.check(Schema.isInt()),
   state: Schema.Literals(['active', 'deprecated', 'read_only']),
   unavailable: Schema.Boolean,
   writable: Schema.Boolean,
 });
 
-export const ShellUnavailableDeploymentSchema: Schema.Codec<ShellUnavailableDeployment> =
-  Schema.Union([
-    Schema.Struct({ appId: Schema.String, status: Schema.Literals(['disabled', 'revoked']) }),
-    Schema.Struct({
-      appId: Schema.String,
-      reason: Schema.Literals(['incompatible', 'timeout', 'unavailable']),
-      status: Schema.Literal('unavailable'),
-    }),
-  ]);
+export const ShellUnavailableDeploymentSchema = Schema.Union([
+  Schema.Struct({ appId: AppIdSchema, status: Schema.Literals(['disabled', 'revoked']) }),
+  Schema.Struct({
+    appId: AppIdSchema,
+    reason: Schema.Literals(['incompatible', 'timeout', 'unavailable']),
+    status: Schema.Literal('unavailable'),
+  }),
+]);
 
-export const ShellCompositionSchema: Schema.Codec<ShellComposition> = Schema.Union([
+export const ShellCompositionSchema = Schema.Union([
   Schema.Struct({ navigation: Schema.Tuple([]), state: Schema.Literal('access_blocked') }),
   Schema.Struct({ navigation: Schema.Tuple([]), state: Schema.Literal('selection_required') }),
   Schema.Struct({
@@ -630,35 +408,29 @@ export const ShellCompositionSchema: Schema.Codec<ShellComposition> = Schema.Uni
   }),
 ]);
 
-export const ResolveModuleTargetPayloadSchema: Schema.Codec<ResolveModuleTargetPayload> =
-  Schema.Struct({
-    entrypointKey: Schema.optionalKey(
-      Schema.String.check(
-        Schema.isMinLength(3),
-        Schema.isMaxLength(200),
-        Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
-      ),
-    ),
-    moduleId: Schema.String.check(Schema.isMinLength(3)),
-  });
+export const ResolveModuleTargetPayloadSchema = Schema.Struct({
+  entrypointKey: Schema.optionalKey(EntrypointKeySchema),
+  moduleId: ModuleIdSchema,
+});
 
-export const ResolvedModuleTargetSchema: Schema.Codec<ResolvedModuleTarget> = Schema.Struct({
-  appId: Schema.String,
-  componentKey: Schema.String,
-  entrypointKey: Schema.String,
-  moduleId: Schema.String,
+export const ResolvedModuleTargetSchema = Schema.Struct({
+  appId: AppIdSchema,
+  componentKey: ComponentKeySchema,
+  entrypointKey: EntrypointKeySchema,
+  moduleId: ModuleIdSchema,
   writable: Schema.Boolean,
 });
 
-export const ResourceRefSchema: Schema.Codec<ResourceRef> = Schema.Struct({
-  moduleId: Schema.String.check(Schema.isMinLength(3)),
-  resourceId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+export const ResourceRefSchema = Schema.Struct({
+  moduleId: ModuleIdSchema,
+  resourceId: ResourceIdSchema,
   resourceType: Schema.String.check(Schema.isMinLength(3)),
-  tenantId: Schema.optionalKey(Schema.String.check(Schema.isUUID())),
+  tenantId: Schema.optionalKey(TenantIdSchema),
 });
 
 const searchTitle = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const ShellSearchResultSchema: Schema.Codec<ShellSearchResult> = Schema.Union([
+const PartyRoleSchema = Schema.Literals(['CUSTOMER', 'SUPPLIER']);
+const ShellSearchResultSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal('resource'), ref: ResourceRefSchema, title: searchTitle }),
   Schema.Struct({
     archived: Schema.Boolean,
@@ -674,11 +446,11 @@ const ShellSearchResultSchema: Schema.Codec<ShellSearchResult> = Schema.Union([
         kind: Schema.Literal('CANONICAL_PARTY_COUNTERPARTY_COLLISION'),
       }),
     ),
-    currentRoles: Schema.Array(Schema.Literals(['CUSTOMER', 'SUPPLIER'])),
+    currentRoles: Schema.Array(PartyRoleSchema),
     kind: Schema.Literal('counterparty'),
     legalEntity: Schema.Struct({
-      legalEntityId: Schema.String.check(Schema.isUUID()),
-      tenantId: Schema.String.check(Schema.isUUID()),
+      legalEntityId: LegalEntityIdSchema,
+      tenantId: TenantIdSchema,
     }),
     party: Schema.Struct({
       archived: Schema.Boolean,
@@ -691,31 +463,31 @@ const ShellSearchResultSchema: Schema.Codec<ShellSearchResult> = Schema.Union([
   }),
 ]);
 
-export const ShellSearchPayloadSchema: Schema.Codec<ShellSearchPayload> = Schema.Struct({
+export const ShellSearchPayloadSchema = Schema.Struct({
   includeArchived: Schema.optionalKey(Schema.Boolean),
   query: Schema.String.check(Schema.isMaxLength(300)),
-  role: Schema.optionalKey(Schema.Literals(['CUSTOMER', 'SUPPLIER'])),
+  role: Schema.optionalKey(PartyRoleSchema),
 });
 
-export const ShellSearchResponseSchema: Schema.Codec<ShellSearchResponse> = Schema.Struct({
+export const ShellSearchResponseSchema = Schema.Struct({
   partial: Schema.Boolean,
   results: Schema.Array(ShellSearchResultSchema),
 });
 
-const ShellTimelineEntrySchema: Schema.Codec<ShellTimelineEntry> = Schema.Struct({
-  occurredAt: Schema.String,
-  summary: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
-  timelineEntryId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+export const ShellResourceDetailFieldSchema = Schema.Struct({
+  label: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+  value: Schema.String.check(Schema.isMaxLength(2000)),
 });
 
-export const ShellResourceResponseSchema: Schema.Codec<ShellResourceResponse> = Schema.Struct({
+export const ShellTimelineEntrySchema = Schema.Struct({
+  occurredAt: Schema.DateTimeUtcFromString,
+  summary: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+  timelineEntryId: TimelineEntryIdSchema,
+});
+
+export const ShellResourceResponseSchema = Schema.Struct({
   detail: Schema.Struct({
-    fields: Schema.Array(
-      Schema.Struct({
-        label: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
-        value: Schema.String.check(Schema.isMaxLength(2000)),
-      }),
-    ),
+    fields: Schema.Array(ShellResourceDetailFieldSchema),
     title: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
   }),
   media: Schema.Struct({
@@ -727,7 +499,7 @@ export const ShellResourceResponseSchema: Schema.Codec<ShellResourceResponse> = 
   timeline: Schema.Array(ShellTimelineEntrySchema),
 });
 
-export const MediaAttachmentResponseSchema: Schema.Codec<MediaAttachmentResponse> = Schema.Struct({
+export const MediaAttachmentResponseSchema = Schema.Struct({
   attached: Schema.Literal(true),
 });
 

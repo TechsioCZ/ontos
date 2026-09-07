@@ -1,6 +1,17 @@
-import { readdir, readFile } from 'node:fs/promises';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { NodeServices } from '@effect/platform-node';
+import {
+  Array as EffectArray,
+  Console,
+  Effect,
+  Exit,
+  FileSystem,
+  flow,
+  ManagedRuntime,
+  Order,
+  Path,
+  Schema,
+} from 'effect';
+import type { PlatformError } from 'effect/PlatformError';
 
 export interface DatabaseAccessViolation {
   readonly file: string;
@@ -10,24 +21,38 @@ export interface DatabaseAccessViolation {
 
 const sourceExtensions = new Set(['.ts', '.tsx', '.mts']);
 const ignoredDirectories = new Set(['dist', 'node_modules', 'repos', '.output', '.codex']);
+const coreRuntimeSourcePrefix = 'packages/core-runtime/src/';
 
-const collect = async (root: string): Promise<readonly string[]> => {
-  const files: string[] = [];
-  const visit = async (directory: string): Promise<void> => {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      if (entry.isDirectory() && ignoredDirectories.has(entry.name)) continue;
-      const candidate = path.join(directory, entry.name);
-      if (entry.isDirectory()) await visit(candidate);
-      else if (sourceExtensions.has(path.extname(entry.name))) files.push(candidate);
-    }
-  };
-  await visit(root);
-  return files.toSorted();
-};
+const collect = (
+  root: string,
+): Effect.Effect<readonly string[], PlatformError, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* collectSourceFiles() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const entries = yield* fileSystem.readDirectory(root);
+    const discovered = yield* Effect.all(
+      entries.map((entry) => {
+        if (ignoredDirectories.has(entry)) {
+          return Effect.succeed<readonly string[]>([]);
+        }
+        const candidate = path.join(root, entry);
+        return fileSystem.stat(candidate).pipe(
+          Effect.flatMap((info) => {
+            if (info.type === 'Directory') {
+              return collect(candidate);
+            }
+            return Effect.succeed(sourceExtensions.has(path.extname(entry)) ? [candidate] : []);
+          }),
+        );
+      }),
+      { concurrency: 'unbounded' },
+    );
+    return EffectArray.sort(discovered.flat(), Order.String);
+  });
 
 const isGovernedAdapter = (relative: string, source: string): boolean =>
   !/(?:^|\/)(?:tests?|__tests__)\//u.test(relative) &&
-  ((!relative.startsWith('packages/core-runtime/src/') &&
+  ((!relative.startsWith(coreRuntimeSourcePrefix) &&
     /(?:^|\/)src\/(?:actions|reads)\//u.test(relative)) ||
     /(?:^|\/)verticals\/[^/]+\/api\//u.test(relative) ||
     (/(?:^|\/)apps\/[^/]+\/api\//u.test(relative) &&
@@ -39,7 +64,7 @@ const isGovernedAdapter = (relative: string, source: string): boolean =>
 
 const isOwnerOperationSource = (relative: string, source: string): boolean =>
   !/(?:^|\/)(?:tests?|__tests__)\//u.test(relative) &&
-  ((!relative.startsWith('packages/core-runtime/src/') &&
+  ((!relative.startsWith(coreRuntimeSourcePrefix) &&
     /(?:^|\/)src\/(?:actions|reads)\//u.test(relative)) ||
     (!relative.startsWith('packages/core-runtime/') &&
       !relative.startsWith('scripts/') &&
@@ -63,58 +88,61 @@ const importsCoreDatabaseSchema = new RegExp(
   'u',
 );
 const importSpecifier = new RegExp(`${importPrefix}['"](?<specifier>[^'"]+)['"]`, 'u');
-const globalDatabaseImplementationImport = new RegExp(
-  String.raw`(?:import\s+(?!type\b)[^;]*?\s+from\s+|import\s*\(\s*|import\s+|export\s+(?!type\b)[^;]*?\s+from\s+)['"](?:pg|drizzle-orm/node-postgres|@app/core-runtime/db/client|[^'"]*/db/client(?:\.[^'"]*)?)['"]`,
-  'u',
-);
+const globalDatabaseImplementationImport =
+  /(?:import\s+(?!type\b)[^;]*?\s+from\s+|import\s*\(\s*|import\s+|export\s+(?!type\b)[^;]*?\s+from\s+)['"](?:pg|drizzle-orm\/node-postgres|@app\/core-runtime\/db\/client|[^'"]*\/db\/client(?:\.[^'"]*)?)['"]/u;
+
+const candidatesFor = (path: Path.Path, unresolved: string): readonly string[] => {
+  const extension = path.extname(unresolved);
+  if (extension.length === 0) {
+    return [
+      unresolved,
+      `${unresolved}.ts`,
+      `${unresolved}.tsx`,
+      `${unresolved}.mts`,
+      path.join(unresolved, 'index.ts'),
+    ];
+  }
+  if (extension !== '.js' && extension !== '.mjs') {
+    return [unresolved];
+  }
+  const stem = unresolved.slice(0, -extension.length);
+  return [unresolved, `${stem}.ts`, `${stem}.mts`];
+};
 
 const resolveLocalSource = (
   sourceFiles: ReadonlySet<string>,
+  path: Path.Path,
   root: string,
   importer: string,
   specifier: string,
 ): string | undefined => {
-  const candidatesFor = (unresolved: string): readonly string[] => {
-    const extension = path.extname(unresolved);
-    return extension.length > 0
-      ? [
-          unresolved,
-          ...(['.js', '.mjs'].includes(extension)
-            ? [
-                unresolved.slice(0, -extension.length) + '.ts',
-                unresolved.slice(0, -extension.length) + '.mts',
-              ]
-            : []),
-        ]
-      : [
-          unresolved,
-          `${unresolved}.ts`,
-          `${unresolved}.tsx`,
-          `${unresolved}.mts`,
-          path.join(unresolved, 'index.ts'),
-        ];
-  };
-  const packageImport = /^@app\/(?<packageName>[^/]+)(?:\/(?<subpath>.+))?$/u.exec(
+  if (specifier.startsWith('.')) {
+    return candidatesFor(path, path.resolve(path.dirname(importer), specifier)).find((candidate) =>
+      sourceFiles.has(candidate),
+    );
+  }
+  const packageGroups = /^@app\/(?<packageName>[^/]+)(?:\/(?<subpath>.+))?$/u.exec(
     specifier,
   )?.groups;
-  const candidates = specifier.startsWith('.')
-    ? candidatesFor(path.resolve(path.dirname(importer), specifier))
-    : packageImport === undefined
-      ? []
-      : ['apps', 'packages', 'verticals'].flatMap((ownerRoot) => {
-          const packageRoot = path.join(root, ownerRoot, packageImport['packageName']!);
-          const subpath = packageImport['subpath'];
-          return subpath === undefined
-            ? [
-                path.join(packageRoot, 'src/index.ts'),
-                path.join(packageRoot, 'index.ts'),
-                path.join(packageRoot, 'vertical.registration.ts'),
-              ]
-            : [
-                ...candidatesFor(path.join(packageRoot, subpath)),
-                ...candidatesFor(path.join(packageRoot, 'src', subpath)),
-              ];
-        });
+  const packageName = packageGroups?.packageName;
+  if (packageName === undefined) {
+    return undefined;
+  }
+  const subpath = packageGroups?.subpath;
+  const candidates = ['apps', 'packages', 'verticals'].flatMap((ownerRoot) => {
+    const packageRoot = path.join(root, ownerRoot, packageName);
+    if (subpath === undefined) {
+      return [
+        path.join(packageRoot, 'src/index.ts'),
+        path.join(packageRoot, 'index.ts'),
+        path.join(packageRoot, 'vertical.registration.ts'),
+      ];
+    }
+    return [
+      ...candidatesFor(path, path.join(packageRoot, subpath)),
+      ...candidatesFor(path, path.join(packageRoot, 'src', subpath)),
+    ];
+  });
   return candidates.find((candidate) => sourceFiles.has(candidate));
 };
 
@@ -122,34 +150,47 @@ const importsGlobalDatabaseCapability = (
   file: string,
   sources: ReadonlyMap<string, string>,
   sourceFiles: ReadonlySet<string>,
+  path: Path.Path,
   root: string,
   visiting: ReadonlySet<string> = new Set(),
 ): boolean => {
-  if (visiting.has(file)) return false;
+  if (visiting.has(file)) {
+    return false;
+  }
   const source = sources.get(file);
-  if (source === undefined) return false;
+  if (source === undefined) {
+    return false;
+  }
   const relative = path.relative(root, file).split(path.sep).join('/');
   // Core's public runtime modules are the sanctioned governed-operation boundary.
   // Direct Core database imports and named hidden capabilities are checked at the
   // owning source line; recursively treating every safe Core type dependency as a
   // database leak makes generated Action and Read registrations impossible.
-  if (relative.startsWith('packages/core-runtime/src/')) return false;
-  if (globalDatabaseImplementationImport.test(source) || hiddenCapability.test(source)) return true;
+  if (relative.startsWith(coreRuntimeSourcePrefix)) {
+    return false;
+  }
+  if (globalDatabaseImplementationImport.test(source) || hiddenCapability.test(source)) {
+    return true;
+  }
   const nextVisiting = new Set(visiting).add(file);
   for (const match of source.matchAll(importedSpecifier)) {
-    const specifier = match.groups?.['specifier'];
-    if (specifier === undefined) continue;
-    const dependency = resolveLocalSource(sourceFiles, root, file, specifier);
+    const specifier = match.groups?.specifier;
+    if (specifier === undefined) {
+      continue;
+    }
+    const dependency = resolveLocalSource(sourceFiles, path, root, file, specifier);
     if (
       dependency !== undefined &&
-      importsGlobalDatabaseCapability(dependency, sources, sourceFiles, root, nextVisiting)
+      importsGlobalDatabaseCapability(dependency, sources, sourceFiles, path, root, nextVisiting)
     ) {
       return true;
     }
   }
   return false;
 };
+
 const crossOwnerPrivateImport = (
+  path: Path.Path,
   root: string,
   file: string,
   relative: string,
@@ -157,7 +198,9 @@ const crossOwnerPrivateImport = (
 ): boolean => {
   const sourceOwner = /(?:^|\/)verticals\/(?<owner>[^/]+)\/src\//u.exec(relative)?.groups?.owner;
   const specifier = importSpecifier.exec(line)?.groups?.specifier;
-  if (sourceOwner === undefined || specifier === undefined) return false;
+  if (sourceOwner === undefined || specifier === undefined) {
+    return false;
+  }
   const targetRelative = specifier.startsWith('.')
     ? path
         .relative(root, path.resolve(path.dirname(file), specifier))
@@ -172,124 +215,243 @@ const crossOwnerPrivateImport = (
   );
 };
 
-export const checkDatabaseAccessBoundaries = async (
-  root: string,
-): Promise<readonly DatabaseAccessViolation[]> => {
-  const violations: DatabaseAccessViolation[] = [];
-  const files = await collect(root);
-  const sources = new Map(
-    await Promise.all(files.map(async (file) => [file, await readFile(file, 'utf-8')] as const)),
-  );
-  const sourceFiles = new Set(files);
-  const recorded = new Set<string>();
-  const record = (violation: DatabaseAccessViolation): void => {
-    const key = `${violation.file}:${violation.line}:${violation.reason}`;
-    if (recorded.has(key)) return;
-    recorded.add(key);
-    violations.push(violation);
-  };
-  for (const file of files) {
-    const source = sources.get(file)!;
-    const relative = path.relative(root, file).split(path.sep).join('/');
-    const governedAdapter = isGovernedAdapter(relative, source);
-    if (!isTestSource(relative)) {
-      for (const match of source.matchAll(importedSpecifier)) {
-        const specifier = match.groups?.['specifier'];
-        if (specifier === undefined) continue;
-        const dependency = resolveLocalSource(sourceFiles, root, file, specifier);
-        const dependencyRelative =
-          dependency === undefined
-            ? undefined
-            : path.relative(root, dependency).split(path.sep).join('/');
-        if (
-          specifier.startsWith('@app/core-runtime/testing/') ||
-          dependencyRelative?.startsWith('packages/core-runtime/src/testing/') === true
-        ) {
-          record({
-            file: relative,
-            line: source.slice(0, match.index).split('\n').length,
-            reason: 'test-only Core runtime imported by production source',
-          });
-        }
-      }
+interface SourceCheckContext {
+  readonly file: string;
+  readonly governedAdapter: boolean;
+  readonly path: Path.Path;
+  readonly record: (violation: DatabaseAccessViolation) => void;
+  readonly relative: string;
+  readonly root: string;
+  readonly source: string;
+  readonly sourceFiles: ReadonlySet<string>;
+  readonly sources: ReadonlyMap<string, string>;
+}
+
+const sourceLine = (source: string, index: number): number =>
+  source.slice(0, index).split('\n').length;
+
+const recordProductionTestingImports = (context: SourceCheckContext): void => {
+  if (isTestSource(context.relative)) {
+    return;
+  }
+  for (const match of context.source.matchAll(importedSpecifier)) {
+    const specifier = match.groups?.specifier;
+    if (specifier === undefined) {
+      continue;
     }
-    if (isOwnerOperationSource(relative, source)) {
-      for (const match of source.matchAll(importedSpecifier)) {
-        const specifier = match.groups?.['specifier'];
-        if (specifier === undefined) continue;
-        const dependency = resolveLocalSource(sourceFiles, root, file, specifier);
-        if (
-          dependency !== undefined &&
-          importsGlobalDatabaseCapability(dependency, sources, sourceFiles, root)
-        ) {
-          record({
-            file: relative,
-            line: source.slice(0, match.index).split('\n').length,
-            reason: 'transitive global database capability in governed handler requirements',
-          });
-        }
-      }
-    }
-    for (const match of source.matchAll(multilineForbiddenImport)) {
-      if (!match[0].includes('\n')) continue;
-      if (
-        governedAdapter ||
-        (isVerticalOwnerSource(relative) && importsCoreDatabaseSchema.test(match[0])) ||
-        crossOwnerPrivateImport(root, file, relative, match[0])
-      ) {
-        record({
-          file: relative,
-          line: source.slice(0, match.index).split('\n').length,
-          reason:
-            'direct database/private repository import in governed handler or transport adapter',
-        });
-      }
-    }
-    for (const [index, line] of source.split('\n').entries()) {
-      if (
-        (governedAdapter && forbiddenImport.test(line)) ||
-        (isVerticalOwnerSource(relative) && importsCoreDatabaseSchema.test(line)) ||
-        crossOwnerPrivateImport(root, file, relative, line)
-      ) {
-        record({
-          file: relative,
-          line: index + 1,
-          reason:
-            'direct database/private repository import in governed handler or transport adapter',
-        });
-      } else if (
-        (governedAdapter
-          ? hiddenCapability.test(line)
-          : isVerticalOwnerSource(relative) && hiddenCoreSchema.test(line)) &&
-        !line.trimStart().startsWith('//')
-      ) {
-        record({
-          file: relative,
-          line: index + 1,
-          reason: 'database capability exposed through governed handler requirements',
-        });
-      }
+    const dependency = resolveLocalSource(
+      context.sourceFiles,
+      context.path,
+      context.root,
+      context.file,
+      specifier,
+    );
+    const dependencyRelative =
+      dependency === undefined
+        ? undefined
+        : context.path.relative(context.root, dependency).split(context.path.sep).join('/');
+    if (
+      specifier.startsWith('@app/core-runtime/testing/') ||
+      dependencyRelative?.startsWith('packages/core-runtime/src/testing/') === true
+    ) {
+      context.record({
+        file: context.relative,
+        line: sourceLine(context.source, match.index),
+        reason: 'test-only Core runtime imported by production source',
+      });
     }
   }
-  return violations.toSorted(
-    (left, right) =>
-      left.file.localeCompare(right.file) ||
-      left.line - right.line ||
-      left.reason.localeCompare(right.reason),
-  );
 };
 
-const isMain =
-  process.argv[1] !== undefined &&
-  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
-if (isMain) {
-  const workspaceRoot = path.resolve(process.cwd());
-  const violations = await checkDatabaseAccessBoundaries(workspaceRoot);
-  if (violations.length > 0) {
-    for (const violation of violations)
-      console.error(`${violation.file}:${violation.line}: ${violation.reason}`);
-    process.exitCode = 1;
-  } else {
-    console.log('Database access boundaries verified');
+const recordTransitiveDatabaseCapabilities = (context: SourceCheckContext): void => {
+  if (!isOwnerOperationSource(context.relative, context.source)) {
+    return;
   }
+  for (const match of context.source.matchAll(importedSpecifier)) {
+    const specifier = match.groups?.specifier;
+    if (specifier === undefined) {
+      continue;
+    }
+    const dependency = resolveLocalSource(
+      context.sourceFiles,
+      context.path,
+      context.root,
+      context.file,
+      specifier,
+    );
+    if (
+      dependency !== undefined &&
+      importsGlobalDatabaseCapability(
+        dependency,
+        context.sources,
+        context.sourceFiles,
+        context.path,
+        context.root,
+      )
+    ) {
+      context.record({
+        file: context.relative,
+        line: sourceLine(context.source, match.index),
+        reason: 'transitive global database capability in governed handler requirements',
+      });
+    }
+  }
+};
+
+const isDirectDatabaseImport = (context: SourceCheckContext, source: string): boolean =>
+  context.governedAdapter ||
+  (isVerticalOwnerSource(context.relative) && importsCoreDatabaseSchema.test(source)) ||
+  crossOwnerPrivateImport(context.path, context.root, context.file, context.relative, source);
+
+const recordMultilineDatabaseImports = (context: SourceCheckContext): void => {
+  for (const match of context.source.matchAll(multilineForbiddenImport)) {
+    if (!match[0].includes('\n') || !isDirectDatabaseImport(context, match[0])) {
+      continue;
+    }
+    context.record({
+      file: context.relative,
+      line: sourceLine(context.source, match.index),
+      reason: 'direct database/private repository import in governed handler or transport adapter',
+    });
+  }
+};
+
+const exposesHiddenCapability = (context: SourceCheckContext, line: string): boolean => {
+  const hasCapability = context.governedAdapter
+    ? hiddenCapability.test(line)
+    : isVerticalOwnerSource(context.relative) && hiddenCoreSchema.test(line);
+  return hasCapability && !line.trimStart().startsWith('//');
+};
+
+const recordLineDatabaseViolations = (context: SourceCheckContext): void => {
+  for (const [index, line] of context.source.split('\n').entries()) {
+    const directImport =
+      (context.governedAdapter && forbiddenImport.test(line)) ||
+      (isVerticalOwnerSource(context.relative) && importsCoreDatabaseSchema.test(line)) ||
+      crossOwnerPrivateImport(context.path, context.root, context.file, context.relative, line);
+    if (directImport) {
+      context.record({
+        file: context.relative,
+        line: index + 1,
+        reason:
+          'direct database/private repository import in governed handler or transport adapter',
+      });
+    } else if (exposesHiddenCapability(context, line)) {
+      context.record({
+        file: context.relative,
+        line: index + 1,
+        reason: 'database capability exposed through governed handler requirements',
+      });
+    }
+  }
+};
+
+const compareViolations = (
+  left: DatabaseAccessViolation,
+  right: DatabaseAccessViolation,
+): -1 | 0 | 1 => {
+  const fileOrder = left.file.localeCompare(right.file);
+  if (fileOrder < 0) {
+    return -1;
+  }
+  if (fileOrder > 0) {
+    return 1;
+  }
+  const lineOrder = left.line - right.line;
+  if (lineOrder < 0) {
+    return -1;
+  }
+  if (lineOrder > 0) {
+    return 1;
+  }
+  const reasonOrder = left.reason.localeCompare(right.reason);
+  if (reasonOrder < 0) {
+    return -1;
+  }
+  return reasonOrder > 0 ? 1 : 0;
+};
+
+const ViolationOrder = Order.make(compareViolations);
+
+const checkDatabaseAccessBoundariesEffect = (root: string) =>
+  Effect.gen(function* checkDatabaseAccessBoundariesProgram() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const violations: DatabaseAccessViolation[] = [];
+    const files = yield* collect(root);
+    const sourcePairs = yield* Effect.all(
+      files.map((file) =>
+        fileSystem
+          .readFileString(file, 'utf-8')
+          .pipe(Effect.map((source) => [file, source] as const)),
+      ),
+      { concurrency: 'unbounded' },
+    );
+    const sources = new Map(sourcePairs);
+    const sourceFiles = new Set(files);
+    const recorded = new Set<string>();
+    const record = (violation: DatabaseAccessViolation): void => {
+      const key = `${violation.file}:${violation.line}:${violation.reason}`;
+      if (recorded.has(key)) {
+        return;
+      }
+      recorded.add(key);
+      violations.push(violation);
+    };
+    for (const [file, source] of sourcePairs) {
+      const relative = path.relative(root, file).split(path.sep).join('/');
+      const context: SourceCheckContext = {
+        file,
+        governedAdapter: isGovernedAdapter(relative, source),
+        path,
+        record,
+        relative,
+        root,
+        source,
+        sourceFiles,
+        sources,
+      };
+      recordProductionTestingImports(context);
+      recordTransitiveDatabaseCapabilities(context);
+      recordMultilineDatabaseImports(context);
+      recordLineDatabaseViolations(context);
+    }
+    return EffectArray.sort(violations, ViolationOrder);
+  });
+
+const databaseAccessBoundaryRuntime = ManagedRuntime.make(NodeServices.layer);
+
+export const checkDatabaseAccessBoundaries: (
+  root: string,
+) => Promise<readonly DatabaseAccessViolation[]> = flow(
+  checkDatabaseAccessBoundariesEffect,
+  databaseAccessBoundaryRuntime.runPromise,
+);
+
+class DatabaseAccessBoundaryCheckFailed extends Schema.TaggedError<DatabaseAccessBoundaryCheckFailed>()(
+  'DatabaseAccessBoundaryCheckFailed',
+  { violationCount: Schema.Number },
+) {}
+
+const main = Effect.gen(function* databaseAccessBoundaryMain() {
+  const path = yield* Path.Path;
+  const violations = yield* checkDatabaseAccessBoundariesEffect(path.resolve(process.cwd()));
+  if (violations.length > 0) {
+    yield* Effect.all(
+      violations.map((violation) =>
+        Console.error(`${violation.file}:${violation.line}: ${violation.reason}`),
+      ),
+      { concurrency: 1, discard: true },
+    );
+    return yield* Effect.fail(
+      new DatabaseAccessBoundaryCheckFailed({ violationCount: violations.length }),
+    );
+  }
+  return yield* Console.log('Database access boundaries verified');
+});
+
+const [, invokedPath] = process.argv;
+if (invokedPath === import.meta.filename) {
+  const exit = await databaseAccessBoundaryRuntime.runPromiseExit(main);
+  process.exitCode = Exit.isSuccess(exit) ? 0 : 1;
 }

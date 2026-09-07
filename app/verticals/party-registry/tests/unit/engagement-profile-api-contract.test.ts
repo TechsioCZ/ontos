@@ -1,14 +1,17 @@
-// @effect-diagnostics nodeBuiltinImport:off asyncFunction:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics nodeBuiltinImport:off asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
+import { FetchHttpClient } from 'effect/unstable/http';
 import {
   AttachOrganizationEngagementPayloadSchema,
   AttachPersonEngagementPayloadSchema,
   engagementProfileOperationContexts,
   partyRegistryApiContract,
 } from '../../shared/api.ts';
+import { attachOrganizationEngagement } from '../../src/api/engagement-profile-client.ts';
 
 const tenantId = 'd1000000-0000-4000-8000-000000000001';
 const partyRef = {
@@ -69,6 +72,51 @@ test('attach contracts accept only public Party Registry refs', () => {
       }),
     );
   }
+});
+
+test('public engagement mutations preserve the request trace header at the HTTP boundary', async () => {
+  const requests: Request[] = [];
+  const timestamp = '2026-09-07T00:00:00.000Z';
+  const fakeFetch: typeof fetch = async (input, init) => {
+    const request = new Request(input, init);
+    requests.push(request);
+    const { pathname } = new URL(request.url);
+    if (pathname === '/auth/gateway-context') {
+      return Response.json({ expiresAt: 1, token: 'test-gateway-token' });
+    }
+    assert.equal(pathname, '/party-registry-api/contacts/engagement/organizations/attach');
+    return Response.json({
+      archivedAt: null,
+      counterpartyRef,
+      createdAt: timestamp,
+      partyRef,
+      profileRef: {
+        moduleId: 'party.registry',
+        resourceId: 'd5000000-0000-4000-8000-000000000001',
+        resourceType: 'party.registry.organization-engagement-profile',
+        tenantId,
+      },
+      updatedAt: timestamp,
+    });
+  };
+
+  await runEffectTestPromise(
+    attachOrganizationEngagement(
+      { counterpartyRef, partyRef },
+      {
+        baseUrl: 'https://party.example/party-registry-api',
+        correlationId: 'engagement-correlation',
+        gateway: { baseUrl: 'https://party.example' },
+        idempotencyKey: 'attach-engagement',
+        traceId: 'engagement-trace',
+      },
+    ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch)),
+  );
+
+  const mutationRequest = requests.find(({ url }) => url.includes('/contacts/engagement/'));
+  assert.ok(mutationRequest);
+  assert.equal(mutationRequest.headers.get('x-trace-id'), 'engagement-trace');
+  assert.equal(mutationRequest.headers.get('x-correlation-id'), 'engagement-correlation');
 });
 
 test('public Party Registry engagement API does not expose legacy identity operations', async () => {

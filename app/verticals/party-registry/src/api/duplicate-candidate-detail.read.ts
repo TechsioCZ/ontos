@@ -6,7 +6,7 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, Match, Schema } from 'effect';
 import {
   DuplicateCandidateDetailRequestSchema,
   DuplicateCandidateDetailResponseSchema,
@@ -23,6 +23,15 @@ export const duplicateCandidateDetailEntrypoint = defineTenantModuleEntrypoint({
 interface Services {
   readonly find: (caseId: string) => ReturnType<typeof findDuplicateCandidateCase>;
 }
+const duplicateCandidateUnavailable = (cause: unknown) =>
+  Object.defineProperty(
+    new ReadHandlerUnavailable({
+      code: 'read_handler_unavailable',
+      reason: 'Duplicate Candidate persistence is unavailable',
+    }),
+    'cause',
+    { value: cause },
+  );
 export const duplicateCandidateDetailRead = defineRead(
   {
     accessKind: 'detail',
@@ -42,22 +51,25 @@ export const duplicateCandidateDetailRead = defineRead(
   },
   (input, context: ReadHandlerContext<Services>) =>
     context.services.find(input.caseRef.resourceId).pipe(
-      Effect.mapError(
-        () =>
-          new ReadHandlerUnavailable({
-            code: 'read_handler_unavailable',
-            reason: 'Duplicate Candidate persistence is unavailable',
-          }),
-      ),
+      Effect.mapError(duplicateCandidateUnavailable),
       Effect.flatMap((found) =>
-        found._tag === 'found'
-          ? Effect.succeed({ evidence: { resultCount: 1 }, result: found.value })
-          : Effect.fail(
+        Match.value(found).pipe(
+          Match.tag('found', ({ value }) =>
+            Schema.decodeUnknownEffect(DuplicateCandidateDetailResponseSchema)(value).pipe(
+              Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
+              Effect.mapError(duplicateCandidateUnavailable),
+            ),
+          ),
+          Match.tag('not_found', () =>
+            Effect.fail(
               new ReadHandlerNotFound({
                 code: 'read_handler_not_found',
                 reason: 'The Duplicate Candidate case does not exist',
               }),
             ),
+          ),
+          Match.exhaustive,
+        ),
       ),
     ),
   (transaction, scope) =>

@@ -1,8 +1,8 @@
-// @effect-diagnostics asyncFunction:off strictEffectProvide:off
-/* eslint-disable no-await-in-loop -- Ordered provider scenarios verify isolated cache and retry state. */
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Fiber, Layer, Logger } from 'effect';
+import { DateTime, Effect, Fiber, Layer, Logger, Option } from 'effect';
 import { TestClock } from 'effect/testing';
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http';
 import type { HttpClientRequest } from 'effect/unstable/http';
@@ -83,16 +83,21 @@ test('maps a bounded ARES observation and sends an exact credential-free JSON re
       }),
     );
   });
-  const result = await Effect.runPromise(lookup(client, ' 01234567 '));
+  const result = await runEffectTestPromise(lookup(client, ' 01234567 '));
 
   assert.equal(result.status, 'FOUND');
   assert.equal(result.provider, 'ares');
   assert.equal(result.queryIco, '01234567');
   assert.equal(result.subject.ico, '01234567');
-  assert.equal(result.subject.businessName, 'J.E.S., spol. s r.o.');
-  assert.equal(result.subject.registeredAddress?.municipality, 'Praha');
-  assert.equal(result.providerChangedOn, '2026-09-01');
-  assert.equal(result.providerRecordRef, 'provider-record-123');
+  assert.equal(Option.getOrUndefined(result.subject.businessName), 'J.E.S., spol. s r.o.');
+  const registeredAddress = Option.getOrUndefined(result.subject.registeredAddress);
+  assert.ok(registeredAddress);
+  assert.equal(Option.getOrUndefined(registeredAddress.municipality), 'Praha');
+  assert.equal(
+    result.providerChangedOn.pipe(Option.map(DateTime.formatIsoDateUtc), Option.getOrUndefined),
+    '2026-09-01',
+  );
+  assert.equal(Option.getOrUndefined(result.providerRecordRef), 'provider-record-123');
   assert.equal(Object.hasOwn(result, 'czNace'), false);
   assert.equal(Object.hasOwn(result, 'seznamRegistraci'), false);
   assert.equal(requests.length, 1);
@@ -113,10 +118,12 @@ test('rejects malformed IČOs before provider I/O', async () => {
     return Effect.succeed(jsonResponse(request, 200, rawSubject()));
   });
 
-  for (const ico of ['1234567', '123456789', '1234 5678', 'abcdefgh', '../48039101']) {
-    const error = await Effect.runPromise(Effect.flip(lookup(client, ico)));
-    assert.equal(error._tag, 'AresSubjectInvalidIco');
-  }
+  await Promise.all(
+    ['1234567', '123456789', '1234 5678', 'abcdefgh', '../48039101'].map(async (ico) => {
+      const error = await runEffectTestPromise(Effect.flip(lookup(client, ico)));
+      assert.equal(error._tag, 'AresSubjectInvalidIco');
+    }),
+  );
   assert.equal(requests, 0);
 });
 
@@ -130,19 +137,19 @@ test('represents absent optional provider facts explicitly without inventing Par
       }),
     ),
   );
-  const result = await Effect.runPromise(lookup(client));
+  const result = await runEffectTestPromise(client.pipe(lookup));
 
   assert.deepEqual(result.subject, {
-    businessName: null,
-    dic: null,
-    dissolvedOn: null,
-    establishedOn: null,
+    businessName: Option.none(),
+    dic: Option.none(),
+    dissolvedOn: Option.none(),
+    establishedOn: Option.none(),
     ico: '48039101',
-    legalFormCode: null,
-    registeredAddress: null,
+    legalFormCode: Option.none(),
+    registeredAddress: Option.none(),
   });
-  assert.equal(result.providerChangedOn, null);
-  assert.equal(result.providerRecordRef, null);
+  assert.ok(Option.isNone(result.providerChangedOn));
+  assert.ok(Option.isNone(result.providerRecordRef));
 });
 
 test('keeps not-found, denial, throttling, timeout, and unavailable failures distinct and safe', async () => {
@@ -156,30 +163,32 @@ test('keeps not-found, denial, throttling, timeout, and unavailable failures dis
     [500, 'AresSubjectUnavailable', 3],
     [502, 'AresSubjectUnavailable', 3],
   ] as const;
-  for (const [status, tag, expectedAttempts] of statusCases) {
-    let attempts = 0;
-    const client = clientFrom((request) => {
-      attempts += 1;
-      return Effect.succeed(
-        jsonResponse(request, status, {
-          kod: 'PRIVATE_PROVIDER_CODE',
-          popis: 'private provider detail',
-        }),
-      );
-    });
-    const program = Effect.flip(lookup(client));
-    const fiberProgram = Effect.gen(function* finishRetries() {
-      const fiber = yield* program.pipe(Effect.forkChild);
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust('10 seconds');
-      return yield* Fiber.join(fiber);
-    }).pipe(Effect.provide(TestClock.layer()));
-    const error = await Effect.runPromise(expectedAttempts === 3 ? fiberProgram : program);
-    assert.equal(error._tag, tag);
-    assert.equal(attempts, expectedAttempts);
-    assert.equal(JSON.stringify(error).includes('PRIVATE_PROVIDER_CODE'), false);
-    assert.equal(JSON.stringify(error).includes('private provider detail'), false);
-  }
+  await Promise.all(
+    statusCases.map(async ([status, tag, expectedAttempts]) => {
+      let attempts = 0;
+      const client = clientFrom((request) => {
+        attempts += 1;
+        return Effect.succeed(
+          jsonResponse(request, status, {
+            kod: 'PRIVATE_PROVIDER_CODE',
+            popis: 'private provider detail',
+          }),
+        );
+      });
+      const program = Effect.flip(lookup(client));
+      const fiberProgram = Effect.gen(function* finishRetries() {
+        const fiber = yield* program.pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust('10 seconds');
+        return yield* Fiber.join(fiber);
+      }).pipe(Effect.provide(TestClock.layer()));
+      const error = await runEffectTestPromise(expectedAttempts === 3 ? fiberProgram : program);
+      assert.equal(error._tag, tag);
+      assert.equal(attempts, expectedAttempts);
+      assert.equal(JSON.stringify(error).includes('PRIVATE_PROVIDER_CODE'), false);
+      assert.equal(JSON.stringify(error).includes('private provider detail'), false);
+    }),
+  );
 });
 
 test('retries transport faults with bounded backoff without exposing diagnostics', async () => {
@@ -205,7 +214,7 @@ test('retries transport faults with bounded backoff without exposing diagnostics
     yield* TestClock.adjust('10 seconds');
     return yield* Fiber.join(fiber);
   }).pipe(Effect.provide(Layer.mergeAll(TestClock.layer(), capturedLoggerLayer(logs))));
-  const error = await Effect.runPromise(program);
+  const error = await runEffectTestPromise(program);
 
   assert.equal(error._tag, 'AresSubjectUnavailable');
   assert.equal(attempts, 3);
@@ -226,7 +235,7 @@ test('times out and aborts each of the three bounded attempts', async () => {
     yield* TestClock.adjust('30 seconds');
     return yield* Fiber.join(fiber);
   }).pipe(Effect.provide(TestClock.layer()));
-  const error = await Effect.runPromise(program);
+  const error = await runEffectTestPromise(program);
 
   assert.equal(error._tag, 'AresSubjectTimeout');
   assert.equal(signals.length, 3);
@@ -258,7 +267,7 @@ test('bounds stalled response bodies with the same three-attempt timeout policy'
     yield* TestClock.adjust('30 seconds');
     return yield* Fiber.join(fiber);
   }).pipe(Effect.provide(TestClock.layer()));
-  const error = await Effect.runPromise(program);
+  const error = await runEffectTestPromise(program);
   assert.equal(error._tag, 'AresSubjectTimeout');
   assert.equal(attempts, 3);
 });
@@ -273,16 +282,18 @@ test('rejects malformed JSON, schema drift, mismatched IČO, and oversized text 
     (request) => jsonResponse(request, 200, { ...rawSubject(), obchodniJmeno: 'x'.repeat(501) }),
   ];
 
-  for (const response of responses) {
-    let requests = 0;
-    const client = clientFrom((request) => {
-      requests += 1;
-      return Effect.succeed(response(request));
-    });
-    const error = await Effect.runPromise(Effect.flip(lookup(client)));
-    assert.equal(error._tag, 'AresSubjectResponseInvalid');
-    assert.equal(requests, 1);
-  }
+  await Promise.all(
+    responses.map(async (response) => {
+      let requests = 0;
+      const client = clientFrom((request) => {
+        requests += 1;
+        return Effect.succeed(response(request));
+      });
+      const error = await runEffectTestPromise(Effect.flip(lookup(client)));
+      assert.equal(error._tag, 'AresSubjectResponseInvalid');
+      assert.equal(requests, 1);
+    }),
+  );
 });
 
 test('coalesces identical requests and exposes cache age without changing observedAt', async () => {
@@ -314,7 +325,7 @@ test('coalesces identical requests and exposes cache age without changing observ
     Effect.provideService(HttpClient.HttpClient, client),
     Effect.provide(TestClock.layer()),
   );
-  const result = await Effect.runPromise(program);
+  const result = await runEffectTestPromise(program);
 
   assert.equal(requests, 1);
   assert.equal(result.initial[0]?.observedAt, result.initial[1]?.observedAt);
@@ -363,7 +374,7 @@ test('bounds distinct upstream lookups to four concurrent requests', async () =>
     Effect.provideService(HttpClient.HttpClient, client),
     Effect.provide(TestClock.layer()),
   );
-  const results = await Effect.runPromise(program);
+  const results = await runEffectTestPromise(program);
 
   assert.equal(results.length, 8);
   assert.equal(requests, 8);

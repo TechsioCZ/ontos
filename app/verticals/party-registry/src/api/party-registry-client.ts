@@ -1,13 +1,9 @@
-/* eslint-disable oxc/no-barrel-file -- The published client entrypoint must aggregate the governed generated operation clients. */
-import { Effect, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
+/* eslint-disable oxc/no-barrel-file -- The published client entrypoint must aggregate the governed generated operation clients. expires: 2026-12-31. */
+import { Effect } from '@modern-js/plugin-bff/effect-client';
 import type { HttpClientError, Schema } from '@modern-js/plugin-bff/effect-client';
 
-import {
-  partyRegistryApiContract,
-  partyRegistryFoundationApi,
-  partyRegistryOperationContexts,
-} from '../../shared/api.ts';
-import type { OperationContext, PartyRegistryReadiness } from '../../shared/api.ts';
+import { partyRegistryOperationContexts } from '../../shared/api.ts';
+import type { PartyRegistryReadiness } from '../../shared/api.ts';
 import { executeAresLookup } from './ares-lookup-client.ts';
 import { loadCounterpartiesClient } from './counterparties-search-client.ts';
 import { executeCounterpartyRead } from './counterparty-read-client.ts';
@@ -24,6 +20,8 @@ import { executePartyMergeReadiness } from './party-merge-readiness-client.ts';
 import { executePartyOfficialIdentifierDetail } from './party-official-identifier-detail-client.ts';
 import { executePartyOfficialIdentifierHistory } from './party-official-identifier-history-client.ts';
 import { executePartyRelationshipDetail } from './party-relationship-detail-client.ts';
+import { createPartyRegistryHttpClient } from './party-registry-http-client.ts';
+import type { PartyRegistryHttpClientOptions } from './party-registry-http-client.ts';
 
 export * from './ares-lookup-client.ts';
 export * from './counterparties-search-client.ts';
@@ -61,7 +59,7 @@ export type {
   AresApplySelection,
   PartyRegistryStandardActionInvoker,
 } from './action-gateway.ts';
-export { Effect, runEffectRequest } from '@modern-js/plugin-bff/effect-client';
+export { Effect } from '@modern-js/plugin-bff/effect-client';
 
 export interface PartyRegistryClient {
   readonly executeAresLookup: typeof executeAresLookup;
@@ -91,36 +89,15 @@ export type PartyRegistryClientEffect<Success> = Effect.Effect<
   never
 >;
 
-export interface PartyRegistryClientOptions {
-  readonly baseUrl?: string | URL;
-  readonly locale?: string;
-  readonly operationContext?: OperationContext;
-  readonly traceparent?: string;
-}
-
-interface PartyRegistryReadinessRequestContext {
-  locale?: string;
-  operationContext: OperationContext;
-  traceparent?: string;
-}
+export type PartyRegistryClientOptions = PartyRegistryHttpClientOptions;
 
 export const getPartyRegistryReadiness = (
   options: PartyRegistryClientOptions = {},
-): PartyRegistryClientEffect<PartyRegistryReadiness> => {
-  const requestContext: PartyRegistryReadinessRequestContext = {
+): PartyRegistryClientEffect<PartyRegistryReadiness> =>
+  createPartyRegistryHttpClient({
+    ...options,
     operationContext: options.operationContext ?? partyRegistryOperationContexts.readiness,
-  };
-  if (options.locale !== undefined) {
-    requestContext.locale = options.locale;
-  }
-  if (options.traceparent !== undefined) {
-    requestContext.traceparent = options.traceparent;
-  }
-  return makeEffectHttpApiClient(partyRegistryFoundationApi, {
-    baseUrl: options.baseUrl ?? partyRegistryApiContract.apiPrefix,
-    requestContext,
   }).pipe(Effect.flatMap((client) => client.foundation.readiness({})));
-};
 
 export const partyRegistryClient = {
   executeAresLookup,

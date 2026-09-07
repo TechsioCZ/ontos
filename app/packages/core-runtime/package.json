@@ -6,8 +6,11 @@
   "exports": {
     ".": "./src/index.ts",
     "./actions/principal-context": "./src/actions/principal-context.ts",
+    "./actions/runtime-wiring": "./src/actions/runtime-wiring.ts",
     "./install/stage-context-bootstrap": "./src/install/stage-context-bootstrap.ts",
+    "./outbox/worker": "./src/outbox/worker-entrypoint.ts",
     "./testing/actions": "./src/testing/actions.ts",
+    "./testing/effect-runtime": "./src/testing/effect-runtime.ts",
     "./workspace-environment": "./src/environment/workspace-environment.ts"
   },
   "scripts": {

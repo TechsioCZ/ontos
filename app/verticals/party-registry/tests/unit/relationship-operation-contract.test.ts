@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Schema } from 'effect';
+import { DateTime, Option, Schema } from 'effect';
 import { createPartyRelationshipAction } from '../../src/actions/create-party-relationship.action.ts';
 import { endPartyRelationshipAction } from '../../src/actions/end-party-relationship.action.ts';
 import { updatePartyRelationshipAction } from '../../src/actions/update-party-relationship.action.ts';
@@ -97,9 +97,12 @@ test('relationship detail preserves canonical and stored alias endpoint context'
     validTo: '2026-09-01T00:00:00.000Z',
   });
   assert.equal(detail.from.canonicalPartyRef.resourceId, canonicalFrom.resourceId);
-  assert.equal(detail.from.requestedAlias?.resourceId, storedFrom.resourceId);
+  assert.equal(Option.getOrThrow(detail.from.requestedAlias).resourceId, storedFrom.resourceId);
   assert.equal(detail.state, 'HISTORICAL');
-  assert.equal(detail.endHistory[0]?.reason, 'No longer the contact');
+  const [endEvidence] = detail.endHistory;
+  assert.ok(endEvidence);
+  assert.equal(Option.getOrThrow(endEvidence.reason), 'No longer the contact');
+  assert.equal(DateTime.formatIso(Option.getOrThrow(detail.validTo)), '2026-09-01T00:00:00.000Z');
 });
 
 test('outbox payloads carry stable refs and no mutable Party or authorization copy', () => {
@@ -112,7 +115,8 @@ test('outbox payloads carry stable refs and no mutable Party or authorization co
     validFrom: '2026-09-01T10:00:00.000Z',
     validTo: null,
   } as const;
-  assert.deepEqual(Schema.decodeUnknownSync(RelationshipCreatedOutboxSchema)(payload), payload);
+  const decoded = Schema.decodeUnknownSync(RelationshipCreatedOutboxSchema)(payload);
+  assert.deepEqual(Schema.encodeSync(RelationshipCreatedOutboxSchema)(decoded), payload);
   assert.throws(() =>
     Schema.decodeUnknownSync(RelationshipCreatedOutboxSchema, { onExcessProperty: 'error' })({
       ...payload,

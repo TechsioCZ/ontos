@@ -1,4 +1,4 @@
-// @effect-diagnostics asyncFunction:off nodeBuiltinImport:off processEnv:off
+// @effect-diagnostics asyncFunction:off nodeBuiltinImport:off processEnv:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { reconcileStageContextBootstraps } from '@app/core-runtime/install/stage-context-bootstrap';
 import { betterAuth } from 'better-auth';
 import { verifyPassword } from 'better-auth/crypto';
@@ -7,7 +7,7 @@ import { admin } from 'better-auth/plugins';
 import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { Effect, Schema } from 'effect';
+import { Config, Duration, Effect, Option, Redacted, Schema } from 'effect';
 import { Pool } from 'pg';
 import { account, authDatabaseSchema, authRelations, user } from './db/schema.ts';
 import {
@@ -114,43 +114,92 @@ const reconcileAuthUser = (
         await pool.end();
       }
     },
-  });
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: Duration.infinity,
+      orElse: () =>
+        Effect.fail(
+          new StageDemoBootstrapError({
+            code: 'stage_demo_persistence_failed',
+            reason: 'The stage demo Better Auth user could not be reconciled',
+          }),
+        ),
+    }),
+  );
 
-export const bootstrapStageDemo = (
-  environment: StageDemoEnvironment = process.env,
-): Effect.Effect<StageDemoBootstrapResult, StageDemoBootstrapError> =>
-  Effect.gen(function* bootstrapStageDemoEffect() {
-    const configuration = yield* parseStageDemoBootstrapConfig(environment);
-    const [techsioAccount, siamparkAccount] = configuration.accounts;
-    const techsioAuthUser = yield* reconcileAuthUser(configuration, techsioAccount);
-    const siamparkAuthUser = yield* reconcileAuthUser(configuration, siamparkAccount);
-    const [techsioContext, siamparkContext] = yield* reconcileStageContextBootstraps([
-      techsioAuthUser.userId,
-      siamparkAuthUser.userId,
-    ]).pipe(
+const optionalString = (name: string) =>
+  Config.option(Config.string(name)).pipe(Config.map(Option.getOrUndefined));
+
+const optionalSecret = (name: string) =>
+  Config.option(Config.redacted(name)).pipe(
+    Config.map(Option.map(Redacted.value)),
+    Config.map(Option.getOrUndefined),
+  );
+
+const loadStageDemoEnvironment = Effect.fn(
+  'StageDemoBootstrapRuntimeInfrastructure.loadStageDemoEnvironment',
+)(function* loadStageDemoEnvironmentEffect() {
+  const values = yield* Effect.all(
+    {
+      BETTER_AUTH_SECRET: optionalSecret('BETTER_AUTH_SECRET'),
+      BETTER_AUTH_URL: optionalString('BETTER_AUTH_URL'),
+      DATABASE_ADMIN_URL: optionalSecret('DATABASE_ADMIN_URL'),
+      STAGE_DEMO_PASSWORD: optionalSecret('STAGE_DEMO_PASSWORD'),
+      STAGE_SIAMPARK_PASSWORD: optionalSecret('STAGE_SIAMPARK_PASSWORD'),
+      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: optionalString('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'),
+    },
+    { concurrency: 6 },
+  );
+  return values satisfies StageDemoEnvironment;
+});
+
+export const bootstrapStageDemo: (
+  environment?: StageDemoEnvironment,
+) => Effect.Effect<StageDemoBootstrapResult, StageDemoBootstrapError> = Effect.fn(
+  'StageDemoBootstrapRuntimeInfrastructure.bootstrapStageDemo',
+)(function* bootstrapStageDemoEffect(environment) {
+  const runtimeEnvironment =
+    environment ??
+    (yield* loadStageDemoEnvironment().pipe(
       Effect.mapError(
         (error) =>
           new StageDemoBootstrapError({
-            code: 'stage_demo_persistence_failed',
-            reason: error.reason,
+            code: 'stage_demo_configuration_invalid',
+            reason: `The stage demo configuration could not be loaded: ${error.message}`,
           }),
       ),
-    );
-    const accounts: StageDemoAccountResult[] = [
-      {
-        authUser: techsioAuthUser.status,
-        email: techsioAccount.email,
-        legalEntityId: techsioContext.legalEntityId,
-        principalId: techsioContext.principalId,
-        tenantId: techsioContext.tenantId,
-      },
-      {
-        authUser: siamparkAuthUser.status,
-        email: siamparkAccount.email,
-        legalEntityId: siamparkContext.legalEntityId,
-        principalId: siamparkContext.principalId,
-        tenantId: siamparkContext.tenantId,
-      },
-    ];
-    return { accounts };
-  });
+    ));
+  const configuration = yield* parseStageDemoBootstrapConfig(runtimeEnvironment);
+  const [techsioAccount, siamparkAccount] = configuration.accounts;
+  const techsioAuthUser = yield* reconcileAuthUser(configuration, techsioAccount);
+  const siamparkAuthUser = yield* reconcileAuthUser(configuration, siamparkAccount);
+  const [techsioContext, siamparkContext] = yield* reconcileStageContextBootstraps([
+    techsioAuthUser.userId,
+    siamparkAuthUser.userId,
+  ]).pipe(
+    Effect.mapError(
+      (error) =>
+        new StageDemoBootstrapError({
+          code: 'stage_demo_persistence_failed',
+          reason: error.reason,
+        }),
+    ),
+  );
+  const accounts: StageDemoAccountResult[] = [
+    {
+      authUser: techsioAuthUser.status,
+      email: techsioAccount.email,
+      legalEntityId: techsioContext.legalEntityId,
+      principalId: techsioContext.principalId,
+      tenantId: techsioContext.tenantId,
+    },
+    {
+      authUser: siamparkAuthUser.status,
+      email: siamparkAccount.email,
+      legalEntityId: siamparkContext.legalEntityId,
+      principalId: siamparkContext.principalId,
+      tenantId: siamparkContext.tenantId,
+    },
+  ];
+  return { accounts };
+});

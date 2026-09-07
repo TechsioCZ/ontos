@@ -55,6 +55,7 @@ test('keeps authentication in the existing Shell/Core ownership boundary', () =>
 
 test('keeps the Contacts page in the Party Registry lazy browser allowlist', () => {
   const source = readText('apps/shell-super-app/src/api/vertical-clients.ts');
+  const shellConfig = readText('apps/shell-super-app/modern.config.ts');
   const lazyRemotes = [...source.matchAll(/import\('(?<remote>[^']+)'\)/gu)].map(
     (match) => match.groups?.['remote'],
   );
@@ -63,4 +64,7 @@ test('keeps the Contacts page in the Party Registry lazy browser allowlist', () 
   );
   expect(lazyRemotes).toEqual(['partyRegistry/PageContacts']);
   expect(componentKeys).toEqual(['party.registry.page-contacts']);
+  expect(shellConfig).toContain(
+    'new rspack.NormalModuleReplacementPlugin(\n                  /^partyRegistry\\//u,',
+  );
 });

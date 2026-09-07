@@ -4,49 +4,57 @@
 import { Effect, Schema } from 'effect';
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
-import {
-  bindApiKey,
-  principalManagementRepositoryFromTransaction,
-} from '../../auth/principal-management.ts';
+import { principalManagementRepositoryFromTransaction } from '../../auth/principal-management.ts';
+import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
 import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
-const uuid = Schema.String.check(Schema.isUUID());
-const subject = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
-export const BindSelfApiKeyPayloadSchema = Schema.Struct({ providerSubjectId: subject });
+const ProviderSubjectIdSchema = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(500),
+).pipe(Schema.brand('ProviderSubjectId'));
+const AuthBindingIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('AuthBindingId'),
+);
+export const BindSelfApiKeyPayloadSchema = Schema.Struct({
+  providerSubjectId: ProviderSubjectIdSchema,
+});
 export type BindSelfApiKeyPayload = Schema.Schema.Type<typeof BindSelfApiKeyPayloadSchema>;
 export const BindSelfApiKeyResultSchema = Schema.Struct({
-  authBindingId: uuid,
+  authBindingId: AuthBindingIdSchema,
   status: Schema.Literal('active'),
 });
 export type BindSelfApiKeyResult = Schema.Schema.Type<typeof BindSelfApiKeyResultSchema>;
-type Input = Parameters<typeof bindApiKey>[1];
-type Result = ReturnType<typeof bindApiKey>;
-const handle = (
+type BindApiKey = PrincipalManagementRepositoryService['bindApiKey'];
+type Input = Parameters<BindApiKey>[0];
+type Result = ReturnType<BindApiKey>;
+const handle = Effect.fn('BindSelfApiKeyAction.handle')(function* bindSelfApiKeyActionHandle(
   payload: BindSelfApiKeyPayload,
   context: ActionHandlerContext<
     Readonly<Record<never, never>>,
     { readonly bind: (input: Input) => Result }
   >,
-) =>
-  Effect.gen(function* bindSelfApiKeyHandler() {
-    const result = yield* context.services.bind({
-      managed: false,
-      principalId: context.scope.principalId,
-      providerSubjectId: payload.providerSubjectId,
-      tenantId: context.scope.tenantId,
-    });
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `principal-api-key-eligibility:${context.scope.principalId}`,
-      resultCount: 1,
-      servingModuleKey: 'core.identity',
-      targetModuleKey: 'core.identity',
-      targetResourceId: context.scope.principalId,
-      targetResourceType: 'principal',
-    });
-    return result;
+) {
+  const result = yield* context.services.bind({
+    managed: false,
+    principalId: context.scope.principalId,
+    providerSubjectId: payload.providerSubjectId,
+    tenantId: context.scope.tenantId,
   });
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `principal-api-key-eligibility:${context.scope.principalId}`,
+    resultCount: 1,
+    servingModuleKey: 'core.identity',
+    targetModuleKey: 'core.identity',
+    targetResourceId: context.scope.principalId,
+    targetResourceType: 'principal',
+  });
+  return {
+    ...result,
+    authBindingId: AuthBindingIdSchema.make(result.authBindingId),
+  };
+});
 export const bindSelfApiKeyAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -75,6 +83,6 @@ export const bindSelfApiKeyAction = defineAction(
   handle,
   (transaction) => {
     const repository = principalManagementRepositoryFromTransaction(transaction);
-    return Effect.succeed({ bind: (input) => bindApiKey(repository, input) });
+    return Effect.succeed({ bind: repository.bindApiKey });
   },
 );

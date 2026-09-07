@@ -1,4 +1,4 @@
-import type { Client, ClientBase } from 'pg';
+import type { Client } from 'pg';
 import { Cause, Option, Schema } from 'effect';
 
 interface DatabasePrivileges {
@@ -8,8 +8,8 @@ interface DatabasePrivileges {
 }
 
 interface DefaultPrivilege {
-  readonly grantee: string;
   readonly grantable: boolean;
+  readonly grantee: string;
   readonly objectType: string;
   readonly owner: string;
   readonly privilege: string;
@@ -198,6 +198,16 @@ export class DatabaseTrustBoundaryAuditError extends Schema.TaggedError<Database
   { reason: Schema.String },
 ) {}
 
+export const DatabaseTargetMismatchError = Schema.TaggedError<unknown>()(
+  'DatabaseTargetMismatchError',
+  { message: Schema.String },
+);
+
+export const DatabaseSessionIdentityError = Schema.TaggedError<unknown>()(
+  'DatabaseSessionIdentityError',
+  { message: Schema.String },
+);
+
 export const genericAuditFailureMessage = 'Database trust-boundary audit failed';
 
 export const getDatabaseTrustBoundaryFailureMessage = (
@@ -208,10 +218,6 @@ export const getDatabaseTrustBoundaryFailureMessage = (
     ? failure.value.reason
     : genericAuditFailureMessage;
 };
-
-export class DatabaseTargetMismatchError extends Error {}
-
-export class DatabaseSessionIdentityError extends Error {}
 
 const hasDml = (table: TablePrivilege): boolean =>
   table.privileges.delete ||
@@ -226,8 +232,41 @@ const hasClusterPrivilege = (role: RoleAttributes): boolean =>
   role.canCreateRoles ||
   role.replication;
 
-const compareText = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0;
+const compareText = (left: string, right: string): number => {
+  if (left < right) {
+    return -1;
+  }
+  if (left > right) {
+    return 1;
+  }
+  return 0;
+};
+
+const sorted = <Value,>(
+  values: Iterable<Value>,
+  compare: (left: Value, right: Value) => number,
+): Value[] => {
+  const result: Value[] = [];
+  for (const value of values) {
+    const insertionIndex = result.findIndex((candidate) => compare(value, candidate) < 0);
+    if (insertionIndex === -1) {
+      result.push(value);
+    } else {
+      result.splice(insertionIndex, 0, value);
+    }
+  }
+  return result;
+};
+
+const addFinding = (
+  findings: DatabaseTrustBoundaryFinding[],
+  included: boolean,
+  finding: DatabaseTrustBoundaryFinding,
+): void => {
+  if (included) {
+    findings.push(finding);
+  }
+};
 
 export const assertSameDatabaseTarget = (
   administrative: DatabaseTargetIdentity,
@@ -241,8 +280,13 @@ export const assertSameDatabaseTarget = (
       (administrative.configuredHost !== runtime.configuredHost ||
         administrative.configuredPort !== runtime.configuredPort))
   ) {
-    throw new DatabaseTargetMismatchError(
-      'DATABASE_ADMIN_URL and DATABASE_URL must target the same PostgreSQL server and database',
+    Option.getOrThrowWith(
+      Option.none(),
+      () =>
+        new DatabaseTargetMismatchError({
+          message:
+            'DATABASE_ADMIN_URL and DATABASE_URL must target the same PostgreSQL server and database',
+        }),
     );
   }
 };
@@ -262,13 +306,22 @@ export const assertDatabaseSessionIdentities = (
     administrative.currentRole !== administrative.sessionRole ||
     runtime.currentRole !== runtime.sessionRole
   ) {
-    throw new DatabaseSessionIdentityError(
-      'current_user must equal session_user for both database audit connections',
+    Option.getOrThrowWith(
+      Option.none(),
+      () =>
+        new DatabaseSessionIdentityError({
+          message: 'current_user must equal session_user for both database audit connections',
+        }),
     );
   }
   if (administrative.sessionRole === runtime.sessionRole) {
-    throw new DatabaseSessionIdentityError(
-      'DATABASE_ADMIN_URL and DATABASE_URL must authenticate as distinct authenticated PostgreSQL roles',
+    Option.getOrThrowWith(
+      Option.none(),
+      () =>
+        new DatabaseSessionIdentityError({
+          message:
+            'DATABASE_ADMIN_URL and DATABASE_URL must authenticate as distinct authenticated PostgreSQL roles',
+        }),
     );
   }
 };
@@ -276,26 +329,29 @@ export const assertDatabaseSessionIdentities = (
 export const buildDatabaseTrustBoundaryReport = (
   snapshot: DatabaseTrustBoundarySnapshot,
 ): DatabaseTrustBoundaryReport => {
-  const schemas = [...snapshot.schemas].toSorted((left, right) =>
-    compareText(left.schema, right.schema),
-  );
-  const tables = [...snapshot.tables].toSorted(
+  const schemas = sorted(snapshot.schemas, (left, right) => compareText(left.schema, right.schema));
+  const tables = sorted(
+    snapshot.tables,
     (left, right) => compareText(left.schema, right.schema) || compareText(left.table, right.table),
   );
-  const sequences = [...snapshot.sequences].toSorted(
+  const sequences = sorted(
+    snapshot.sequences,
     (left, right) =>
       compareText(left.schema, right.schema) || compareText(left.sequence, right.sequence),
   );
-  const routines = [...snapshot.routines].toSorted(
+  const routines = sorted(
+    snapshot.routines,
     (left, right) =>
       compareText(left.schema, right.schema) ||
       compareText(left.routine, right.routine) ||
       compareText(left.identityArguments, right.identityArguments),
   );
-  const types = [...snapshot.types].toSorted(
+  const types = sorted(
+    snapshot.types,
     (left, right) => compareText(left.schema, right.schema) || compareText(left.type, right.type),
   );
-  const defaultPrivileges = [...snapshot.defaultPrivileges].toSorted(
+  const defaultPrivileges = sorted(
+    snapshot.defaultPrivileges,
     (left, right) =>
       compareText(left.schema ?? '', right.schema ?? '') ||
       compareText(left.owner, right.owner) ||
@@ -305,37 +361,37 @@ export const buildDatabaseTrustBoundaryReport = (
       compareText(left.source, right.source) ||
       Number(left.grantable) - Number(right.grantable),
   );
-  const memberships = [...snapshot.memberships].toSorted((left, right) =>
+  const memberships = sorted(snapshot.memberships, (left, right) =>
     compareText(left.role, right.role),
   );
-  const grantOptions = [...snapshot.grantOptions].toSorted(compareText);
+  const grantOptions = sorted(snapshot.grantOptions, compareText);
   const grantableDefaultPrivileges = defaultPrivileges.filter(({ grantable }) => grantable);
-  const parameterPrivileges = [...snapshot.parameterPrivileges].toSorted((left, right) =>
+  const parameterPrivileges = sorted(snapshot.parameterPrivileges, (left, right) =>
     compareText(left.parameter, right.parameter),
   );
   const findings: DatabaseTrustBoundaryFinding[] = [];
   const dmlTables = tables.filter(hasDml);
 
-  if (hasClusterPrivilege(snapshot.role) || snapshot.role.predefinedRole === true) {
-    findings.push({
+  addFinding(
+    findings,
+    hasClusterPrivilege(snapshot.role) || snapshot.role.predefinedRole === true,
+    {
       code: 'runtime_role_is_privileged',
       evidence:
         'The runtime role has a PostgreSQL cluster-level privilege or is a predefined PostgreSQL role.',
       severity: 'critical',
-    });
-  }
+    },
+  );
   const administrativeMembership = memberships.some(
     ({ canAdministerRole, canInheritRole, canSetRole, role }) =>
       (canSetRole || canAdministerRole || canInheritRole) && role === snapshot.administrativeRole,
   );
-  if (administrativeMembership) {
-    findings.push({
-      code: 'runtime_role_can_assume_administrative_role',
-      evidence:
-        'The runtime role can inherit, SET ROLE to, or has ADMIN OPTION on the authenticated administrative identity.',
-      severity: 'critical',
-    });
-  }
+  addFinding(findings, administrativeMembership, {
+    code: 'runtime_role_can_assume_administrative_role',
+    evidence:
+      'The runtime role can inherit, SET ROLE to, or has ADMIN OPTION on the authenticated administrative identity.',
+    severity: 'critical',
+  });
   const nonAdministrativeMemberships = memberships.filter(
     ({ canAdministerRole, canInheritRole, canSetRole, role }) =>
       (canSetRole || canAdministerRole || canInheritRole) && role !== snapshot.administrativeRole,
@@ -351,7 +407,7 @@ export const buildDatabaseTrustBoundaryReport = (
       ownedRoutines,
       ownedSchemas,
       ownedTypes,
-      parameterPrivileges = [],
+      parameterPrivileges: membershipParameterPrivileges = [],
       predefinedRole,
       relationPrivilegeSchemas,
       securityDefinerRoutines,
@@ -364,26 +420,22 @@ export const buildDatabaseTrustBoundaryReport = (
       ownedRoutines.length > 0 ||
       ownedSchemas.length > 0 ||
       ownedTypes.length > 0 ||
-      parameterPrivileges.length > 0 ||
+      membershipParameterPrivileges.length > 0 ||
       relationPrivilegeSchemas.length > 0 ||
       securityDefinerRoutines.length > 0,
   );
-  if (privilegedMemberships.length > 0) {
-    findings.push({
-      code: 'runtime_role_can_assume_privileged_role',
-      evidence:
-        'The runtime role can reach a non-administrative identity with predefined-role, cluster, database, schema, relation, routine, type, or parameter authority through inheritance, SET ROLE, or ADMIN OPTION.',
-      severity: 'critical',
-    });
-  }
-  if (nonAdministrativeMemberships.length > privilegedMemberships.length) {
-    findings.push({
-      code: 'runtime_role_can_assume_other_role',
-      evidence:
-        'The runtime role can inherit, SET ROLE to, or administer at least one additional identity.',
-      severity: 'high',
-    });
-  }
+  addFinding(findings, privilegedMemberships.length > 0, {
+    code: 'runtime_role_can_assume_privileged_role',
+    evidence:
+      'The runtime role can reach a non-administrative identity with predefined-role, cluster, database, schema, relation, routine, type, or parameter authority through inheritance, SET ROLE, or ADMIN OPTION.',
+    severity: 'critical',
+  });
+  addFinding(findings, nonAdministrativeMemberships.length > privilegedMemberships.length, {
+    code: 'runtime_role_can_assume_other_role',
+    evidence:
+      'The runtime role can inherit, SET ROLE to, or administer at least one additional identity.',
+    severity: 'high',
+  });
   const ownsRelation =
     tables.some(({ owner }) => owner === snapshot.runtimeRole) ||
     sequences.some(({ owner }) => owner === snapshot.runtimeRole);
@@ -397,33 +449,31 @@ export const buildDatabaseTrustBoundaryReport = (
         ownedSchemas.length > 0 ||
         ownedTypes.length > 0),
   );
-  if (
+  addFinding(
+    findings,
     snapshot.databasePrivileges.create ||
-    schemas.some(({ create }) => create) ||
-    ownsRelation ||
-    ownsRoutine ||
-    ownsType ||
-    inheritsOwnership
-  ) {
-    findings.push({
+      schemas.some(({ create }) => create) ||
+      ownsRelation ||
+      ownsRoutine ||
+      ownsType ||
+      inheritsOwnership,
+    {
       code: 'runtime_role_has_ddl_authority',
       evidence:
         'The runtime role has database/schema CREATE or direct/inherited ownership of an audited schema, relation, routine, or application type.',
       severity: 'high',
-    });
-  }
+    },
+  );
   const relationControlTables = tables.filter(
     ({ privileges }) =>
       privileges.maintain || privileges.references || privileges.trigger || privileges.truncate,
   );
-  if (relationControlTables.length > 0) {
-    findings.push({
-      code: 'runtime_role_has_relation_control_authority',
-      evidence:
-        'The runtime role has MAINTAIN, TRUNCATE, REFERENCES, or TRIGGER on an audited table-like relation.',
-      severity: 'high',
-    });
-  }
+  addFinding(findings, relationControlTables.length > 0, {
+    code: 'runtime_role_has_relation_control_authority',
+    evidence:
+      'The runtime role has MAINTAIN, TRUNCATE, REFERENCES, or TRIGGER on an audited table-like relation.',
+    severity: 'high',
+  });
   const executableSecurityDefiners = routines.filter(
     ({ executable, owner, securityDefiner }) =>
       executable && securityDefiner && owner !== snapshot.runtimeRole,
@@ -531,8 +581,8 @@ export const buildDatabaseTrustBoundaryReport = (
     memberships,
     parameterPrivileges,
     routines,
-    schemaVersion: 1,
     schemas,
+    schemaVersion: 1,
     sequences,
     summary: {
       auditedSchemaCount: schemas.length,

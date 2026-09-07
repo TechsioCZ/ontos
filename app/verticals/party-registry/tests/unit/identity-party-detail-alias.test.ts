@@ -1,7 +1,9 @@
+import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { PartyDetailResponseSchema } from '../../shared/apis/party-detail.ts';
+import { PartySchema } from '../../shared/domain/identity-contracts.ts';
 import type { Party } from '../../shared/domain/identity-contracts.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import { readPartyDetailFromServices } from '../../src/api/party-detail.read.ts';
@@ -17,7 +19,7 @@ const partyRef = (resourceId: string): PartyRef => ({
   resourceType: 'party.registry.party',
   tenantId,
 });
-const canonicalParty: Party = {
+const canonicalPartyWire = {
   archivedAt: null,
   createdAt: '2026-09-01T10:00:00.000Z',
   displayName: 'Canonical Party',
@@ -25,7 +27,8 @@ const canonicalParty: Party = {
   partyType: 'ORGANIZATION',
   revision: 3,
   updatedAt: '2026-09-03T10:00:00.000Z',
-};
+} as const;
+const canonicalParty: Party = Schema.decodeUnknownSync(PartySchema)(canonicalPartyWire);
 const alias = (aliasPartyId: string, canonicalPartyId: string): PartyAliasLookupRow => ({
   aliasPartyId,
   canonicalPartyId,
@@ -38,13 +41,15 @@ const makeServices = (
   const lookups: string[] = [];
   const resolver = makePartyAliasResolutionService({
     findAlias: (_tenantId, partyId) =>
-      Effect.succeed(aliases.find(({ aliasPartyId }) => aliasPartyId === partyId) ?? null),
+      Effect.succeed(
+        Option.fromNullishOr(aliases.find(({ aliasPartyId }) => aliasPartyId === partyId)),
+      ),
     partyExists: (_tenantId, partyId) => Effect.succeed(party?.partyRef.resourceId === partyId),
   });
   return {
     lookups,
     services: {
-      facts: () => Effect.succeed({ currentFactAssertions: [], factHistory: null }),
+      facts: () => Effect.succeed({ currentFactAssertions: [], factHistory: Option.none() }),
       find: (partyId: string): Effect.Effect<PartyLookup> => {
         lookups.push(partyId);
         return Effect.succeed(
@@ -63,13 +68,13 @@ test('Party Detail reads the final canonical Party after the complete historical
     alias('party-b', 'party-a'),
     alias('party-a', 'party-c'),
   ]);
-  const result = Effect.runSync(
+  const result = runEffectTestSync(
     readPartyDetailFromServices(partyRef('party-b'), tenantId, services),
   );
 
   assert.deepEqual(result, {
     currentFactAssertions: [],
-    factHistory: null,
+    factHistory: Option.none(),
     party: canonicalParty,
     resolution: {
       aliasChain: [partyRef('party-b'), partyRef('party-a')],
@@ -79,17 +84,24 @@ test('Party Detail reads the final canonical Party after the complete historical
     },
   });
   assert.deepEqual(lookups, ['party-c']);
-  assert.deepEqual(Schema.decodeUnknownSync(PartyDetailResponseSchema)(result), result);
+  assert.equal(Schema.is(PartyDetailResponseSchema)(result), true);
+  const encoded = Schema.encodeSync(PartyDetailResponseSchema)(result);
+  assert.equal(encoded.factHistory, null);
+  assert.deepEqual(encoded.party, canonicalPartyWire);
 });
 
 test('Party Detail preserves archived lifecycle independently of direct resolution metadata', () => {
-  const archivedParty = { ...canonicalParty, archivedAt: '2026-09-02T10:00:00.000Z' };
+  const archivedAt = '2026-09-02T10:00:00.000Z';
+  const archivedParty = Schema.decodeUnknownSync(PartySchema)({
+    ...canonicalPartyWire,
+    archivedAt,
+  });
   const { services } = makeServices([], archivedParty);
-  const result = Effect.runSync(
+  const result = runEffectTestSync(
     readPartyDetailFromServices(partyRef('party-c'), tenantId, services),
   );
 
-  assert.equal(result.party.archivedAt, '2026-09-02T10:00:00.000Z');
+  assert.deepEqual(result.party.archivedAt, Option.some(DateTime.makeUnsafe(archivedAt)));
   assert.deepEqual(result.resolution, {
     aliasChain: [],
     canonicalPartyRef: partyRef('party-c'),
@@ -104,7 +116,7 @@ test('Party Detail fails closed for cycles and broken historical chains without 
     [alias('party-a', 'missing')],
   ]) {
     const { lookups, services } = makeServices(aliases);
-    const error = Effect.runSync(
+    const error = runEffectTestSync(
       Effect.flip(readPartyDetailFromServices(partyRef('party-a'), tenantId, services)),
     );
     assert.equal(error._tag, 'ReadHandlerUnavailable');
@@ -118,7 +130,7 @@ test('Party Detail hides a missing direct Party and a cross-tenant requested ref
     partyRef('missing'),
     { ...partyRef('party-c'), tenantId: otherTenantId },
   ]) {
-    const error = Effect.runSync(
+    const error = runEffectTestSync(
       Effect.flip(readPartyDetailFromServices(requested, tenantId, services)),
     );
     assert.equal(error._tag, 'ReadHandlerNotFound');

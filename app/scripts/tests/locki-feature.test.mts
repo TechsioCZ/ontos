@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { chmod, cp, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { execPath } from 'node:process';
 import { test } from 'node:test';
-import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
 
-const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const workspaceRoot = path.resolve(import.meta.dirname, '../..');
 const workflowScript = path.join(workspaceRoot, 'scripts/locki-feature.sh');
+const featureSlug = 'customer-search';
 
-test('pins pnpm to the npm mise backend for cross-platform sandbox installation', async () => {
+void test('pins pnpm to the npm mise backend for cross-platform sandbox installation', async () => {
   const miseConfiguration = await readFile(path.join(workspaceRoot, '.mise.toml'), 'utf-8');
   assert.match(miseConfiguration, /\[tool_alias\][\s\S]*pnpm = "npm:pnpm"/u);
   assert.match(miseConfiguration, /\[tools\][\s\S]*pnpm = "11\.25\.0"/u);
@@ -20,6 +21,12 @@ interface Fixture {
   readonly logPath: string;
   readonly sourceRoot: string;
   readonly targetRoot: string;
+}
+
+interface WorkflowResult {
+  readonly code: number | null;
+  readonly stderr: string;
+  readonly stdout: string;
 }
 
 const executable = async (target: string, content: string): Promise<void> => {
@@ -101,48 +108,40 @@ esac
   return { binDirectory, logPath, sourceRoot, targetRoot };
 };
 
-const runWorkflow = async (
+const runWorkflow = (
   fixture: Fixture,
-  arguments_: readonly string[],
+  commandArguments: readonly string[],
   extraEnvironment: Readonly<Record<string, string>> = {},
-): Promise<{ readonly code: number | null; readonly stderr: string; readonly stdout: string }> =>
-  await new Promise((resolve, reject) => {
-    const child = spawn(
-      'sh',
-      [path.join(fixture.sourceRoot, 'app/scripts/locki-feature.sh'), ...arguments_],
-      {
-        env: {
-          ...process.env,
-          ...extraEnvironment,
-          PATH: `${fixture.binDirectory}:${process.env.PATH ?? ''}`,
-          TEST_LOG: fixture.logPath,
-          TEST_SOURCE_ROOT: fixture.sourceRoot,
-          TEST_TARGET_ROOT: fixture.targetRoot,
-        },
+): WorkflowResult => {
+  const result = spawnSync(
+    '/bin/sh',
+    [path.join(fixture.sourceRoot, 'app/scripts/locki-feature.sh'), ...commandArguments],
+    {
+      encoding: 'utf-8',
+      env: {
+        ...extraEnvironment,
+        PATH: `${fixture.binDirectory}:${path.dirname(execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
+        TEST_LOG: fixture.logPath,
+        TEST_SOURCE_ROOT: fixture.sourceRoot,
+        TEST_TARGET_ROOT: fixture.targetRoot,
       },
-    );
-    let stderr = '';
-    let stdout = '';
-    child.stderr.setEncoding('utf-8').on('data', (value) => {
-      stderr += value;
-    });
-    child.stdout.setEncoding('utf-8').on('data', (value) => {
-      stdout += value;
-    });
-    child.on('error', reject);
-    child.on('close', (code) => resolve({ code, stderr, stdout }));
-  });
+    },
+  );
+  assert.ifError(result.error);
+  return { code: result.status, stderr: result.stderr, stdout: result.stdout };
+};
 
-test('creates one sandbox from main, copies .env opaquely, and prepares in order', async () => {
+void test('creates one sandbox from main, copies .env opaquely, and prepares in order', async () => {
   const fixture = await makeFixture();
-  const result = await runWorkflow(fixture, ['--', 'customer-search', '--no-ai']);
+  const result = runWorkflow(fixture, ['--', featureSlug, '--no-ai']);
   assert.equal(result.code, 0, result.stderr);
   assert.equal(result.stdout.includes('OPAQUE-SECRET'), false);
   assert.deepEqual(
     await readFile(path.join(fixture.targetRoot, 'app/.env')),
     await readFile(path.join(fixture.sourceRoot, 'app/.env')),
   );
-  assert.equal((await stat(path.join(fixture.targetRoot, 'app/.env'))).mode & 0o777, 0o600);
+  const environmentStat = await stat(path.join(fixture.targetRoot, 'app/.env'));
+  assert.equal(environmentStat.mode % 0o1000, 0o600);
   const log = await readFile(fixture.logPath, 'utf-8');
   assert.match(log, /locki new --from main --branch codex\/customer-search --json/u);
   assert.match(
@@ -167,36 +166,40 @@ test('creates one sandbox from main, copies .env opaquely, and prepares in order
   }
 });
 
-test('rejects unsafe slugs and alternate options before creating a sandbox', async () => {
-  for (const arguments_ of [['Bad Slug'], ['feature', '--from', 'main']]) {
+void test('rejects unsafe slugs and alternate options before creating a sandbox', async () => {
+  const assertRejected = async (commandArguments: readonly string[]): Promise<void> => {
     const fixture = await makeFixture();
-    const result = await runWorkflow(fixture, arguments_);
+    const result = runWorkflow(fixture, commandArguments);
     assert.equal(result.code, 2);
     await assert.rejects(readFile(fixture.logPath, 'utf-8'));
-  }
+  };
+  await assertRejected(['Bad Slug']);
+  await assertRejected(['feature', '--from', 'main']);
 });
 
-test('fails before Locki when the source environment is missing', async () => {
+void test('fails before Locki when the source environment is missing', async () => {
   const fixture = await makeFixture(false);
-  const result = await runWorkflow(fixture, ['customer-search']);
+  const result = runWorkflow(fixture, [featureSlug]);
   assert.equal(result.code, 1);
   assert.match(result.stderr, /Source app\/\.env is required/u);
-  assert.equal((await readFile(fixture.logPath, 'utf-8')).includes('locki new'), false);
+  const log = await readFile(fixture.logPath, 'utf-8');
+  assert.equal(log.includes('locki new'), false);
 });
 
-test('fails before creating a sandbox when the workflow is not committed on main', async () => {
+void test('fails before creating a sandbox when the workflow is not committed on main', async () => {
   const fixture = await makeFixture();
-  const result = await runWorkflow(fixture, ['customer-search'], {
+  const result = runWorkflow(fixture, [featureSlug], {
     TEST_WORKFLOW_COMMITTED: 'false',
   });
   assert.equal(result.code, 1);
   assert.match(result.stderr, /workflow is not yet committed on main/u);
-  assert.equal((await readFile(fixture.logPath, 'utf-8')).includes('locki new'), false);
+  const log = await readFile(fixture.logPath, 'utf-8');
+  assert.equal(log.includes('locki new'), false);
 });
 
-test('refuses an app path that resolves outside the returned worktree', async () => {
+void test('refuses an app path that resolves outside the returned worktree', async () => {
   const fixture = await makeFixture();
-  const result = await runWorkflow(fixture, ['customer-search'], { ESCAPE_TARGET: 'true' });
+  const result = runWorkflow(fixture, [featureSlug], { ESCAPE_TARGET: 'true' });
   assert.equal(result.code, 1);
   assert.match(result.stderr, /Refusing to copy \.env outside the Locki worktree/u);
   assert.deepEqual(
@@ -205,9 +208,9 @@ test('refuses an app path that resolves outside the returned worktree', async ()
   );
 });
 
-test('preserves a failed sandbox and never launches AI', async () => {
+void test('preserves a failed sandbox and never launches AI', async () => {
   const fixture = await makeFixture();
-  const result = await runWorkflow(fixture, ['customer-search'], { FAIL_PREPARATION: 'true' });
+  const result = runWorkflow(fixture, [featureSlug], { FAIL_PREPARATION: 'true' });
   assert.equal(result.code, 1);
   assert.match(result.stdout, /locki exec --match sandbox-42/u);
   assert.match(result.stdout, /locki rm --match sandbox-42/u);
@@ -215,9 +218,9 @@ test('preserves a failed sandbox and never launches AI', async () => {
   assert.equal(log.includes('locki ai'), false);
 });
 
-test('launches the configured AI only after successful preparation', async () => {
+void test('launches the configured AI only after successful preparation', async () => {
   const fixture = await makeFixture();
-  const result = await runWorkflow(fixture, ['customer-search']);
+  const result = runWorkflow(fixture, [featureSlug]);
   assert.equal(result.code, 0, result.stderr);
   const log = await readFile(fixture.logPath, 'utf-8');
   assert.ok(

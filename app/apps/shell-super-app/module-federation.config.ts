@@ -3,16 +3,74 @@ import { createRequire } from 'node:module';
 
 import { getBuildConfigEnvironment } from '@modern-js/app-tools/config';
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
-import * as Schema from 'effect/Schema';
+import {
+  getOrElse as getOptionOrElse,
+  getOrUndefined as getOptionOrUndefined,
+  isSome as isOptionSome,
+} from 'effect/Option';
+import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
+import {
+  Boolean as BooleanSchema,
+  Literal,
+  Literals,
+  OptionFromUndefinedOr,
+  String as StringSchema,
+  Struct,
+  Trim,
+  check,
+  decodeTo,
+  decodeUnknownResult,
+  decodeUnknownSync,
+  isMinLength,
+} from 'effect/Schema';
+import { transform } from 'effect/SchemaTransformation';
 
 import { dependencies } from './package.json';
 
-const cloudflareDeployEnabled = getBuildConfigEnvironment('MODERNJS_DEPLOY') === 'cloudflare';
-const cloudflareWorkersDevSubdomain = getBuildConfigEnvironment(
+const nonEmptyBuildStringSchema = Trim.pipe(check(isMinLength(1)));
+const getOptionalBuildConfig = (name: string): string | undefined => {
+  const decoded = decodeUnknownResult(OptionFromUndefinedOr(nonEmptyBuildStringSchema))(
+    getBuildConfigEnvironment(name),
+  );
+  return isResultSuccess(decoded) ? getOptionOrUndefined(decoded.success) : undefined;
+};
+const cloudflareDeployMode = getResultOrThrow(
+  decodeUnknownResult(OptionFromUndefinedOr(Literal('cloudflare')))(
+    getBuildConfigEnvironment('MODERNJS_DEPLOY'),
+  ),
+);
+const cloudflareDeployEnabled = isOptionSome(cloudflareDeployMode);
+const cloudflareWorkersDevSubdomain = getOptionalBuildConfig(
   'ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN',
-)?.trim();
-const requireCloudflarePublicUrls =
-  getBuildConfigEnvironment('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') === 'true';
+);
+const BuildBooleanSchema = Literals([
+  'true',
+  'yes',
+  'on',
+  '1',
+  'y',
+  'false',
+  'no',
+  'off',
+  '0',
+  'n',
+]).pipe(
+  decodeTo(
+    BooleanSchema,
+    transform({
+      decode: (value) => ['true', 'yes', 'on', '1', 'y'].includes(value),
+      encode: (value) => (value ? 'true' : 'false'),
+    }),
+  ),
+);
+const requireCloudflarePublicUrls = getOptionOrElse(
+  getResultOrThrow(
+    decodeUnknownResult(OptionFromUndefinedOr(BuildBooleanSchema))(
+      getBuildConfigEnvironment('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS'),
+    ),
+  ),
+  () => false,
+);
 
 const createRemoteManifestUrl = (options: {
   manifestEnv: string;
@@ -21,21 +79,17 @@ const createRemoteManifestUrl = (options: {
   publicUrlEnv: string;
   workerName: string;
 }) => {
-  const configuredManifest = getBuildConfigEnvironment(options.manifestEnv)?.trim();
-  if (configuredManifest !== undefined && configuredManifest.length > 0) {
+  const configuredManifest = getOptionalBuildConfig(options.manifestEnv);
+  if (configuredManifest !== undefined) {
     return configuredManifest;
   }
 
-  const configuredPublicUrl = getBuildConfigEnvironment(options.publicUrlEnv)?.trim();
-  if (configuredPublicUrl !== undefined && configuredPublicUrl.length > 0) {
+  const configuredPublicUrl = getOptionalBuildConfig(options.publicUrlEnv);
+  if (configuredPublicUrl !== undefined) {
     return `${options.mfName}@${configuredPublicUrl.replace(/\/+$/u, '')}/mf-manifest.json`;
   }
 
-  if (
-    cloudflareDeployEnabled &&
-    cloudflareWorkersDevSubdomain !== undefined &&
-    cloudflareWorkersDevSubdomain.length > 0
-  ) {
+  if (cloudflareDeployEnabled && cloudflareWorkersDevSubdomain !== undefined) {
     return `${options.mfName}@https://${options.workerName}.${cloudflareWorkersDevSubdomain}.workers.dev/mf-manifest.json`;
   }
 
@@ -49,9 +103,9 @@ const createRemoteManifestUrl = (options: {
 };
 
 const require = createRequire(import.meta.url);
-const PackageVersionSchema = Schema.Struct({ version: Schema.String });
+const PackageVersionSchema = Struct({ version: StringSchema });
 const packageVersion = (packageName: string): string =>
-  Schema.decodeUnknownSync(PackageVersionSchema)(require(`${packageName}/package.json`)).version;
+  decodeUnknownSync(PackageVersionSchema)(require(`${packageName}/package.json`)).version;
 const i18nVersion = packageVersion('@modern-js/plugin-i18n');
 const runtimeVersion = packageVersion('@modern-js/runtime');
 const reactVersion = packageVersion('react');

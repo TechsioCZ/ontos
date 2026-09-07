@@ -1,10 +1,8 @@
-/* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Effect error combinators are the typed async boundary. */
 import { Cause, Effect } from 'effect';
 import type {
   InstalledDeploymentFailureReason,
   ModuleEntrypointDescriptor,
-  ModuleEntrypointGatewayService,
-  ModuleStateGateError,
+  ModuleEntrypointGatewayService as ModuleEntrypointAdapter,
   RunGatedModuleEntrypointInput,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
@@ -12,13 +10,6 @@ import type {
 export type SettledModuleEntrypointLoad<Value> =
   | { readonly reason: InstalledDeploymentFailureReason; readonly state: 'unavailable' }
   | { readonly state: 'ready'; readonly value: Value };
-
-export interface ModuleEntrypointLoadRequest<Identity, Value> {
-  readonly identity: Identity;
-  readonly isCompatible: (value: Value) => boolean;
-  readonly load: () => Promise<Value>;
-  readonly timeoutMs?: number;
-}
 
 export type IdentifiedSettledModuleEntrypointLoad<Identity, Value> =
   SettledModuleEntrypointLoad<Value> & { readonly identity: Identity };
@@ -47,13 +38,22 @@ export const settleModuleEntrypointLoad = <Value>(
         ? { state: 'ready', value }
         : { reason: 'incompatible', state: 'unavailable' },
     ),
-    Effect.catch((error) =>
-      Effect.succeed<SettledModuleEntrypointLoad<Value>>({
-        reason: Cause.isTimeoutError(error) ? 'timeout' : 'unavailable',
-        state: 'unavailable',
-      }),
-    ),
+    Effect.matchEffect({
+      onFailure: (error) =>
+        Effect.succeed<SettledModuleEntrypointLoad<Value>>({
+          reason: Cause.isTimeoutError(error) ? 'timeout' : 'unavailable',
+          state: 'unavailable',
+        }),
+      onSuccess: Effect.succeed,
+    }),
   );
+
+export interface ModuleEntrypointLoadRequest<Identity, Value> {
+  readonly identity: Identity;
+  readonly isCompatible: (value: Value) => boolean;
+  readonly load: Parameters<typeof settleModuleEntrypointLoad<Value>>[0];
+  readonly timeoutMs?: number;
+}
 
 /** Settles a set of browser entrypoints concurrently without widening one failure to the set. */
 export const settleModuleEntrypointLoads = <Identity, Value>(
@@ -65,7 +65,7 @@ export const settleModuleEntrypointLoads = <Identity, Value>(
         Effect.map((result) => ({ identity, ...result })),
       ),
     ),
-    { concurrency: 'unbounded' },
+    { concurrency: 8 },
   );
 
 export type LazyModuleEntrypointLoad<Value, AuthorizationError, LoadError, Requirements> = Omit<
@@ -75,28 +75,34 @@ export type LazyModuleEntrypointLoad<Value, AuthorizationError, LoadError, Requi
   readonly entrypoint: ModuleEntrypointDescriptor<'page' | 'public_component'>;
 };
 
-/** Shell-only composition seam. Callers pass typed descriptors and lazy thunks, never remote strings. */
-export const loadModuleEntrypointComposition = <Value, AuthorizationError, LoadError, Requirements>(
-  gateway: ModuleEntrypointGatewayService,
+/** Shell-only composition seam. Callers pass typed descriptors and lazy Effects, never remote strings. */
+export const loadModuleEntrypointComposition = Effect.fn(
+  'ModuleEntrypointLoader.loadModuleEntrypointComposition',
+)(function* loadModuleEntrypointCompositionEffect<
+  Value,
+  AuthorizationError,
+  LoadError,
+  Requirements,
+>(
+  gateway: ModuleEntrypointAdapter,
   context: Readonly<TrustedPrincipalContext>,
   loads: readonly LazyModuleEntrypointLoad<Value, AuthorizationError, LoadError, Requirements>[],
-): Effect.Effect<
-  readonly Value[],
-  AuthorizationError | LoadError | ModuleStateGateError,
-  Requirements
-> =>
-  Effect.gen(function* loadModuleEntrypointCompositionEffect() {
-    const snapshot = yield* gateway.prepareSnapshot(
-      context,
-      loads.map((load) => load.entrypoint),
-    );
-    yield* Effect.forEach((load: (typeof loads)[number]) =>
-      gateway.check(snapshot, load.entrypoint),
-    )(loads);
-    return yield* Effect.forEach((load: (typeof loads)[number]) =>
-      gateway.run({ ...load, snapshot }),
-    )(loads);
-  });
+) {
+  const snapshot = yield* gateway.prepareSnapshot(
+    context,
+    loads.map((load) => load.entrypoint),
+  );
+  yield* Effect.forEach(
+    loads,
+    (load: (typeof loads)[number]) => gateway.check(snapshot, load.entrypoint),
+    { concurrency: 1 },
+  );
+  return yield* Effect.forEach(
+    loads,
+    (load: (typeof loads)[number]) => gateway.run({ ...load, snapshot }),
+    { concurrency: 1 },
+  );
+});
 
 /** A resolved BFF target is the capability token that permits the browser-side lazy registry lookup. */
 export const resolveThenLoadModuleTarget = <
