@@ -6,7 +6,6 @@ import {
   acquireSpiceDbClientResource,
   createSpiceDbPermissionClient,
   fullyConsistent,
-  normalizeSpiceDbPermissionClientOperation,
   spiceDbPermissionClientError,
 } from './client.ts';
 import type { SpiceDbPermissionClient } from './client.ts';
@@ -184,40 +183,40 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
       return Effect.succeed([]);
     }
     const requests = items.map((item) => makeRequestItem(item, principalId));
-    return normalizeSpiceDbPermissionClientOperation(
-      client.checkBulkPermissions(
+    return client
+      .checkBulkPermissions(
         v1.CheckBulkPermissionsRequest.create({
           consistency: fullyConsistent,
           items: requests,
           withTracing: false,
         }),
-      ),
-    ).pipe(
-      Effect.map((response) => {
-        if (response.pairs.length !== requests.length) {
-          return unavailable(keys);
-        }
-        const seen = new Set<string>();
-        const decisions = response.pairs.map((pair, index) => {
-          const expected = requests[index];
-          const key = keys[index];
-          if (
-            expected === undefined ||
-            key === undefined ||
-            !sameRequest(expected, pair.request) ||
-            seen.has(key)
-          ) {
-            return null;
+      )
+      .pipe(
+        Effect.map((response) => {
+          if (response.pairs.length !== requests.length) {
+            return unavailable(keys);
           }
-          seen.add(key);
-          return { decision: classifyPair(pair), key };
-        });
-        return decisions.every((decision): decision is ContextAccessResult => decision !== null)
-          ? decisions
-          : unavailable(keys);
-      }),
-      Effect.catchTag('SpiceDbPermissionClientError', () => Effect.succeed(unavailable(keys))),
-    );
+          const seen = new Set<string>();
+          const decisions = response.pairs.map((pair, index) => {
+            const expected = requests[index];
+            const key = keys[index];
+            if (
+              expected === undefined ||
+              key === undefined ||
+              !sameRequest(expected, pair.request) ||
+              seen.has(key)
+            ) {
+              return null;
+            }
+            seen.add(key);
+            return { decision: classifyPair(pair), key };
+          });
+          return decisions.every((decision): decision is ContextAccessResult => decision !== null)
+            ? decisions
+            : unavailable(keys);
+        }),
+        Effect.catchTag('SpiceDbPermissionClientError', () => Effect.succeed(unavailable(keys))),
+      );
   };
 
   const service: ContextAccessService = {

@@ -16,9 +16,8 @@ import {
   acquireSpiceDbClientResource,
   createSpiceDbPermissionClient,
   fullyConsistent,
-  normalizeSpiceDbPermissionClientOperation,
 } from './client.ts';
-import type { SpiceDbPermissionClient, SpiceDbPermissionClientOperation } from './client.ts';
+import type { SpiceDbPermissionClient } from './client.ts';
 
 export { SPICEDB_CHECK_TIMEOUT_MS } from './client.ts';
 
@@ -49,13 +48,7 @@ export interface ActionPermissionService {
   ) => Effect.Effect<ActionPermissionDecision, ActionPermissionCheckError>;
 }
 
-export interface PermissionCheckClient<
-  CheckOutcome extends SpiceDbPermissionClientOperation<v1.CheckPermissionResponse | undefined> =
-    SpiceDbPermissionClientOperation<v1.CheckPermissionResponse | undefined>,
-> {
-  readonly checkPermission: (request: v1.CheckPermissionRequest) => CheckOutcome;
-  readonly close: () => void;
-}
+export type PermissionCheckClient = Pick<SpiceDbPermissionClient, 'checkPermission' | 'close'>;
 
 export type PermissionClientFactory = (
   configuration: SpiceDbConfigValue,
@@ -143,10 +136,9 @@ const runCheck = (
   client: PermissionCheckClient,
   request: v1.CheckPermissionRequest,
 ): Effect.Effect<'has' | 'none', ActionPermissionCheckError> =>
-  normalizeSpiceDbPermissionClientOperation(client.checkPermission(request)).pipe(
-    Effect.mapError(checkFailure),
-    Effect.flatMap(classifyPermissionship),
-  );
+  client
+    .checkPermission(request)
+    .pipe(Effect.mapError(checkFailure), Effect.flatMap(classifyPermissionship));
 
 export interface ActionPermissionRolloutOptions {
   readonly emit: (event: AuthorizationWouldDenyEvent) => void;

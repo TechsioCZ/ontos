@@ -1,10 +1,10 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type, unicorn/no-thenable -- This focused test harness models the narrow Drizzle fluent/PromiseLike surface used by the owner-local service. expires: 2026-12-31. */
+import { DateTime, Effect } from 'effect';
+/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This focused test harness models the narrow Drizzle native Effect query surface used by the owner-local service. expires: 2026-12-31. */
+import type { Table } from 'drizzle-orm';
+import { getTableName } from 'drizzle-orm';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getTableName } from 'drizzle-orm';
-import type { Table } from 'drizzle-orm';
-import { DateTime } from 'effect';
 import {
   addCounterpartyRoleRecord,
   createCounterpartyRecord,
@@ -81,24 +81,24 @@ const transactionHarness = (
   const updateSets: Readonly<Record<string, unknown>>[] = [];
   const select = () => {
     const rows = selectQueue.shift() ?? [];
-    const chain = {
-      for: () => Promise.resolve(rows),
-      from: (table: Table) => {
-        selectedTables.push(getTableName(table));
-        return chain;
+    const chain = Object.assign(
+      Effect.sync(() => rows),
+      {
+        for: () => Effect.succeed(rows),
+        from: (table: Table) => {
+          selectedTables.push(getTableName(table));
+          return chain;
+        },
+        limit: () => chain,
+        orderBy: () => chain,
+        where: () => chain,
       },
-      limit: () => chain,
-      orderBy: () => chain,
-      then: <Result>(
-        onfulfilled?: ((value: readonly Readonly<Record<string, unknown>>[]) => Result) | null,
-      ) => Promise.resolve(rows).then(onfulfilled),
-      where: () => chain,
-    };
+    );
     return chain;
   };
   const update = () => {
     const chain = {
-      returning: () => Promise.resolve(updateQueue.shift() ?? []),
+      returning: () => Effect.succeed(updateQueue.shift() ?? []),
       set: (values: Readonly<Record<string, unknown>>) => {
         updateSets.push(values);
         return chain;
@@ -109,18 +109,18 @@ const transactionHarness = (
   };
   const insert = (table: Table) => {
     insertedTables.push(getTableName(table));
-    const chain = {
-      onConflictDoNothing: () => chain,
-      onConflictDoUpdate: () => chain,
-      returning: () => Promise.resolve(insertQueue.shift() ?? []),
-      then: <Result>(
-        onfulfilled?: ((value: readonly Readonly<Record<string, unknown>>[]) => Result) | null,
-      ) => Promise.resolve([]).then(onfulfilled),
-      values: (values: Readonly<Record<string, unknown>>) => {
-        insertValues.push(values);
-        return chain;
+    const chain = Object.assign(
+      Effect.sync(() => []),
+      {
+        onConflictDoNothing: () => chain,
+        onConflictDoUpdate: () => chain,
+        returning: () => Effect.succeed(insertQueue.shift() ?? []),
+        values: (values: Readonly<Record<string, unknown>>) => {
+          insertValues.push(values);
+          return chain;
+        },
       },
-    };
+    );
     return chain;
   };
   // SAFETY: the harness implements precisely the select/update fluent methods exercised here.

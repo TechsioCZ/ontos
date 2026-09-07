@@ -34,39 +34,22 @@ export const spiceDbPermissionClientError = (cause?: unknown): SpiceDbPermission
     cause,
   );
 
-export type SpiceDbPermissionClientOperation<Value> =
-  | Effect.Effect<Value, SpiceDbPermissionClientError>
-  | PromiseLike<Value>;
-
-export interface SpiceDbPermissionClient<
-  BulkCheckOutcome extends SpiceDbPermissionClientOperation<v1.CheckBulkPermissionsResponse> =
-    SpiceDbPermissionClientOperation<v1.CheckBulkPermissionsResponse>,
-  CheckOutcome extends SpiceDbPermissionClientOperation<v1.CheckPermissionResponse> =
-    SpiceDbPermissionClientOperation<v1.CheckPermissionResponse>,
-> extends CloseableSpiceDbClient {
-  readonly checkBulkPermissions: (request: v1.CheckBulkPermissionsRequest) => BulkCheckOutcome;
-  readonly checkPermission: (request: v1.CheckPermissionRequest) => CheckOutcome;
+export interface SpiceDbPermissionClient extends CloseableSpiceDbClient {
+  readonly checkBulkPermissions: (
+    request: v1.CheckBulkPermissionsRequest,
+  ) => Effect.Effect<v1.CheckBulkPermissionsResponse, SpiceDbPermissionClientError>;
+  readonly checkPermission: (
+    request: v1.CheckPermissionRequest,
+  ) => Effect.Effect<v1.CheckPermissionResponse, SpiceDbPermissionClientError>;
 }
 
-export const normalizeSpiceDbPermissionClientOperation = <Value>(
-  operation: SpiceDbPermissionClientOperation<Value>,
-): Effect.Effect<Value, SpiceDbPermissionClientError> =>
-  Effect.isEffect(operation)
-    ? operation
-    : Effect.tryPromise({
-        catch: spiceDbPermissionClientError,
-        try: () => operation,
-      }).pipe(
-        Effect.timeoutOrElse({
-          duration: Duration.millis(SPICEDB_CHECK_TIMEOUT_MS),
-          orElse: () =>
-            Effect.fail(
-              spiceDbPermissionClientError(
-                new Cause.TimeoutError('SpiceDB client operation timed out'),
-              ),
-            ),
-        }),
-      );
+const permissionTimeout = Effect.timeoutOrElse({
+  duration: Duration.millis(SPICEDB_CHECK_TIMEOUT_MS),
+  orElse: () =>
+    Effect.fail(
+      spiceDbPermissionClientError(new Cause.TimeoutError('SpiceDB client operation timed out')),
+    ),
+});
 
 export const spiceDbClientSecurity = (
   configuration: Pick<SpiceDbConfigValue, 'deploymentEnvironment' | 'endpoint' | 'insecureLocal'>,
@@ -84,10 +67,7 @@ export const spiceDbClientSecurity = (
 export const createSpiceDbPermissionClient = (
   configuration: SpiceDbConfigValue,
   timeoutMilliseconds: number,
-): SpiceDbPermissionClient<
-  Effect.Effect<v1.CheckBulkPermissionsResponse, SpiceDbPermissionClientError>,
-  Effect.Effect<v1.CheckPermissionResponse, SpiceDbPermissionClientError>
-> => {
+): SpiceDbPermissionClient => {
   const client = v1.NewClient(
     configuration.preSharedKey,
     configuration.endpoint,
@@ -97,9 +77,17 @@ export const createSpiceDbPermissionClient = (
   );
   return {
     checkBulkPermissions: (request) =>
-      normalizeSpiceDbPermissionClientOperation(client.promises.checkBulkPermissions(request)),
+      Effect.tryPromise({
+        catch: spiceDbPermissionClientError,
+        // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign SDK Promise boundary.
+        try: () => client.promises.checkBulkPermissions(request),
+      }).pipe(permissionTimeout),
     checkPermission: (request) =>
-      normalizeSpiceDbPermissionClientOperation(client.promises.checkPermission(request)),
+      Effect.tryPromise({
+        catch: spiceDbPermissionClientError,
+        // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign SDK Promise boundary.
+        try: () => client.promises.checkPermission(request),
+      }).pipe(permissionTimeout),
     close: () => client.close(),
   };
 };

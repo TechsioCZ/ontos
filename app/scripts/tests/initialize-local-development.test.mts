@@ -4,6 +4,10 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { NodeFileSystem, NodePath } from '@effect/platform-node';
+import { Effect, Exit, Layer } from 'effect';
+import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
 import type { deriveOntosModuleDeploymentContract } from '../generate-ontos-module-contract.mts';
 import {
   LOCAL_DEVELOPMENT_CONTEXT,
@@ -14,6 +18,7 @@ import {
   deriveActivatedModuleIds,
   moduleStateIdFor,
   parseLocalDevelopmentConfiguration,
+  reconcileCoreContext,
 } from '../initialize-local-development.mts';
 
 const localEnvironment = {
@@ -27,6 +32,7 @@ const localEnvironment = {
   ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'development',
 } as const;
 
+const LOCAL_AUTH_USER_ID = 'local-auth-user';
 const INVENTORY_MODULE_ID = 'inventory.core';
 const LOCAL_MODULES_DIRECTORY_PREFIX = 'ontos-local-modules-';
 const PARTY_REGISTRY_MODULE_ID = 'party.registry';
@@ -106,17 +112,26 @@ void test('accepts only a development configuration with local service endpoints
   );
 });
 
-void test('exact reconciliation is idempotent and contradictory records fail closed', () => {
+void test('exact reconciliation is idempotent and contradictory records fail in the typed channel', async () => {
   const expected = { name: 'OntOS Local Development', status: 'active' } as const;
-  assert.equal(classifyExactLocalRecord('tenant', undefined, expected), 'create');
-  assert.equal(classifyExactLocalRecord('tenant', expected, expected), 'existing');
-  assert.throws(
-    () => classifyExactLocalRecord('tenant', { ...expected, status: 'suspended' }, expected),
-    LocalDevelopmentInitializationError,
+  assert.equal(
+    await runEffectTestPromise(classifyExactLocalRecord('tenant', undefined, expected)),
+    'create',
   );
+  assert.equal(
+    await runEffectTestPromise(classifyExactLocalRecord('tenant', expected, expected)),
+    'existing',
+  );
+  const conflict = await runEffectTestPromise(
+    classifyExactLocalRecord('tenant', { ...expected, status: 'suspended' }, expected).pipe(
+      Effect.flip,
+    ),
+  );
+  assert.equal(conflict.code, 'local_conflict');
+  assert.match(conflict.reason, /status/u);
 });
 
-void test('module-state reconciliation preserves migrated IDs and rejects identity collisions', () => {
+void test('module-state reconciliation preserves migrated IDs and rejects identity collisions', async () => {
   const expected = {
     moduleKey: PARTY_REGISTRY_MODULE_ID,
     state: 'active',
@@ -124,19 +139,23 @@ void test('module-state reconciliation preserves migrated IDs and rejects identi
     tenantModuleStateId: moduleStateIdFor(PARTY_REGISTRY_MODULE_ID),
   } as const;
   assert.equal(
-    classifyLocalModuleState(PARTY_REGISTRY_MODULE_STATE_LABEL, undefined, expected),
+    await runEffectTestPromise(
+      classifyLocalModuleState(PARTY_REGISTRY_MODULE_STATE_LABEL, undefined, expected),
+    ),
     'create',
   );
   assert.equal(
-    classifyLocalModuleState(
-      PARTY_REGISTRY_MODULE_STATE_LABEL,
-      { ...expected, tenantModuleStateId: '7f000000-0000-4000-8000-000000000001' },
-      expected,
+    await runEffectTestPromise(
+      classifyLocalModuleState(
+        PARTY_REGISTRY_MODULE_STATE_LABEL,
+        { ...expected, tenantModuleStateId: '7f000000-0000-4000-8000-000000000001' },
+        expected,
+      ),
     ),
     'existing',
   );
-  assert.throws(
-    () =>
+  await assert.rejects(
+    runEffectTestPromise(
       classifyLocalModuleState(
         PARTY_REGISTRY_MODULE_STATE_LABEL,
         {
@@ -146,6 +165,7 @@ void test('module-state reconciliation preserves migrated IDs and rejects identi
         },
         expected,
       ),
+    ),
     LocalDevelopmentInitializationError,
   );
 });
@@ -156,7 +176,14 @@ void test('derives only configured Party Registry through its generated owner co
   await writeFile(path.join(root, TOPOLOGY_PATH), topology, 'utf-8');
   const deriveContract = async ({ vertical }: { readonly vertical: string }) =>
     moduleContract(`${vertical}.core`);
-  assert.deepEqual(await deriveActivatedModuleIds(root, deriveContract), ['party-registry.core']);
+  assert.deepEqual(
+    await runEffectTestPromise(
+      deriveActivatedModuleIds(root, deriveContract).pipe(
+        Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
+      ),
+    ),
+    ['party-registry.core'],
+  );
 });
 
 void test('rejects duplicate module IDs derived from different verticals', async () => {
@@ -165,12 +192,16 @@ void test('rejects duplicate module IDs derived from different verticals', async
   await writeFile(path.join(root, TOPOLOGY_PATH), topology, 'utf-8');
   const deriveContract = async () => moduleContract('duplicate.core');
   await assert.rejects(
-    deriveActivatedModuleIds(root, deriveContract, ['party-registry', 'inventory']),
+    runEffectTestPromise(
+      deriveActivatedModuleIds(root, deriveContract, ['party-registry', 'inventory']).pipe(
+        Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
+      ),
+    ),
     LocalDevelopmentInitializationError,
   );
 });
 
-void test('generates stable module state IDs and complete access relationships', () => {
+void test('generates stable module state IDs and complete access relationships', async () => {
   assert.equal(
     moduleStateIdFor(PARTY_REGISTRY_MODULE_ID),
     moduleStateIdFor(PARTY_REGISTRY_MODULE_ID),
@@ -179,11 +210,64 @@ void test('generates stable module state IDs and complete access relationships',
     moduleStateIdFor(PARTY_REGISTRY_MODULE_ID),
     moduleStateIdFor(INVENTORY_MODULE_ID),
   );
-  const relationships = buildLocalDevelopmentRelationships([
-    PARTY_REGISTRY_MODULE_ID,
-    INVENTORY_MODULE_ID,
-  ]);
+  const relationships = await runEffectTestPromise(
+    buildLocalDevelopmentRelationships([PARTY_REGISTRY_MODULE_ID, INVENTORY_MODULE_ID]),
+  );
   assert.equal(relationships.length, 7);
   assert.equal(relationships.filter(({ relation }) => relation === 'accessor').length, 2);
   assert.equal(relationships.filter(({ relation }) => relation === 'legal_entity').length, 2);
+});
+
+void test('a late module conflict rolls back Core bootstrap and retains its typed reason', async () => {
+  const statements: string[] = [];
+  const database = makeTestDatabase((sql) =>
+    Effect.sync(() => {
+      statements.push(sql);
+      return sql.includes('from "core"."tenant_module_states"') ? [{}, {}] : [];
+    }),
+  );
+
+  const conflict = await runEffectTestPromise(
+    reconcileCoreContext(database, LOCAL_AUTH_USER_ID, [PARTY_REGISTRY_MODULE_ID]).pipe(
+      Effect.flip,
+    ),
+  );
+
+  assert.equal(conflict.code, 'local_conflict');
+  assert.match(conflict.reason, /module-state identity conflicts/u);
+  assert.ok(statements.some((sql) => sql.startsWith('insert into "core"."tenants"')));
+  assert.equal(statements.at(-1), 'ROLLBACK');
+  assert.ok(!statements.includes('COMMIT'));
+});
+
+void test('native commit failure becomes a typed bootstrap error', async () => {
+  const database = makeTestDatabase((sql) =>
+    sql === 'COMMIT'
+      ? Effect.fail(
+          new SqlError({ reason: new ConnectionError({ cause: new Error('connection closed') }) }),
+        )
+      : Effect.succeed([]),
+  );
+
+  const error = await runEffectTestPromise(
+    reconcileCoreContext(database, LOCAL_AUTH_USER_ID, []).pipe(Effect.flip),
+  );
+  assert.equal(error.code, 'local_persistence_failed');
+});
+
+void test('bootstrap preserves unrelated defects after native rollback', async () => {
+  const defect = new Error('unexpected query defect');
+  const statements: string[] = [];
+  const database = makeTestDatabase((sql) =>
+    Effect.suspend(() => {
+      statements.push(sql);
+      return sql.startsWith('select ') ? Effect.die(defect) : Effect.succeed([]);
+    }),
+  );
+
+  const exit = await runEffectTestPromise(
+    reconcileCoreContext(database, LOCAL_AUTH_USER_ID, []).pipe(Effect.exit),
+  );
+  assert.deepEqual(exit, Exit.die(defect));
+  assert.equal(statements.at(-1), 'ROLLBACK');
 });
