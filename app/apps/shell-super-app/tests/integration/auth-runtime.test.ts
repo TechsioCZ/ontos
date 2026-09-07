@@ -14,7 +14,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test, { after as afterNativeDatabase } from 'node:test';
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/node-postgres';
+import { makeAuthDatabase } from '../../api/auth/db/client.ts';
 
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import { Pool } from 'pg';
@@ -216,18 +216,25 @@ const installedPageCatalog = (): InstalledModuleCatalog =>
 test('creates, resolves, persists, revokes, and signs out a Better Auth session', async () => {
   const configuration = await runEffectTestPromise(loadAuthConfig());
   const corePool = new Pool({ connectionString: configuration.connectionString });
-  const authPool = new Pool({ connectionString: configuration.connectionString });
   const coreDatabase = await runEffectTestPromise(
     makeTestDatabaseFromPool(corePool, coreRelations).pipe(
       NativeScope.provide(nativeDatabaseScope),
     ),
   );
-  const authDatabase = drizzle({ client: authPool, relations: authRelations });
+  const authPersistence = await runEffectTestPromise(
+    makeAuthDatabase(configuration).pipe(NativeScope.provide(nativeDatabaseScope)),
+  );
+  const authDatabase = authPersistence.executor;
   const resolver = makePrincipalResolver({ executor: coreDatabase });
-  const authentication = makeAuthenticationService(configuration, authDatabase, resolver, {
-    allowFixtureSignUp: true,
-    runResolverEffect: legalEntitySelectionOptions.runResolverEffect,
-  });
+  const authentication = makeAuthenticationService(
+    configuration,
+    authPersistence.adapter,
+    resolver,
+    {
+      allowFixtureSignUp: true,
+      runResolverEffect: legalEntitySelectionOptions.runResolverEffect,
+    },
+  );
   const authenticationLayer = Layer.succeed(AuthenticationService, authentication);
   const moduleStateLayer = Layer.succeed(
     TenantModuleStateService,
@@ -246,10 +253,9 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     await runEffectTestPromise(
       coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
     );
-    const existingUsers = await authDatabase
-      .select({ id: user.id })
-      .from(user)
-      .where(eq(user.email, email));
+    const existingUsers = await runEffectTestPromise(
+      authDatabase.select({ id: user.id }).from(user).where(eq(user.email, email)),
+    );
 
     await Promise.all(
       existingUsers.map(async (existingUser) => {
@@ -258,9 +264,13 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
             .delete(principalAuthBindings)
             .where(eq(principalAuthBindings.providerSubjectId, existingUser.id)),
         );
-        await authDatabase.delete(session).where(eq(session.userId, existingUser.id));
-        await authDatabase.delete(account).where(eq(account.userId, existingUser.id));
-        await authDatabase.delete(user).where(eq(user.id, existingUser.id));
+        await runEffectTestPromise(
+          authDatabase.delete(session).where(eq(session.userId, existingUser.id)),
+        );
+        await runEffectTestPromise(
+          authDatabase.delete(account).where(eq(account.userId, existingUser.id)),
+        );
+        await runEffectTestPromise(authDatabase.delete(user).where(eq(user.id, existingUser.id)));
       }),
     );
 
@@ -892,6 +902,11 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       'dir',
     );
     await symlink(
+      path.join(appRoot, 'packages/gateway-principal-verifier'),
+      path.join(generatedFixtureRoot, 'node_modules/@app/gateway-principal-verifier'),
+      'dir',
+    );
+    await symlink(
       path.join(appRoot, 'node_modules/effect'),
       path.join(generatedFixtureRoot, 'node_modules/effect'),
       'dir',
@@ -1052,7 +1067,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     await Promise.all(handlers.map(async ({ dispose }) => await dispose()));
     await rm(generatedFixtureRoot, { force: true, recursive: true });
     await cleanup();
-    await Promise.all([authPool.end(), corePool.end()]);
+    await corePool.end();
   }
 });
 
@@ -1100,19 +1115,30 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     connectionString: databaseConnections.admin.connectionString,
   });
   const corePool = new Pool({ connectionString: configuration.connectionString });
-  const authPool = new Pool({ connectionString: configuration.connectionString });
   const coreDatabase = await runEffectTestPromise(
     makeTestDatabaseFromPool(corePool, coreRelations).pipe(
       NativeScope.provide(nativeDatabaseScope),
     ),
   );
-  const authDatabase = drizzle({ client: authPool, relations: authRelations });
-  const adminAuthDatabase = drizzle({ client: adminPool, relations: authRelations });
+  const authPersistence = await runEffectTestPromise(
+    makeAuthDatabase(configuration).pipe(NativeScope.provide(nativeDatabaseScope)),
+  );
+  const authDatabase = authPersistence.executor;
+  const adminAuthDatabase = await runEffectTestPromise(
+    makeTestDatabaseFromPool(adminPool, authRelations).pipe(
+      NativeScope.provide(nativeDatabaseScope),
+    ),
+  );
   const resolver = makePrincipalResolver({ executor: coreDatabase });
-  const authentication = makeAuthenticationService(configuration, authDatabase, resolver, {
-    allowFixtureSignUp: true,
-    runResolverEffect: multiLegalEntitySelectionOptions.runResolverEffect,
-  });
+  const authentication = makeAuthenticationService(
+    configuration,
+    authPersistence.adapter,
+    resolver,
+    {
+      allowFixtureSignUp: true,
+      runResolverEffect: multiLegalEntitySelectionOptions.runResolverEffect,
+    },
+  );
   const moduleStateLayer = Layer.succeed(
     TenantModuleStateService,
     makeTenantModuleStateService({ executor: coreDatabase }),
@@ -1125,10 +1151,9 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         .delete(dataAccessEvents)
         .where(inArray(dataAccessEvents.tenantId, [firstTenantId, secondTenantId])),
     );
-    const existingUsers = await authDatabase
-      .select({ id: user.id })
-      .from(user)
-      .where(eq(user.email, multiEmail));
+    const existingUsers = await runEffectTestPromise(
+      authDatabase.select({ id: user.id }).from(user).where(eq(user.email, multiEmail)),
+    );
     const existingUserIds = existingUsers.map(({ id }) => id);
     if (existingUserIds.length > 0) {
       await runEffectTestPromise(
@@ -1136,9 +1161,15 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
           .delete(principalAuthBindings)
           .where(inArray(principalAuthBindings.providerSubjectId, existingUserIds)),
       );
-      await authDatabase.delete(session).where(inArray(session.userId, existingUserIds));
-      await authDatabase.delete(account).where(inArray(account.userId, existingUserIds));
-      await authDatabase.delete(user).where(inArray(user.id, existingUserIds));
+      await runEffectTestPromise(
+        authDatabase.delete(session).where(inArray(session.userId, existingUserIds)),
+      );
+      await runEffectTestPromise(
+        authDatabase.delete(account).where(inArray(account.userId, existingUserIds)),
+      );
+      await runEffectTestPromise(
+        authDatabase.delete(user).where(inArray(user.id, existingUserIds)),
+      );
     }
     await runEffectTestPromise(
       coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, firstTenantId)),
@@ -1269,10 +1300,12 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       cookie: authenticatedCookie,
       origin: configuration.baseUrl,
     });
-    const initialSessions = await authDatabase
-      .select({ activeTenantId: session.activeTenantId })
-      .from(session)
-      .where(eq(session.userId, betterAuthUserId));
+    const initialSessions = await runEffectTestPromise(
+      authDatabase
+        .select({ activeTenantId: session.activeTenantId })
+        .from(session)
+        .where(eq(session.userId, betterAuthUserId)),
+    );
     assert.equal(initialSessions[0]?.activeTenantId, firstTenantId);
 
     const pair = await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true });
@@ -1347,10 +1380,12 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       }),
     );
     assert.equal(forbiddenResponse.status, 403);
-    const sessionsAfterForbiddenSwitch = await authDatabase
-      .select({ activeTenantId: session.activeTenantId })
-      .from(session)
-      .where(eq(session.userId, betterAuthUserId));
+    const sessionsAfterForbiddenSwitch = await runEffectTestPromise(
+      authDatabase
+        .select({ activeTenantId: session.activeTenantId })
+        .from(session)
+        .where(eq(session.userId, betterAuthUserId)),
+    );
     assert.equal(sessionsAfterForbiddenSwitch[0]?.activeTenantId, firstTenantId);
 
     await runEffectTestPromise(
@@ -1371,10 +1406,12 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       }),
     );
     assert.equal(inactiveTargetResponse.status, 403);
-    const sessionsAfterInactiveSwitch = await authDatabase
-      .select({ activeTenantId: session.activeTenantId })
-      .from(session)
-      .where(eq(session.userId, betterAuthUserId));
+    const sessionsAfterInactiveSwitch = await runEffectTestPromise(
+      authDatabase
+        .select({ activeTenantId: session.activeTenantId })
+        .from(session)
+        .where(eq(session.userId, betterAuthUserId)),
+    );
     assert.equal(sessionsAfterInactiveSwitch[0]?.activeTenantId, firstTenantId);
     await runEffectTestPromise(
       coreDatabase
@@ -1385,7 +1422,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
 
     const resolverUnavailableAuthentication = makeAuthenticationService(
       configuration,
-      authDatabase,
+      authPersistence.adapter,
       {
         ...resolver,
         resolveBetterAuthUserForTenant: (userId, selectedTenantId) =>
@@ -1420,16 +1457,19 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       }),
     );
     assert.equal(resolverUnavailableResponse.status, 503);
-    const sessionsAfterResolverFailure = await authDatabase
-      .select({ activeTenantId: session.activeTenantId })
-      .from(session)
-      .where(eq(session.userId, betterAuthUserId));
+    const sessionsAfterResolverFailure = await runEffectTestPromise(
+      authDatabase
+        .select({ activeTenantId: session.activeTenantId })
+        .from(session)
+        .where(eq(session.userId, betterAuthUserId)),
+    );
     assert.equal(sessionsAfterResolverFailure[0]?.activeTenantId, firstTenantId);
 
     // Drizzle has no query-builder failure injection. This temporary trigger raises PostgreSQL's
     // connection-failure class for the fixed test tenant through the real Better Auth adapter path.
-    await adminAuthDatabase.execute(
-      sql.raw(`
+    await runEffectTestPromise(
+      adminAuthDatabase.execute(
+        sql.raw(`
         CREATE OR REPLACE FUNCTION auth.tenant_switch_test_fail_persistence()
         RETURNS trigger
         LANGUAGE plpgsql
@@ -1442,14 +1482,17 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         END;
         $function$
       `),
+      ),
     );
-    await adminAuthDatabase.execute(
-      sql.raw(`
+    await runEffectTestPromise(
+      adminAuthDatabase.execute(
+        sql.raw(`
         CREATE TRIGGER tenant_switch_test_persistence_failure
         BEFORE UPDATE ON auth.session
         FOR EACH ROW
         EXECUTE FUNCTION auth.tenant_switch_test_fail_persistence()
       `),
+      ),
     );
     try {
       const persistenceUnavailableResponse = await runtime.handler(
@@ -1464,28 +1507,36 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         }),
       );
       assert.equal(persistenceUnavailableResponse.status, 503);
-      const sessionsAfterPersistenceFailure = await authDatabase
-        .select({ activeTenantId: session.activeTenantId })
-        .from(session)
-        .where(eq(session.userId, betterAuthUserId));
+      const sessionsAfterPersistenceFailure = await runEffectTestPromise(
+        authDatabase
+          .select({ activeTenantId: session.activeTenantId })
+          .from(session)
+          .where(eq(session.userId, betterAuthUserId)),
+      );
       assert.equal(sessionsAfterPersistenceFailure[0]?.activeTenantId, firstTenantId);
     } finally {
-      await adminAuthDatabase.execute(
-        sql.raw(`
+      await runEffectTestPromise(
+        adminAuthDatabase.execute(
+          sql.raw(`
           DROP TRIGGER IF EXISTS tenant_switch_test_persistence_failure ON auth.session
         `),
+        ),
       );
-      await adminAuthDatabase.execute(
-        sql.raw(`
+      await runEffectTestPromise(
+        adminAuthDatabase.execute(
+          sql.raw(`
           DROP FUNCTION IF EXISTS auth.tenant_switch_test_fail_persistence()
         `),
+        ),
       );
     }
 
-    const sessionsBeforeSwitch = await authDatabase
-      .select({ activeLegalEntityId: session.activeLegalEntityId })
-      .from(session)
-      .where(eq(session.userId, betterAuthUserId));
+    const sessionsBeforeSwitch = await runEffectTestPromise(
+      authDatabase
+        .select({ activeLegalEntityId: session.activeLegalEntityId })
+        .from(session)
+        .where(eq(session.userId, betterAuthUserId)),
+    );
     assert.equal(sessionsBeforeSwitch[0]?.activeLegalEntityId, firstLegalEntityId);
 
     const switchResponse = await runtime.handler(
@@ -1501,13 +1552,15 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     );
     assert.equal(switchResponse.status, 200);
     assert.deepEqual(await switchResponse.json(), { selectedTenantId: secondTenantId });
-    const sessionsAfterSwitch = await authDatabase
-      .select({
-        activeLegalEntityId: session.activeLegalEntityId,
-        activeTenantId: session.activeTenantId,
-      })
-      .from(session)
-      .where(eq(session.userId, betterAuthUserId));
+    const sessionsAfterSwitch = await runEffectTestPromise(
+      authDatabase
+        .select({
+          activeLegalEntityId: session.activeLegalEntityId,
+          activeTenantId: session.activeTenantId,
+        })
+        .from(session)
+        .where(eq(session.userId, betterAuthUserId)),
+    );
     assert.equal(sessionsAfterSwitch[0]?.activeTenantId, secondTenantId);
     assert.equal(sessionsAfterSwitch[0]?.activeLegalEntityId, null);
     const currentSessionAfterSwitch = await runEffectTestPromise(
@@ -1561,8 +1614,9 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
 
     // A non-unavailability persistence rejection is an unexpected defect. The real Better Auth
     // adapter must roll it back, while each owning HTTP boundary logs and returns a redacted 500.
-    await adminAuthDatabase.execute(
-      sql.raw(`
+    await runEffectTestPromise(
+      adminAuthDatabase.execute(
+        sql.raw(`
         CREATE OR REPLACE FUNCTION auth.tenant_switch_test_fail_internal_persistence()
         RETURNS trigger
         LANGUAGE plpgsql
@@ -1575,14 +1629,17 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         END;
         $function$
       `),
+      ),
     );
-    await adminAuthDatabase.execute(
-      sql.raw(`
+    await runEffectTestPromise(
+      adminAuthDatabase.execute(
+        sql.raw(`
         CREATE TRIGGER tenant_switch_test_internal_persistence_failure
         BEFORE UPDATE ON auth.session
         FOR EACH ROW
         EXECUTE FUNCTION auth.tenant_switch_test_fail_internal_persistence()
       `),
+      ),
     );
     try {
       const unexpectedSwitchResponse = await runtime.handler(
@@ -1602,16 +1659,20 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         await unexpectedSwitchResponse.text(),
         /secret auth persistence defect|P0001/u,
       );
-      const sessionsAfterUnexpectedSwitchFailure = await authDatabase
-        .select({ activeTenantId: session.activeTenantId })
-        .from(session)
-        .where(eq(session.userId, betterAuthUserId));
+      const sessionsAfterUnexpectedSwitchFailure = await runEffectTestPromise(
+        authDatabase
+          .select({ activeTenantId: session.activeTenantId })
+          .from(session)
+          .where(eq(session.userId, betterAuthUserId)),
+      );
       assert.equal(sessionsAfterUnexpectedSwitchFailure[0]?.activeTenantId, secondTenantId);
 
-      await authDatabase
-        .update(session)
-        .set({ activeTenantId: null })
-        .where(eq(session.userId, betterAuthUserId));
+      await runEffectTestPromise(
+        authDatabase
+          .update(session)
+          .set({ activeTenantId: null })
+          .where(eq(session.userId, betterAuthUserId)),
+      );
       const unexpectedLegacyUpgradeResponse = await runtime.handler(
         new Request(`${configuration.baseUrl}/auth/session`, {
           headers: new Headers({
@@ -1626,21 +1687,27 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         await unexpectedLegacyUpgradeResponse.text(),
         /secret auth persistence defect|P0001/u,
       );
-      const sessionsAfterUnexpectedLegacyUpgrade = await authDatabase
-        .select({ activeTenantId: session.activeTenantId })
-        .from(session)
-        .where(eq(session.userId, betterAuthUserId));
+      const sessionsAfterUnexpectedLegacyUpgrade = await runEffectTestPromise(
+        authDatabase
+          .select({ activeTenantId: session.activeTenantId })
+          .from(session)
+          .where(eq(session.userId, betterAuthUserId)),
+      );
       assert.equal(sessionsAfterUnexpectedLegacyUpgrade[0]?.activeTenantId, null);
     } finally {
-      await adminAuthDatabase.execute(
-        sql.raw(`
+      await runEffectTestPromise(
+        adminAuthDatabase.execute(
+          sql.raw(`
           DROP TRIGGER IF EXISTS tenant_switch_test_internal_persistence_failure ON auth.session
         `),
+        ),
       );
-      await adminAuthDatabase.execute(
-        sql.raw(`
+      await runEffectTestPromise(
+        adminAuthDatabase.execute(
+          sql.raw(`
           DROP FUNCTION IF EXISTS auth.tenant_switch_test_fail_internal_persistence()
         `),
+        ),
       );
     }
 
@@ -1650,10 +1717,12 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         .pipe(Effect.provide(multiAuthenticationContextLayer)),
     );
     assert.equal(upgradedSession.identity?.tenantId, firstTenantId);
-    const upgradedSessionRows = await authDatabase
-      .select({ activeTenantId: session.activeTenantId })
-      .from(session)
-      .where(eq(session.userId, betterAuthUserId));
+    const upgradedSessionRows = await runEffectTestPromise(
+      authDatabase
+        .select({ activeTenantId: session.activeTenantId })
+        .from(session)
+        .where(eq(session.userId, betterAuthUserId)),
+    );
     assert.equal(upgradedSessionRows[0]?.activeTenantId, firstTenantId);
 
     await runEffectTestPromise(
@@ -1709,7 +1778,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
   } finally {
     await Promise.all(handlers.map(async ({ dispose }) => await dispose()));
     await cleanup();
-    await Promise.all([adminPool.end(), authPool.end(), corePool.end()]);
+    await Promise.all([adminPool.end(), corePool.end()]);
   }
 });
 afterNativeDatabase(

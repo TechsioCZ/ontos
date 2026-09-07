@@ -90,14 +90,19 @@ test('refuses to provision outside stage or without an operator-supplied passwor
 
 test('treats an exact record as idempotent and rejects conflicting state', () => {
   const expected = { name: 'Techsio', slug: 'techsio', status: 'active' } as const;
-  expect(classifyExactStageDemoRecord('tenant', undefined, expected)).toBe('create');
-  expect(classifyExactStageDemoRecord('tenant', expected, expected)).toBe('existing');
-  try {
-    classifyExactStageDemoRecord('tenant', { ...expected, name: 'Other tenant' }, expected);
-    throw new Error('Expected a stage demo conflict');
-  } catch (error) {
-    expect(error).toMatchObject({ reason: expect.stringMatching(/conflicts/u) });
-  }
+  expect(runEffectTestSync(classifyExactStageDemoRecord('tenant', undefined, expected))).toBe(
+    'create',
+  );
+  expect(runEffectTestSync(classifyExactStageDemoRecord('tenant', expected, expected))).toBe(
+    'existing',
+  );
+  expect(
+    runEffectTestSync(
+      Effect.flip(
+        classifyExactStageDemoRecord('tenant', { ...expected, name: 'Other tenant' }, expected),
+      ),
+    ),
+  ).toMatchObject({ reason: expect.stringMatching(/conflicts/u) });
 });
 
 test('keeps the demo bootstrap operator-invoked and excludes its password from source', async () => {

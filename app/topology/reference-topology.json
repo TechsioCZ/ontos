@@ -535,6 +535,12 @@
       "description": "Server-only Core infrastructure and typed PostgreSQL ownership."
     },
     {
+      "id": "gateway-principal-verifier",
+      "package": "@app/gateway-principal-verifier",
+      "path": "packages/gateway-principal-verifier",
+      "description": "Server-only audience-bound Shell gateway assertion verification."
+    },
+    {
       "id": "shared-contracts",
       "package": "@app/shared-contracts",
       "path": "packages/shared-contracts",
