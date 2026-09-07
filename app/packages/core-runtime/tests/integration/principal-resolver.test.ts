@@ -15,7 +15,8 @@ const principalOne = '20000000-0000-4000-8000-000000000001';
 const principalTwo = '20000000-0000-4000-8000-000000000002';
 const subject = 'better-auth-integration-subject';
 
-const databaseEffect = <Value>(operation: () => PromiseLike<Value>) => Effect.promise(operation);
+const databaseEffect = <Value>(operation: () => PromiseLike<Value>) =>
+  Effect.promise(() => operation());
 const effectTest = <Value, Failure>(name: string, effect: Effect.Effect<Value, Failure>): void => {
   test(name, makeEffectTestCallback(effect));
 };

@@ -169,7 +169,7 @@ const tryDatabasePromise = <Value, Failure>(
   evaluate: () => PromiseLike<Value>,
   mapFailure: (cause: CoreSearchPersistenceCause) => Failure,
 ): Effect.Effect<Value, Failure> =>
-  Effect.tryPromise({ catch: mapFailure, try: evaluate }).pipe(
+  Effect.tryPromise({ catch: mapFailure, try: () => evaluate() }).pipe(
     Effect.timeoutOrElse({
       duration: Duration.infinity,
       orElse: () => Effect.fail(mapFailure('Database operation timed out')),

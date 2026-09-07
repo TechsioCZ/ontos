@@ -129,7 +129,7 @@ const bootstrapFailureFromCause = (cause: unknown): StageContextBootstrapError =
 const tryBootstrapPromise = <Value>(
   evaluate: () => PromiseLike<Value>,
 ): Effect.Effect<Value, StageContextBootstrapError> =>
-  Effect.tryPromise({ catch: bootstrapFailureFromCause, try: evaluate }).pipe(
+  Effect.tryPromise({ catch: bootstrapFailureFromCause, try: () => evaluate() }).pipe(
     Effect.timeoutOrElse({
       duration: Duration.infinity,
       orElse: () => Effect.fail(failure('The fixed stage Core context could not be reconciled')),

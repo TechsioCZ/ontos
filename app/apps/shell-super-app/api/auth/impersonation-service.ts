@@ -114,14 +114,14 @@ const mapProviderError = <Failure>(error: Failure) =>
 const IMPERSONATION_IO_TIMEOUT = '10 seconds';
 const timeoutFailure = () => unavailable('Support impersonation dependency timed out');
 const providerOperation = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: mapProviderError, try: operation }).pipe(
+  Effect.tryPromise({ catch: mapProviderError, try: () => operation() }).pipe(
     Effect.timeoutOrElse({
       duration: IMPERSONATION_IO_TIMEOUT,
       orElse: () => Effect.fail(timeoutFailure()),
     }),
   );
 const databaseOperation = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: unavailable, try: operation }).pipe(
+  Effect.tryPromise({ catch: unavailable, try: () => operation() }).pipe(
     Effect.timeoutOrElse({
       duration: IMPERSONATION_IO_TIMEOUT,
       orElse: () => Effect.fail(timeoutFailure()),

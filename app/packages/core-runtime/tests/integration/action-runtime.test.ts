@@ -1402,7 +1402,7 @@ void test('serializes Domain Event allocation by tenant commit order', async () 
   await databasePromise(async (database) => {
     const firstCommitRelease = await runEffectTestPromise(Deferred.make<null>());
     const firstFlushed = await runEffectTestPromise(Deferred.make<null>());
-    const secondTransactionStarted = await runEffectTestPromise(Deferred.make<null>());
+    const secondInsertStarted = await runEffectTestPromise(Deferred.make<null>());
     const delayedTransaction = {
       transaction: async (transactionBody, configuration) =>
         await database.executor.transaction(async (transaction) => {
@@ -1424,15 +1424,13 @@ void test('serializes Domain Event allocation by tenant commit order', async () 
       testOperationalScopeResolver,
       openActionRuntimeOptions,
     );
-    const signaledTransaction = {
-      transaction: async (transactionBody, configuration) => {
-        runEffectTestSync(Deferred.succeed(secondTransactionStarted, null));
-        return await database.executor.transaction(transactionBody, configuration);
-      },
-    } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
+    const signaledInsert: typeof database.executor.insert = (table) => {
+      runEffectTestSync(Deferred.succeed(secondInsertStarted, null));
+      return database.executor.insert(table);
+    };
     const signaledExecutor: ContextServiceContract['executor'] = Object.assign(
       Object.create(database.executor),
-      signaledTransaction,
+      { insert: signaledInsert },
     );
     const secondRuntime = makeActionRuntime(
       { executor: signaledExecutor },
@@ -1472,7 +1470,7 @@ void test('serializes Domain Event allocation by tenant commit order', async () 
       secondCompleted = true;
     });
 
-    await runEffectTestPromise(Deferred.await(secondTransactionStarted));
+    await runEffectTestPromise(Deferred.await(secondInsertStarted));
     assert.equal(secondCompleted, false);
 
     runEffectTestSync(Deferred.succeed(firstCommitRelease, null));

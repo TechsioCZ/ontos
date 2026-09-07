@@ -82,7 +82,8 @@ const relationship = (
     }),
   });
 
-const promiseEffect = <Value>(operation: () => PromiseLike<Value>) => Effect.promise(operation);
+const promiseEffect = <Value>(operation: () => PromiseLike<Value>) =>
+  Effect.promise(() => operation());
 const effectTest = <Value, Failure>(name: string, effect: Effect.Effect<Value, Failure>): void => {
   test(name, makeEffectTestCallback(effect));
 };

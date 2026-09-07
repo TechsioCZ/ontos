@@ -14,7 +14,7 @@ const configValues = { ...fileConfig, ...nodeProcess.env };
 const databaseUrl = Redacted.value(
   Result.getOrThrow(
     Schema.decodeUnknownResult(
-      Schema.Redacted(Schema.Trim.pipe(Schema.check(Schema.isMinLength(1)))),
+      Schema.RedactedFromValue(Schema.Trim.pipe(Schema.check(Schema.isMinLength(1)))),
     )(configValues['DATABASE_ADMIN_URL']),
   ),
 );

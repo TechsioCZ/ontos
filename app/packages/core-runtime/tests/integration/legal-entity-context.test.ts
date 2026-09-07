@@ -16,7 +16,8 @@ const activeTwo = '21000000-0000-4000-8000-000000000002';
 const suspended = '21000000-0000-4000-8000-000000000003';
 const foreign = '21000000-0000-4000-8000-000000000004';
 
-const databaseEffect = <Value>(operation: () => PromiseLike<Value>) => Effect.promise(operation);
+const databaseEffect = <Value>(operation: () => PromiseLike<Value>) =>
+  Effect.promise(() => operation());
 const effectTest = <Value, Failure>(name: string, effect: Effect.Effect<Value, Failure>): void => {
   test(name, makeEffectTestCallback(effect));
 };

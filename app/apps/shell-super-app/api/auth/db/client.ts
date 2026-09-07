@@ -34,6 +34,11 @@ const connectionFailure = (cause: unknown) =>
     },
   );
 
+const invokePromiseWithoutSignal =
+  <Value>(operation: () => PromiseLike<Value>) =>
+  (_signal: AbortSignal): PromiseLike<Value> =>
+    operation();
+
 export const acquirePoolResource = <Resource extends PoolResource>(
   acquire: () => Resource,
 ): Effect.Effect<Resource, AuthDatabaseConnectionError, Scope.Scope> =>
@@ -42,7 +47,7 @@ export const acquirePoolResource = <Resource extends PoolResource>(
       catch: connectionFailure,
       try: acquire,
     }),
-    (pool) => Effect.promise(pool.end.bind(pool, undefined)),
+    (pool) => Effect.promise(invokePromiseWithoutSignal(pool.end.bind(pool, undefined))),
   );
 
 export type PoolFactory = (configuration: PoolConfig) => Pool;

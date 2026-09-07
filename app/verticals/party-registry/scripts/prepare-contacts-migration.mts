@@ -44,6 +44,11 @@ const RootConfigProvider = ConfigProvider.layer(
 const databaseFailure = (message: string, cause: unknown): ContactsMigrationError =>
   new ContactsMigrationError({ cause, message });
 
+const invokePromiseWithoutSignal =
+  <Value,>(operation: () => PromiseLike<Value>) =>
+  (_signal: AbortSignal): PromiseLike<Value> =>
+    operation();
+
 const query = <Row extends QueryResultRow = QueryResultRow>(
   client: Client,
   text: string,
@@ -51,7 +56,7 @@ const query = <Row extends QueryResultRow = QueryResultRow>(
   const executeQuery: (queryText: string) => Promise<QueryResult<Row>> = client.query.bind(client);
   return Effect.tryPromise({
     catch: (cause) => databaseFailure(`PostgreSQL query failed: ${text}`, cause),
-    try: executeQuery.bind(undefined, text),
+    try: invokePromiseWithoutSignal(executeQuery.bind(undefined, text)),
   }).pipe(
     Effect.timeoutOrElse({
       duration: POSTGRES_OPERATION_TIMEOUT,
@@ -69,7 +74,7 @@ const connect = Effect.fn('ContactsMigration.connect')(function* connectEffect(
   });
   yield* Effect.tryPromise({
     catch: (cause) => databaseFailure('Unable to connect to PostgreSQL', cause),
-    try: client.connect.bind(client),
+    try: invokePromiseWithoutSignal(client.connect.bind(client)),
   }).pipe(
     Effect.timeoutOrElse({
       duration: POSTGRES_OPERATION_TIMEOUT,
@@ -83,7 +88,7 @@ const connect = Effect.fn('ContactsMigration.connect')(function* connectEffect(
 const close = (client: Client) =>
   Effect.tryPromise({
     catch: (cause) => databaseFailure('Unable to close the PostgreSQL connection', cause),
-    try: client.end.bind(client),
+    try: invokePromiseWithoutSignal(client.end.bind(client)),
   }).pipe(
     Effect.timeoutOrElse({
       duration: POSTGRES_OPERATION_TIMEOUT,

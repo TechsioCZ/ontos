@@ -52,6 +52,7 @@ import {
   ActionTransactionError,
   ActionTrustedContextValidationError,
 } from './errors.ts';
+
 import type { ActionCoreError, ActionInvocationNotFound } from './errors.ts';
 import type { DomainEventContractMap } from './events.ts';
 import { ActionPermission } from '../permissions/service.ts';
@@ -80,6 +81,11 @@ import { OperationalScopeResolver } from '../operations/context.ts';
 import type { OperationalScope, OperationalScopeResolverService } from '../operations/context.ts';
 import { ContextAccess } from '../permissions/context-access.ts';
 import { isDatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
+
+const invokePromiseWithoutSignal =
+  <Value>(operation: () => PromiseLike<Value>) =>
+  (_signal: AbortSignal): PromiseLike<Value> =>
+    operation();
 
 const withOptionalProperty = <
   Base extends object,
@@ -1078,7 +1084,7 @@ export const makeActionRuntime = (
             Predicate.isObjectKeyword(failure) && failure !== null
               ? failure
               : Object.freeze({ rejection: failure }),
-          try: transactionOperation,
+          try: invokePromiseWithoutSignal(transactionOperation),
         }).pipe(Effect.timeout(Duration.infinity)),
       );
       const rollbackCause = yield* Ref.get(transactionRollbackCause);

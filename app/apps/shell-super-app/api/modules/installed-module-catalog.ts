@@ -28,6 +28,11 @@ const unavailableErrorFields = {
   code: Schema.Literal('installed_module_catalog_unavailable'),
   reason: Schema.String,
 };
+
+const invokePromiseWithoutSignal =
+  <Value>(operation: () => PromiseLike<Value>) =>
+  (_signal: AbortSignal): PromiseLike<Value> =>
+    operation();
 const InstalledModuleCatalogUnavailableErrorSchema = Schema.TaggedStruct(
   'InstalledModuleCatalogUnavailableError',
   unavailableErrorFields,
@@ -136,7 +141,7 @@ const readResponseChunks = (
 > =>
   Effect.tryPromise({
     catch: unavailable,
-    try: reader.read.bind(reader),
+    try: invokePromiseWithoutSignal(reader.read.bind(reader)),
   }).pipe(
     Effect.timeout(timeout),
     Effect.flatMap((next) => {
@@ -195,7 +200,9 @@ const readBoundedContract = Effect.fn('ShellInstalledModuleCatalog.readBoundedCo
       Effect.succeed(reader),
       (bodyReader) => collectResponseBody(bodyReader, maxBytes, timeout),
       (bodyReader) =>
-        Effect.promise(bodyReader.cancel.bind(bodyReader, undefined)).pipe(Effect.ignore),
+        Effect.promise(
+          invokePromiseWithoutSignal(bodyReader.cancel.bind(bodyReader, undefined)),
+        ).pipe(Effect.ignore),
     );
     return yield* decodeContractDocument(text).pipe(Effect.mapError((cause) => invalid(cause)));
   },

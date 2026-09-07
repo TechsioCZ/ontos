@@ -19,7 +19,8 @@ import type {
   CoreSearchWorkerSnapshotService,
 } from '../../src/search/worker-snapshot.ts';
 
-const databaseEffect = <Value>(operation: () => PromiseLike<Value>) => Effect.tryPromise(operation);
+const databaseEffect = <Value>(operation: () => PromiseLike<Value>) =>
+  Effect.tryPromise(() => operation());
 const workerSnapshotRuntime = ManagedRuntime.make(NodeServices.layer);
 const queryPromise = <Row extends QueryResultRow = QueryResultRow>(
   client: Pool | PoolClient,

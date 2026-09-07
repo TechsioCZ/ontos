@@ -12,14 +12,13 @@ import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 import {
+  contains as optionContains,
   getOrElse as getOptionOrElse,
   getOrUndefined as getOptionOrUndefined,
-  isSome as isOptionSome,
 } from 'effect/Option';
 import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
 import {
   Boolean as BooleanSchema,
-  Literal,
   Literals,
   NumberFromString,
   OptionFromUndefinedOr,
@@ -98,11 +97,11 @@ const getBuildBoolean = (name: string): boolean =>
     () => false,
   );
 const cloudflareDeployMode = getResultOrThrow(
-  decodeUnknownResult(OptionFromUndefinedOr(Literal('cloudflare')))(
+  decodeUnknownResult(OptionFromUndefinedOr(Literals(['cloudflare', 'node'])))(
     getBuildConfigEnvironment('MODERNJS_DEPLOY'),
   ),
 );
-const cloudflareDeployEnabled = isOptionSome(cloudflareDeployMode);
+const cloudflareDeployEnabled = optionContains(cloudflareDeployMode, 'cloudflare');
 const postgresProtocolCommonJsEntry = fileURLToPath(
   new URL('../pg-protocol/dist/index.js', import.meta.resolve('pg/package.json')),
 );

@@ -4,14 +4,13 @@ import { createRequire } from 'node:module';
 import { getBuildConfigEnvironment } from '@modern-js/app-tools/config';
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
 import {
+  contains as optionContains,
   getOrElse as getOptionOrElse,
   getOrUndefined as getOptionOrUndefined,
-  isSome as isOptionSome,
 } from 'effect/Option';
 import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
 import {
   Boolean as BooleanSchema,
-  Literal,
   Literals,
   OptionFromUndefinedOr,
   String as StringSchema,
@@ -35,11 +34,11 @@ const getOptionalBuildConfig = (name: string): string | undefined => {
   return isResultSuccess(decoded) ? getOptionOrUndefined(decoded.success) : undefined;
 };
 const cloudflareDeployMode = getResultOrThrow(
-  decodeUnknownResult(OptionFromUndefinedOr(Literal('cloudflare')))(
+  decodeUnknownResult(OptionFromUndefinedOr(Literals(['cloudflare', 'node'])))(
     getBuildConfigEnvironment('MODERNJS_DEPLOY'),
   ),
 );
-const cloudflareDeployEnabled = isOptionSome(cloudflareDeployMode);
+const cloudflareDeployEnabled = optionContains(cloudflareDeployMode, 'cloudflare');
 const cloudflareWorkersDevSubdomain = getOptionalBuildConfig(
   'ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN',
 );

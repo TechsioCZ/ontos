@@ -118,7 +118,8 @@ const effectTest = <Value, Error>(name: string, effect: Effect.Effect<Value, Err
   test(name, effectCallback(effect));
 };
 
-const databaseEffect = <Value>(operation: () => PromiseLike<Value>) => Effect.promise(operation);
+const databaseEffect = <Value>(operation: () => PromiseLike<Value>) =>
+  Effect.promise(() => operation());
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const promiseEffect = <Value>(promise: PromiseLike<Value>): Effect.Effect<Value> =>

@@ -148,7 +148,8 @@ const effectTest = <Value, Error>(name: string, effect: Effect.Effect<Value, Err
   test(name, effectCallback(effect));
 };
 
-const databaseEffect = <Value>(operation: () => PromiseLike<Value>) => Effect.promise(operation);
+const databaseEffect = <Value>(operation: () => PromiseLike<Value>) =>
+  Effect.promise(() => operation());
 
 const cleanup = withDatabase((database) =>
   Effect.gen(function* cleanTenantModuleStateFixtures() {

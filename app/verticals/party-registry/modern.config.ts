@@ -40,11 +40,11 @@ const getBuildBoolean = (name: string): boolean =>
     () => false,
   );
 const cloudflareDeployMode = Result.getOrThrow(
-  Schema.decodeUnknownResult(Schema.OptionFromUndefinedOr(Schema.Literal('cloudflare')))(
+  Schema.decodeUnknownResult(Schema.OptionFromUndefinedOr(Schema.Literals(['cloudflare', 'node'])))(
     getBuildConfigEnvironment('MODERNJS_DEPLOY'),
   ),
 );
-const cloudflareDeployEnabled = Option.isSome(cloudflareDeployMode);
+const cloudflareDeployEnabled = Option.contains(cloudflareDeployMode, 'cloudflare');
 const resolvePostgresProtocolCommonJsEntry = () =>
   fileURLToPath(new URL('../pg-protocol/dist/index.js', import.meta.resolve('pg/package.json')));
 const resolvePostgresPoolCommonJsEntry = () =>

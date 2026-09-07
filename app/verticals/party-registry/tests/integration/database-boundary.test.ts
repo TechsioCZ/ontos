@@ -360,9 +360,7 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
       }),
       hasPostgreSqlCode('23505'),
     );
-    const contactEndRecordedAt = DateTime.toDateUtc(
-      DateTime.makeUnsafe('2026-09-07T00:00:00.000Z'),
-    );
+    const contactEndRecordedAt = await runEffectTestPromise(DateTime.nowAsDate);
     const futureContactEnd = new Date('2099-01-01T00:00:00.000Z');
     await admin
       .update(partyContactPoints)

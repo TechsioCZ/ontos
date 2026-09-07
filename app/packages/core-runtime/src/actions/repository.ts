@@ -343,7 +343,7 @@ const tryDatabasePromise = <Value, Failure>(
 ): Effect.Effect<Value, Failure> =>
   Effect.tryPromise({
     catch: mapFailure,
-    try: evaluate,
+    try: () => evaluate(),
   }).pipe(
     Effect.timeoutOrElse({
       duration: Duration.infinity,
