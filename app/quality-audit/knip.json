@@ -1,0 +1,229 @@
+{
+  "ignore": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/dist-cloudflare/**",
+    "**/.output/**",
+    "**/.modern/**",
+    "**/.modernjs/**",
+    "**/modern-tanstack/**",
+    "**/routeTree.gen.*",
+    "repos/**",
+    "tools/oxlint/effect-native/tests/fixtures/**",
+    "**/.env",
+    "**/.env.*",
+    "**/cloudflare-dist/**"
+  ],
+  "workspaces": {
+    ".": {
+      "entry": [
+        "oxlint.config.ts",
+        "oxfmt.config.ts",
+        "tools/oxlint/effect-native/tests/*.test.mts",
+        "tools/oxlint/effect-native/report.mts",
+        "scripts/run-zerops-migrator.mjs",
+        "tools/oxlint/effect-native/tests/fixture-plugin.ts",
+        "tools/oxlint/effect-native/tests/production-fixture.config.ts",
+        "!**/node_modules/**",
+        "!**/dist/**",
+        "!**/dist-cloudflare/**",
+        "!**/cloudflare-dist/**",
+        "!**/.output/**",
+        "!**/.modern/**",
+        "!**/.modernjs/**",
+        "!**/modern-tanstack/**",
+        "!**/routeTree.gen.*",
+        "!**/.env",
+        "!**/.env.*",
+        "!repos/**",
+        "!tools/oxlint/effect-native/tests/fixtures/**",
+        "scripts/**/*.{test,spec}.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "quality-audit/knip-reporter.mts"
+      ],
+      "project": [
+        "scripts/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "tools/oxlint/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "!**/node_modules/**",
+        "!**/dist/**",
+        "!**/dist-cloudflare/**",
+        "!**/cloudflare-dist/**",
+        "!**/.output/**",
+        "!**/.modern/**",
+        "!**/.modernjs/**",
+        "!**/modern-tanstack/**",
+        "!**/routeTree.gen.*",
+        "!**/.env",
+        "!**/.env.*",
+        "!repos/**",
+        "!tools/oxlint/effect-native/tests/fixtures/**",
+        "quality-audit/**/*.mts"
+      ],
+      "rstest": {
+        "config": [],
+        "entry": [
+          "tests/**/*.{test,spec}.{ts,tsx,mts}"
+        ]
+      },
+      "lefthook": false,
+      "node": false
+    },
+    "apps/*": {
+      "project": [
+        "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "!**/node_modules/**",
+        "!**/dist/**",
+        "!**/dist-cloudflare/**",
+        "!**/cloudflare-dist/**",
+        "!**/.output/**",
+        "!**/.modern/**",
+        "!**/.modernjs/**",
+        "!**/modern-tanstack/**",
+        "!**/routeTree.gen.*",
+        "!**/.env",
+        "!**/.env.*"
+      ],
+      "entry": [
+        "src/index.{ts,tsx,js}",
+        "api/index.ts",
+        "vertical.registration.ts",
+        "src/federation-entry.tsx",
+        "src/routes/**/{page,layout,error,loading,not-found}.{ts,tsx}",
+        "src/routes/**/*.data.{ts,tsx}",
+        "src/routes/**/route.{meta,sitemap}.{ts,mjs}",
+        "*.config.{ts,mts,js,mjs}",
+        "src/modern.runtime.ts",
+        "src/worker-host/main.ts",
+        "api/backend-federation.ts",
+        "api/effect-api.ts",
+        "!**/node_modules/**",
+        "!**/dist/**",
+        "!**/dist-cloudflare/**",
+        "!**/cloudflare-dist/**",
+        "!**/.output/**",
+        "!**/.modern/**",
+        "!**/.modernjs/**",
+        "!**/modern-tanstack/**",
+        "!**/routeTree.gen.*",
+        "!**/.env",
+        "!**/.env.*"
+      ],
+      "drizzle": {
+        "config": []
+      },
+      "playwright": {
+        "config": [],
+        "entry": [
+          "tests/**/*.spec.{ts,tsx}",
+          "tests/**/*.test.{ts,tsx}"
+        ]
+      },
+      "rstest": {
+        "config": [],
+        "entry": [
+          "tests/**/*.{test,spec}.{ts,tsx,mts}"
+        ]
+      },
+      "lefthook": false
+    },
+    "verticals/*": {
+      "project": [
+        "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "!**/node_modules/**",
+        "!**/dist/**",
+        "!**/dist-cloudflare/**",
+        "!**/cloudflare-dist/**",
+        "!**/.output/**",
+        "!**/.modern/**",
+        "!**/.modernjs/**",
+        "!**/modern-tanstack/**",
+        "!**/routeTree.gen.*",
+        "!**/.env",
+        "!**/.env.*"
+      ],
+      "entry": [
+        "src/index.{ts,tsx,js}",
+        "api/index.ts",
+        "vertical.registration.ts",
+        "src/federation-entry.tsx",
+        "src/routes/**/{page,layout,error,loading,not-found}.{ts,tsx}",
+        "src/routes/**/*.data.{ts,tsx}",
+        "src/routes/**/route.{meta,sitemap}.{ts,mjs}",
+        "*.config.{ts,mts,js,mjs}",
+        "src/modern.runtime.ts",
+        "src/worker-host/main.ts",
+        "api/backend-federation.ts",
+        "api/effect-api.ts",
+        "!**/node_modules/**",
+        "!**/dist/**",
+        "!**/dist-cloudflare/**",
+        "!**/cloudflare-dist/**",
+        "!**/.output/**",
+        "!**/.modern/**",
+        "!**/.modernjs/**",
+        "!**/modern-tanstack/**",
+        "!**/routeTree.gen.*",
+        "!**/.env",
+        "!**/.env.*"
+      ],
+      "drizzle": {
+        "config": []
+      },
+      "playwright": {
+        "config": [],
+        "entry": [
+          "tests/**/*.spec.{ts,tsx}",
+          "tests/**/*.test.{ts,tsx}"
+        ]
+      },
+      "rstest": {
+        "config": [],
+        "entry": [
+          "tests/**/*.{test,spec}.{ts,tsx,mts}"
+        ]
+      },
+      "lefthook": false
+    },
+    "packages/*": {
+      "project": [
+        "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "!**/node_modules/**",
+        "!**/dist/**",
+        "!**/dist-cloudflare/**",
+        "!**/cloudflare-dist/**",
+        "!**/.output/**",
+        "!**/.modern/**",
+        "!**/.modernjs/**",
+        "!**/modern-tanstack/**",
+        "!**/routeTree.gen.*",
+        "!**/.env",
+        "!**/.env.*"
+      ],
+      "drizzle": {
+        "config": []
+      },
+      "entry": [
+        "src/index.ts",
+        "drizzle.config.ts",
+        "!**/node_modules/**",
+        "!**/dist/**",
+        "!**/dist-cloudflare/**",
+        "!**/cloudflare-dist/**",
+        "!**/.output/**",
+        "!**/.modern/**",
+        "!**/.modernjs/**",
+        "!**/modern-tanstack/**",
+        "!**/routeTree.gen.*",
+        "!**/.env",
+        "!**/.env.*"
+      ],
+      "rstest": {
+        "config": [],
+        "entry": [
+          "tests/**/*.{test,spec}.{ts,tsx,mts}"
+        ]
+      },
+      "lefthook": false
+    }
+  }
+}
