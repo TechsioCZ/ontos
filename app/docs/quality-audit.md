@@ -10,19 +10,21 @@ mise exec -- pnpm quality:audit --tool fallow
 mise exec -- pnpm quality:audit:test
 ```
 
-The first rollout reports findings. Existing unused-code, duplication, and complexity findings do not fail the audit command. Missing tools, invalid reports, configuration failures, or an empty analysis are failures and retain diagnostics. A successful report does not prove every reported item should be removed or extracted.
+The audit reports findings. Existing unused-code, duplication, and complexity findings do not fail the audit command. Missing tools, invalid reports, configuration failures, or an empty analysis are failures and retain diagnostics. A successful report does not prove every reported item should be removed or extracted.
 
-The default output is `.codex/reports/quality-audit/`. Use `--output <path>` to select another directory. Read `summary.md` for the result, `summary.json` for structured status, and the raw analyzer reports and stderr for evidence. Reports are generated artifacts and should not be committed as an accepted baseline.
+The runner verifies each installed analyzer and invokes its local `node_modules/.bin/<tool>` executable directly. Analyzer subprocesses do not use `pnpm exec`, which can reify dependencies in a synthetic workspace; installation remains a separate, explicit step.
 
-The separate **Quality Audit Reports** workflow publishes reports on pull requests and pushes to `main` and `stage`; it can also be run manually. It is not added to branch-required checks or stage deployment prerequisites in this rollout. Existing formatting, lint, type, architecture, and behavioral gates retain their current behavior. Local Git hook activation is a separate follow-up, because the audit found that the root Lefthook example did not load the application configuration through the effective global hook chain.
+The default output is `.codex/reports/quality-audit/`. Use `--output <path>` to select another directory. Read `summary.md` for the result, `summary.json` for structured status, and the raw analyzer reports and stderr for evidence. Reports are generated artifacts and should not be committed as an accepted baseline. Local run artifacts remain available until the user removes them; this deliberately retains review evidence. The runner does not automatically delete an arbitrary directory supplied through `--output`.
+
+The separate **Quality Audit Reports** workflow publishes reports on pull requests and pushes to `main` and `stage`; it can also be run manually. It is not added to branch-required checks or stage deployment prerequisites in this rollout. Existing formatting, lint, type, architecture, and behavioral gates retain their current behavior. The audit does not install or activate local Git hooks. CI installs dependencies with `--ignore-scripts` to avoid lifecycle-script mutations while collecting reports.
 
 ## What each report answers
 
-| Tool   | Report                                                                     | Interpretation                                                                                                    |
-| ------ | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Knip   | Unused files, exports, types, dependencies, and import/dependency problems | No consumer was found in the configured model. Framework roots and external consumers need review before removal. |
-| JSCPD  | Substantial repeated token sequences                                       | Candidate shared implementation, including copies of unchanged files.                                             |
-| Fallow | Structural clones and functions above cyclomatic 10 or cognitive 15        | Candidate duplication or complexity to inspect. Structural normalization is not proof of equivalent behavior.     |
+| Tool   | Report                                                                                 | Interpretation                                                                                                                         |
+| ------ | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Knip   | Unused files, exports, types, dependencies, and import/dependency problems             | No consumer was found in the configured model. Framework roots and external consumers need review before removal.                      |
+| JSCPD  | Substantial repeated token sequences                                                   | Candidate shared implementation, including copies of unchanged files.                                                                  |
+| Fallow | Strict clones, separate semantic similarities, and control-flow complexity above 10/15 | Strict matches are primary clone observations; semantic matches are advisory. Complexity separates React heuristics from control flow. |
 
 Use the checked-in analyzer configs and runner as the command and scope authority. They account for runtime source, tooling, tests, and framework consumers. Intentionally invalid custom-rule fixtures, dependencies, and generated build output require explicit handling; editable Codesmith starter files remain source. Discovery totals and clone-eligible file totals differ because clone detectors omit files shorter than their token/line minimums. Do not compare duplication percentages between tools as if they used the same denominator.
 
@@ -30,34 +32,34 @@ Knip must preserve filename-loaded Modern runtime files, route loaders and metad
 
 Keep the existing compiler and lint checks. Some analyzers recover from malformed syntax and still emit JSON, so report validation does not replace syntax/type validation. Audit health metrics deliberately avoid using estimated coverage or an aggregate health score as a gate.
 
-## Initial source audit
+## Calibrated reporting model
 
-A parallel audit inspected source revision `3c6faedcccb0d86f7c0df40e2e826edddc82c6d5` before the reporting integration. Those observations belong to that source revision and the audit's stated corpora. Running the integrated command on a later commit can produce different totals.
+Knip's model adapters inspect source and configuration syntax without evaluating application modules. They derive concrete consumer evidence for dynamic framework behavior, including federation package keys, subprocess source arguments, source-reading validators, reflective Drizzle schemas, and loader configuration. Each modeled consumer records its owning workspace, source location, target, and reason in `knip-model.json`. `provenance.json` records the Git revision, whether the working tree is clean or modified, and tracked/untracked changes; a modified scan is not attributed to the commit alone. The run retains both `configs/knip-base.json` and the effective `configs/knip.json` so the model's effect is reviewable.
 
-The broad audit inventoried 3,181 JavaScript and TypeScript files. The recurring report excludes 2,248 custom-rule fixture files and two generated Modern TanStack router files, and adds three audit implementation files, giving 934 source files at integration time. Fallow additionally discovers four CSS files. Custom-rule fixture behavior remains covered by the existing lint-rule tests. Clone-eligible totals also change with these exclusions and each detector's minimum size.
+The generated `knip-consumers.mts` snapshot expresses proven file, named-export, and root dependency consumption through scoped imports. Root dependency imports avoid Knip's inherited root exceptions, so a root consumer cannot hide an unused declaration in a child workspace. A file-only consumer does not imply that all of its exports are used; a reflected named export does not protect an unused neighboring helper. These imports belong to the temporary analyzer model and do not modify application imports or create runtime coupling between MicroVerticals.
 
-| Observation                  | Audit evidence and limit                                                                                                                                                                                                  |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Knip ordinary analysis       | 14 files, 388 exports, 201 types, 21 dependencies, and 15 development dependencies reported unused. Remaining framework, public-contract, and installation-model uncertainties prevent treating these as deletion counts. |
-| Knip production analysis     | 17 files, 529 exports, 256 types, and 30 dependencies reported unused under a separate production model. This is not a deployed-bundle proof.                                                                             |
-| JSCPD runtime/tooling corpus | 235 clone pairs; 145 pairs wholly inside `tools/oxlint`. Large families repeat lexical-scope and Effect-binding helpers.                                                                                                  |
-| Fallow broad audit           | 449 structural clone groups; 568 functions above the proposed 10/15 limits, including 402 in quality tooling. This broad audit included tests and fixture observations separately.                                        |
-| Existing policy              | Classic cyclomatic complexity defaults to 20; cognitive complexity is disabled in the application config. Party Registry has a migration override disabling 39 rules for `.ts` files.                                     |
+Knip's `report.ndjson` remains the native report. The calibrated summary retains `nativeFindingCounts` alongside `findingCounts` and `modeledUsages`. The corresponding `knip/modeled-usages.json` records the exact original issue category and consumer evidence for each modeled usage, including an empty array when none apply. Resolver handling requires the actual source, line, column, package target, explicit resolution anchor, resolved path, and an `owningManifest` declaration proof. A vendor dependency chain must also be proved. A package that happens to resolve inside the same workspace without being declared remains a finding, as do unanchored imports elsewhere. A count change caused by corrected consumer modeling is not a code removal or an accepted-debt baseline.
 
-No audit findings were automatically repaired or accepted into a permanent baseline. The broad source audit also validated consumer roots and isolated detector failure behavior. In particular, all three analyzers can return success on empty inputs, and Fallow's duplication subcommand cannot be gated by assuming `--fail-on-issues` works like its other analyses.
+The compiler-option correction applies only to Knip's exact locationless `@effect/language-service` record for `tsconfig.base.json`. It requires the pinned Effect TSGo manifest, documentation proving the plugin is built in, and evidence that the actual typecheck command chain uses that compiler. This configuration namespace does not imply an installed JavaScript plugin dependency. References in `types[]` and direct imports retain their findings.
 
-## Follow-up PR boundaries
+Fallow runs `strict` mode for its primary clone report and `semantic` mode for the separate `fallow-similarity` advisory. Semantic normalization can match different numeric policies, string values, API contracts, and worker wiring, while also finding renamed implementations that strict mode misses. Both reports remain useful when their meanings stay explicit. JSCPD is an independent token detector. Never add JSCPD, Fallow strict, and Fallow semantic totals: their pairs, groups, and source spans overlap. Raw duplicated-line statistics are observations from the detector, not verified replaceable lines or distinct defect counts.
 
-Keep each correction independently reviewable:
+Fallow's raw cognitive metric includes the React contribution kinds `hook-density` and `prop-count`. The 10/15 policy concerns control flow, so the runner reconstructs the native metrics from each function's contributions and derives:
 
-1. **Consumer-model corrections.** Prove runtime, federation, worker, test-loader, and externally consumed contract roots. Resolve false unused reports before deleting code. Include unused-neighbor controls so broad entry patterns cannot hide defects.
-2. **Custom Oxlint helper consolidation.** Start with lexical provenance and Effect-binding clone families. Preserve invalid/valid fixtures and rule-specific diagnostics; do not merge distinct provenance semantics just because token sequences match.
-3. **Unused artifacts by owner.** Remove confirmed unused exports, types, files, or dependencies in separate owner-scoped changes after consumer proof and fresh-install verification.
-4. **Owner-local clone and complexity repairs.** One cohesive API, script, or operation family per PR. Preserve typed failures, authorization order, transaction boundaries, resource lifetime, and overload narrowing.
-5. **Generator/framework duplication.** Fix repeated generated helpers at their producer or approved shared layer, with regeneration and independent deployment proof.
-6. **Policy and suppression governance.** Make complexity definitions explicit, narrow broad migration overrides, and validate owned expiring exceptions independently of the analyzer they suppress.
-7. **Install lifecycle and source integrity.** Existing postinstall runs write-mode Oxfmt before validation. Correct that separately and prove a deliberately unformatted tracked file survives installation unchanged and then fails the format check. The new audit workflow uses `--ignore-scripts` to avoid that behavior without changing existing workflows.
-8. **Hook and pipeline enforcement.** Prove staged/pushed-tree semantics and the effective hook chain; then require validated quality checks on protected branches and the actual stage-deployment revision.
+```text
+cyclomatic = 1 + sum(cyclomatic contribution weights)
+weightedCognitive = sum(cognitive contribution weights)
+controlFlowCognitive = weightedCognitive - hookDensityWeight - propCountWeight
+primaryViolation = cyclomatic > 10 || controlFlowCognitive > 15
+```
+
+The normalized `fallow-health/complexity.json` retains each function's path, line, name, raw weighted cognitive value, both React weights, projected control-flow cognitive value, and threshold classification. The report separates native weighted findings, control-flow findings, and UI-only advisories. A branch-free component whose props and hooks alone cross the native threshold is a UI advisory; a neighboring branch-heavy function remains a primary finding. Missing contribution evidence or arithmetic inconsistent with the native metrics is an analysis failure. This projection changes the metric interpretation without raising thresholds or excluding UI files.
+
+## Review and maintenance
+
+Rollout measurements, calibration evidence, and follow-up scope belong to [PR #492](https://github.com/TechsioCZ/ontos/pull/492).
+
+An unused export identifies an unnecessary exported name or forwarding surface; it does not establish that its declaration or initializer can be deleted. Preserve locally used implementations and prove the intended public boundary before changing an export. Knip duplicate-export groups concern aliases and remain separate from JSCPD/Fallow body-clone observations.
 
 ADR-0016 remains binding throughout. A clone between MicroVerticals never permits importing another deployment's private registration, handler, repository, worker, or business behavior. Repeat deliberate domain structure when ownership or type semantics require it and document the reason.
 

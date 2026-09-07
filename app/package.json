@@ -85,7 +85,7 @@
     "authorization:impact:report": "node ./scripts/report-fail-closed-authorization-impact.mts",
     "authorization:readiness:check": "node ./scripts/check-authorization-readiness.mts",
     "quality:audit": "node ./scripts/quality-audit.mts",
-    "quality:audit:test": "node --test ./scripts/tests/quality-audit.test.mts"
+    "quality:audit:test": "node --test ./scripts/tests/quality-audit.test.mts ./scripts/tests/quality-audit-model.test.mts ./scripts/tests/quality-audit-runtime-model.test.mts"
   },
   "dependencies": {
     "@authzed/authzed-node": "1.6.1",
@@ -127,7 +127,8 @@
     "oxlint-tsgolint": "7.0.2001",
     "knip": "6.34.0",
     "jscpd": "5.1.2",
-    "fallow": "3.22.0"
+    "fallow": "3.22.0",
+    "oxc-parser": "0.147.0"
   },
   "engines": {
     "node": ">=26",

@@ -4,6 +4,7 @@ import {
   copyFileSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -14,10 +15,13 @@ import path from 'node:path';
 import test from 'node:test';
 import { NodeServices } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
+import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 import { runEffectTestPromise } from '../../packages/core-runtime/src/testing/effect-runtime.ts';
 import { auditSteps, runQualityAudit, validateReport } from '../quality-audit.mts';
 
 const FALLOW_CLONES = 'fallow-clones';
+const FALLOW_SIMILARITY = 'fallow-similarity';
+const FALLOW_HEALTH = 'fallow-health';
 const CONFIG_DIRECTORY = 'quality-audit';
 const REPORT_DIRECTORY = 'reports';
 const KNIP_CONFIG = 'quality-audit/knip.json';
@@ -128,19 +132,21 @@ await test('Fallow rejects missing discovery, unsupported schema and incomplete 
 await test('tool selection preserves the complete Fallow group', () => {
   assert.deepEqual(
     auditSteps('/app', '/output', 'fallow').map((step) => step.name),
-    ['fallow-files', FALLOW_CLONES, 'fallow-health'],
+    ['fallow-files', FALLOW_CLONES, FALLOW_SIMILARITY, FALLOW_HEALTH],
   );
   assert.deepEqual(
     auditSteps('/app', '/output', 'knip').map((step) => step.name),
     ['knip'],
   );
-  assert.equal(auditSteps('/app', '/output', 'all').length, 5);
+  assert.equal(auditSteps('/app', '/output', 'all').length, 6);
 });
 
 const createFixture = async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'ontos-quality-test-'));
   mkdirSync(path.join(root, CONFIG_DIRECTORY));
   mkdirSync(path.join(root, 'scripts'));
+  mkdirSync(path.join(root, '.codex'));
+  writeFileSync(path.join(root, '.codex/caller-owned.txt'), 'keep');
   symlinkSync(path.join(appRoot, 'node_modules'), path.join(root, 'node_modules'), 'dir');
   writeFileSync(
     path.join(root, 'package.json'),
@@ -195,15 +201,148 @@ const summary = async (output: string) =>
     ),
   );
 
+await test('real Fallow separates UI penalties from control-flow complexity without hiding branches', async () => {
+  const root = await createFixture();
+  const output = path.join(root, REPORT_DIRECTORY);
+  const props = Array.from({ length: 22 }, (_, index) => `p${index + 1}`).join(', ');
+  const branches = Array.from(
+    { length: 11 },
+    (_, index) => `if (value === ${index + 1}) return ${index + 1};`,
+  ).join('\n');
+  try {
+    writeFileSync(
+      path.join(root, 'scripts/metric-example.tsx'),
+      `import { useState } from 'react';
+export function Panel({ ${props} }: Record<string, string>) {
+  useState('one');
+  useState('two');
+  useState('three');
+  return <div>{p1}</div>;
+}
+export function branchHeavy(value: number) {
+  ${branches}
+  return 0;
+}
+`,
+    );
+    await runFixture(root, output, 'fallow');
+    const result = await summary(output);
+    const healthDirectory = path.join(result.runDirectory, FALLOW_HEALTH);
+    const rows = await runEffectTestPromise(
+      Schema.decodeUnknownEffect(
+        Schema.fromJsonString(
+          Schema.Array(
+            Schema.Struct({
+              controlFlowCognitive: Schema.Number,
+              exceedsControlFlowLimits: Schema.Boolean,
+              name: Schema.String,
+              weightedCognitive: Schema.Number,
+            }),
+          ),
+        ),
+      )(readFileSync(path.join(healthDirectory, 'complexity.json'), 'utf-8')),
+    );
+    const panel = rows.find((row) => row.name === 'Panel');
+    const branchHeavy = rows.find((row) => row.name === 'branchHeavy');
+    assert.ok(panel);
+    assert.equal(panel.weightedCognitive, 21);
+    assert.equal(panel.controlFlowCognitive, 0);
+    assert.equal(panel.exceedsControlFlowLimits, false);
+    assert.equal(branchHeavy?.exceedsControlFlowLimits, true);
+    const raw = readFileSync(path.join(healthDirectory, 'report.json'), 'utf-8');
+    const corrupted = raw.replace(
+      /(?<prefix>"cognitive"\s*:\s*)21/u,
+      (_match: string, prefix: string) => `${prefix}22`,
+    );
+    assert.notEqual(corrupted, raw);
+    await assert.rejects(validate(FALLOW_HEALTH, corrupted), /contributions disagree/u);
+    const wrongCount = raw.replace(
+      /"functions_above_threshold"\s*:\s*\d+/u,
+      '"functions_above_threshold": 0',
+    );
+    await assert.rejects(validate(FALLOW_HEALTH, wrongCount), /count disagrees/u);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+await test('primary clone detectors preserve policy literals while semantic similarity stays advisory', async () => {
+  const root = await createFixture();
+  const output = path.join(root, REPORT_DIRECTORY);
+  const policyFiles = ['policy-read.ts', 'policy-write.ts'];
+  try {
+    for (const [index, file] of policyFiles.entries()) {
+      const policy = Array.from(
+        { length: 16 },
+        (_, field) =>
+          `decision${field}: subject === '${index === 0 ? 'role' : 'admin'}-${field}' ? '${index === 0 ? 'allow' : 'audit'}-${field}' : '${index === 0 ? 'deny' : 'defer'}-${field}'`,
+      ).join(',\n');
+      writeFileSync(
+        path.join(root, 'scripts', file),
+        `export function selectPolicy(subject: string) {\nreturn {\n${policy}\n};\n}\n`,
+      );
+    }
+    await runFixture(root, output, 'all');
+    const result = await summary(output);
+    const schema = Schema.fromJsonString(
+      Schema.Struct({
+        clone_groups: Schema.Array(
+          Schema.Struct({ instances: Schema.Array(Schema.Struct({ file: Schema.String })) }),
+        ),
+      }),
+    );
+    await Promise.all(
+      [FALLOW_CLONES, FALLOW_SIMILARITY].map(async (name) => {
+        const report = await runEffectTestPromise(
+          Schema.decodeUnknownEffect(schema)(
+            readFileSync(path.join(result.runDirectory, name, 'report.json'), 'utf-8'),
+          ),
+        );
+        const matchesDistinctPolicies = report.clone_groups.some((group) =>
+          policyFiles.every((file) =>
+            group.instances.some((instance) => path.basename(instance.file) === file),
+          ),
+        );
+        assert.equal(matchesDistinctPolicies, name === FALLOW_SIMILARITY, name);
+      }),
+    );
+    const jscpd = await runEffectTestPromise(
+      Schema.decodeUnknownEffect(
+        Schema.fromJsonString(
+          Schema.Struct({
+            duplicates: Schema.Array(
+              Schema.Struct({
+                firstFile: Schema.Struct({ name: Schema.String }),
+                secondFile: Schema.Struct({ name: Schema.String }),
+              }),
+            ),
+          }),
+        ),
+      )(readFileSync(path.join(result.runDirectory, 'jscpd/report.json'), 'utf-8')),
+    );
+    assert.equal(
+      jscpd.duplicates.some((pair) =>
+        policyFiles.every((file) =>
+          [pair.firstFile.name, pair.secondFile.name].some((name) => path.basename(name) === file),
+        ),
+      ),
+      false,
+    );
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 await test('real pinned tools report debt successfully and isolate stale reports after invalid config', async () => {
   const root = await createFixture();
   const output = path.join(root, REPORT_DIRECTORY);
   try {
     await runFixture(root, output, 'all');
     const first = await summary(output);
+    assert.deepEqual(readdirSync(path.join(root, '.codex')), ['caller-owned.txt']);
     assert.equal(first.status, 'reported');
-    assert.equal(first.results.length, 5);
-    for (const name of ['knip', 'jscpd', FALLOW_CLONES, 'fallow-health']) {
+    assert.equal(first.results.length, 6);
+    for (const name of ['knip', 'jscpd', FALLOW_CLONES, FALLOW_HEALTH]) {
       assert.ok(
         first.results.some((row) => row.name === name && row.findings > 0),
         `${name} must report injected debt`,
@@ -217,7 +356,12 @@ await test('real pinned tools report debt successfully and isolate stale reports
     assert.equal(second.status, 'error');
     assert.notEqual(second.runDirectory, first.runDirectory);
     assert.equal(second.results[0]?.status, 'error');
-    assert.ok(readFileSync(path.join(second.runDirectory, 'knip/stderr.txt'), 'utf-8').length > 0);
+    assert.deepEqual(readdirSync(path.join(root, '.codex')), ['caller-owned.txt']);
+    assert.equal(readFileSync(path.join(root, '.codex/caller-owned.txt'), 'utf-8'), 'keep');
+    assert.match(
+      readFileSync(path.join(output, 'summary.md'), 'utf-8'),
+      /Malformed .*configs\/knip\.json/u,
+    );
     assert.ok(
       readFileSync(path.join(first.runDirectory, 'knip/report.ndjson'), 'utf-8').length > 0,
     );
@@ -245,23 +389,60 @@ await test('missing binaries and an empty source scope fail with preserved summa
     await assert.rejects(runFixture(root, output, 'jscpd'), /analysis failed/u);
     const empty = await summary(output);
     assert.equal(empty.results[0]?.name, 'setup');
+    assert.match(
+      readFileSync(path.join(output, 'summary.json'), 'utf-8'),
+      /Source inventory: analysis contains no files/u,
+    );
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
 });
 
-await test('the CLI resolves the application root independently of invocation directory', () => {
-  const output = mkdtempSync(path.join(tmpdir(), 'ontos-quality-cwd-'));
+await test('the CLI handles escaped paths, foreign cwd and untracked source provenance', async () => {
+  const root = await createFixture();
+  const output = path.join(root, REPORT_DIRECTORY);
   try {
-    const result = spawnSync(
-      process.execPath,
-      [path.join(appRoot, 'scripts/quality-audit.mts'), '--tool', 'knip', '--output', output],
-      { cwd: tmpdir(), encoding: 'utf-8', timeout: 60_000 },
+    await runEffectTestPromise(
+      Effect.gen(function* initializeFixtureRepository() {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        yield* spawner.string(ChildProcess.make('git', ['init', '-q', root]));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
+    const executable = path.join(root, 'scripts/quality audit.mts');
+    copyFileSync(path.join(appRoot, 'scripts/quality-audit.mts'), executable);
+    for (const file of ['knip-model.mts', 'knip-runtime-model.mts']) {
+      copyFileSync(
+        path.join(appRoot, CONFIG_DIRECTORY, file),
+        path.join(root, CONFIG_DIRECTORY, file),
+      );
+    }
+    const result = spawnSync(process.execPath, [executable, '--tool', 'knip', '--output', output], {
+      cwd: tmpdir(),
+      encoding: 'utf-8',
+      timeout: 60_000,
+    });
+    assert.equal(
+      result.error,
+      undefined,
+      `CLI spawn failed: ${String(result.error)}\n${result.stdout}\n${result.stderr}`,
     );
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-    assert.match(readFileSync(path.join(output, 'summary.json'), 'utf-8'), /"reported"/u);
+    const report = await summary(output);
+    assert.equal(report.status, 'reported');
+    const provenance = await runEffectTestPromise(
+      Schema.decodeUnknownEffect(
+        Schema.fromJsonString(
+          Schema.Struct({
+            sourceState: Schema.String,
+            workingTreeChanges: Schema.Array(Schema.String),
+          }),
+        ),
+      )(readFileSync(path.join(report.runDirectory, 'provenance.json'), 'utf-8')),
+    );
+    assert.equal(provenance.sourceState, 'modified');
+    assert.ok(provenance.workingTreeChanges.some((file) => file === '?? scripts/index.ts'));
   } finally {
-    rmSync(output, { force: true, recursive: true });
+    rmSync(root, { force: true, recursive: true });
   }
 });
 
