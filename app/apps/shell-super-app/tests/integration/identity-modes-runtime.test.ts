@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test, { after as afterNativeDatabase } from 'node:test';
 import { and, eq, inArray } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/node-postgres';
+import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
 
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import { Pool } from 'pg';
@@ -50,7 +50,6 @@ import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import {
   account,
   apikey,
-  authRelations,
   session,
   supportImpersonationRecovery,
   user,
@@ -82,9 +81,11 @@ const cookieHeader = (setCookieHeaders: readonly string[]): string => {
 
 void test('verifies provider keys and completes live support impersonation with durable stopped evidence', async (context) => {
   const baseConfiguration = await runEffectTestPromise(loadAuthConfig());
-  const authPool = new Pool({ connectionString: baseConfiguration.connectionString });
   const corePool = new Pool({ connectionString: baseConfiguration.connectionString });
-  const authDatabase = drizzle({ client: authPool, relations: authRelations });
+  const authPersistence = await runEffectTestPromise(
+    makeAuthDatabase(baseConfiguration).pipe(NativeScope.provide(nativeDatabaseScope)),
+  );
+  const authDatabase = authPersistence.executor;
   const coreDatabase = await runEffectTestPromise(
     makeTestDatabaseFromPool(corePool, coreRelations).pipe(
       NativeScope.provide(nativeDatabaseScope),
@@ -155,7 +156,7 @@ void test('verifies provider keys and completes live support impersonation with 
   );
   const fixtureAuthentication = makeAuthenticationService(
     baseConfiguration,
-    authDatabase,
+    authPersistence.adapter,
     resolver,
     { allowFixtureSignUp: true, runResolverEffect: runEffectTestPromise },
   );
@@ -171,13 +172,17 @@ void test('verifies provider keys and completes live support impersonation with 
       const ids = [originalUserId, targetUserId, secondAdministratorUserId].filter(
         (id) => id.length > 0,
       );
-      await authDatabase
-        .delete(supportImpersonationRecovery)
-        .where(eq(supportImpersonationRecovery.tenantId, tenantId));
-      await authDatabase.delete(apikey).where(inArray(apikey.referenceId, ids));
-      await authDatabase.delete(session).where(inArray(session.userId, ids));
-      await authDatabase.delete(account).where(inArray(account.userId, ids));
-      await authDatabase.delete(user).where(inArray(user.id, ids));
+      await runEffectTestPromise(
+        authDatabase
+          .delete(supportImpersonationRecovery)
+          .where(eq(supportImpersonationRecovery.tenantId, tenantId)),
+      );
+      await runEffectTestPromise(
+        authDatabase.delete(apikey).where(inArray(apikey.referenceId, ids)),
+      );
+      await runEffectTestPromise(authDatabase.delete(session).where(inArray(session.userId, ids)));
+      await runEffectTestPromise(authDatabase.delete(account).where(inArray(account.userId, ids)));
+      await runEffectTestPromise(authDatabase.delete(user).where(inArray(user.id, ids)));
     }
     await runEffectTestPromise(
       coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
@@ -282,9 +287,14 @@ void test('verifies provider keys and completes live support impersonation with 
       ...baseConfiguration,
       supportUserIds: [originalUserId],
     };
-    const authentication = makeAuthenticationService(configuration, authDatabase, resolver, {
-      runResolverEffect: runEffectTestPromise,
-    });
+    const authentication = makeAuthenticationService(
+      configuration,
+      authPersistence.adapter,
+      resolver,
+      {
+        runResolverEffect: runEffectTestPromise,
+      },
+    );
     const signedIn = await runEffectTestPromise(
       authentication.signIn(
         originalEmail,
@@ -297,7 +307,12 @@ void test('verifies provider keys and completes live support impersonation with 
       origin: configuration.baseUrl,
     });
 
-    const keys = makeApiKeyService(configuration, authDatabase);
+    const keys = await runEffectTestPromise(
+      makeApiKeyService().pipe(
+        Effect.provideService(AuthConfig, configuration),
+        Effect.provideService(AuthDatabase, authPersistence),
+      ),
+    );
     const resolvedOriginal = await runEffectTestPromise(
       provideContextAccess(authentication.resolveTenantContext(originalHeaders)),
     );
@@ -318,10 +333,12 @@ void test('verifies provider keys and completes live support impersonation with 
             tenantId,
           }),
         );
-        await authDatabase
-          .update(apikey)
-          .set({ createdAt: new Date(nowEpochMillis - 10 * 60 * 1000) })
-          .where(eq(apikey.id, pending.providerKeyId));
+        await runEffectTestPromise(
+          authDatabase
+            .update(apikey)
+            .set({ createdAt: new Date(nowEpochMillis - 10 * 60 * 1000) })
+            .where(eq(apikey.id, pending.providerKeyId)),
+        );
 
         assert.deepEqual(
           await runEffectTestPromise(
@@ -334,17 +351,19 @@ void test('verifies provider keys and completes live support impersonation with 
           ),
           { hasMore: false, providerKeyIds: [pending.providerKeyId] },
         );
-        await authDatabase
-          .update(apikey)
-          .set({
-            metadata: JSON.stringify({
-              issuerPrincipalId: originalPrincipalId,
-              lifecycleOperationId,
-              ontosLifecycle: 'binding_pending_v1',
-              tenantId,
-            }),
-          })
-          .where(eq(apikey.id, pending.providerKeyId));
+        await runEffectTestPromise(
+          authDatabase
+            .update(apikey)
+            .set({
+              metadata: JSON.stringify({
+                issuerPrincipalId: originalPrincipalId,
+                lifecycleOperationId,
+                ontosLifecycle: 'binding_pending_v1',
+                tenantId,
+              }),
+            })
+            .where(eq(apikey.id, pending.providerKeyId)),
+        );
         assert.deepEqual(
           await runEffectTestPromise(
             keys.pendingCleanup({
@@ -514,7 +533,7 @@ void test('verifies provider keys and completes live support impersonation with 
         Context.add(SupportRecoveryPrincipalContextResolver, supportRecoveryPrincipal),
         Context.add(
           SupportAuthProviderService,
-          makeSupportAuthProvider(configuration, authDatabase),
+          makeSupportAuthProvider(configuration, authPersistence.adapter),
         ),
         Context.add(SupportImpersonationStoreService, makeSupportImpersonationStore(authDatabase)),
       ),
@@ -537,11 +556,13 @@ void test('verifies provider keys and completes live support impersonation with 
       cookie: cookieHeader(started.setCookieHeaders),
       origin: configuration.baseUrl,
     });
-    const [impersonationSession] = await authDatabase
-      .select({ actionId: session.impersonationActionId, id: session.id })
-      .from(session)
-      .where(and(eq(session.userId, targetUserId), eq(session.impersonatedBy, originalUserId)))
-      .limit(1);
+    const [impersonationSession] = await runEffectTestPromise(
+      authDatabase
+        .select({ actionId: session.impersonationActionId, id: session.id })
+        .from(session)
+        .where(and(eq(session.userId, targetUserId), eq(session.impersonatedBy, originalUserId)))
+        .limit(1),
+    );
     assert.notEqual(impersonationSession, undefined);
     if (impersonationSession === undefined) {
       throw new TypeError('The support impersonation session was not persisted');
@@ -550,30 +571,38 @@ void test('verifies provider keys and completes live support impersonation with 
     if (!Predicate.isString(impersonationSession.actionId)) {
       throw new TypeError('The approved support start did not persist its Action correlation');
     }
-    await authDatabase
-      .update(session)
-      .set({ impersonationActionId: null })
-      .where(eq(session.id, impersonationSession.id));
+    await runEffectTestPromise(
+      authDatabase
+        .update(session)
+        .set({ impersonationActionId: null })
+        .where(eq(session.id, impersonationSession.id)),
+    );
     const incompleteImpersonation = await runEffectTestPromise(
       Effect.flip(provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders))),
     );
     assert.equal(incompleteImpersonation._tag, 'OntosIdentityForbiddenError');
-    await authDatabase
-      .update(session)
-      .set({ impersonationActionId: impersonationSession.actionId })
-      .where(eq(session.id, impersonationSession.id));
-    await authDatabase
-      .update(session)
-      .set({ impersonationReason: 'Tampered support reason' })
-      .where(eq(session.id, impersonationSession.id));
+    await runEffectTestPromise(
+      authDatabase
+        .update(session)
+        .set({ impersonationActionId: impersonationSession.actionId })
+        .where(eq(session.id, impersonationSession.id)),
+    );
+    await runEffectTestPromise(
+      authDatabase
+        .update(session)
+        .set({ impersonationReason: 'Tampered support reason' })
+        .where(eq(session.id, impersonationSession.id)),
+    );
     const mismatchedImpersonationReason = await runEffectTestPromise(
       Effect.flip(provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders))),
     );
     assert.equal(mismatchedImpersonationReason._tag, 'OntosIdentityForbiddenError');
-    await authDatabase
-      .update(session)
-      .set({ impersonationReason: 'Investigating a tenant support request' })
-      .where(eq(session.id, impersonationSession.id));
+    await runEffectTestPromise(
+      authDatabase
+        .update(session)
+        .set({ impersonationReason: 'Investigating a tenant support request' })
+        .where(eq(session.id, impersonationSession.id)),
+    );
     const impersonated = await runEffectTestPromise(
       provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders)),
     );
@@ -660,11 +689,13 @@ void test('verifies provider keys and completes live support impersonation with 
           evidence.impersonatedByPrincipalId === originalPrincipalId,
       ),
     );
-    const recovery = await authDatabase.select().from(supportImpersonationRecovery);
+    const recovery = await runEffectTestPromise(
+      authDatabase.select().from(supportImpersonationRecovery),
+    );
     assert.equal(recovery.length, 0);
   } finally {
     await cleanup();
-    await Promise.all([authPool.end(), corePool.end()]);
+    await corePool.end();
   }
 });
 afterNativeDatabase(
