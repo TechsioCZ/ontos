@@ -401,7 +401,7 @@ test('builds every declared handler and preserves owner-local CORS through the i
       '/reads/party-match': { candidate },
     } as const;
     for (const [index, endpoint] of endpoints.entries()) {
-      const callsBefore = actionCalls + actionCommitCalls + readCalls;
+      const callsBefore: number = actionCalls + actionCommitCalls + readCalls;
       const payloadSchema = endpoint.payload.get('application/json')?.schemas[0];
       const manualPayload = Object.entries(manualPayloads).find(
         ([path]) => path === endpoint.path,
