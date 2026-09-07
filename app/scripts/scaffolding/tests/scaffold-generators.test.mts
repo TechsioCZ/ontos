@@ -7,9 +7,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import nodeTest from 'node:test';
-import { Predicate } from 'effect';
+import { Clock, ConfigProvider, Predicate, Redacted } from 'effect';
+import { defineAction } from '../../../packages/core-runtime/src/actions/definition.ts';
+import { GatewayAssertionRedemptionService } from '../../../packages/core-runtime/src/auth/gateway-assertion-redemption.ts';
+import { defineSystemModuleEntrypoint } from '../../../packages/core-runtime/src/modules/module-entrypoint.ts';
+import { makeActionTestHarness } from '../../../packages/core-runtime/src/testing/actions.ts';
 import { TrustedPrincipalContextSchema } from '../../../packages/core-runtime/src/actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../../../packages/core-runtime/src/actions/principal-context.ts';
+import type { GatewayPrincipalVerifierLive } from '../../../packages/gateway-principal-verifier/src/server.ts';
+import type { bindActionHttpRunner as ActionHttpRunnerBinding } from '../../../verticals/party-registry/api/action-http-runner.ts';
 import {
   defineEffectBff,
   Effect,
@@ -77,6 +83,7 @@ interface GeneratedPrincipalEnvironment {
 }
 
 interface GeneratedPrincipalModule {
+  readonly ActionPrincipalVerifierLive: typeof GatewayPrincipalVerifierLive;
   readonly verifyActionPrincipal: (
     authorization: string | undefined,
     options: {
@@ -85,6 +92,10 @@ interface GeneratedPrincipalModule {
       readonly redemption: { readonly consume: () => Effect.Effect<void> };
     },
   ) => Effect.Effect<TrustedPrincipalContext, { readonly _tag: GeneratedPrincipalErrorTag }>;
+}
+
+interface GeneratedActionHttpRunnerModule {
+  readonly bindActionHttpRunner: typeof ActionHttpRunnerBinding;
 }
 
 interface GeneratedOperationGatewayModule {
@@ -98,8 +109,19 @@ interface GeneratedOperationGatewayModule {
 }
 
 const GeneratedPrincipalModuleSchema = Schema.Struct({
+  ActionPrincipalVerifierLive: Schema.declare<
+    GeneratedPrincipalModule['ActionPrincipalVerifierLive']
+  >((value): value is GeneratedPrincipalModule['ActionPrincipalVerifierLive'] =>
+    Predicate.isObject(value),
+  ),
   verifyActionPrincipal: Schema.declare<GeneratedPrincipalModule['verifyActionPrincipal']>(
     (value): value is GeneratedPrincipalModule['verifyActionPrincipal'] =>
+      Predicate.isFunction(value),
+  ),
+});
+const GeneratedActionHttpRunnerModuleSchema = Schema.Struct({
+  bindActionHttpRunner: Schema.declare<GeneratedActionHttpRunnerModule['bindActionHttpRunner']>(
+    (value): value is GeneratedActionHttpRunnerModule['bindActionHttpRunner'] =>
       Predicate.isFunction(value),
   ),
 });
@@ -149,20 +171,15 @@ type EndpointProblem =
 const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
 );
-const failActionAuthentication = () =>
-  bearerChallenge.pipe(
-    Effect.andThen(
-      Effect.fail<EndpointProblem>({
-        _tag: 'ActionAuthenticationProblem',
-        detail: 'A valid Bearer assertion is required.',
-        status: 401,
-        title: 'Action authentication required',
-        type: 'https://ontos.dev/problems/action-authentication-required',
-      }),
-    ),
-  );
-const failActionVerificationUnavailable = () =>
-  Effect.fail<EndpointProblem>({
+const actionAuthenticationProblem = (): typeof ActionAuthenticationProblemSchema.Type => ({
+  _tag: 'ActionAuthenticationProblem',
+  detail: 'A valid Bearer assertion is required.',
+  status: 401,
+  title: 'Action authentication required',
+  type: 'https://ontos.dev/problems/action-authentication-required',
+});
+const actionVerificationUnavailableProblem =
+  (): typeof ActionVerificationUnavailableProblemSchema.Type => ({
     _tag: 'ActionVerificationUnavailableProblem',
     detail: 'Action identity verification is temporarily unavailable.',
     retryable: true,
@@ -170,6 +187,10 @@ const failActionVerificationUnavailable = () =>
     title: 'Action verification unavailable',
     type: 'https://ontos.dev/problems/action-verification-unavailable',
   });
+const failActionAuthentication = () =>
+  bearerChallenge.pipe(Effect.andThen(Effect.fail<EndpointProblem>(actionAuthenticationProblem())));
+const failActionVerificationUnavailable = () =>
+  Effect.fail<EndpointProblem>(actionVerificationUnavailableProblem());
 const generatedPrincipalErrorHandlers = {
   ActionPrincipalConfigurationError: failActionVerificationUnavailable,
   ActionPrincipalExpiredError: failActionAuthentication,
@@ -178,6 +199,34 @@ const generatedPrincipalErrorHandlers = {
   ActionPrincipalScopeError: failActionAuthentication,
   ActionPrincipalUnavailableError: failActionVerificationUnavailable,
 };
+const GeneratedBindingResultSchema = Schema.Struct({ accepted: Schema.Literal(true) });
+const generatedBindingAction = defineAction(
+  {
+    accessEvidencePolicy: {
+      captureMode: 'metadata_only',
+      policyKey: 'core.test.generated-action-http.access.v1',
+    },
+    actionKey: 'core.test.generated-action-http',
+    auditProfile: 'standard',
+    domainErrorSchema: Schema.Never,
+    domainEvents: {},
+    entrypoint: defineSystemModuleEntrypoint({
+      access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      entrypointKey: 'core.test.generated-action-http',
+      moduleKey: 'core.shell',
+      role: 'action',
+    }),
+    idempotency: 'optional',
+    legalEntityScope: 'optional',
+    owningModuleKey: 'core.shell',
+    payloadSchema: Schema.Struct({}),
+    policies: [],
+    resultSchema: GeneratedBindingResultSchema,
+    schemaVersion: '1',
+  },
+  () => Effect.succeed({ accepted: true as const }),
+);
 const FixtureTsconfigSchema = Schema.Struct({
   references: Schema.Array(Schema.Struct({ path: Schema.String })),
 });
@@ -275,6 +324,7 @@ const inventoryReportContractFile = 'verticals/inventory-stock/shared/apis/stock
 const inventoryReportClientFile = 'verticals/inventory-stock/src/api/stock-levels-report-client.ts';
 const inventoryReportServerFile = 'verticals/inventory-stock/api/stock-levels-report-server.ts';
 const inventoryActionPrincipalFile = 'verticals/inventory-stock/api/auth/action-principal.ts';
+const inventoryActionHttpRunnerFile = 'verticals/inventory-stock/api/action-http-runner.ts';
 const inventoryActionGatewayFile = 'verticals/inventory-stock/src/api/action-gateway.ts';
 const inventoryPackageFile = 'verticals/inventory-stock/package.json';
 const inventoryActionFile = 'verticals/inventory-stock/src/actions/create-order.action.ts';
@@ -1794,6 +1844,7 @@ test('generates one immutable Action identity boundary and exact direct dependen
     ]);
     assert.equal(result.kind, 'generated');
     const server = await readFixtureFile(fixture.root, inventoryActionPrincipalFile);
+    const actionHttpRunner = await readFixtureFile(fixture.root, inventoryActionHttpRunnerFile);
     const client = await readFixtureFile(fixture.root, inventoryActionGatewayFile);
     const redemption = await readFixtureFile(
       fixture.root,
@@ -1824,6 +1875,10 @@ test('generates one immutable Action identity boundary and exact direct dependen
     );
     assert.doesNotMatch(client, /localStorage|sessionStorage/u);
     assert.match(server, /verifyAndRedeem/u);
+    assert.match(actionHttpRunner, /bindGovernedActionHttp/u);
+    assert.match(actionHttpRunner, /bindActionHttpRunner/u);
+    assert.match(actionHttpRunner, /authenticateOperationPrincipal/u);
+    assert.doesNotMatch(actionHttpRunner, /ActionRuntime|ActionCoreError|HttpApiEndpoint/u);
     assert.match(redemption, /GatewayAssertionRedemptionUnavailableError/u);
     const packageJson = decodeFixturePackage(
       await readFixtureFile(fixture.root, inventoryPackageFile),
@@ -2010,6 +2065,9 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
     const generatedClientModule = Schema.decodeUnknownSync(GeneratedOperationGatewayModuleSchema)(
       await import(pathToFileURL(path.join(fixture.root, inventoryActionGatewayFile)).href),
     );
+    const generatedActionHttpRunnerModule = Schema.decodeUnknownSync(
+      GeneratedActionHttpRunnerModuleSchema,
+    )(await import(pathToFileURL(path.join(fixture.root, inventoryActionHttpRunnerFile)).href));
     const current = await makeGatewayKey('current');
     const retiring = await makeGatewayKey('retiring');
     const principal = {
@@ -2326,6 +2384,84 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
       assert.equal(actionReached, true);
     } finally {
       await actionHandler.dispose();
+    }
+
+    const generatedBindingApi = HttpApi.make('generatedActionRunnerFixture').add(
+      HttpApiGroup.make('action').add(
+        HttpApiEndpoint.post('invoke', '/actions/generated-runner', {
+          error: [ActionAuthenticationProblemSchema, ActionVerificationUnavailableProblemSchema],
+          success: GeneratedBindingResultSchema,
+        }),
+      ),
+    );
+    const runGeneratedActionHttp = generatedActionHttpRunnerModule.bindActionHttpRunner({
+      authentication: actionAuthenticationProblem,
+      unavailable: actionVerificationUnavailableProblem,
+    });
+    const harness = makeActionTestHarness({
+      actionPermission: 'allowed',
+      tenantPermission: 'allowed',
+    });
+    const generatedBindingGroupLive = HttpApiBuilder.group(
+      generatedBindingApi,
+      'action',
+      (handlers) =>
+        handlers.handle('invoke', ({ request }) =>
+          runGeneratedActionHttp({
+            endpointHeaders: {
+              idempotencyKey: request.headers['idempotency-key'],
+              traceId: 'generated-trace',
+            },
+            internalProblem: actionVerificationUnavailableProblem,
+            invalidCorrelationProblem: actionAuthenticationProblem,
+            mapError: actionVerificationUnavailableProblem,
+            payload: {},
+            registration: generatedBindingAction,
+            requestHeaders: {
+              authorization: Redacted.make(request.headers['authorization']),
+              'x-correlation-id': request.headers['x-correlation-id'],
+            },
+          }),
+        ),
+    ).pipe(
+      Layer.provide(generatedModule.ActionPrincipalVerifierLive),
+      Layer.provide(Layer.succeed(GatewayAssertionRedemptionService, testRedemption)),
+      Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
+      Layer.provide(harness.layer),
+    );
+    const generatedBindingRuntime = defineEffectBff({
+      api: generatedBindingApi,
+      layer: HttpApiBuilder.layer(generatedBindingApi).pipe(
+        Layer.provide(generatedBindingGroupLive),
+        Layer.provideMerge(harness.layer),
+      ),
+    });
+    const generatedBindingHandler = generatedBindingRuntime.createHandler();
+    try {
+      const liveIssuedAt = Math.floor((await runEffectTestPromise(Clock.currentTimeMillis)) / 1000);
+      const liveAssertion = await issue(current.configuration, liveIssuedAt);
+      const generatedBindingResponse = await generatedBindingHandler.handler(
+        new Request('https://inventory.example.test/actions/generated-runner', {
+          headers: {
+            authorization: `Bearer ${liveAssertion.token}`,
+            'x-correlation-id': 'generated-runner-correlation',
+          },
+          method: 'POST',
+        }),
+      );
+      const generatedBindingBody = Schema.decodeUnknownSync(GeneratedBindingResultSchema)(
+        await generatedBindingResponse.json(),
+      );
+      assert.equal(
+        generatedBindingResponse.status,
+        200,
+        JSON.stringify({ body: generatedBindingBody, snapshot: harness.snapshot() }),
+      );
+      assert.deepEqual(generatedBindingBody, { accepted: true });
+      assert.equal(harness.snapshot().invocations.length, 1);
+      assert.equal(harness.snapshot().transactionCount, 1);
+    } finally {
+      await generatedBindingHandler.dispose();
     }
   });
 });
@@ -5060,6 +5196,7 @@ test('every generated TypeScript file is already formatter-stable', async () => 
       'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/route.meta.ts',
       'verticals/inventory-stock/src/federation/page-orders.tsx',
       inventoryActionPrincipalFile,
+      inventoryActionHttpRunnerFile,
       inventoryActionGatewayFile,
       inventoryModuleApiContractFile,
       inventoryModuleApiReadFile,
@@ -5252,6 +5389,9 @@ test('all generated files typecheck against the real workspace contracts', async
             ],
             '@app/core-runtime/auth/gateway-assertion-redemption': [
               path.join(appRoot, 'packages/core-runtime/src/auth/gateway-assertion-redemption.ts'),
+            ],
+            '@app/core-runtime/http/action-runner': [
+              path.join(appRoot, 'packages/core-runtime/src/http/http-instrumentation-seam.ts'),
             ],
             '@app/core-runtime/http/principal-authentication': [
               path.join(appRoot, 'packages/core-runtime/src/http/principal-authentication.ts'),

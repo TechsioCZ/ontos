@@ -166,6 +166,26 @@ export const GatewayAssertionRedemptionLive = Layer.succeed(
 );
 `;
 
+export const renderActionHttpRunner = (
+  vertical: Pick<VerticalMetadata, 'appId'>,
+): string => `${ACTION_BOUNDARY_GENERATOR_HEADER}
+// @ontos-action-boundary-owner ${vertical.appId}
+import { bindGovernedActionHttp } from '@app/core-runtime/http/action-runner';
+import type { PrincipalAuthenticationProblems } from '@app/core-runtime/http/principal-authentication';
+import { authenticateOperationPrincipal } from './auth/action-principal.ts';
+
+/**
+ * Owner-bound governed Action transport. Endpoint contracts, registrations, and exhaustive
+ * public Problem Details mappings remain explicit at each local HttpApi handler.
+ */
+export const bindActionHttpRunner = <AuthenticationProblem, UnavailableProblem>(
+  problems: PrincipalAuthenticationProblems<AuthenticationProblem, UnavailableProblem>,
+) =>
+  bindGovernedActionHttp({
+    authenticate: (authorization) => authenticateOperationPrincipal(authorization, problems),
+  });
+`;
+
 const renderClient = (vertical: VerticalMetadata): string => `${ACTION_BOUNDARY_GENERATOR_HEADER}
 // @ontos-action-boundary-owner ${vertical.appId}
 // @ontos-action-boundary-audience ${vertical.appId}
@@ -231,6 +251,15 @@ export const planActionBoundaryScaffold = (
         'gateway-assertion-redemption.ts',
       ),
     );
+    const runnerPath = yield* trySync(() =>
+      resolveContainedPath(
+        workspaceRoot,
+        'verticals',
+        vertical.slug,
+        'api',
+        'action-http-runner.ts',
+      ),
+    );
     const serverMutation = yield* createOrAcceptOwnedMutation(
       serverPath,
       renderActionPrincipalServer(vertical),
@@ -253,6 +282,11 @@ export const planActionBoundaryScaffold = (
       renderGatewayAssertionRedemptionAdapter(vertical),
       ['GatewayAssertionRedemption', `@ontos-action-boundary-owner ${vertical.appId}`],
     );
+    const runnerMutation = yield* createOrAcceptOwnedMutation(
+      runnerPath,
+      renderActionHttpRunner(vertical),
+      ['bindActionHttpRunner', `@ontos-action-boundary-owner ${vertical.appId}`],
+    );
     const dependencyMutation = yield* trySync(() =>
       Option.fromNullishOr(
         withExactDependencies(vertical, {
@@ -267,12 +301,13 @@ export const planActionBoundaryScaffold = (
       serverMutation,
       clientMutation,
       redemptionMutation,
+      runnerMutation,
       dependencyMutation,
     ]);
     yield* trySync(() => ensureUniqueMutationPaths(mutations));
     return {
       mutations,
-      result: { appId: vertical.appId, clientPath, redemptionPath, serverPath },
+      result: { appId: vertical.appId, clientPath, redemptionPath, runnerPath, serverPath },
     };
   });
 
