@@ -1171,11 +1171,11 @@ index 2144abc7232f756a7d824e18bd90ce881e0dadc2..5df3764b126e9774ca832dbc6bd5ccd7
 +    () => false,
 +  );
 +const cloudflareDeployMode = Result.getOrThrow(
-+  Schema.decodeUnknownResult(Schema.OptionFromUndefinedOr(Schema.Literal('cloudflare')))(
++  Schema.decodeUnknownResult(Schema.OptionFromUndefinedOr(Schema.Literals(['cloudflare', 'node'])))(
 +    getBuildConfigEnvironment('MODERNJS_DEPLOY'),
 +  ),
 +);
-+const cloudflareDeployEnabled = Option.isSome(cloudflareDeployMode);
++const cloudflareDeployEnabled = Option.contains(cloudflareDeployMode, 'cloudflare');
 +{{value31}}
  {{value23}}const appId = '{{value1}}';
  const cloudflareWorkerName = '{{value2}}';
