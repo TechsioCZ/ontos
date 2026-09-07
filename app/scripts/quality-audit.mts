@@ -26,6 +26,8 @@ const FALLOW_FILES = 'fallow-files';
 const FALLOW_HEALTH = 'fallow-health';
 const FALLOW_SIMILARITY = 'fallow-similarity';
 const TOOL_VERSIONS = { fallow: '3.22.0', jscpd: '5.1.2', knip: '6.34.0' } as const;
+const TOOL_BINS = { fallow: 'bin/fallow', jscpd: 'run-jscpd.js', knip: 'bin/knip.js' } as const;
+const COMPLEXITY_LIMITS = { cognitive: 15, cyclomatic: 10 } as const;
 const SOURCE_GROUPS = {
   fixtures: 'fixtures',
   generated: 'generated-or-templates',
@@ -124,9 +126,9 @@ const FallowHealthSchema = Schema.Struct({
     files_analyzed: CountSchema,
     functions_above_threshold: CountSchema,
     functions_analyzed: CountSchema,
-    max_cognitive_threshold: Schema.Literal(15),
+    max_cognitive_threshold: Schema.Literal(COMPLEXITY_LIMITS.cognitive),
     max_crap_threshold: Schema.Literal(0),
-    max_cyclomatic_threshold: Schema.Literal(10),
+    max_cyclomatic_threshold: Schema.Literal(COMPLEXITY_LIMITS.cyclomatic),
   }),
   version: Schema.Literal('3.22.0'),
   workspace_diagnostics: Schema.optionalKey(Schema.Array(DiagnosticSchema)),
@@ -389,7 +391,9 @@ const validateHealth = Effect.fn('qualityAudit.validateHealth')(function* valida
     return {
       controlFlowCognitive,
       cyclomatic: finding.cyclomatic,
-      exceedsControlFlowLimits: finding.cyclomatic > 10 || controlFlowCognitive > 15,
+      exceedsControlFlowLimits:
+        finding.cyclomatic > COMPLEXITY_LIMITS.cyclomatic ||
+        controlFlowCognitive > COMPLEXITY_LIMITS.cognitive,
       hookDensityWeight,
       line: finding.line,
       name: finding.name,
@@ -402,7 +406,13 @@ const validateHealth = Effect.fn('qualityAudit.validateHealth')(function* valida
   if (complexity.some((finding) => !finding.reconstructed)) {
     return yield* failure('Fallow complexity contributions disagree with function metrics');
   }
-  if (report.findings.some((finding) => finding.cyclomatic <= 10 && finding.cognitive <= 15)) {
+  if (
+    report.findings.some(
+      (finding) =>
+        finding.cyclomatic <= COMPLEXITY_LIMITS.cyclomatic &&
+        finding.cognitive <= COMPLEXITY_LIMITS.cognitive,
+    )
+  ) {
     return yield* failure('Fallow reported a function below both configured thresholds');
   }
   const controlFlowFindings = complexity.filter(
@@ -469,37 +479,31 @@ const collectSourceFiles = Effect.fn('qualityAudit.collectSourceFiles')(
   },
 );
 
-const writeProvenance = Effect.fn('qualityAudit.writeProvenance')(function* writeProvenanceEffect(
-  root: string,
-  directory: string,
-  configs: readonly string[],
-) {
-  const path = yield* Path.Path;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const git = (args: readonly string[]) =>
-    spawner
-      .string(ChildProcess.make('git', args, { cwd: root }))
-      .pipe(Effect.timeout('10 seconds'), Effect.result);
-  const [revision, status] = yield* Effect.all(
-    [git(['rev-parse', 'HEAD']), git(['status', '--porcelain=v1', '--untracked-files=all'])],
-    { concurrency: 'unbounded' },
-  );
-  yield* writeJson(path.join(directory, 'provenance.json'), {
-    configs: configs.map((name) => `configs/${name}`),
-    expectedToolVersions: TOOL_VERSIONS,
-    parserCompleteness: 'unavailable',
-    sourceRevision: Result.isSuccess(revision)
-      ? revision.success.trim()
-      : 'unavailable (no Git HEAD)',
-    sourceState: Result.match(status, {
-      onFailure: () => 'unavailable',
-      onSuccess: (output) => (output.trim() ? 'modified' : 'clean'),
-    }),
-    workingTreeChanges: Result.isSuccess(status)
-      ? status.success.trimEnd().split('\n').filter(Boolean)
-      : [],
-  });
-});
+const readSourceProvenance = Effect.fn('qualityAudit.readSourceProvenance')(
+  function* readProvenance(root: string) {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const git = (args: readonly string[]) =>
+      spawner
+        .string(ChildProcess.make('git', args, { cwd: root }))
+        .pipe(Effect.timeout('10 seconds'), Effect.result);
+    const [revision, status] = yield* Effect.all(
+      [git(['rev-parse', 'HEAD']), git(['status', '--porcelain=v1', '--untracked-files=all'])],
+      { concurrency: 'unbounded' },
+    );
+    return {
+      sourceRevision: Result.isSuccess(revision)
+        ? revision.success.trim()
+        : 'unavailable (no Git HEAD)',
+      sourceState: Result.match(status, {
+        onFailure: () => 'unavailable',
+        onSuccess: (output) => (output.trim() ? 'modified' : 'clean'),
+      }),
+      workingTreeChanges: Result.isSuccess(status)
+        ? status.success.trimEnd().split('\n').filter(Boolean)
+        : [],
+    };
+  },
+);
 
 const snapshotConfiguration = Effect.fn('qualityAudit.snapshotConfiguration')(
   function* snapshotConfigurationEffect(
@@ -551,7 +555,7 @@ const snapshotConfiguration = Effect.fn('qualityAudit.snapshotConfiguration')(
         ignorePatterns: [...ignores.ignorePatterns, `${relativeOutput}/**`],
       });
     }
-    yield* writeProvenance(root, directory, configs);
+    return configs;
   },
 );
 
@@ -658,8 +662,8 @@ const executeStep = Effect.fn('qualityAudit.executeStep')(function* executeStepE
     concurrency: 'unbounded',
   });
   const startedAt = yield* Clock.currentTimeMillis;
-  const binary = path.join(root, 'node_modules/.bin', step.tool);
-  const command = [binary, ...step.args];
+  const binary = path.join(root, 'node_modules', step.tool, TOOL_BINS[step.tool]);
+  const command = [process.execPath, binary, ...step.args];
   const execution = yield* Effect.gen(function* launchAnalyzer() {
     if (!(yield* fs.exists(binary))) {
       return yield* failure(`Missing pinned local binary: ${binary}`);
@@ -674,7 +678,7 @@ const executeStep = Effect.fn('qualityAudit.executeStep')(function* executeStepE
       );
     }
     const processHandle = yield* spawner.spawn(
-      ChildProcess.make(binary, step.args, {
+      ChildProcess.make(process.execPath, [binary, ...step.args], {
         cwd: root,
         env: { NO_COLOR: '1' },
         extendEnv: true,
@@ -810,9 +814,9 @@ export const auditSteps = (
         '--complexity',
         '--complexity-breakdown',
         '--max-cyclomatic',
-        '10',
+        String(COMPLEXITY_LIMITS.cyclomatic),
         '--max-cognitive',
-        '15',
+        String(COMPLEXITY_LIMITS.cognitive),
         '--max-crap',
         '0',
         '--report-only',
@@ -884,7 +888,7 @@ const writeSummary = Effect.fn('qualityAudit.writeSummary')(function* writeSumma
         ]),
       'Unused exports describe an unused public binding; they do not establish that the implementation body is unused.',
       'Fallow strict clones preserve literal differences. Semantic similarity normalizes them and remains advisory; inspect both together with JSCPD before choosing a shared implementation.',
-      'Health counts cyclomatic > 10 or control-flow cognitive > 15. The latter subtracts hook-density and prop-count penalties from the native weighted metric, with contribution arithmetic verified for every finding.',
+      `Health counts cyclomatic > ${COMPLEXITY_LIMITS.cyclomatic} or control-flow cognitive > ${COMPLEXITY_LIMITS.cognitive}. The latter subtracts hook-density and prop-count penalties from the native weighted metric, with contribution arithmetic verified for every finding.`,
       ...results
         .filter((result) => result.name === FALLOW_HEALTH)
         .map(
@@ -920,6 +924,7 @@ export const runQualityAudit = Effect.fn('qualityAudit.runQualityAudit')(
   function* runQualityAuditEffect(root: string, output: string, tool: AuditTool) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const provenance = yield* readSourceProvenance(root);
     yield* fs.makeDirectory(output, { recursive: true });
     const runDirectory = yield* fs.makeTempDirectory({ directory: output, prefix: 'run-' });
     yield* writeSummary(output, runDirectory, [
@@ -949,7 +954,13 @@ export const runQualityAudit = Effect.fn('qualityAudit.runQualityAudit')(
       });
       const consumerPath =
         tool === 'all' || tool === 'knip' ? yield* createConsumerPath(root) : undefined;
-      yield* snapshotConfiguration(root, runDirectory, tool, consumerPath);
+      const configs = yield* snapshotConfiguration(root, runDirectory, tool, consumerPath);
+      yield* writeJson(path.join(runDirectory, 'provenance.json'), {
+        ...provenance,
+        configs: configs.map((name) => `configs/${name}`),
+        expectedToolVersions: TOOL_VERSIONS,
+        parserCompleteness: 'unavailable',
+      });
       if (tool === 'all' || tool === 'jscpd') {
         const jscpdConfig = yield* decodeReport(
           Schema.Record(Schema.String, Schema.Json),

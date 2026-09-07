@@ -1001,6 +1001,9 @@ const nearestPackage = Effect.fn('QualityAudit.nearestPackage')(function* readNe
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   let directory = anchor;
+  if (!(yield* fs.exists(directory))) {
+    return null;
+  }
   if ((yield* fs.stat(directory)).type !== 'Directory') {
     directory = path.dirname(directory);
   }

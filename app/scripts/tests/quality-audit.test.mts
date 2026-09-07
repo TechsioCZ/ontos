@@ -25,6 +25,12 @@ const FALLOW_HEALTH = 'fallow-health';
 const CONFIG_DIRECTORY = 'quality-audit';
 const REPORT_DIRECTORY = 'reports';
 const KNIP_CONFIG = 'quality-audit/knip.json';
+const ProvenanceSchema = Schema.fromJsonString(
+  Schema.Struct({
+    sourceState: Schema.String,
+    workingTreeChanges: Schema.Array(Schema.String),
+  }),
+);
 const appRoot = path.resolve(import.meta.dirname, '../..');
 const reportSchema = Schema.fromJsonString(Schema.Unknown);
 const stringify = async (value: Schema.Json) =>
@@ -430,17 +436,62 @@ await test('the CLI handles escaped paths, foreign cwd and untracked source prov
     const report = await summary(output);
     assert.equal(report.status, 'reported');
     const provenance = await runEffectTestPromise(
-      Schema.decodeUnknownEffect(
-        Schema.fromJsonString(
-          Schema.Struct({
-            sourceState: Schema.String,
-            workingTreeChanges: Schema.Array(Schema.String),
-          }),
-        ),
-      )(readFileSync(path.join(report.runDirectory, 'provenance.json'), 'utf-8')),
+      Schema.decodeUnknownEffect(ProvenanceSchema)(
+        readFileSync(path.join(report.runDirectory, 'provenance.json'), 'utf-8'),
+      ),
     );
     assert.equal(provenance.sourceState, 'modified');
     assert.ok(provenance.workingTreeChanges.some((file) => file === '?? scripts/index.ts'));
+    assert.ok(!provenance.workingTreeChanges.some((file) => file.startsWith('?? reports/')));
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+await test('custom output does not mark clean source provenance as modified', async () => {
+  const root = await createFixture();
+  const output = path.join(root, REPORT_DIRECTORY);
+  try {
+    writeFileSync(path.join(root, '.gitignore'), 'node_modules\n.codex\n');
+    await runEffectTestPromise(
+      Effect.gen(function* commitFixture() {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const commands = [
+          ['init', '-q'],
+          ['add', '.gitignore', 'package.json', CONFIG_DIRECTORY, 'scripts'],
+          [
+            '-c',
+            `core.hooksPath=${path.join(root, '.git/no-hooks')}`,
+            '-c',
+            'user.name=Audit test',
+            '-c',
+            'user.email=audit@example.invalid',
+            '-c',
+            'commit.gpgSign=false',
+            'commit',
+            '-qm',
+            'Fixture source',
+          ],
+        ];
+        yield* Effect.forEach(
+          commands,
+          (args) =>
+            spawner
+              .exitCode(ChildProcess.make('git', args, { cwd: root }))
+              .pipe(Effect.tap((code) => Effect.sync(() => assert.equal(Number(code), 0)))),
+          { concurrency: 1 },
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
+    await runFixture(root, output, 'jscpd');
+    const report = await summary(output);
+    const provenance = await runEffectTestPromise(
+      Schema.decodeUnknownEffect(ProvenanceSchema)(
+        readFileSync(path.join(report.runDirectory, 'provenance.json'), 'utf-8'),
+      ),
+    );
+    assert.equal(provenance.sourceState, 'clean');
+    assert.deepEqual(provenance.workingTreeChanges, []);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -484,9 +535,8 @@ await test('a selected tool with the wrong installed version fails before launch
   try {
     // Replace only the fixture's symlink; never mutate the shared installed dependencies.
     rmSync(path.join(root, 'node_modules'));
-    mkdirSync(path.join(root, 'node_modules/.bin'), { recursive: true });
-    mkdirSync(path.join(root, 'node_modules/knip'));
-    writeFileSync(path.join(root, 'node_modules/.bin/knip'), 'must never execute');
+    mkdirSync(path.join(root, 'node_modules/knip/bin'), { recursive: true });
+    writeFileSync(path.join(root, 'node_modules/knip/bin/knip.js'), 'must never execute');
     writeFileSync(
       path.join(root, 'node_modules/knip/package.json'),
       await stringify({ version: '0.0.0' }),

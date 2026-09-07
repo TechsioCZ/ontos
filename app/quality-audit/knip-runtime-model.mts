@@ -1,4 +1,6 @@
 import { Effect, FileSystem, Path, Schema } from 'effect';
+import { parse as parseJsonc } from 'jsonc-parser';
+import type { ParseError } from 'jsonc-parser';
 import { parseSync } from 'oxc-parser';
 import type { KnipModelEvidence } from './knip-model.mts';
 
@@ -19,16 +21,30 @@ const documentsBuiltInPlugin = (readme: string): boolean =>
   readme.includes('Adding the `@effect/tsgo` dependency to your project.') &&
   readme.includes('Configuring your `tsconfig.json` to use the Effect Language Service plugin.') &&
   readme.includes('"name": "@effect/language-service"');
-const Tsconfig = Schema.fromJsonString(
-  Schema.Struct({
-    compilerOptions: Schema.optional(
-      Schema.Struct({
-        plugins: Schema.optional(Schema.Array(Schema.Struct({ name: Schema.String }))),
-        types: Schema.optional(Schema.Array(Schema.String)),
-      }),
-    ),
-  }),
-);
+class InvalidTsconfig extends Schema.TaggedError<InvalidTsconfig>()('InvalidTsconfig', {
+  file: Schema.String,
+  offset: Schema.Number,
+}) {}
+const Tsconfig = Schema.Struct({
+  compilerOptions: Schema.optional(
+    Schema.Struct({
+      plugins: Schema.optional(Schema.Array(Schema.Struct({ name: Schema.String }))),
+      types: Schema.optional(Schema.Array(Schema.String)),
+    }),
+  ),
+});
+const parseTsconfig = Effect.fn('QualityAudit.parseTsconfig')(function* parseTsconfigEffect(
+  file: string,
+  source: string,
+) {
+  const errors: ParseError[] = [];
+  const parsed: unknown = parseJsonc(source, errors, { allowTrailingComma: true });
+  const [error] = errors;
+  if (error !== undefined) {
+    yield* new InvalidTsconfig({ file, offset: error.offset });
+  }
+  return yield* Schema.decodeUnknownEffect(Tsconfig)(parsed);
+});
 const at = (
   source: string,
   text: string,
@@ -323,7 +339,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         const configFile = 'tsconfig.base.json';
         const configText = yield* read(configFile);
         if (configText !== undefined && (yield* tsgoDocumentation())) {
-          const config = yield* Schema.decodeUnknownEffect(Tsconfig)(configText);
+          const config = yield* parseTsconfig(configFile, configText);
           if (
             config.compilerOptions?.plugins?.some((plugin) => plugin.name === EFFECT_PLUGIN) ===
               true &&

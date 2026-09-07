@@ -189,6 +189,28 @@ await test('compiler-option proof requires the installed pinned compiler and bui
   }
 });
 
+await test('compiler configuration accepts JSONC but rejects malformed and schema-invalid input', async () => {
+  const root = await fixture();
+  try {
+    write(
+      root,
+      compilerConfig,
+      `{
+      // TypeScript permits comments and trailing commas.
+      "compilerOptions": { "plugins": [{ "name": "${pluginName}", }], },
+    }`,
+    );
+    const modeled = await facts(root);
+    assert.ok(modeled.some((fact) => fact.kind === compilerOptionKind));
+    write(root, compilerConfig, '{ "compilerOptions": {');
+    await assert.rejects(facts(root), /InvalidTsconfig/u);
+    write(root, compilerConfig, '{ "compilerOptions": { "plugins": false } }');
+    await assert.rejects(facts(root), /plugins/u);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 await test('DTS compiler resolution belongs to the invoking workspace and excludes commented lookalikes', async () => {
   const root = await fixture();
   try {

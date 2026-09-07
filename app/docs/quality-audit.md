@@ -12,7 +12,7 @@ mise exec -- pnpm quality:audit:test
 
 The audit reports findings. Existing unused-code, duplication, and complexity findings do not fail the audit command. Missing tools, invalid reports, configuration failures, or an empty analysis are failures and retain diagnostics. A successful report does not prove every reported item should be removed or extracted.
 
-The runner verifies each installed analyzer and invokes its local `node_modules/.bin/<tool>` executable directly. Analyzer subprocesses do not use `pnpm exec`, which can reify dependencies in a synthetic workspace; installation remains a separate, explicit step.
+The runner verifies each installed analyzer and invokes its package's JavaScript launcher with the current Node executable. This avoids package-manager shims and keeps installation a separate, explicit step.
 
 The default output is `.codex/reports/quality-audit/`. Use `--output <path>` to select another directory. Read `summary.md` for the result, `summary.json` for structured status, and the raw analyzer reports and stderr for evidence. Reports are generated artifacts and should not be committed as an accepted baseline. Local run artifacts remain available until the user removes them; this deliberately retains review evidence. The runner does not automatically delete an arbitrary directory supplied through `--output`.
 

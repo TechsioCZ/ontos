@@ -481,6 +481,18 @@ await test('vendor ownership rejects a different installed copy and accepts the 
           item.owningManifest === path.join(root, producer, packageFile),
       ),
     );
+    write(
+      root,
+      indexFile,
+      [
+        ...requirePrelude,
+        `require.resolve('target', { paths: [${await stringify(path.join(root, owner, 'missing'))}] });`,
+      ].join('\n'),
+    );
+    const missingAnchor = await build();
+    assert.ok(
+      !missingAnchor.evidence.some((item) => item.kind === 'resolver' && item.target === 'target'),
+    );
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
