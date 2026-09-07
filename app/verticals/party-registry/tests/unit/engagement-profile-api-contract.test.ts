@@ -74,7 +74,7 @@ test('attach contracts accept only public Party Registry refs', () => {
   }
 });
 
-test('public engagement mutations preserve the request trace header at the HTTP boundary', async () => {
+test('public engagement mutations use the owner audience and preserve HTTP context', async () => {
   const requests: Request[] = [];
   const timestamp = '2026-09-07T00:00:00.000Z';
   const fakeFetch: typeof fetch = async (input, init) => {
@@ -114,7 +114,11 @@ test('public engagement mutations preserve the request trace header at the HTTP 
   );
 
   const mutationRequest = requests.find(({ url }) => url.includes('/contacts/engagement/'));
+  const gatewayRequest = requests.find(({ url }) => url.endsWith('/auth/gateway-context'));
+  assert.ok(gatewayRequest);
   assert.ok(mutationRequest);
+  assert.deepEqual(await gatewayRequest.json(), { audience: 'party-registry' });
+  assert.equal(mutationRequest.headers.get('authorization'), 'Bearer test-gateway-token');
   assert.equal(mutationRequest.headers.get('x-trace-id'), 'engagement-trace');
   assert.equal(mutationRequest.headers.get('x-correlation-id'), 'engagement-correlation');
 });

@@ -363,38 +363,37 @@ export const GatewayAssertionRedemptionLive = Layer.succeed(
 const renderClient = (vertical: VerticalMetadata): string => `${ACTION_BOUNDARY_GENERATOR_HEADER}
 // @ontos-action-boundary-owner ${vertical.appId}
 // @ontos-action-boundary-audience ${vertical.appId}
-import { issueGatewayContext } from '@app/shared-contracts';
-import type {
-  GatewayContextClientEffect,
-  GatewayContextClientOptions,
-  GatewayContextResponse,
+import {
+  issueGatewayContext,
+  makeOperationGateway as makeSharedOperationGateway,
 } from '@app/shared-contracts';
-import { Effect } from 'effect';
+import type {
+  GatewayContextClientError,
+  OperationGatewayAttempt as SharedOperationGatewayAttempt,
+  OperationGatewayIssuer as SharedOperationGatewayIssuer,
+} from '@app/shared-contracts';
 
 export const ACTION_GATEWAY_AUDIENCE = '${vertical.appId}' as const;
 
-export type ActionGatewayIssuer = (
-  payload: { readonly audience: typeof ACTION_GATEWAY_AUDIENCE },
-  options?: GatewayContextClientOptions,
-) => GatewayContextClientEffect<GatewayContextResponse>;
+export type OperationGatewayIssuer = SharedOperationGatewayIssuer<
+  typeof ACTION_GATEWAY_AUDIENCE,
+  GatewayContextClientError
+>;
+export type OperationGatewayAttempt<Success, Failure> = SharedOperationGatewayAttempt<
+  Success,
+  Failure
+>;
 
-export type ActionGatewayAttempt<Success, Failure> = (
-  authorization: string,
-) => Effect.Effect<Success, Failure>;
+// oxlint-disable-next-line sonarjs/redundant-type-aliases -- Required action-oriented compatibility export; expires: 2027-03-31.
+export type ActionGatewayIssuer = OperationGatewayIssuer;
+export type ActionGatewayAttempt<Success, Failure> = OperationGatewayAttempt<Success, Failure>;
 
-export const makeActionGateway = (acquire: ActionGatewayIssuer = issueGatewayContext) => ({
-  invoke: <Success, Failure>(
-    attempt: ActionGatewayAttempt<Success, Failure>,
-    options: GatewayContextClientOptions = {},
-  ) =>
-    acquire({ audience: ACTION_GATEWAY_AUDIENCE }, options).pipe(
-      Effect.flatMap(({ token }) => attempt(\`Bearer \${token}\`)),
-    ),
-});
+export const makeOperationGateway = (acquire: OperationGatewayIssuer = issueGatewayContext) =>
+  makeSharedOperationGateway(ACTION_GATEWAY_AUDIENCE, acquire);
 
-export const actionGateway = makeActionGateway();
-export const makeOperationGateway = makeActionGateway;
-export const operationGateway = actionGateway;
+export const makeActionGateway = makeOperationGateway;
+export const operationGateway = makeOperationGateway();
+export const actionGateway = operationGateway;
 `;
 
 export const planActionBoundaryScaffold = (

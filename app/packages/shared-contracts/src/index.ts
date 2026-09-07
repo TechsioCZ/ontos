@@ -35,6 +35,12 @@ export type {
   GatewayTrustedPrincipalContext,
   GatewayUnavailableProblem,
 } from './gateway-context.ts';
+export { makeOperationGateway } from './operation-gateway.ts';
+export type {
+  OperationGateway,
+  OperationGatewayAttempt,
+  OperationGatewayIssuer,
+} from './operation-gateway.ts';
 
 export const UltramodernPublicSitemapChangeFrequencySchema = Schema.Literals([
   'always',

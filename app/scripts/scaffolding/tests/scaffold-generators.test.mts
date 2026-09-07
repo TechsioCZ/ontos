@@ -1351,7 +1351,15 @@ test('generates one immutable Action identity boundary and exact direct dependen
     assert.match(server, /\^Bearer /u);
     assert.match(server, /Clock\.currentTimeMillis/u);
     assert.doesNotMatch(server, /Date\.now|Effect\.runPromise|decodeUnknownSync/u);
-    assert.match(client, /acquire\(\{ audience: ACTION_GATEWAY_AUDIENCE \}/u);
+    assert.match(client, /makeOperationGateway as makeSharedOperationGateway/u);
+    assert.match(client, /makeSharedOperationGateway\(ACTION_GATEWAY_AUDIENCE, acquire\)/u);
+    assert.match(client, /export const makeActionGateway = makeOperationGateway/u);
+    assert.match(client, /export const actionGateway = operationGateway/u);
+    assert.doesNotMatch(client, /Effect\.flatMap|Bearer \$\{|acquire\(\{ audience/u);
+    assert.doesNotMatch(
+      client,
+      /api\/auth\/action-principal|gateway-assertion-redemption|GatewayContextProtectedHeader|verticals\//u,
+    );
     assert.doesNotMatch(client, /localStorage|sessionStorage/u);
     assert.match(server, /options\.redemption/u);
     assert.match(redemption, /GatewayAssertionRedemptionUnavailableError/u);
