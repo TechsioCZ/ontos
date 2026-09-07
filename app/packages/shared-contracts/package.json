@@ -5,10 +5,11 @@
   "description": "Generated route, ownership, and topology contracts.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./problem-details": "./src/problem-details.ts"
   },
   "scripts": {
-    "test:unit": "node --test tests/unit/*.test.ts",
+    "test:unit": "node ../../scripts/ultramodern-typecheck.mts --project tests/tsconfig.json && node --test tests/unit/*.test.ts",
     "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
   },
   "dependencies": {

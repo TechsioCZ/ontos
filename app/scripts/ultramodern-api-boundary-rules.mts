@@ -1,5 +1,10 @@
 import path from 'node:path';
 
+export {
+  type ApiContractSourceContext,
+  unconstrainedHttpApiContractSchemaViolation,
+} from './typescript-api-contract-boundary.mts';
+
 const normalize = (filePath: string): string => filePath.split(path.sep).join('/');
 
 const privateOwnerSpecifierPattern = /vertical\.(?:manifest|registration)(?:\.ts)?$/u;

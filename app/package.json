@@ -114,6 +114,7 @@
     "miniflare": "4.20260708.1",
     "oxfmt": "0.64.0",
     "oxlint": "1.79.0",
+    "oxc-parser": "0.143.0",
     "ultracite": "7.10.7",
     "wrangler": "4.110.0",
     "zephyr-agent": "1.1.1",

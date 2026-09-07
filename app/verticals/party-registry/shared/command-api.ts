@@ -1,9 +1,12 @@
+import {
+  makeProblemDetailsSchema,
+  makeRetryableProblemDetailsSchema,
+} from '@app/shared-contracts/problem-details';
 /* eslint-disable import/no-duplicates, no-duplicate-imports -- Canonical public command contracts re-export schema-only Action payloads and results. expires: 2026-12-31. */
 import {
   HttpApi,
   HttpApiEndpoint,
   HttpApiGroup,
-  HttpApiSchema,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import { HttpApiMiddleware } from 'effect/unstable/httpapi';
@@ -246,15 +249,10 @@ export const PartyCommandHeadersSchema = Schema.Struct({
     Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   ),
 });
-const problemFields = { detail: Schema.String, title: Schema.String, type: Schema.String } as const;
-const asProblemDetails = HttpApiSchema.asJson({ contentType: 'application/problem+json' });
-export const PartyCommandInvalidRequestProblemSchema = Schema.TaggedStruct(
+export const PartyCommandInvalidRequestProblemSchema = makeProblemDetailsSchema(
   'PartyCommandInvalidRequestProblem',
-  {
-    ...problemFields,
-    status: Schema.Literal(400),
-  },
-).pipe(asProblemDetails, HttpApiSchema.status(400));
+  400,
+);
 
 /** Converts framework payload/header decoding failures into the declared RFC 9457 shape. */
 export class PartyCommandSchemaErrorMiddleware extends HttpApiMiddleware.Service<PartyCommandSchemaErrorMiddleware>()(
@@ -262,34 +260,25 @@ export class PartyCommandSchemaErrorMiddleware extends HttpApiMiddleware.Service
   { error: PartyCommandInvalidRequestProblemSchema },
 ) {}
 
-export const PartyCommandAuthenticationProblemSchema = Schema.TaggedStruct(
+export const PartyCommandAuthenticationProblemSchema = makeProblemDetailsSchema(
   'PartyCommandAuthenticationProblem',
-  {
-    ...problemFields,
-    status: Schema.Literal(401),
-  },
-).pipe(asProblemDetails, HttpApiSchema.status(401));
+  401,
+);
 
-export const PartyCommandForbiddenProblemSchema = Schema.TaggedStruct(
+export const PartyCommandForbiddenProblemSchema = makeProblemDetailsSchema(
   'PartyCommandForbiddenProblem',
-  {
-    ...problemFields,
-    status: Schema.Literal(403),
-  },
-).pipe(asProblemDetails, HttpApiSchema.status(403));
+  403,
+);
 
-export const PartyCommandNotFoundProblemSchema = Schema.TaggedStruct(
+export const PartyCommandNotFoundProblemSchema = makeProblemDetailsSchema(
   'PartyCommandNotFoundProblem',
-  {
-    ...problemFields,
-    status: Schema.Literal(404),
-  },
-).pipe(asProblemDetails, HttpApiSchema.status(404));
+  404,
+);
 
-export const PartyCommandConflictProblemSchema = Schema.TaggedStruct(
+export const PartyCommandConflictProblemSchema = makeProblemDetailsSchema(
   'PartyCommandConflictProblem',
+  409,
   {
-    ...problemFields,
     code: Schema.Literals([
       'action_request_hash_conflict',
       'action_invocation_state_invalid',
@@ -314,14 +303,13 @@ export const PartyCommandConflictProblemSchema = Schema.TaggedStruct(
       'party_relationship_revision_conflict',
       'party_relationship_correction_required',
     ]),
-    status: Schema.Literal(409),
   },
-).pipe(asProblemDetails, HttpApiSchema.status(409));
+);
 
-export const PartyCommandUnprocessableProblemSchema = Schema.TaggedStruct(
+export const PartyCommandUnprocessableProblemSchema = makeProblemDetailsSchema(
   'PartyCommandUnprocessableProblem',
+  422,
   {
-    ...problemFields,
     code: Schema.Literals([
       'action_policy_denied',
       'party_evidence_insufficient',
@@ -332,52 +320,42 @@ export const PartyCommandUnprocessableProblemSchema = Schema.TaggedStruct(
       'party_relationship_type_unsupported',
       'party_relationship_invalid_interval',
     ]),
-    status: Schema.Literal(422),
   },
-).pipe(asProblemDetails, HttpApiSchema.status(422));
+);
 
-export const PartyCommandPreconditionRequiredProblemSchema = Schema.TaggedStruct(
+export const PartyCommandPreconditionRequiredProblemSchema = makeProblemDetailsSchema(
   'PartyCommandPreconditionRequiredProblem',
-  {
-    ...problemFields,
-    status: Schema.Literal(428),
-  },
-).pipe(asProblemDetails, HttpApiSchema.status(428));
+  428,
+);
 
-export const PartyCommandUnavailableProblemSchema = Schema.TaggedStruct(
+export const PartyCommandUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
   'PartyCommandUnavailableProblem',
-  {
-    ...problemFields,
-    retryable: Schema.Literal(true),
-    status: Schema.Literal(503),
-  },
-).pipe(asProblemDetails, HttpApiSchema.status(503));
+  503,
+);
 
 const PartyCommandInvocationIdSchema = ActionInvocationIdSchema;
 
-export const PartyCommandAlreadyCommittedProblemSchema = Schema.TaggedStruct(
+export const PartyCommandAlreadyCommittedProblemSchema = makeProblemDetailsSchema(
   'PartyCommandAlreadyCommittedProblem',
+  409,
   {
-    ...problemFields,
     code: Schema.Literal('action_already_committed'),
     invocationId: PartyCommandInvocationIdSchema,
     resolution: Schema.Literal('REFRESH_GOVERNED_READS'),
     retryCommand: Schema.Literal(false),
-    status: Schema.Literal(409),
   },
-).pipe(asProblemDetails, HttpApiSchema.status(409));
+);
 
 /** Uncertainty is not a retry hint: resolve the durable invocation before any further command. */
-export const PartyCommandCommitIndeterminateProblemSchema = Schema.TaggedStruct(
+export const PartyCommandCommitIndeterminateProblemSchema = makeProblemDetailsSchema(
   'PartyCommandCommitIndeterminateProblem',
+  503,
   {
-    ...problemFields,
     invocationId: PartyCommandInvocationIdSchema,
     resolution: Schema.Literal('RESOLVE_COMMIT'),
     retryCommand: Schema.Literal(false),
-    status: Schema.Literal(503),
   },
-).pipe(asProblemDetails, HttpApiSchema.status(503));
+);
 
 export const ResolvePartyCommandCommitPayloadSchema = Schema.Struct({
   invocationId: PartyCommandInvocationIdSchema,
@@ -394,24 +372,20 @@ export const ResolvePartyCommandCommitResultSchema = Schema.TaggedStruct(
 );
 export type ResolvePartyCommandCommitResult = typeof ResolvePartyCommandCommitResultSchema.Type;
 
-export const PartyCommandInternalProblemSchema = Schema.TaggedStruct(
+export const PartyCommandInternalProblemSchema = makeProblemDetailsSchema(
   'PartyCommandInternalProblem',
-  {
-    ...problemFields,
-    status: Schema.Literal(500),
-  },
-).pipe(asProblemDetails, HttpApiSchema.status(500));
+  500,
+);
 
-export const PartyCommandAliasWriteRejectedProblemSchema = Schema.TaggedStruct(
+export const PartyCommandAliasWriteRejectedProblemSchema = makeProblemDetailsSchema(
   'PartyCommandAliasWriteRejectedProblem',
+  409,
   {
-    ...problemFields,
     aliasPartyRef: PartyRefSchema,
     canonicalPartyRef: PartyRefSchema,
     code: Schema.Literal('party_alias_write_rejected'),
-    status: Schema.Literal(409),
   },
-).pipe(asProblemDetails, HttpApiSchema.status(409));
+);
 
 export type PartyCommandProblem =
   | typeof PartyCommandInvalidRequestProblemSchema.Type

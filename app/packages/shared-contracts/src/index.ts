@@ -1,5 +1,8 @@
 import { Schema } from 'effect';
 
+export { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from './problem-details.ts';
+export type { ProblemDetailsStatus } from './problem-details.ts';
+
 export {
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_TTL_SECONDS,
