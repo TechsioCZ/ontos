@@ -1,16 +1,20 @@
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Context, Effect, Layer } from 'effect';
+import { Context, Effect, Layer, Redacted } from 'effect';
 import type { Scope } from 'effect';
 import { Pool } from 'pg';
 import type { PoolConfig } from 'pg';
 import { DatabaseConfig } from './config.ts';
 import type { DatabaseConfigValue } from './config.ts';
 import { DatabaseConnectionError } from './connection-error.ts';
+import { configureDatabasePool } from './pool-configuration.ts';
+import type { DatabasePoolDeadlines } from './pool-configuration.ts';
 import { coreRelations } from './schema.ts';
 import type { CoreDatabaseExecutor } from './types.ts';
 
 export { DatabaseConnectionError } from './connection-error.ts';
+export { DEFAULT_DATABASE_POOL_DEADLINES } from './pool-configuration.ts';
+export type { DatabasePoolDeadlines } from './pool-configuration.ts';
 
 export class CoreDatabase extends Context.Service<
   CoreDatabase,
@@ -47,22 +51,24 @@ export type PoolFactory = (configuration: PoolConfig) => Pool;
 
 const defaultPoolFactory: PoolFactory = (configuration) => new Pool(configuration);
 
-export const makeCoreDatabase = (
-  configuration: DatabaseConfigValue,
+export const makeCoreDatabase = Effect.fn('Client.makeCoreDatabase')(function* makeDatabase(
+  configuration: DatabaseConfigValue & {
+    readonly poolDeadlines?: Partial<DatabasePoolDeadlines>;
+  },
   poolFactory: PoolFactory = defaultPoolFactory,
-): Effect.Effect<(typeof CoreDatabase)['Service'], DatabaseConnectionError, Scope.Scope> =>
-  acquirePoolResource(() =>
-    poolFactory({
-      connectionString: configuration.connectionString,
-    }),
-  ).pipe(
-    Effect.map((pool) => ({
-      executor: drizzle({
-        client: pool,
-        relations: coreRelations,
-      }),
-    })),
+): Effect.fn.Return<(typeof CoreDatabase)['Service'], DatabaseConnectionError, Scope.Scope> {
+  const poolConfiguration = yield* configureDatabasePool(
+    Redacted.make(configuration.connectionString),
+    configuration.poolDeadlines,
   );
+  const pool = yield* acquirePoolResource(() => poolFactory(poolConfiguration));
+  return {
+    executor: drizzle({
+      client: pool,
+      relations: coreRelations,
+    }),
+  };
+});
 
 export const CoreDatabaseLive = Layer.effect(
   CoreDatabase,
