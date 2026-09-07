@@ -173,6 +173,16 @@ interface AuditResult {
   readonly status: string;
 }
 
+const errorResult = (name: string, directory: string, diagnostic: string): AuditResult => ({
+  coverage: {},
+  diagnostic,
+  directory,
+  files: 0,
+  findings: 0,
+  name,
+  status: 'error',
+});
+
 const failure = (reason: string): QualityAuditError => new QualityAuditError({ reason });
 const jsonCodec = Schema.fromJsonString(Schema.Unknown, { space: 2 });
 
@@ -746,15 +756,7 @@ const executeStep = Effect.fn('qualityAudit.executeStep')(function* executeStepE
   if (Result.isFailure(evaluated)) {
     const diagnostic = String(evaluated.failure);
     yield* fs.writeFileString(path.join(directory, 'validation-error.txt'), `${diagnostic}\n`);
-    return {
-      coverage: {},
-      diagnostic,
-      directory,
-      files: 0,
-      findings: 0,
-      name: step.name,
-      status: 'error',
-    };
+    return errorResult(step.name, directory, diagnostic);
   }
   if ('complexity' in evaluated.success) {
     const { complexity, ...summary } = evaluated.success;
@@ -935,17 +937,9 @@ export const runQualityAudit = Effect.fn('qualityAudit.runQualityAudit')(
     yield* fs.makeDirectory(output, { recursive: true });
     const runDirectory = yield* fs.makeTempDirectory({ directory: output, prefix: 'run-' });
     yield* writeSummary(output, runDirectory, [
-      {
-        coverage: {},
-        diagnostic: 'Audit has not completed',
-        directory: runDirectory,
-        files: 0,
-        findings: 0,
-        name: 'setup',
-        status: 'error',
-      },
+      errorResult('setup', runDirectory, 'Audit has not completed'),
     ]);
-    const collected = yield* Effect.gen(function* collectAudit() {
+    const results = yield* Effect.gen(function* collectAudit() {
       const files = yield* collectSourceFiles(root, output);
       yield* writeJson(path.join(runDirectory, 'source-inventory.json'), {
         count: files.length,
@@ -979,47 +973,33 @@ export const runQualityAudit = Effect.fn('qualityAudit.runQualityAudit')(
           path: files.map((file) => path.resolve(root, file)),
         });
       }
-      const results = yield* Effect.forEach(
+      const stepResults = yield* Effect.forEach(
         auditSteps(root, runDirectory, tool),
         (step) => executeStep(root, path.join(runDirectory, step.name), step),
         { concurrency: 1 },
       );
-      const coverage = yield* reconcileCoverage(root, runDirectory, files, results).pipe(
-        Effect.result,
+      return yield* reconcileCoverage(root, runDirectory, files, stepResults).pipe(
+        Effect.match({
+          onFailure: (issue) => [
+            ...stepResults,
+            errorResult('coverage', runDirectory, String(issue)),
+          ],
+          onSuccess: () => stepResults,
+        }),
       );
-      return Result.isSuccess(coverage)
-        ? results
-        : [
-            ...results,
-            {
-              coverage: {},
-              diagnostic: String(coverage.failure),
-              directory: runDirectory,
-              files: 0,
-              findings: 0,
-              name: 'coverage',
-              status: 'error',
-            },
-          ];
-    }).pipe(Effect.scoped, Effect.result);
-    const results = Result.isSuccess(collected)
-      ? collected.success
-      : [
-          {
-            coverage: {},
-            diagnostic: String(collected.failure),
-            directory: runDirectory,
-            files: 0,
-            findings: 0,
-            name: 'setup',
-            status: 'error',
-          },
-        ];
+    }).pipe(
+      Effect.scoped,
+      Effect.match({
+        onFailure: (issue) => [errorResult('setup', runDirectory, String(issue))],
+        onSuccess: (collected) => collected,
+      }),
+    );
     yield* writeSummary(output, runDirectory, results);
     yield* Console.log(`Quality audit: ${path.join(output, 'summary.md')}`);
-    if (results.some((result) => result.status === 'error')) {
+    const errors = results.filter((result) => result.status === 'error');
+    if (errors.length > 0) {
       yield* Effect.forEach(
-        results.filter((result) => result.status === 'error'),
+        errors,
         (result) => Console.error(`${result.name}: ${result.diagnostic}`),
         { concurrency: 1 },
       );

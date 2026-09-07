@@ -196,7 +196,15 @@ const runFixture = async (
 const SummarySchema = Schema.Struct({
   mode: Schema.Literal('report-only'),
   results: Schema.Array(
-    Schema.Struct({ findings: Schema.Number, name: Schema.String, status: Schema.String }),
+    Schema.Struct({
+      coverage: Schema.Record(Schema.String, Schema.Json),
+      diagnostic: Schema.String,
+      directory: Schema.String,
+      files: Schema.Number,
+      findings: Schema.Number,
+      name: Schema.String,
+      status: Schema.String,
+    }),
   ),
   runDirectory: Schema.String,
   status: Schema.String,
@@ -385,6 +393,21 @@ await test('missing binaries and an empty source scope fail with preserved summa
     await assert.rejects(runFixture(root, output, 'knip'), /analysis failed/u);
     const missing = await summary(output);
     assert.equal(missing.status, 'error');
+    const failedDirectory = path.join(missing.runDirectory, 'knip');
+    assert.deepEqual(missing.results, [
+      {
+        coverage: {},
+        diagnostic: readFileSync(
+          path.join(failedDirectory, 'validation-error.txt'),
+          'utf-8',
+        ).trimEnd(),
+        directory: failedDirectory,
+        files: 0,
+        findings: 0,
+        name: 'knip',
+        status: 'error',
+      },
+    ]);
     assert.match(
       readFileSync(path.join(missing.runDirectory, 'knip/metadata.json'), 'utf-8'),
       /Missing pinned local binary/u,
@@ -395,7 +418,17 @@ await test('missing binaries and an empty source scope fail with preserved summa
     );
     await assert.rejects(runFixture(root, output, 'jscpd'), /analysis failed/u);
     const empty = await summary(output);
-    assert.equal(empty.results[0]?.name, 'setup');
+    assert.deepEqual(empty.results, [
+      {
+        coverage: {},
+        diagnostic: 'QualityAuditError: Source inventory: analysis contains no files',
+        directory: empty.runDirectory,
+        files: 0,
+        findings: 0,
+        name: 'setup',
+        status: 'error',
+      },
+    ]);
     assert.match(
       readFileSync(path.join(output, 'summary.json'), 'utf-8'),
       /Source inventory: analysis contains no files/u,
@@ -527,6 +560,9 @@ await test('narrowed workspace and Fallow source discovery produce coverage erro
     );
     await assert.rejects(runFixture(root, output, 'knip'), /analysis failed/u);
     const narrowed = await summary(output);
+    assert.equal(narrowed.results[0]?.status, 'reported');
+    assert.equal(narrowed.results.at(-1)?.name, 'coverage');
+    assert.match(narrowed.results.at(-1)?.diagnostic ?? '', /Knip workspace coverage mismatch/u);
     assert.ok(
       narrowed.results.some((result) => result.name === 'coverage' && result.status === 'error'),
     );
