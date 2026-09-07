@@ -1,9 +1,12 @@
+import {
+  makeProblemDetailsSchema,
+  makeRetryableProblemDetailsSchema,
+} from '@app/shared-contracts/problem-details';
 /* eslint-disable oxc/no-barrel-file -- This is the generated public contract aggregate; remove-when: Codesmith emits direct re-exports. */
 import {
   HttpApi,
   HttpApiEndpoint,
   HttpApiGroup,
-  HttpApiSchema,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
@@ -32,54 +35,49 @@ export const ContactsMutationHeadersSchema = Schema.Struct({
   ),
 });
 
-const problemFields = {
-  detail: Schema.String,
-  title: Schema.String,
-  type: Schema.String,
-} as const;
-const asProblemDetails = HttpApiSchema.asJson({ contentType: 'application/problem+json' });
-export const ContactsInvalidRequestProblemSchema = Schema.TaggedStruct(
+export const ContactsInvalidRequestProblemSchema = makeProblemDetailsSchema(
   'ContactsInvalidRequestProblem',
-  { ...problemFields, status: Schema.Literal(400) },
-).pipe(asProblemDetails, HttpApiSchema.status(400));
-export const ContactsAuthenticationProblemSchema = Schema.TaggedStruct(
+  400,
+);
+export const ContactsAuthenticationProblemSchema = makeProblemDetailsSchema(
   'ContactsAuthenticationProblem',
-  { ...problemFields, status: Schema.Literal(401) },
-).pipe(asProblemDetails, HttpApiSchema.status(401));
-export const ContactsForbiddenProblemSchema = Schema.TaggedStruct('ContactsForbiddenProblem', {
-  ...problemFields,
-  status: Schema.Literal(403),
-}).pipe(asProblemDetails, HttpApiSchema.status(403));
-export const ContactsNotFoundProblemSchema = Schema.TaggedStruct('ContactsNotFoundProblem', {
-  ...problemFields,
-  status: Schema.Literal(404),
-}).pipe(asProblemDetails, HttpApiSchema.status(404));
-export const ContactsConflictProblemSchema = Schema.TaggedStruct('ContactsConflictProblem', {
-  ...problemFields,
-  code: Schema.Literals([
-    'contacts_counterparty_customer_role_required',
-    'contacts_engagement_profile_already_exists',
-    'contacts_engagement_profile_lifecycle_conflict',
-    'contacts_party_counterparty_mismatch',
-    'contacts_party_alias_requires_canonical_reference',
-    'contacts_party_archived',
-    'contacts_party_type_mismatch',
-  ]),
-  status: Schema.Literal(409),
-}).pipe(asProblemDetails, HttpApiSchema.status(409));
-export const ContactsPreconditionRequiredProblemSchema = Schema.TaggedStruct(
+  401,
+);
+export const ContactsForbiddenProblemSchema = makeProblemDetailsSchema(
+  'ContactsForbiddenProblem',
+  403,
+);
+export const ContactsNotFoundProblemSchema = makeProblemDetailsSchema(
+  'ContactsNotFoundProblem',
+  404,
+);
+export const ContactsConflictProblemSchema = makeProblemDetailsSchema(
+  'ContactsConflictProblem',
+  409,
+  {
+    code: Schema.Literals([
+      'contacts_counterparty_customer_role_required',
+      'contacts_engagement_profile_already_exists',
+      'contacts_engagement_profile_lifecycle_conflict',
+      'contacts_party_counterparty_mismatch',
+      'contacts_party_alias_requires_canonical_reference',
+      'contacts_party_archived',
+      'contacts_party_type_mismatch',
+    ]),
+  },
+);
+export const ContactsPreconditionRequiredProblemSchema = makeProblemDetailsSchema(
   'ContactsPreconditionRequiredProblem',
-  { ...problemFields, status: Schema.Literal(428) },
-).pipe(asProblemDetails, HttpApiSchema.status(428));
-export const ContactsUnavailableProblemSchema = Schema.TaggedStruct('ContactsUnavailableProblem', {
-  ...problemFields,
-  retryable: Schema.Literal(true),
-  status: Schema.Literal(503),
-}).pipe(asProblemDetails, HttpApiSchema.status(503));
-export const ContactsInternalProblemSchema = Schema.TaggedStruct('ContactsInternalProblem', {
-  ...problemFields,
-  status: Schema.Literal(500),
-}).pipe(asProblemDetails, HttpApiSchema.status(500));
+  428,
+);
+export const ContactsUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
+  'ContactsUnavailableProblem',
+  503,
+);
+export const ContactsInternalProblemSchema = makeProblemDetailsSchema(
+  'ContactsInternalProblem',
+  500,
+);
 
 export type ContactsProblem =
   | typeof ContactsInvalidRequestProblemSchema.Type

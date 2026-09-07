@@ -47,6 +47,7 @@ const createOrAcceptOwnedMutation = (
   filePath: string,
   content: string,
   requiredMarkers: readonly string[],
+  requiredContract?: { readonly marker: string; readonly migration: string },
 ): Effect.Effect<
   Option.Option<Mutation>,
   ActionBoundaryScaffoldError | ScaffoldFailure,
@@ -67,6 +68,11 @@ const createOrAcceptOwnedMutation = (
       current.startsWith(`${ACTION_BOUNDARY_GENERATOR_HEADER}\n`) &&
       requiredMarkers.every((marker) => current.includes(marker))
     ) {
+      if (requiredContract !== undefined && !current.includes(requiredContract.marker)) {
+        return yield* scaffoldError(
+          `incompatible generated Action boundary: ${filePath}. ${requiredContract.migration}`,
+        );
+      }
       return Option.none();
     }
     return yield* scaffoldError(`refusing to overwrite existing business file: ${filePath}`);
@@ -273,6 +279,11 @@ export const planActionBoundaryScaffold = (
         `@ontos-action-boundary-owner ${vertical.appId}`,
         `@ontos-action-boundary-audience ${vertical.appId}`,
       ],
+      {
+        marker: 'export const authenticateOperationPrincipal',
+        migration:
+          'Preserve owner adaptations and export authenticateOperationPrincipal using makeMicroverticalHttpPrincipalAuthentication with the audience-bound verifier; provide ActionPrincipalVerifierLive at the owning API runtime before generating governed contributions.',
+      },
     );
     const clientMutation = yield* createOrAcceptOwnedMutation(clientPath, renderClient(vertical), [
       `ACTION_GATEWAY_AUDIENCE = '${vertical.appId}'`,

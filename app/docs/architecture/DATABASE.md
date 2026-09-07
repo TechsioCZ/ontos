@@ -43,12 +43,13 @@ pair only as one cohort and only through the proofs in
 
 Owner conventions on v1:
 
-- Declare relations with `defineRelations(<tables>, (r) => ...)`. Core and Party
+- Declare relations with `defineRelations(<tables>, (r) => ...)`. Core, Auth, and Party
   construct native executors with `makeWithDefaults({ relations })` from
   `drizzle-orm/effect-postgres`, supplying `PgClient` and `Reactivity`; their types
-  are `EffectPgDatabase<typeof <owner>Relations>`. The Better Auth integration
-  uses `drizzle({ client, relations })` from `drizzle-orm/node-postgres` and
-  `NodePgDatabase<typeof authRelations>` for its supported adapter. Relational
+  are `EffectPgDatabase<typeof <owner>Relations>`. Auth's database service also
+  creates Better Auth's supported adapter using a private `node-postgres`
+  Drizzle handle on the same scoped pool. It exposes the adapter, never that
+  Promise-based handle. Application Auth queries use the native executor. Relational
   Queries v1 (`relations(...)`, callback `where`) are unavailable.
 - Declare governed tables with `<schema>.table.withRLS(...)` and attach
   `tenantRlsPolicies` or `tenantLegalEntityRlsPolicies` from `@app/core-runtime`.
@@ -73,7 +74,7 @@ database APIs when Drizzle and Effect can represent the behavior. The
 node-postgres pool is a private implementation detail acquired and released by
 an Effect scope.
 
-Core and Party persistence use `drizzle-orm/effect-postgres` with `@effect/sql-pg`.
+Core, Auth, and Party persistence use `drizzle-orm/effect-postgres` with `@effect/sql-pg`.
 Queries are native Effects: yield the query directly and map its typed error at the
 owning repository or service. Transaction callbacks return an Effect; the native SQL
 client owns connection acquisition, commit, rollback, savepoints, and interruption.

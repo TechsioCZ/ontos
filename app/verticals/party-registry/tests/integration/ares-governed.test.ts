@@ -1,9 +1,9 @@
-import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import {
   makeEffectTestCallback as nativeTestCallback,
   runEffectTestPromise,
   runEffectTestSync as runNativeSync,
 } from '@app/core-runtime/testing/effect-runtime';
+import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/plugin-bff/effect-edge';
@@ -28,12 +28,12 @@ import { randomUUID } from 'node:crypto';
 import test, { after as afterNativeDatabase } from 'node:test';
 import { Pool } from 'pg';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { aresLookupReadApiLive } from '../../api/ares-lookup-read-server.ts';
+import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive,
 } from '../../api/auth/gateway-assertion-redemption.ts';
-import { aresLookupReadApiLive } from '../../api/ares-lookup-read-server.ts';
-import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
 import { partyRegistryCommandsLive } from '../../api/party-command-server.ts';
 import { partyContactPointsReadApiLive } from '../../api/party-contact-points-read-server.ts';
 import { partyDetailReadApiLive } from '../../api/party-detail-read-server.ts';
