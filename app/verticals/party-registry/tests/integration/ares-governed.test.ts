@@ -1,9 +1,9 @@
-import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import {
   makeEffectTestCallback as nativeTestCallback,
   runEffectTestPromise,
   runEffectTestSync as runNativeSync,
 } from '@app/core-runtime/testing/effect-runtime';
+import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/plugin-bff/effect-edge';

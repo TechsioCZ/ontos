@@ -10,8 +10,8 @@ import type {
   ResolvePartyCommandCommitPayload,
   ResolvePartyCommandCommitResult,
 } from '../shared/command-api.ts';
-import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 import { ActionInvocationIdSchema } from '../shared/domain/correction-contracts.ts';
+import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 import { partyCommandRegistrations } from './party-command-registrations.ts';
 import {
   failPartyCommandProblem,

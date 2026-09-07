@@ -1197,23 +1197,10 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
         mutations.push(serverMutation.value);
       }
       mutations.push(...compositionMutations);
-      const boundaryPath = yield* tryScaffold('failed to resolve Action boundary path', () =>
-        resolveContainedPath(vertical.directory, 'api', 'auth', 'action-principal.ts'),
-      );
-      const fileSystem = yield* FileSystem.FileSystem;
-      const boundaryExists = yield* fileSystem
-        .exists(boundaryPath)
-        .pipe(
-          Effect.mapError((cause) =>
-            scaffoldFailure(`failed to inspect Action boundary ${boundaryPath}`, cause),
-          ),
-        );
-      if (!boundaryExists) {
-        const boundary = yield* planActionBoundaryScaffold(workspaceRoot, {
-          vertical: vertical.slug,
-        });
-        mutations.push(...boundary.mutations);
-      }
+      const boundary = yield* planActionBoundaryScaffold(workspaceRoot, {
+        vertical: vertical.slug,
+      });
+      mutations.push(...boundary.mutations);
     }
     const ownerImport = manifestImport(kind, name);
     let manifest = vertical.manifestContent;

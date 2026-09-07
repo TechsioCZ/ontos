@@ -1354,6 +1354,9 @@ try {
       ],
     });
 
+    // Restore the generated contract after the execution-only authentication stub. Reruns
+    // must validate the real owned boundary, not silently accept handwritten fixture code.
+    await writeFixtureFile(fixture.root, inventoryActionPrincipalFile, operationBoundary);
     const beforeRepeat = await snapshotTree(fixture.root);
     await assert.rejects(
       run(fixture, scaffoldCommand.publicComponent, [
@@ -1854,6 +1857,64 @@ export const ownerCode = true;
       /refusing to overwrite existing business file/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), before);
+  });
+});
+
+test('governed generators reject legacy principal boundaries before writing files', async () => {
+  await withFixture(async (fixture) => {
+    await addInventoryItemResourceType(fixture);
+    await run(fixture, scaffoldCommand.microverticalActionBoundary, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+    ]);
+    const generated = await readFixtureFile(fixture.root, inventoryActionPrincipalFile);
+    const legacy = generated.replace(
+      /const verifyOperationPrincipal =[\s\S]*$/u,
+      'export const verifyOperationPrincipal = verifyActionPrincipal;\n',
+    );
+    assert.doesNotMatch(legacy, /export const authenticateOperationPrincipal/u);
+    await writeFixtureFile(fixture.root, inventoryActionPrincipalFile, legacy);
+    const before = await snapshotTree(fixture.root);
+    const calls: readonly [ScaffoldCommand, readonly string[]][] = [
+      [scaffoldCommand.microverticalActionBoundary, []],
+      [scaffoldCommand.moduleApi, ['--name', fixtureName.resourceDetail]],
+      [
+        scaffoldCommand.searchProvider,
+        ['--name', fixtureName.inventoryItems, scaffoldFlag.resource, 'item'],
+      ],
+      ['report', ['--name', fixtureName.stockLevels, scaffoldFlag.resource, 'item']],
+    ];
+    await Promise.all(
+      calls.map(async ([command, args]) => {
+        await assert.rejects(
+          run(fixture, command, [scaffoldFlag.vertical, inventorySlug, ...args]),
+          /incompatible generated Action boundary:.*export authenticateOperationPrincipal.*provide ActionPrincipalVerifierLive/u,
+        );
+        assert.deepEqual(await snapshotTree(fixture.root), before);
+      }),
+    );
+  });
+});
+
+test('governed generation preserves compatible owner principal adaptations', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, scaffoldCommand.microverticalActionBoundary, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+    ]);
+    const adapted = `${await readFixtureFile(fixture.root, inventoryActionPrincipalFile)}\n// Owner-specific diagnostics remain private to this adapter.\n`;
+    await writeFixtureFile(fixture.root, inventoryActionPrincipalFile, adapted);
+    await run(fixture, scaffoldCommand.microverticalActionBoundary, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+    ]);
+    await run(fixture, scaffoldCommand.moduleApi, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--name',
+      fixtureName.resourceDetail,
+    ]);
+    assert.equal(await readFixtureFile(fixture.root, inventoryActionPrincipalFile), adapted);
   });
 });
 

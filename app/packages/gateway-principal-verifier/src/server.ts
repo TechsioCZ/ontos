@@ -245,7 +245,7 @@ const readBearer = (
       ActionPrincipalMissingErrorSchema.make({ reason: 'A Bearer assertion is required' }),
     );
   }
-  const token = /^Bearer (?<token>[^\s]+)$/u.exec(authorizationValue)?.groups?.['token'];
+  const token = /^Bearer (?<token>[^\s]+)$/iu.exec(authorizationValue)?.groups?.['token'];
   return token === undefined ? Effect.fail(invalidError()) : Effect.succeed(token);
 };
 

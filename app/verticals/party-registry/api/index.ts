@@ -112,7 +112,7 @@ type PartyRegistryApiRuntimeArguments = readonly [
     Layer.Error<typeof productionSearchProjectionGatewayLive>
   >,
   actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof productionActionRuntimeLive>>,
-  assertionRedemption: Layer.Layer<
+  gatewayAssertionRedemption: Layer.Layer<
     GatewayAssertionRedemptionService,
     Layer.Error<typeof gatewayAssertionRedemptionLive>
   >,
@@ -127,7 +127,7 @@ export const makePartyRegistryApiRuntime = (
     aresSubjectService,
     searchProjectionGateway,
     actionRuntime,
-    assertionRedemption,
+    gatewayAssertionRedemption,
   ] = args;
   const apiHandlersLive = Layer.mergeAll(
     partyRegistryFoundationLive,
@@ -169,7 +169,7 @@ export const makePartyRegistryApiRuntime = (
       Layer.provide(searchProjectionGateway),
     ),
     // </generated-governed-http-handler-layers>
-  ).pipe(Layer.provide(Layer.mergeAll(ActionPrincipalVerifierLive, assertionRedemption)));
+  ).pipe(Layer.provide(Layer.mergeAll(ActionPrincipalVerifierLive, gatewayAssertionRedemption)));
   const layer = HttpApiBuilder.layer(partyRegistryApi).pipe(
     Layer.provide(apiHandlersLive),
     Layer.provide(runtimeObservabilityLive),
