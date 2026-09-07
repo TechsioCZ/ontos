@@ -30,6 +30,4 @@ export default defineConfig({
   },
   out: './drizzle',
   schema: './src/db/schema.ts',
-  strict: true,
-  verbose: true,
 });
