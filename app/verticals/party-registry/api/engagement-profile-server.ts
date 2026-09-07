@@ -1,4 +1,3 @@
-import { ActionRuntime } from '@app/core-runtime';
 import type {
   ActionCoreError,
   ActionRegistration,
@@ -11,7 +10,7 @@ import {
   HttpServerResponse,
   Layer,
 } from '@modern-js/plugin-bff/effect-edge';
-import { Cause, Exit, Match, Predicate, Redacted, Result, Schema } from 'effect';
+import { Match, Redacted, Result, Schema } from 'effect';
 import { partyRegistryApi } from '../shared/api.ts';
 import {
   ContactsAuthenticationProblemSchema,
@@ -39,7 +38,7 @@ import { attachOrganizationEngagementAction } from '../src/actions/attach-organi
 import { attachPersonEngagementAction } from '../src/actions/attach-person-engagement.action.ts';
 import { unarchiveOrganizationEngagementAction } from '../src/actions/unarchive-organization-engagement.action.ts';
 import { unarchivePersonEngagementAction } from '../src/actions/unarchive-person-engagement.action.ts';
-import { authenticateOperationPrincipal } from './auth/action-principal.ts';
+import { bindActionHttpRunner } from './action-http-runner.ts';
 import { organizationEngagementProfileReadApiLive } from './organization-engagement-profile-read-server.ts';
 import { personEngagementProfileReadApiLive } from './person-engagement-profile-read-server.ts';
 
@@ -133,11 +132,16 @@ const problem = {
 const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
 );
-const failProblem = (mapped: ContactsProblem) =>
-  (Predicate.isTagged(mapped, 'ContactsAuthenticationProblem')
-    ? bearerChallenge
-    : Effect.void
-  ).pipe(Effect.andThen(Effect.fail(mapped)));
+const isAuthenticationProblem = Schema.is(ContactsAuthenticationProblemSchema);
+const failProblem = <Problem extends ContactsProblem>(mapped: Problem) =>
+  (isAuthenticationProblem(mapped) ? bearerChallenge : Effect.void).pipe(
+    Effect.andThen(Effect.fail(mapped)),
+  );
+
+const runActionHttp = bindActionHttpRunner({
+  authentication: problem.authentication,
+  unavailable: problem.unavailable,
+});
 
 type EngagementActionError =
   | ActionCoreError
@@ -149,24 +153,6 @@ type EngagementAttachProblem = Exclude<
   ContactsProblem,
   { readonly _tag: 'ContactsNotFoundProblem' }
 >;
-
-interface EngagementActionTransportRequest {
-  readonly correlationId: string;
-  idempotencyKey?: string;
-  traceId?: string;
-}
-
-const ContactsProblemSchema = Schema.Union([
-  ContactsAuthenticationProblemSchema,
-  ContactsConflictProblemSchema,
-  ContactsForbiddenProblemSchema,
-  ContactsInternalProblemSchema,
-  ContactsInvalidRequestProblemSchema,
-  ContactsNotFoundProblemSchema,
-  ContactsPreconditionRequiredProblemSchema,
-  ContactsUnavailableProblemSchema,
-]);
-const isContactsProblem = Schema.is(ContactsProblemSchema);
 
 const actionProblem = (error: EngagementActionError): ContactsProblem =>
   Match.value(error).pipe(
@@ -205,12 +191,6 @@ const actionProblem = (error: EngagementActionError): ContactsProblem =>
     Match.exhaustive,
   );
 
-const verifyPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
-  authenticateOperationPrincipal(authorization, {
-    authentication: problem.authentication,
-    unavailable: problem.unavailable,
-  });
-
 const RequestHeadersSchema = Schema.Record(
   Schema.String,
   Schema.Union([Schema.String, Schema.Undefined]),
@@ -218,39 +198,24 @@ const RequestHeadersSchema = Schema.Record(
 type RequestHeaders = Schema.Schema.Type<typeof RequestHeadersSchema>;
 type ContactsMutationHeaders = Schema.Schema.Type<typeof ContactsMutationHeadersSchema>;
 
-const recoverEngagementFailure = (error: EngagementActionError | ContactsProblem | undefined) => {
-  if (error === undefined) {
-    return failProblem(problem.internal());
-  }
-  return failProblem(isContactsProblem(error) ? error : actionProblem(error));
+const isContactsNotFoundProblem = Schema.is(ContactsNotFoundProblemSchema);
+const mapAttachProblem = (error: ContactsProblem): EngagementAttachProblem =>
+  isContactsNotFoundProblem(error) ? problem.internal() : error;
+
+const attachActionProblem = (error: EngagementActionError): EngagementAttachProblem => {
+  const mapped = actionProblem(error);
+  return mapAttachProblem(mapped);
 };
 
-const recoverUnexpectedEngagementDefect = <Value, Failure, Requirements>(
-  effect: Effect.Effect<Value, Failure, Requirements>,
-): Effect.Effect<Value, Failure | ContactsProblem, Requirements> =>
-  Effect.exit(effect).pipe(
-    Effect.flatMap((exit): Effect.Effect<Value, Failure | ContactsProblem> => {
-      if (Exit.isSuccess(exit)) {
-        return Effect.succeed(exit.value);
-      }
-      return exit.cause.reasons.some(Cause.isDieReason)
-        ? Effect.logError('Unexpected engagement Action BFF defect', exit.cause).pipe(
-            Effect.andThen(Effect.fail(problem.internal())),
-          )
-        : Effect.failCause(exit.cause);
-    }),
-  );
-
-const mapAttachProblem = (error: ContactsProblem): EngagementAttachProblem =>
-  Predicate.isTagged(error, 'ContactsNotFoundProblem') ? problem.internal() : error;
-
 const runEngagementAction = <
-  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  PayloadSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   DomainErrorSchema extends Schema.ConstraintDecoder<EngagementActionError>,
   DomainEvents extends DomainEventContractMap,
   Owner extends string,
   Services,
+  Requirements,
+  PublicProblem extends ContactsProblem,
 >(
   registration: ActionRegistration<
     PayloadSchema,
@@ -259,32 +224,30 @@ const runEngagementAction = <
     DomainEvents,
     Owner,
     Services,
-    never
+    Requirements
   >,
   payload: Schema.Schema.Type<PayloadSchema>,
   headers: ContactsMutationHeaders,
   requestHeaders: RequestHeaders,
+  mapError: (error: EngagementActionError) => PublicProblem,
 ) =>
-  Effect.gen(function* executeEngagementAction() {
-    const correlationId = requestHeaders['x-correlation-id'];
-    if (correlationId === undefined || correlationId.trim().length === 0) {
-      return yield* failProblem(problem.invalid());
-    }
-    const principal = yield* verifyPrincipal(Redacted.make(requestHeaders['authorization']));
-    const runtime = yield* ActionRuntime;
-    const idempotencyKey = headers['idempotency-key'];
-    const traceId = requestHeaders['x-trace-id'];
-    const transport: EngagementActionTransportRequest = { correlationId };
-    if (idempotencyKey !== undefined) {
-      transport.idempotencyKey = idempotencyKey;
-    }
-    if (traceId !== undefined) {
-      transport.traceId = traceId;
-    }
-    return yield* runtime.runAction({ payload, principal, registration, transport });
-  }).pipe(Effect.catchEager(recoverEngagementFailure), recoverUnexpectedEngagementDefect);
+  runActionHttp({
+    endpointHeaders: {
+      idempotencyKey: headers['idempotency-key'],
+      traceId: requestHeaders['x-trace-id'],
+    },
+    internalProblem: problem.internal,
+    invalidCorrelationProblem: problem.invalid,
+    mapError,
+    payload,
+    registration,
+    requestHeaders: {
+      authorization: Redacted.make(requestHeaders['authorization']),
+      'x-correlation-id': requestHeaders['x-correlation-id'],
+    },
+  }).pipe(Effect.catchIf(isAuthenticationProblem, failProblem));
 
-const organizationEngagementMutationsLive = HttpApiBuilder.group(
+export const organizationEngagementMutationsLive = HttpApiBuilder.group(
   partyRegistryApi,
   'organizationEngagementMutations',
   (handlers) =>
@@ -295,10 +258,17 @@ const organizationEngagementMutationsLive = HttpApiBuilder.group(
           payload,
           headers,
           request.headers,
-        ).pipe(Effect.mapError(mapAttachProblem)),
+          attachActionProblem,
+        ),
       )
       .handle('archive', ({ headers, payload, request }) =>
-        runEngagementAction(archiveOrganizationEngagementAction, payload, headers, request.headers),
+        runEngagementAction(
+          archiveOrganizationEngagementAction,
+          payload,
+          headers,
+          request.headers,
+          actionProblem,
+        ),
       )
       .handle('unarchive', ({ headers, payload, request }) =>
         runEngagementAction(
@@ -306,6 +276,7 @@ const organizationEngagementMutationsLive = HttpApiBuilder.group(
           payload,
           headers,
           request.headers,
+          actionProblem,
         ),
       ),
 );
@@ -316,15 +287,31 @@ const personEngagementMutationsLive = HttpApiBuilder.group(
   (handlers) =>
     handlers
       .handle('attach', ({ headers, payload, request }) =>
-        runEngagementAction(attachPersonEngagementAction, payload, headers, request.headers).pipe(
-          Effect.mapError(mapAttachProblem),
+        runEngagementAction(
+          attachPersonEngagementAction,
+          payload,
+          headers,
+          request.headers,
+          attachActionProblem,
         ),
       )
       .handle('archive', ({ headers, payload, request }) =>
-        runEngagementAction(archivePersonEngagementAction, payload, headers, request.headers),
+        runEngagementAction(
+          archivePersonEngagementAction,
+          payload,
+          headers,
+          request.headers,
+          actionProblem,
+        ),
       )
       .handle('unarchive', ({ headers, payload, request }) =>
-        runEngagementAction(unarchivePersonEngagementAction, payload, headers, request.headers),
+        runEngagementAction(
+          unarchivePersonEngagementAction,
+          payload,
+          headers,
+          request.headers,
+          actionProblem,
+        ),
       ),
 );
 
