@@ -1,7 +1,7 @@
 // @generated-origin OntOS Codesmith Action Service v1
-import { findPostgresFailure, makePersistenceAttempt } from '@app/core-runtime';
+import { makeMutationPersistenceAttempt, makePersistenceAttempt } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import { DateTime, Duration, Effect, Option, Schema } from 'effect';
+import { DateTime, Duration, Effect, Schema } from 'effect';
 import type { CounterpartyRef, PartyRef } from '../../shared/party-registry-references.ts';
 import type {
   OrganizationEngagementProfile,
@@ -45,20 +45,31 @@ const unavailable = (cause?: unknown) => {
 };
 
 const uniqueViolationSqlState = ['23', '505'].join('');
-const isEngagementUniquenessFailure = ({
-  code,
-  constraint,
-}: Readonly<{ readonly code: string; readonly constraint?: string }>) =>
-  code === uniqueViolationSqlState &&
-  constraint?.startsWith('contacts_') === true &&
-  constraint.endsWith('_uk');
-const mutationFailure = <Failure>(failure: Failure) =>
-  Option.isSome(findPostgresFailure(failure, isEngagementUniquenessFailure))
-    ? new EngagementProfileConflict({
-        code: 'contacts_engagement_profile_already_exists',
-        reason: 'An engagement profile already exists for these canonical references',
-      })
-    : unavailable(failure);
+const engagementProfileConflictConstraints = [
+  'contacts_organization_engagement_profiles_tenant_id_uk',
+  'contacts_organization_engagement_profiles_counterparty_uk',
+  'contacts_organization_engagement_profiles_party_uk',
+  'contacts_person_engagement_profiles_tenant_id_uk',
+  'contacts_person_engagement_profiles_party_counterparty_uk',
+  'contacts_person_engagement_profiles_party_only_uk',
+] as const;
+const mutationPersistenceAttempt = makeMutationPersistenceAttempt({
+  fallback: unavailable,
+  rules: [
+    {
+      makeFailure: () =>
+        new EngagementProfileConflict({
+          code: 'contacts_engagement_profile_already_exists',
+          reason: 'An engagement profile already exists for these canonical references',
+        }),
+      matches: ({ code, constraint }) =>
+        code === uniqueViolationSqlState &&
+        engagementProfileConflictConstraints.some(
+          (approvedConstraint) => approvedConstraint === constraint,
+        ),
+    },
+  ],
+});
 
 const PERSISTENCE_TIMEOUT = Duration.seconds(30);
 const attempt = <Value>(operation: () => PromiseLike<Value>) =>
@@ -69,7 +80,7 @@ const attempt = <Value>(operation: () => PromiseLike<Value>) =>
     }),
   );
 const mutationAttempt = <Value>(operation: () => PromiseLike<Value>) =>
-  makePersistenceAttempt(mutationFailure)(operation).pipe(
+  mutationPersistenceAttempt(operation).pipe(
     Effect.timeoutOrElse({
       duration: PERSISTENCE_TIMEOUT,
       orElse: () => Effect.fail(unavailable()),

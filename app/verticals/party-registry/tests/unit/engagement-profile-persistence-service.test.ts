@@ -120,7 +120,10 @@ test('maps an unrelated uniqueness constraint to the existing persistence fallba
   const failure = await runEffectTestPromise(
     Effect.flip(
       createOrganizationEngagementProfile(
-        rejectingMutationTransaction({ code: '23505', constraint: 'unrelated_table_name_uk' }),
+        rejectingMutationTransaction({
+          code: '23505',
+          constraint: 'contacts_future_internal_integrity_uk',
+        }),
         { ...refs, tenantId },
       ),
     ),

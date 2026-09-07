@@ -183,6 +183,11 @@ export type {
   TenantPermissionKey,
 } from './permissions/context-access.ts';
 export { makePersistenceAttempt } from './persistence/attempt.ts';
+export { makeMutationPersistenceAttempt } from './persistence/mutation-attempt.ts';
+export type {
+  MutationPersistenceAttemptOptions,
+  MutationPersistenceRule,
+} from './persistence/mutation-attempt.ts';
 export {
   defineAction,
   defineActionResourcePermission,
