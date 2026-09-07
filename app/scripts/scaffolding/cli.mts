@@ -4,7 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CodeSmith, FsMaterial, GeneratorCore } from '@modern-js/codesmith';
 import type { GeneratorContext } from '@modern-js/codesmith';
-import { Console, Effect, flow, Option, Predicate, Schema } from 'effect';
+import { Console, Effect, Option, Predicate, Schema } from 'effect';
 import { Argument, CliConfig, Command, Flag, GlobalFlag } from 'effect/unstable/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 import actionGenerator from './action/scaffold.mts';
@@ -23,7 +23,6 @@ import resourceGenerator from './resource/scaffold.mts';
 import retireContributionGenerator from './retire-contribution/scaffold.mts';
 import searchProviderGenerator from './search-provider/scaffold.mts';
 import searchProviderAccessGenerator from './search-provider-access/generator.mts';
-import { scaffoldingRuntime } from '../scaffolding-runtime.mts';
 import type {
   ActionScaffoldConfig,
   ActionScaffoldResult,
@@ -122,14 +121,16 @@ type TypedGeneratorContext<Config> = Omit<GeneratorContext, 'config'> & {
 type LocalGenerator<Config, Result extends GeneratorResult> = (
   context: TypedGeneratorContext<Config>,
   core: GeneratorCore,
-) => Promise<Result>;
+) => Effect.Effect<Result, unknown, NodeServices.NodeServices>;
 
 export interface RouteRefreshInput {
   readonly appId: string;
   readonly workspaceRoot: string;
 }
 
-export type RouteRefreshExecutor = (input: RouteRefreshInput) => void | Promise<void>;
+export type RouteRefreshExecutor = (
+  input: RouteRefreshInput,
+) => Effect.Effect<void, ScaffoldingError>;
 
 export interface RunScaffoldOptions {
   readonly routeRefresh?: RouteRefreshExecutor;
@@ -174,7 +175,7 @@ interface CommandDefinition {
   readonly generate: (
     flags: ParsedScaffoldFlags,
     workspaceRoot: string,
-  ) => Effect.Effect<GeneratorResult, ScaffoldingError>;
+  ) => Effect.Effect<GeneratorResult, ScaffoldingError, NodeServices.NodeServices>;
   readonly help: string;
   readonly requiredFlags: readonly string[];
 }
@@ -210,7 +211,7 @@ const runCodesmithGenerator = Effect.fn('runCodesmithGenerator')(
     generator: LocalGenerator<Config, Result>,
     workspaceRoot: string,
     config: Config,
-  ): Effect.fn.Return<Result, ScaffoldingError> {
+  ): Effect.fn.Return<Result, ScaffoldingError, NodeServices.NodeServices> {
     const prepared = yield* Effect.try({
       catch: (cause) =>
         new ScaffoldingError({ cause, message: 'failed to prepare the Codesmith generator' }),
@@ -231,14 +232,24 @@ const runCodesmithGenerator = Effect.fn('runCodesmithGenerator')(
         return { core, generatorContext };
       },
     });
-    const result = yield* Effect.tryPromise({
-      catch: (cause) =>
-        new ScaffoldingError({
-          cause,
-          message: cause instanceof Error ? cause.message : 'Codesmith generation failed',
-        }),
-      try: async () => await generator(prepared.generatorContext, prepared.core),
-    }).pipe(Effect.ensuring(Effect.sync(() => (prepared.core._context.current = null))));
+    const result = yield* generator(prepared.generatorContext, prepared.core).pipe(
+      Effect.catchDefect((cause) =>
+        Effect.fail(
+          new ScaffoldingError({
+            cause,
+            message: Predicate.isError(cause) ? cause.message : 'Codesmith generation failed',
+          }),
+        ),
+      ),
+      Effect.mapError(
+        (cause) =>
+          new ScaffoldingError({
+            cause,
+            message: Predicate.isError(cause) ? cause.message : 'Codesmith generation failed',
+          }),
+      ),
+      Effect.ensuring(Effect.sync(() => (prepared.core._context.current = null))),
+    );
     return result;
   },
 );
@@ -476,14 +487,7 @@ Options:
           if (options.routeRefresh === undefined) {
             return defaultRouteRefresh(input);
           }
-          return Effect.tryPromise({
-            catch: (cause) =>
-              new ScaffoldingError({
-                cause,
-                message: cause instanceof Error ? cause.message : 'route refresh failed',
-              }),
-            try: async () => await options.routeRefresh?.(input),
-          });
+          return options.routeRefresh(input);
         };
         yield* refresh({ appId: result.appId, workspaceRoot });
         yield* refresh({ appId: 'shell-super-app', workspaceRoot });
@@ -923,11 +927,11 @@ const parseFlags = (
     };
   });
 
-const runScaffoldEffect = Effect.fn('runScaffold')(function* runScaffoldEffectGenerator(
+export const runScaffoldEffect = Effect.fn('runScaffold')(function* runScaffoldEffectGenerator(
   command: ScaffoldCommand,
   rawArguments: readonly string[],
   options: RunScaffoldOptions = {},
-): Effect.fn.Return<RunScaffoldResult, ScaffoldingError, ChildProcessSpawner.ChildProcessSpawner> {
+): Effect.fn.Return<RunScaffoldResult, ScaffoldingError, NodeServices.NodeServices> {
   const argumentsList = normalizeForwardedArguments(rawArguments);
   if (argumentsList.length === 1 && argumentsList[0] === '--help') {
     return { help: getHelpText(command), kind: 'help' };
@@ -941,18 +945,6 @@ const runScaffoldEffect = Effect.fn('runScaffold')(function* runScaffoldEffectGe
   }
   return { kind: 'generated', result };
 });
-
-const makeScaffoldProgram = (
-  command: ScaffoldCommand,
-  rawArguments: readonly string[],
-  options: RunScaffoldOptions = {},
-) => runScaffoldEffect(command, rawArguments, options);
-
-export const runScaffold: (
-  command: ScaffoldCommand,
-  rawArguments: readonly string[],
-  options?: RunScaffoldOptions,
-) => Promise<RunScaffoldResult> = flow(makeScaffoldProgram, scaffoldingRuntime.runPromise);
 
 const optionalTextFlag = (name: string) => Flag.string(name).pipe(Flag.optional);
 const forwardedArguments = Argument.variadic(Argument.string('forwarded flags'));
@@ -1213,6 +1205,6 @@ if (entryPath !== undefined && import.meta.url === pathToFileURL(path.resolve(en
     }),
     CliConfig.CliConfig,
     () => CliConfig.make({ builtIns: [customHelp] }),
-  ).pipe(Effect.ensuring(scaffoldingRuntime.disposeEffect));
+  );
   await Effect.runPromise(cliProgram.pipe(Effect.provide(NodeServices.layer)));
 }

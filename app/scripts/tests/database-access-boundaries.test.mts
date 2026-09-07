@@ -1,3 +1,6 @@
+import { runEffectTestPromise } from '../../packages/core-runtime/src/testing/effect-runtime.ts';
+import { Effect } from 'effect';
+import { NodeServices } from '@effect/platform-node';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -62,7 +65,9 @@ void test('allows owner database factories and rejects Action, read, nested BFF,
         await writeFile(file, source);
       }),
     );
-    const violations = await checkDatabaseAccessBoundaries(root);
+    const violations = await runEffectTestPromise(
+      checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer)),
+    );
     assert.deepEqual(
       violations.map(({ file, line }) => `${file}:${line}`),
       [

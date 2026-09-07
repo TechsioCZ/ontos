@@ -1,5 +1,5 @@
 import { createCodesmithGenerator } from '../generator-adapter.mts';
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import {
   createMutationEffect,
   discoverOntosModuleEffect,
@@ -20,8 +20,8 @@ import type {
 
 const preserveFileSystemCause = (failure: ScaffoldFailure): ScaffoldFailure => {
   const { cause } = failure;
-  const underlying = cause instanceof Error ? cause.cause : undefined;
-  return underlying instanceof Error
+  const underlying = Predicate.isError(cause) ? cause.cause : undefined;
+  return Predicate.isError(underlying)
     ? scaffoldFailure(`${failure.message}: ${underlying.message}`, cause)
     : failure;
 };

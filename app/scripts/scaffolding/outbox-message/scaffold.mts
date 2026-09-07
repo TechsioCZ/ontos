@@ -1,4 +1,4 @@
-import { Cause, Effect, FileSystem, Result, Schema } from 'effect';
+import { Cause, Effect, FileSystem, Result, Schema, Predicate } from 'effect';
 import type { PlatformError } from 'effect';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
@@ -41,7 +41,7 @@ const planningFailure = (reason: string, cause?: unknown): OutboxMessageScaffold
     : new OutboxMessageScaffoldError({ cause, reason });
 
 const failureFromCause = (cause: unknown): OutboxMessageScaffoldError =>
-  planningFailure(cause instanceof Error ? cause.message : String(cause), cause);
+  planningFailure(Predicate.isError(cause) ? cause.message : String(cause), cause);
 
 const fromLegacySync = <Value,>(
   operation: () => Value,

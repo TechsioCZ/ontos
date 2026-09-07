@@ -163,7 +163,7 @@ const discoverCurrentActionsEffect = (
 ): Effect.Effect<
   readonly ActionAuthorizationProvisioningAction[],
   ActionAuthorizationProvisioningError,
-  FileSystem.FileSystem | Path.Path
+  NodeServices.NodeServices
 > =>
   Effect.gen(function* discoverCurrentActionsEffectGenerator() {
     const path = yield* Path.Path;
@@ -192,10 +192,10 @@ const discoverCurrentActionsEffect = (
     const contracts = yield* Effect.forEach(
       verticals,
       ({ id }) =>
-        Effect.tryPromise({
-          catch: discoveryFailure,
-          try: async () => await deriveContract({ vertical: id, workspaceRoot }),
-        }).pipe(Effect.map((contract) => ({ contract, id }))),
+        deriveContract({ vertical: id, workspaceRoot }).pipe(
+          Effect.mapError(discoveryFailure),
+          Effect.map((contract) => ({ contract, id })),
+        ),
       { concurrency: 'unbounded' },
     );
     const verticalActions: ActionAuthorizationProvisioningAction[] = [];
@@ -240,7 +240,7 @@ const discoverCurrentActionsProgram = (
 ): Effect.Effect<
   readonly ActionAuthorizationProvisioningAction[],
   ActionAuthorizationProvisioningError,
-  FileSystem.FileSystem | Path.Path
+  NodeServices.NodeServices
 > => discoverCurrentActionsEffect(workspaceRoot, deriveContract);
 
 export const discoverCurrentActions = flow(
@@ -254,7 +254,7 @@ const discoverCurrentActionKeysProgram = (
 ): Effect.Effect<
   readonly string[],
   ActionAuthorizationProvisioningError,
-  FileSystem.FileSystem | Path.Path
+  NodeServices.NodeServices
 > =>
   discoverCurrentActionsEffect(workspaceRoot, deriveContract).pipe(
     Effect.map((actions) => actions.map(({ actionKey }) => actionKey)),
@@ -329,7 +329,7 @@ const runCurrentActionAuthorizationProvisioningWithServices = (
 ): Effect.Effect<
   ActionAuthorizationProvisioningResult & { readonly environment: 'development' | 'stage' },
   ActionAuthorizationProvisioningError,
-  FileSystem.FileSystem | Path.Path
+  NodeServices.NodeServices
 > =>
   Effect.gen(function* runCurrentActionAuthorizationProvisioningEffect() {
     if (commandArguments.length > 0) {
@@ -368,7 +368,7 @@ export function runCurrentActionAuthorizationProvisioning(
 ): Effect.Effect<
   ActionAuthorizationProvisioningResult & { readonly environment: 'development' | 'stage' },
   ActionAuthorizationProvisioningError,
-  FileSystem.FileSystem | Path.Path
+  NodeServices.NodeServices
 >;
 export function runCurrentActionAuthorizationProvisioning(
   workspaceRoot: string,
@@ -376,7 +376,7 @@ export function runCurrentActionAuthorizationProvisioning(
 ): Effect.Effect<
   ActionAuthorizationProvisioningResult & { readonly environment: 'development' | 'stage' },
   ActionAuthorizationProvisioningError,
-  FileSystem.FileSystem | Path.Path
+  NodeServices.NodeServices
 > {
   return runCurrentActionAuthorizationProvisioningWithServices(workspaceRoot, commandArguments);
 }

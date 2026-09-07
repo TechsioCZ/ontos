@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { test as registerNodeTest } from 'node:test';
+import { test } from 'node:test';
 import { NodeServices } from '@effect/platform-node';
 import { ManagedRuntime } from 'effect';
 import { hashAuthorizationEvidence } from '../check-authorization-readiness.mts';
@@ -77,15 +77,11 @@ const SHELL_OWNER = {
 const OWNERSHIP_PATH = 'topology/ownership.json';
 const DOCUMENTATION_PATH = 'docs/README.md';
 
-const test = (name: string, run: () => void | Promise<void>): void => {
-  void registerNodeTest(name, run);
-};
-
 const deploymentImpactRuntime = ManagedRuntime.make(NodeServices.layer);
 const planDeploymentImpact = async (options: PlanDeploymentImpactOptions) =>
   await deploymentImpactRuntime.runPromise(planDeploymentImpactEffect(options));
 
-registerNodeTest.after(async () => {
+test.after(async () => {
   await deploymentImpactRuntime.dispose();
 });
 
@@ -168,7 +164,7 @@ const withFixture = async (
   }
 };
 
-test('deploys a generated owner worker immediately after its provider', async () => {
+void test('deploys a generated owner worker immediately after its provider', async () => {
   await withFixture(
     async (root) => {
       const plan = await planDeploymentImpact({
@@ -196,7 +192,7 @@ const runGit = (root: string, argumentsList: readonly string[]): string =>
     },
   ).trim();
 
-test('plans current Contacts owner-local changes without a hard-coded owner registry', async () => {
+void test('plans current Contacts owner-local changes without a hard-coded owner registry', async () => {
   await withFixture(async (root) => {
     const plan = await planDeploymentImpact({
       changedPaths: ['app/verticals/contacts/src/features/customers/customer-form.tsx'],
@@ -215,7 +211,7 @@ test('plans current Contacts owner-local changes without a hard-coded owner regi
   });
 });
 
-test('orders authorization schema and replay migration before every affected consumer', async () => {
+void test('orders authorization schema and replay migration before every affected consumer', async () => {
   await withFixture(async (root) => {
     const plan = await planDeploymentImpact({
       changedPaths: ['app/scripts/authorization/rollout-contract.mts'],
@@ -228,7 +224,7 @@ test('orders authorization schema and replay migration before every affected con
   });
 });
 
-test('plans Shell-only changes for the topology-derived Shell owner', async () => {
+void test('plans Shell-only changes for the topology-derived Shell owner', async () => {
   await withFixture(async (root) => {
     const plan = await planDeploymentImpact({
       changedPaths: ['apps/shell-super-app/src/routes/shell-frame.tsx'],
@@ -242,7 +238,7 @@ test('plans Shell-only changes for the topology-derived Shell owner', async () =
   });
 });
 
-test('adds the migrator before an owner whose schema or migration contract changed', async () => {
+void test('adds the migrator before an owner whose schema or migration contract changed', async () => {
   await withFixture(async (root) => {
     const plan = await planDeploymentImpact({
       changedPaths: ['verticals/contacts/drizzle/0003_add_customer.sql'],
@@ -260,7 +256,7 @@ for (const changedPath of [
   'scripts/verify-application-db-schema.mts',
   'scripts/postgres/bootstrap-runtime-role.mts',
 ]) {
-  test(`includes the migrator for root migration contract ${changedPath}`, async () => {
+  void test(`includes the migrator for root migration contract ${changedPath}`, async () => {
     await withFixture(async (root) => {
       const plan = await planDeploymentImpact({ changedPaths: [changedPath], rootDirectory: root });
       assert.deepEqual(
@@ -275,7 +271,7 @@ for (const changedPath of [
   'scripts/postgres/bootstrap-spicedb-database.mts',
   'packages/core-runtime/src/install/spicedb-database-config.ts',
 ]) {
-  test(`includes the migrator, SpiceDB, and every consumer for SpiceDB database bootstrap change ${changedPath}`, async () => {
+  void test(`includes the migrator, SpiceDB, and every consumer for SpiceDB database bootstrap change ${changedPath}`, async () => {
     await withFixture(async (root) => {
       const plan = await planDeploymentImpact({ changedPaths: [changedPath], rootDirectory: root });
       assert.deepEqual(
@@ -286,7 +282,7 @@ for (const changedPath of [
   });
 }
 
-test('expands shared-package changes to every consumer in dependency order', async () => {
+void test('expands shared-package changes to every consumer in dependency order', async () => {
   await withFixture(async (root) => {
     const plan = await planDeploymentImpact({
       changedPaths: ['packages/shared-contracts/src/gateway-context.ts'],
@@ -299,7 +295,7 @@ test('expands shared-package changes to every consumer in dependency order', asy
   });
 });
 
-test('expands a provider public-contract change to the dependent Shell', async () => {
+void test('expands a provider public-contract change to the dependent Shell', async () => {
   await withFixture(async (root) => {
     const plan = await planDeploymentImpact({
       changedPaths: ['verticals/contacts/shared/api.ts'],
@@ -312,7 +308,7 @@ test('expands a provider public-contract change to the dependent Shell', async (
   });
 });
 
-test('orders SpiceDB before all consumers for authorization runtime changes', async () => {
+void test('orders SpiceDB before all consumers for authorization runtime changes', async () => {
   await withFixture(async (root) => {
     const plan = await planDeploymentImpact({
       changedPaths: ['packages/core-runtime/spicedb/bootstrap.yaml'],
@@ -337,7 +333,7 @@ for (const changedPath of [
   'zerops.yaml',
   'topology/reference-topology.json',
 ]) {
-  test(`conservatively deploys every phase for ${changedPath}`, async () => {
+  void test(`conservatively deploys every phase for ${changedPath}`, async () => {
     await withFixture(async (root) => {
       const plan = await planDeploymentImpact({ changedPaths: [changedPath], rootDirectory: root });
       assert.deepEqual(
@@ -348,7 +344,7 @@ for (const changedPath of [
   });
 }
 
-test('produces a reviewed no-op for documentation-only changes', async () => {
+void test('produces a reviewed no-op for documentation-only changes', async () => {
   await withFixture(async (root) => {
     const plan = await planDeploymentImpact({
       changedPaths: ['docs/architecture/DEPLOYMENT.md'],
@@ -359,7 +355,7 @@ test('produces a reviewed no-op for documentation-only changes', async () => {
   });
 });
 
-test('fails closed for the unknown destination of a renamed application directory', async () => {
+void test('fails closed for the unknown destination of a renamed application directory', async () => {
   await withFixture(async (root) => {
     await assert.rejects(
       planDeploymentImpact({
@@ -371,7 +367,7 @@ test('fails closed for the unknown destination of a renamed application director
   });
 });
 
-test('fails closed when a topology delivery unit has no ownership entry', async () => {
+void test('fails closed when a topology delivery unit has no ownership entry', async () => {
   await withFixture(
     async (root) => {
       await assert.rejects(
@@ -383,7 +379,7 @@ test('fails closed when a topology delivery unit has no ownership entry', async 
   );
 });
 
-test('fails closed when topology and ownership identities disagree', async () => {
+void test('fails closed when topology and ownership identities disagree', async () => {
   await withFixture(async (root) => {
     await writeJson(root, OWNERSHIP_PATH, {
       owners: [
@@ -400,7 +396,7 @@ test('fails closed when topology and ownership identities disagree', async () =>
   });
 });
 
-test('fails closed when shared-package topology and ownership identities disagree', async () => {
+void test('fails closed when shared-package topology and ownership identities disagree', async () => {
   await withFixture(async (root) => {
     await writeJson(root, OWNERSHIP_PATH, {
       owners: [
@@ -417,7 +413,7 @@ test('fails closed when shared-package topology and ownership identities disagre
   });
 });
 
-test('fails closed when a topology unit has no supported stage setup', async () => {
+void test('fails closed when a topology unit has no supported stage setup', async () => {
   await withFixture(
     async (root) => {
       await assert.rejects(
@@ -429,7 +425,7 @@ test('fails closed when a topology unit has no supported stage setup', async () 
   );
 });
 
-test('uses a safe full deployment for an all-zero comparison base', async () => {
+void test('uses a safe full deployment for an all-zero comparison base', async () => {
   await withFixture(async (root) => {
     const plan = await planDeploymentImpact({
       baseRevision: '0000000000000000000000000000000000000000',
@@ -445,7 +441,7 @@ test('uses a safe full deployment for an all-zero comparison base', async () => 
   });
 });
 
-test('uses a safe full deployment for an unavailable comparison base', async () => {
+void test('uses a safe full deployment for an unavailable comparison base', async () => {
   await withFixture(async (root) => {
     const plan = await planDeploymentImpact({
       baseRevision: 'missing-base-revision',
@@ -460,7 +456,7 @@ test('uses a safe full deployment for an unavailable comparison base', async () 
   });
 });
 
-test('uses a safe full deployment when the comparison base is not an ancestor', async () => {
+void test('uses a safe full deployment when the comparison base is not an ancestor', async () => {
   await withFixture(async (root) => {
     runGit(root, ['init']);
     runGit(root, ['add', '.']);
@@ -485,7 +481,7 @@ test('uses a safe full deployment when the comparison base is not an ancestor', 
   });
 });
 
-test('changing a topology identity changes the plan without editing planner source', async () => {
+void test('changing a topology identity changes the plan without editing planner source', async () => {
   await withFixture(
     async (root) => {
       const plan = await planDeploymentImpact({
@@ -596,7 +592,7 @@ const withoutReadinessEvidence = (
   return remaining;
 };
 
-test('requires exact impact, readiness, and negative-smoke evidence for enforced promotion', () => {
+void test('requires exact impact, readiness, and negative-smoke evidence for enforced promotion', () => {
   assert.deepEqual(validateAuthorizationPromotionGate(promotionFixture()), {
     environment: 'stage',
     mode: 'enforced',
@@ -622,7 +618,7 @@ test('requires exact impact, readiness, and negative-smoke evidence for enforced
   );
 });
 
-test('report-only promotion is bounded, explicit-baseline-only, and never allowed in production', () => {
+void test('report-only promotion is bounded, explicit-baseline-only, and never allowed in production', () => {
   const enforced = promotionFixture();
   const withoutRequiredEvidence = withoutReadinessEvidence(
     withoutNegativeSmokeEvidence(withoutImpactEvidence(enforced)),

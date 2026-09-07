@@ -22,17 +22,15 @@ import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
 /** Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`. */
 const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
-const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
+const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 const DEFAULT_IGNORE = [
   '**/dist/**',
   '**/build/**',
   '**/node_modules/**',
-  'tools/**',
   '**/*.d.ts',
   '**/*.config.ts',
   '**/*.config.mts',
   '**/module-federation.config.ts',
-  '**/scripts/**',
 ];
 /** pg `Pool` driver edge: the single place a `Promise` contract is the real contract. */
 const DEFAULT_ALLOW_PATHS = ['**/db/client.ts', '**/auth/db/client.ts'];
@@ -93,8 +91,8 @@ function readOptions(context: Context): RuleOptions {
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
-    includeTests: boolean(record.includeTests, false),
-    includeTsx: boolean(record.includeTsx, false),
+    includeTests: boolean(record.includeTests, true),
+    includeTsx: boolean(record.includeTsx, true),
     allowPaths: stringArray(record.allowPaths, DEFAULT_ALLOW_PATHS),
     driverCallbacks: stringArray(record.driverCallbacks, DEFAULT_DRIVER_CALLBACKS),
     allowNames: stringArray(record.allowNames, DEFAULT_ALLOW_NAMES),
@@ -253,8 +251,8 @@ export const rule = defineRule({
       {
         include: DEFAULT_INCLUDE,
         ignore: [...DEFAULT_IGNORE],
-        includeTests: false,
-        includeTsx: false,
+        includeTests: true,
+        includeTsx: true,
         allowPaths: DEFAULT_ALLOW_PATHS,
         driverCallbacks: DEFAULT_DRIVER_CALLBACKS,
         allowNames: DEFAULT_ALLOW_NAMES,
@@ -460,6 +458,58 @@ export const rule = defineRule({
       return false;
     };
 
+    /** A callback supplied directly to the imported test runner is a framework entrypoint. */
+    const atTestBoundary = (node: any): boolean => {
+      if (!isTestFile(path)) return false;
+      for (let current = node; current?.parent; current = current.parent) {
+        const call = current.parent;
+        if (
+          call.type === 'CallExpression' &&
+          call.arguments.includes(current) &&
+          /^(?:node:test:(?:test|it|before|after|beforeEach|afterEach|\*)(?:\.|$)|(?:@playwright\/test|@rstest\/core|vitest):(?:test|it|beforeAll|afterAll|beforeEach|afterEach|rstest\.mock)(?:\.|$))/u.test(
+            imported(call.callee) ?? '',
+          )
+        )
+          return true;
+      }
+      return false;
+    };
+
+    /** Only the actual thunk forwarded to Effect's foreign Promise conversion has that contract. */
+    const isForeignThunkParameter = (node: any): boolean => {
+      let current = node;
+      while (current?.parent && current.parent.type !== 'Identifier') current = current.parent;
+      const parameter = current?.parent;
+      if (!parameter || !FUNCTION_TYPES.has(parameter.parent?.type)) return false;
+      if (isTestFile(path) && exemptHelper(parameter.parent)) return true;
+      const variable = variableFor(parameter, parameter.name);
+      const refs = variable?.references.filter((ref: any) => ref.isRead()) ?? [];
+      return (
+        refs.length > 0 &&
+        refs.every((ref: any) => {
+          let value = ref.identifier;
+          if (
+            value.parent?.type === 'CallExpression' &&
+            value.parent.callee === value &&
+            atDriverEdge(value.parent)
+          )
+            return true;
+          if (
+            value.parent?.type === 'Property' &&
+            value.parent.value === value &&
+            value.parent.key.name === 'try'
+          )
+            value = value.parent.parent;
+          const call = value.parent;
+          return (
+            call?.type === 'CallExpression' &&
+            call.arguments.includes(value) &&
+            isPromiseBoundaryCall(call)
+          );
+        })
+      );
+    };
+
     /** Better Auth owns this exact hook signature, not arbitrary services nested in its options. */
     const atAuthHook = (node: any): boolean => {
       let current = node;
@@ -517,14 +567,27 @@ export const rule = defineRule({
       annotation: ESTree.TSTypeAnnotation | null | undefined,
     ): string | null => {
       if (annotation === null || annotation === undefined) return null;
-      const resolve = (raw: any, seen = new Set<any>()): string | null => {
+      interface TypeBinding {
+        readonly node: any;
+        readonly substitutions: ReadonlyMap<any, TypeBinding>;
+      }
+      const resolve = (
+        raw: any,
+        seen = new Set<any>(),
+        substitutions: ReadonlyMap<any, TypeBinding> = new Map(),
+      ): string | null => {
         if (!raw || seen.has(raw)) return null;
         seen.add(raw);
         if (raw.type === 'TSTypeAnnotation' || raw.type === 'TSParenthesizedType')
-          return resolve(raw.typeAnnotation, seen);
+          return resolve(raw.typeAnnotation, seen, substitutions);
+        if (raw.type === 'TSTypeParameter')
+          return (
+            resolve(raw.constraint, new Set(seen), substitutions) ??
+            resolve(raw.default, new Set(seen), substitutions)
+          );
         if (raw.type === 'TSUnionType' || raw.type === 'TSIntersectionType') {
           for (const item of raw.types) {
-            const result = resolve(item, new Set(seen));
+            const result = resolve(item, new Set(seen), substitutions);
             if (result) return result;
           }
           return null;
@@ -542,10 +605,28 @@ export const rule = defineRule({
           return `${name}<…>`;
         if (names.length !== 1) return null;
         const variable = variableFor(raw.typeName, name);
+        const bound = substitutions.get(variable);
+        if (bound) return resolve(bound.node, seen, bound.substitutions);
         const alias = variable?.defs.find(
           (d: any) => d.node.type === 'TSTypeAliasDeclaration',
         )?.node;
-        if (alias) return resolve(alias.typeAnnotation, seen);
+        if (alias) {
+          const applied = new Map(substitutions);
+          for (const [index, parameter] of (alias.typeParameters?.params ?? []).entries()) {
+            const argument = raw.typeArguments?.params[index];
+            const value = argument ?? parameter.default ?? parameter.constraint;
+            if (!value) continue;
+            const binding = variableFor(parameter.name, parameter.name.name);
+            if (binding)
+              applied.set(binding, {
+                node: value,
+                substitutions: argument ? substitutions : applied,
+              });
+          }
+          return resolve(alias.typeAnnotation, seen, applied);
+        }
+        const parameter = variable?.defs.find((d: any) => d.node.type === 'TSTypeParameter')?.node;
+        if (parameter) return resolve(parameter, seen, substitutions);
         if (variable?.defs.length || !options.promiseTypes.includes(name)) return null;
         return `${name}<…>`;
       };
@@ -605,9 +686,11 @@ export const rule = defineRule({
       if (withinMirror(node)) return;
       // A5 owns the service surface, not signatures of fluent driver continuations.
       // Nested function-returned records are intentionally outside this AST-only port model.
+      let child: any = node;
       for (let ancestor = (node as any).parent; ancestor; ancestor = ancestor.parent) {
         if (['TSTypeAliasDeclaration', 'TSInterfaceDeclaration'].includes(ancestor.type)) break;
-        if (ancestor.type === 'TSFunctionType') return;
+        if (ancestor.type === 'TSFunctionType' && ancestor.returnType === child) return;
+        child = ancestor;
       }
       context.report({ node, messageId, data } as never);
     };
@@ -620,7 +703,17 @@ export const rule = defineRule({
       let parent = parentOf(current);
       while (
         parent &&
-        ['TSUnionType', 'TSIntersectionType', 'TSParenthesizedType'].includes(parent.type)
+        [
+          'TSUnionType',
+          'TSIntersectionType',
+          'TSParenthesizedType',
+          'TSTypeParameterInstantiation',
+          'TSTypeReference',
+          'TSArrayType',
+          'TSOptionalType',
+          'TSRestType',
+          'TSTypeOperator',
+        ].includes(parent.type)
       ) {
         current = parent;
         parent = parentOf(current);
@@ -632,7 +725,27 @@ export const rule = defineRule({
       if (owner === null) return false;
       // `const deleteRecovery: (id: string) => Promise<void> = ...` — a declared binding, not a
       // callback parameter (whose annotated `Identifier` has a function as its parent).
-      if (owner.type === 'Identifier') return parentOf(owner)?.type === 'VariableDeclarator';
+      if (owner.type === 'Identifier' || owner.type === 'RestElement') {
+        let declaration = parentOf(owner);
+        if (
+          declaration?.type === 'AssignmentPattern' ||
+          declaration?.type === 'TSParameterProperty' ||
+          declaration?.type === 'RestElement'
+        )
+          declaration = parentOf(declaration);
+        return (
+          declaration !== null &&
+          (declaration.type === 'VariableDeclarator' ||
+            FUNCTION_TYPES.has(declaration.type) ||
+            [
+              'TSDeclareFunction',
+              'TSEmptyBodyFunctionExpression',
+              'TSFunctionType',
+              'TSMethodSignature',
+              'TSCallSignatureDeclaration',
+            ].includes(declaration.type))
+        );
+      }
       return (
         owner.type === 'TSPropertySignature' ||
         owner.type === 'TSIndexSignature' ||
@@ -719,21 +832,34 @@ export const rule = defineRule({
         return true;
       const owner = namedOwner(fn);
       const id = (owner as any).id;
-      if (!id || id.type !== 'Identifier') return false;
+      if (!id || id.type !== 'Identifier') {
+        for (let current = fn.parent; current; current = current.parent) {
+          if (FUNCTION_TYPES.has(current.type)) return exemptHelper(current, new Set(seen));
+        }
+        return false;
+      }
       if (
         (owner as any).parent?.type === 'ExportNamedDeclaration' ||
         (owner as any).parent?.parent?.type === 'ExportNamedDeclaration'
       )
         return false;
       const variable = variableFor(id, id.name);
-      const refs = variable?.references.filter((r: any) => r.isRead()) ?? [];
+      const refs = (variable?.references.filter((r: any) => r.isRead()) ?? []).filter(
+        (ref: any) => {
+          for (let current = ref.identifier.parent; current; current = current.parent) {
+            if (current === fn) return false;
+          }
+          return true;
+        },
+      );
       if (!refs.length) return false;
       return refs.every((ref: any) => {
         const call = ref.identifier.parent;
-        if (call?.type !== 'CallExpression' || call.callee !== ref.identifier) return false;
-        if (atDriverEdge(call)) return true;
-        for (let current = call.parent; current; current = current.parent)
+        if (atDriverEdge(ref.identifier) || atTestBoundary(ref.identifier)) return true;
+        for (let current = call; current; current = current.parent) {
+          if (current === fn) return true;
           if (FUNCTION_TYPES.has(current.type)) return exemptHelper(current, new Set(seen));
+        }
         return false;
       });
     };
@@ -750,7 +876,8 @@ export const rule = defineRule({
         if (!options.includeFunctionDeclarations) return;
         if (!isModuleScopeFunction(node)) return;
       } else if (!isImplementationPosition(node)) return;
-      if (atDriverEdge(node) || atAuthHook(node) || exemptHelper(node)) return;
+      if (atDriverEdge(node) || atAuthHook(node) || atTestBoundary(node) || exemptHelper(node))
+        return;
       if (insideReportedFunction(node)) return;
       const member = nameOf(node);
       // Framework router entrypoints (`loader`, `action`, ...) are forced to return a Promise.
@@ -787,6 +914,7 @@ export const rule = defineRule({
         const wrapper = promiseReference(node.returnType);
         if (wrapper === null) return;
         if (!isPortFunctionTypePosition(node as unknown as AnyNode)) return;
+        if (isForeignThunkParameter(node) || atTestBoundary(node)) return;
         report(node, 'promisePort', { member: nameOf(node as unknown as AnyNode), wrapper });
       },
       TSPropertySignature: (node: ESTree.TSPropertySignature) => {

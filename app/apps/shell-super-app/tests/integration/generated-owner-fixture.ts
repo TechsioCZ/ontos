@@ -1,7 +1,7 @@
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { Effect, FileSystem } from 'effect';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { runScaffold } from '../../../../scripts/scaffolding/cli.mts';
+import { runScaffoldEffect } from '../../../../scripts/scaffolding/cli.mts';
 import {
   MODULE_MANIFEST_RESOURCE_SLOT_END,
   MODULE_MANIFEST_RESOURCE_SLOT_START,
@@ -18,15 +18,16 @@ export const GENERATED_OWNER = {
 const json = <Value>(value: Value): string => `${JSON.stringify(value, null, 2)}\n`;
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..', '..');
 
-const writeFixtureFile = async (
+const writeFixtureFile = Effect.fn('writeFixtureFile')(function* writeFixtureFileEffect(
   root: string,
   relativePath: string,
   content: string,
-): Promise<void> => {
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
   const filePath = path.join(root, relativePath);
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, content, 'utf-8');
-};
+  yield* fileSystem.makeDirectory(path.dirname(filePath), { recursive: true });
+  yield* fileSystem.writeFileString(filePath, content);
+});
 
 const replaceRequired = (source: string, current: string, replacement: string): string => {
   if (!source.includes(current)) {
@@ -35,23 +36,23 @@ const replaceRequired = (source: string, current: string, replacement: string): 
   return source.replace(current, replacement);
 };
 
-const createWorkspace = async (root: string): Promise<void> => {
-  await writeFixtureFile(
+const createWorkspace = Effect.fn('createWorkspace')(function* createWorkspaceEffect(root: string) {
+  yield* writeFixtureFile(
     root,
     'package.json',
     json({ name: 'generated-owner-fixture', private: true }),
   );
-  await writeFixtureFile(
+  yield* writeFixtureFile(
     root,
     `verticals/${GENERATED_OWNER.slug}/module-federation.config.ts`,
     'export default { exposes: {} };\n',
   );
-  await writeFixtureFile(
+  yield* writeFixtureFile(
     root,
     `verticals/${GENERATED_OWNER.slug}/tsconfig.json`,
     json({ compilerOptions: { composite: true }, include: ['api', 'shared', 'src'] }),
   );
-  await writeFixtureFile(
+  yield* writeFixtureFile(
     root,
     `verticals/${GENERATED_OWNER.slug}/package.json`,
     json({
@@ -74,12 +75,12 @@ const createWorkspace = async (root: string): Promise<void> => {
       version: '0.0.0',
     }),
   );
-  await writeFixtureFile(
+  yield* writeFixtureFile(
     root,
     `verticals/${GENERATED_OWNER.slug}/src/routes/ultramodern-route-head.tsx`,
     'export const UltramodernRouteHead = () => null;\n',
   );
-  await writeFixtureFile(
+  yield* writeFixtureFile(
     root,
     'topology/reference-topology.json',
     json({
@@ -96,48 +97,51 @@ const createWorkspace = async (root: string): Promise<void> => {
       ],
     }),
   );
-};
+});
 
-const linkRuntimeDependencies = async (root: string): Promise<void> => {
-  await mkdir(path.join(root, 'node_modules', '@app'), { recursive: true });
-  await mkdir(path.join(root, 'node_modules', '@modern-js'), { recursive: true });
-  await Promise.all([
-    symlink(
-      path.join(appRoot, 'packages/core-runtime'),
-      path.join(root, 'node_modules/@app/core-runtime'),
-      'dir',
-    ),
-    symlink(
-      path.join(appRoot, 'packages/shared-contracts'),
-      path.join(root, 'node_modules/@app/shared-contracts'),
-      'dir',
-    ),
-    symlink(
-      path.join(appRoot, 'apps/shell-super-app/node_modules/@modern-js/plugin-bff'),
-      path.join(root, 'node_modules/@modern-js/plugin-bff'),
-      'dir',
-    ),
-    symlink(
-      path.join(appRoot, 'apps/shell-super-app/node_modules/drizzle-orm'),
-      path.join(root, 'node_modules/drizzle-orm'),
-      'dir',
-    ),
-    symlink(
-      path.join(appRoot, 'node_modules/effect'),
-      path.join(root, 'node_modules/effect'),
-      'dir',
-    ),
-    symlink(
-      path.join(appRoot, 'apps/shell-super-app/node_modules/jose'),
-      path.join(root, 'node_modules/jose'),
-      'dir',
-    ),
-  ]);
-};
+const linkRuntimeDependencies = Effect.fn('linkRuntimeDependencies')(
+  function* linkRuntimeDependenciesEffect(root: string) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    yield* fileSystem.makeDirectory(path.join(root, 'node_modules', '@app'), { recursive: true });
+    yield* fileSystem.makeDirectory(path.join(root, 'node_modules', '@modern-js'), {
+      recursive: true,
+    });
+    yield* Effect.all(
+      [
+        fileSystem.symlink(
+          path.join(appRoot, 'packages/core-runtime'),
+          path.join(root, 'node_modules/@app/core-runtime'),
+        ),
+        fileSystem.symlink(
+          path.join(appRoot, 'packages/shared-contracts'),
+          path.join(root, 'node_modules/@app/shared-contracts'),
+        ),
+        fileSystem.symlink(
+          path.join(appRoot, 'apps/shell-super-app/node_modules/@modern-js/plugin-bff'),
+          path.join(root, 'node_modules/@modern-js/plugin-bff'),
+        ),
+        fileSystem.symlink(
+          path.join(appRoot, 'apps/shell-super-app/node_modules/drizzle-orm'),
+          path.join(root, 'node_modules/drizzle-orm'),
+        ),
+        fileSystem.symlink(
+          path.join(appRoot, 'node_modules/effect'),
+          path.join(root, 'node_modules/effect'),
+        ),
+        fileSystem.symlink(
+          path.join(appRoot, 'apps/shell-super-app/node_modules/jose'),
+          path.join(root, 'node_modules/jose'),
+        ),
+      ],
+      { concurrency: 'unbounded', discard: true },
+    );
+  },
+);
 
-const addResourceType = async (root: string): Promise<void> => {
+const addResourceType = Effect.fn('addResourceType')(function* addResourceTypeEffect(root: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
   const manifestPath = path.join(root, `verticals/${GENERATED_OWNER.slug}/vertical.manifest.ts`);
-  const manifest = await readFile(manifestPath, 'utf-8');
+  const manifest = yield* fileSystem.readFileString(manifestPath);
   const withResourceType = replaceRequired(
     manifest,
     `      ${MODULE_MANIFEST_RESOURCE_SLOT_START}
@@ -177,7 +181,7 @@ const addResourceType = async (root: string): Promise<void> => {
         },
       ],`,
   );
-  await writeFile(
+  yield* fileSystem.writeFileString(
     manifestPath,
     replaceRequired(
       withResourceDetail,
@@ -198,18 +202,18 @@ const addResourceType = async (root: string): Promise<void> => {
         },
       ],`,
     ),
-    'utf-8',
   );
-};
+});
 
-const adaptContract = async (
+const adaptContract = Effect.fn('adaptContract')(function* adaptContractEffect(
   root: string,
   name: 'resource-detail' | 'resource-list',
   request: string,
   response: string,
-): Promise<void> => {
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
   const contractPath = path.join(root, `verticals/${GENERATED_OWNER.slug}/shared/apis/${name}.ts`);
-  let contract = await readFile(contractPath, 'utf-8');
+  let contract = yield* fileSystem.readFileString(contractPath);
   const type = name === 'resource-detail' ? 'ResourceDetail' : 'ResourceList';
   contract = replaceRequired(
     contract,
@@ -221,8 +225,8 @@ const adaptContract = async (
     `export const ${type}ResponseSchema = Schema.Struct({ ok: Schema.Literal(true) });`,
     `export const ${type}ResponseSchema = ${response};`,
   );
-  await writeFile(contractPath, contract, 'utf-8');
-};
+  yield* fileSystem.writeFileString(contractPath, contract);
+});
 
 const ownerRepositorySource = (schemaName: string): string => `
 // Test-owned adaptation of Codesmith-generated disposable owner artifacts.
@@ -278,7 +282,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, FileSystem } from 'effect';
 import { ResourceDetailRequestSchema, ResourceDetailResponseSchema } from '../../shared/apis/resource-detail.ts';
 import { generatedOwnerHandlerCounts } from '../isolation/instrumentation.ts';
 import { makeOwnerRepository } from '../isolation/owner-repository.ts';
@@ -329,7 +333,7 @@ export const resourceDetailRead = defineRead(
 const listReadSource = `
 // @generated by OntOS Codesmith module-api v1
 import { ReadHandlerUnavailable, defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, FileSystem } from 'effect';
 import { ResourceListRequestSchema, ResourceListResponseSchema } from '../../shared/apis/resource-list.ts';
 import { generatedOwnerHandlerCounts } from '../isolation/instrumentation.ts';
 import { makeOwnerRepository } from '../isolation/owner-repository.ts';
@@ -384,7 +388,7 @@ const searchReadSource = `
 // @generated by OntOS Codesmith Governed Contribution v1
 // @ontos-contribution-kind search-provider
 import { ReadHandlerUnavailable, defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, FileSystem } from 'effect';
 import { RecordsProviderRequestSchema, RecordsProviderResponseSchema } from '../../shared/apis/records-search.ts';
 import { generatedOwnerHandlerCounts } from '../isolation/instrumentation.ts';
 import { makeOwnerRepository } from '../isolation/owner-repository.ts';
@@ -486,9 +490,12 @@ export const createRecordAction = defineAction(
 );
 `;
 
-const adaptGeneratedOwner = async (root: string, schemaName: string): Promise<void> => {
+const adaptGeneratedOwner = Effect.fn('adaptGeneratedOwner')(function* adaptGeneratedOwnerEffect(
+  root: string,
+  schemaName: string,
+) {
   const verticalRoot = `verticals/${GENERATED_OWNER.slug}`;
-  await adaptContract(
+  yield* adaptContract(
     root,
     'resource-detail',
     'Schema.Struct({ resourceId: Schema.String.check(Schema.isUUID()) })',
@@ -497,7 +504,7 @@ const adaptGeneratedOwner = async (root: string, schemaName: string): Promise<vo
   title: Schema.String,
 })`,
   );
-  await adaptContract(
+  yield* adaptContract(
     root,
     'resource-list',
     'Schema.Struct({ resourceId: Schema.String.check(Schema.isUUID()) })',
@@ -510,43 +517,47 @@ const adaptGeneratedOwner = async (root: string, schemaName: string): Promise<vo
   projectionLagging: Schema.Boolean,
 })`,
   );
-  await Promise.all([
-    writeFixtureFile(
-      root,
-      `${verticalRoot}/src/isolation/instrumentation.ts`,
-      instrumentationSource,
-    ),
-    writeFixtureFile(
-      root,
-      `${verticalRoot}/src/isolation/owner-repository.ts`,
-      ownerRepositorySource(schemaName),
-    ),
-    writeFixtureFile(root, `${verticalRoot}/src/api/resource-detail.read.ts`, detailReadSource),
-    writeFixtureFile(root, `${verticalRoot}/src/api/resource-list.read.ts`, listReadSource),
-    writeFixtureFile(root, `${verticalRoot}/src/search/records.provider.ts`, searchReadSource),
-    writeFixtureFile(root, `${verticalRoot}/src/actions/create-record.action.ts`, actionSource),
-  ]);
-};
+  yield* Effect.all(
+    [
+      writeFixtureFile(
+        root,
+        `${verticalRoot}/src/isolation/instrumentation.ts`,
+        instrumentationSource,
+      ),
+      writeFixtureFile(
+        root,
+        `${verticalRoot}/src/isolation/owner-repository.ts`,
+        ownerRepositorySource(schemaName),
+      ),
+      writeFixtureFile(root, `${verticalRoot}/src/api/resource-detail.read.ts`, detailReadSource),
+      writeFixtureFile(root, `${verticalRoot}/src/api/resource-list.read.ts`, listReadSource),
+      writeFixtureFile(root, `${verticalRoot}/src/search/records.provider.ts`, searchReadSource),
+      writeFixtureFile(root, `${verticalRoot}/src/actions/create-record.action.ts`, actionSource),
+    ],
+    { concurrency: 'unbounded', discard: true },
+  );
+});
 
 export interface GeneratedOwnerFixture {
-  readonly dispose: () => Promise<void>;
   readonly root: string;
   readonly verticalRoot: string;
 }
 
-export const createGeneratedOwnerFixture = async (
-  schemaName: string,
-): Promise<GeneratedOwnerFixture> => {
-  const root = await mkdtemp(path.join(tmpdir(), 'ontos-generated-owner-'));
-  try {
-    await createWorkspace(root);
-    await runScaffold(
+export const createGeneratedOwnerFixture = Effect.fn('createGeneratedOwnerFixture')(
+  function* createGeneratedOwnerFixtureEffect(schemaName: string) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const root = yield* fileSystem.makeTempDirectoryScoped({
+      directory: tmpdir(),
+      prefix: 'ontos-generated-owner-',
+    });
+    yield* createWorkspace(root);
+    yield* runScaffoldEffect(
       'module-contract',
       ['--vertical', GENERATED_OWNER.slug, '--module', GENERATED_OWNER.moduleId],
       { workspaceRoot: root },
     );
-    await addResourceType(root);
-    await runScaffold(
+    yield* addResourceType(root);
+    yield* runScaffoldEffect(
       'action',
       [
         '--vertical',
@@ -562,7 +573,7 @@ export const createGeneratedOwnerFixture = async (
       ],
       { workspaceRoot: root },
     );
-    await runScaffold(
+    yield* runScaffoldEffect(
       'module-api',
       [
         '--vertical',
@@ -576,7 +587,7 @@ export const createGeneratedOwnerFixture = async (
       ],
       { workspaceRoot: root },
     );
-    await runScaffold(
+    yield* runScaffoldEffect(
       'module-api',
       [
         '--vertical',
@@ -590,7 +601,7 @@ export const createGeneratedOwnerFixture = async (
       ],
       { workspaceRoot: root },
     );
-    await runScaffold(
+    yield* runScaffoldEffect(
       'search-provider',
       [
         '--vertical',
@@ -606,15 +617,11 @@ export const createGeneratedOwnerFixture = async (
       ],
       { workspaceRoot: root },
     );
-    await adaptGeneratedOwner(root, schemaName);
-    await linkRuntimeDependencies(root);
+    yield* adaptGeneratedOwner(root, schemaName);
+    yield* linkRuntimeDependencies(root);
     return {
-      dispose: async () => await rm(root, { force: true, recursive: true }),
       root,
       verticalRoot: path.join(root, 'verticals', GENERATED_OWNER.slug),
     };
-  } catch (error) {
-    await rm(root, { force: true, recursive: true });
-    throw error;
-  }
-};
+  },
+);

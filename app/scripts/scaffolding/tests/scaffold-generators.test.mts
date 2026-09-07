@@ -1,3 +1,4 @@
+import { NodeServices } from '@effect/platform-node';
 import { runEffectTestPromise } from '../../../packages/core-runtime/src/testing/effect-runtime.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -6,7 +7,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import nodeTest from 'node:test';
+import test from 'node:test';
 import { Predicate } from 'effect';
 import { TrustedPrincipalContextSchema } from '../../../packages/core-runtime/src/actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../../../packages/core-runtime/src/actions/principal-context.ts';
@@ -34,7 +35,7 @@ import {
   makeGatewayIssuerLayer,
 } from '../../../apps/shell-super-app/api/auth/gateway-issuer.ts';
 import type { GatewayIssuerConfigValue } from '../../../apps/shell-super-app/api/auth/gateway-issuer-config.ts';
-import { getHelpText, runScaffold } from '../cli.mts';
+import { getHelpText, runScaffoldEffect, ScaffoldingError } from '../cli.mts';
 import type { ScaffoldCommand } from '../cli.mts';
 import type { JsonValue } from '../shared.mts';
 import {
@@ -55,10 +56,6 @@ const GeneratedPrincipalErrorTagSchema = Schema.Literals([
   'ActionPrincipalUnavailableError',
 ]);
 type GeneratedPrincipalErrorTag = typeof GeneratedPrincipalErrorTagSchema.Type;
-
-const test = (name: string, handler: () => void | Promise<void>): void => {
-  void nodeTest(name, handler);
-};
 
 const isGeneratedPrincipalError = (tag: GeneratedPrincipalErrorTag) =>
   Schema.is(Schema.Struct({ _tag: Schema.Literal(tag) }));
@@ -515,12 +512,14 @@ export const coreActionCatalog = [
   await Promise.all(
     [inventoryVertical, billingVertical, hrVertical, contactsVertical].map(
       async (vertical) =>
-        await runScaffold(
-          'module-contract',
-          [scaffoldFlag.vertical, vertical.slug, '--module', vertical.moduleId],
-          {
-            workspaceRoot: root,
-          },
+        await runEffectTestPromise(
+          runScaffoldEffect(
+            'module-contract',
+            [scaffoldFlag.vertical, vertical.slug, '--module', vertical.moduleId],
+            {
+              workspaceRoot: root,
+            },
+          ).pipe(Effect.provide(NodeServices.layer)),
         ),
     ),
   );
@@ -566,50 +565,52 @@ const run = async (
   scaffoldArguments: readonly string[],
   routeRefresh?: (appId: string) => void,
 ) =>
-  await runScaffold(
-    command,
-    (() => {
-      let flags = [...scaffoldArguments];
-      if (
-        command === 'action' &&
-        flags.includes('--action') &&
-        !flags.includes(scaffoldFlag.legalEntityScope)
-      ) {
-        flags = [...flags, scaffoldFlag.legalEntityScope, 'optional'];
-      }
-      if (!flags.includes(scaffoldFlag.authorization)) {
-        if (command === 'action') {
-          flags = [
-            ...flags,
-            scaffoldFlag.authorization,
-            'action_execution',
-            '--provisioning',
-            'tenant_membership_default',
-          ];
-        } else if (command === scaffoldCommand.outboxWorker) {
-          flags = [...flags, scaffoldFlag.authorization, 'owner_local_background'];
-        } else if (
-          command === scaffoldCommand.microverticalPage ||
-          command === scaffoldCommand.moduleApi ||
-          command === scaffoldCommand.publicComponent ||
-          command === 'report' ||
-          command === scaffoldCommand.searchProvider
+  await runEffectTestPromise(
+    runScaffoldEffect(
+      command,
+      (() => {
+        let flags = [...scaffoldArguments];
+        if (
+          command === 'action' &&
+          flags.includes('--action') &&
+          !flags.includes(scaffoldFlag.legalEntityScope)
         ) {
-          flags = [
-            ...flags,
-            scaffoldFlag.authorization,
-            'context_permission',
-            '--permission',
-            'module.access',
-          ];
+          flags = [...flags, scaffoldFlag.legalEntityScope, 'optional'];
         }
-      }
-      return flags;
-    })(),
-    {
-      routeRefresh: ({ appId }) => routeRefresh?.(appId),
-      workspaceRoot: fixture.root,
-    },
+        if (!flags.includes(scaffoldFlag.authorization)) {
+          if (command === 'action') {
+            flags = [
+              ...flags,
+              scaffoldFlag.authorization,
+              'action_execution',
+              '--provisioning',
+              'tenant_membership_default',
+            ];
+          } else if (command === scaffoldCommand.outboxWorker) {
+            flags = [...flags, scaffoldFlag.authorization, 'owner_local_background'];
+          } else if (
+            command === scaffoldCommand.microverticalPage ||
+            command === scaffoldCommand.moduleApi ||
+            command === scaffoldCommand.publicComponent ||
+            command === 'report' ||
+            command === scaffoldCommand.searchProvider
+          ) {
+            flags = [
+              ...flags,
+              scaffoldFlag.authorization,
+              'context_permission',
+              '--permission',
+              'module.access',
+            ];
+          }
+        }
+        return flags;
+      })(),
+      {
+        routeRefresh: ({ appId }) => Effect.sync(() => routeRefresh?.(appId)),
+        workspaceRoot: fixture.root,
+      },
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 
 const addInventoryItemResourceType = async (fixture: Fixture): Promise<void> => {
@@ -639,7 +640,7 @@ const addInventoryItemResourceType = async (fixture: Fixture): Promise<void> => 
   );
 };
 
-test('documents every command and treats --help as a write-free operation', async () => {
+void test('documents every command and treats --help as a write-free operation', async () => {
   await Promise.all(
     (
       [
@@ -659,9 +660,11 @@ test('documents every command and treats --help as a write-free operation', asyn
         scaffoldCommand.searchProvider,
       ] as const
     ).map(async (command) => {
-      const result = await runScaffold(command, ['--', '--help'], {
-        workspaceRoot: path.join(tmpdir(), 'does-not-need-to-exist'),
-      });
+      const result = await runEffectTestPromise(
+        runScaffoldEffect(command, ['--', '--help'], {
+          workspaceRoot: path.join(tmpdir(), 'does-not-need-to-exist'),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      );
       assert.deepEqual(result, { help: getHelpText(command), kind: 'help' });
       assert.match(result.help, new RegExp(`scaffold:${command}`, 'u'));
     }),
@@ -686,7 +689,7 @@ test('documents every command and treats --help as a write-free operation', asyn
   );
 });
 
-test('search-provider access updates only generated access metadata and fails atomically on drift', async () => {
+void test('search-provider access updates only generated access metadata and fails atomically on drift', async () => {
   await withFixture(async (fixture) => {
     await mkdir(path.join(fixture.root, 'verticals/retired/node_modules'), { recursive: true });
     await addInventoryItemResourceType(fixture);
@@ -772,7 +775,7 @@ test('search-provider access updates only generated access metadata and fails at
   });
 });
 
-test('generated API owner slots sort property keys before suffix variants', async () => {
+void test('generated API owner slots sort property keys before suffix variants', async () => {
   await withFixture(async (fixture) => {
     await run(fixture, scaffoldCommand.moduleApi, [
       scaffoldFlag.vertical,
@@ -797,7 +800,7 @@ test('generated API owner slots sort property keys before suffix variants', asyn
   });
 });
 
-test('generated read clients fetch mounted owner URLs and support separately deployed hosts', async () => {
+void test('generated read clients fetch mounted owner URLs and support separately deployed hosts', async () => {
   await withFixture(async (fixture) => {
     await addInventoryItemResourceType(fixture);
     await run(fixture, scaffoldCommand.moduleApi, [
@@ -908,7 +911,7 @@ test('generated read clients fetch mounted owner URLs and support separately dep
   });
 });
 
-test('governed contribution generators patch owner contracts and lazy adapters atomically', async () => {
+void test('governed contribution generators patch owner contracts and lazy adapters atomically', async () => {
   await withFixture(async (fixture) => {
     const manifestPath = path.join(fixture.root, inventoryManifestFile);
     await addInventoryItemResourceType(fixture);
@@ -1145,7 +1148,7 @@ void ignored;
   });
 });
 
-test('recognizes only exact schema-only Outbox package subpaths as cross-vertical contracts', () => {
+void test('recognizes only exact schema-only Outbox package subpaths as cross-vertical contracts', () => {
   const producerPackage = {
     exports: {
       '.': './src/index.ts',
@@ -1181,23 +1184,25 @@ test('recognizes only exact schema-only Outbox package subpaths as cross-vertica
   );
 });
 
-test('rejects malformed command contracts and leaves the fixture unchanged', async () => {
+void test('rejects malformed command contracts and leaves the fixture unchanged', async () => {
   await withFixture(async (fixture) => {
     const before = await snapshotTree(fixture.root);
     await assert.rejects(
-      runScaffold(
-        'action',
-        [
-          scaffoldFlag.vertical,
-          inventorySlug,
-          '--action',
-          fixtureName.action,
-          scaffoldFlag.authorization,
-          'action_execution',
-          '--provisioning',
-          'tenant_membership_default',
-        ],
-        { workspaceRoot: fixture.root },
+      runEffectTestPromise(
+        runScaffoldEffect(
+          'action',
+          [
+            scaffoldFlag.vertical,
+            inventorySlug,
+            '--action',
+            fixtureName.action,
+            scaffoldFlag.authorization,
+            'action_execution',
+            '--provisioning',
+            'tenant_membership_default',
+          ],
+          { workspaceRoot: fixture.root },
+        ).pipe(Effect.provide(NodeServices.layer)),
       ),
       /missing required flag --legal-entity-scope/u,
     );
@@ -1325,7 +1330,7 @@ test('rejects malformed command contracts and leaves the fixture unchanged', asy
   });
 });
 
-test('generates one immutable Action identity boundary and exact direct dependencies', async () => {
+void test('generates one immutable Action identity boundary and exact direct dependencies', async () => {
   await withFixture(async (fixture) => {
     const shellBefore = await readFixtureFile(fixture.root, shellSentinelFile);
     const topologyBefore = await readFixtureFile(fixture.root, topologyFile);
@@ -1371,7 +1376,7 @@ test('generates one immutable Action identity boundary and exact direct dependen
   });
 });
 
-test('Action identity boundary preflight refuses unsafe writes', async () => {
+void test('Action identity boundary preflight refuses unsafe writes', async () => {
   await withFixture(async (fixture) => {
     await run(fixture, scaffoldCommand.microverticalActionBoundary, [
       scaffoldFlag.vertical,
@@ -1407,7 +1412,7 @@ test('Action identity boundary preflight refuses unsafe writes', async () => {
   });
 });
 
-test('generated verifier executes real Shell assertions and overlapping Ed25519 rotation', async () => {
+void test('generated verifier executes real Shell assertions and overlapping Ed25519 rotation', async () => {
   await withFixture(async (fixture) => {
     await run(fixture, scaffoldCommand.microverticalActionBoundary, [
       scaffoldFlag.vertical,
@@ -1758,7 +1763,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
   });
 });
 
-test('generates one self-contained typed fail-closed Action and preserves package metadata', async () => {
+void test('generates one self-contained typed fail-closed Action and preserves package metadata', async () => {
   await withFixture(async (fixture) => {
     await run(fixture, 'action', [
       scaffoldFlag.vertical,
@@ -1849,7 +1854,7 @@ export const createOrder2Action = defineAction(
   });
 });
 
-test('generates an owner-local Action service without overwriting business logic', async () => {
+void test('generates an owner-local Action service without overwriting business logic', async () => {
   await withFixture(async (fixture) => {
     await run(fixture, scaffoldCommand.actionService, [
       scaffoldFlag.vertical,
@@ -1883,7 +1888,7 @@ export const inventoryPersistenceService = () => Effect.succeed({});
   });
 });
 
-test('generates exactly one private owner-local external HTTP adapter', async () => {
+void test('generates exactly one private owner-local external HTTP adapter', async () => {
   await withFixture(async (fixture) => {
     const before = await snapshotTree(fixture.root);
     const result = await run(fixture, scaffoldCommand.externalHttpAdapter, [
@@ -1976,7 +1981,7 @@ export const AresSubjectServiceLive = Layer.effect(AresSubjectService, makeAresS
   });
 });
 
-test('rejects unsafe external HTTP adapter command input without writing', async () => {
+void test('rejects unsafe external HTTP adapter command input without writing', async () => {
   await withFixture(async (fixture) => {
     const before = await snapshotTree(fixture.root);
     const invalidCalls: readonly [readonly string[], RegExp][] = [
@@ -2113,7 +2118,7 @@ test('rejects unsafe external HTTP adapter command input without writing', async
   });
 });
 
-test('external HTTP adapter planner rejects malformed OntOS ownership atomically', async () => {
+void test('external HTTP adapter planner rejects malformed OntOS ownership atomically', async () => {
   await withFixture(async (fixture) => {
     const manifestPath = path.join(fixture.root, 'verticals/contacts/vertical.manifest.ts');
     const manifest = await readFile(manifestPath, 'utf-8');
@@ -2162,7 +2167,7 @@ test('external HTTP adapter planner rejects malformed OntOS ownership atomically
   });
 });
 
-test('Action generation rejects unrelated imports in its governed owner slots', async () => {
+void test('Action generation rejects unrelated imports in its governed owner slots', async () => {
   await withFixture(async (fixture) => {
     const manifestPath = path.join(fixture.root, inventoryManifestFile);
     const manifest = await readFile(manifestPath, 'utf-8');
@@ -2184,7 +2189,7 @@ import { fakeRead } from './src/api/fake.read.ts';`,
   });
 });
 
-test('generates Core-owned Actions only through the Core owner slot with atomic preflight', async () => {
+void test('generates Core-owned Actions only through the Core owner slot with atomic preflight', async () => {
   await withFixture(async (fixture) => {
     await run(fixture, 'action', [
       '--scope',
@@ -2329,7 +2334,7 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
   });
 });
 
-test('preflights the Action dependency patch before creating a file', async () => {
+void test('preflights the Action dependency patch before creating a file', async () => {
   await withFixture(async (fixture) => {
     const packagePath = path.join(fixture.root, inventoryPackageFile);
     const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
@@ -2355,7 +2360,7 @@ test('preflights the Action dependency patch before creating a file', async () =
   });
 });
 
-test('rejects Action generation when a vertical app identity is duplicated', async () => {
+void test('rejects Action generation when a vertical app identity is duplicated', async () => {
   await withFixture(async (fixture) => {
     const billingPackagePath = path.join(fixture.root, 'verticals/billing/package.json');
     const billingPackage = decodeFixturePackage(await readFile(billingPackagePath, 'utf-8'));
@@ -2382,7 +2387,7 @@ test('rejects Action generation when a vertical app identity is duplicated', asy
   });
 });
 
-test('rejects Action generation when the target identity is absent from topology', async () => {
+void test('rejects Action generation when the target identity is absent from topology', async () => {
   await withFixture(async (fixture) => {
     const packagePath = path.join(fixture.root, inventoryPackageFile);
     const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
@@ -2409,7 +2414,7 @@ test('rejects Action generation when the target identity is absent from topology
   });
 });
 
-test('preserves owner JSON document style while patching the Core dependency', async () => {
+void test('preserves owner JSON document style while patching the Core dependency', async () => {
   await withFixture(async (fixture) => {
     const packagePath = path.join(fixture.root, inventoryPackageFile);
     const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
@@ -2431,7 +2436,7 @@ test('preserves owner JSON document style while patching the Core dependency', a
   });
 });
 
-test('generates Action-owned Outbox Messages and sorts only the owned export slot', async () => {
+void test('generates Action-owned Outbox Messages and sorts only the owned export slot', async () => {
   await withFixture(async (fixture) => {
     await run(fixture, 'action', [
       scaffoldFlag.vertical,
@@ -2546,7 +2551,7 @@ export const outboxProducerModuleKey = 'inventory.stock' as const;
   });
 });
 
-test('rejects missing, handwritten, duplicate, and normalized-collision Outbox targets without partial writes', async () => {
+void test('rejects missing, handwritten, duplicate, and normalized-collision Outbox targets without partial writes', async () => {
   await withFixture(async (fixture) => {
     const beforeMissing = await snapshotTree(fixture.root);
     await assert.rejects(
@@ -2636,7 +2641,7 @@ test('rejects missing, handwritten, duplicate, and normalized-collision Outbox t
   });
 });
 
-test('generates isolated Outbox Workers from published contracts and composes a stable registry', async () => {
+void test('generates isolated Outbox Workers from published contracts and composes a stable registry', async () => {
   await withFixture(async (fixture) => {
     await run(fixture, 'action', [
       scaffoldFlag.vertical,
@@ -2871,7 +2876,7 @@ export const startBillingOutboxWorker = (): void =>
   });
 });
 
-test('generates self-consuming Outbox Workers without circular project or package dependencies', async () => {
+void test('generates self-consuming Outbox Workers without circular project or package dependencies', async () => {
   await withFixture(async (fixture) => {
     await run(fixture, 'action', [
       scaffoldFlag.vertical,
@@ -2979,7 +2984,7 @@ test('generates self-consuming Outbox Workers without circular project or packag
   });
 });
 
-test('refuses unpublished or malformed Outbox contracts without partial consumer writes', async () => {
+void test('refuses unpublished or malformed Outbox contracts without partial consumer writes', async () => {
   await withFixture(async (fixture) => {
     const beforeUnpublished = await snapshotTree(fixture.root);
     await assert.rejects(
@@ -3039,7 +3044,7 @@ test('refuses unpublished or malformed Outbox contracts without partial consumer
   });
 });
 
-test('generates fail-closed global and owner-local Policies with narrow exports', async () => {
+void test('generates fail-closed global and owner-local Policies with narrow exports', async () => {
   await withFixture(async (fixture) => {
     await run(fixture, 'policy', ['--scope', 'global', '--policy', fixtureName.policy]);
     await run(fixture, 'policy', ['--scope', 'global', '--policy', 'account-open']);
@@ -3125,7 +3130,7 @@ export { tenantActivePolicy } from './policies/tenant-active.policy.ts';
   });
 });
 
-test('generates a title-only authenticated page at the default MicroVertical URL', async () => {
+void test('generates a title-only authenticated page at the default MicroVertical URL', async () => {
   await withFixture(async (fixture) => {
     const shellBefore = await readFixtureFile(fixture.root, shellSentinelFile);
     const englishLocalePath = path.join(fixture.root, inventoryEnglishLocaleFile);
@@ -3280,7 +3285,7 @@ export { routeMeta };
   });
 });
 
-test('allows a two-letter MicroVertical slug in a derived default page URL', async () => {
+void test('allows a two-letter MicroVertical slug in a derived default page URL', async () => {
   await withFixture(async (fixture) => {
     await run(fixture, scaffoldCommand.microverticalPage, [
       scaffoldFlag.vertical,
@@ -3296,7 +3301,7 @@ test('allows a two-letter MicroVertical slug in a derived default page URL', asy
   });
 });
 
-test('renders a newly generated federated page with English and Czech owner resources', async () => {
+void test('renders a newly generated federated page with English and Czech owner resources', async () => {
   await withFixture(async (fixture) => {
     await run(fixture, scaffoldCommand.microverticalPage, [
       scaffoldFlag.vertical,
@@ -3396,7 +3401,7 @@ process.stdout.write(renderToStaticMarkup(<Page />));
   });
 });
 
-test('adds further pages after generated owner files have been formatted', async () => {
+void test('adds further pages after generated owner files have been formatted', async () => {
   await withFixture(async (fixture) => {
     const formattedOwnerPaths = [
       inventoryManifestFile,
@@ -3460,7 +3465,7 @@ test('adds further pages after generated owner files have been formatted', async
   });
 });
 
-test('supports an explicit nested page URL and rejects unsafe URL inputs atomically', async () => {
+void test('supports an explicit nested page URL and rejects unsafe URL inputs atomically', async () => {
   await withFixture(async (fixture) => {
     await run(fixture, scaffoldCommand.microverticalPage, [
       scaffoldFlag.vertical,
@@ -3567,7 +3572,7 @@ test('supports an explicit nested page URL and rejects unsafe URL inputs atomica
   );
 });
 
-test('generates a non-navigational dynamic page with canonical parameters and router directories', async () => {
+void test('generates a non-navigational dynamic page with canonical parameters and router directories', async () => {
   await withFixture(async (fixture) => {
     await writeFixtureFile(
       fixture.root,
@@ -3649,7 +3654,7 @@ test('generates a non-navigational dynamic page with canonical parameters and ro
   });
 });
 
-test('generates the Contacts Contact-detail two-parameter page atomically and safely reruns it', async () => {
+void test('generates the Contacts Contact-detail two-parameter page atomically and safely reruns it', async () => {
   const generatorArguments = [
     scaffoldFlag.vertical,
     inventorySlug,
@@ -3724,7 +3729,7 @@ test('generates the Contacts Contact-detail two-parameter page atomically and sa
   });
 });
 
-test('rejects unsafe dynamic parameters and dynamic route collisions without writing', async () => {
+void test('rejects unsafe dynamic parameters and dynamic route collisions without writing', async () => {
   await Promise.all(
     [
       '/inventory/customers/:1id/edit',
@@ -3882,7 +3887,7 @@ test('rejects unsafe dynamic parameters and dynamic route collisions without wri
   ]);
 });
 
-test('extends an existing dynamic route branch without reclassifying an existing static sibling', async () => {
+void test('extends an existing dynamic route branch without reclassifying an existing static sibling', async () => {
   await withFixture(async (fixture) => {
     await run(fixture, scaffoldCommand.microverticalPage, [
       scaffoldFlag.vertical,
@@ -3916,7 +3921,7 @@ test('extends an existing dynamic route branch without reclassifying an existing
   });
 });
 
-test('rejects reserved, dynamic, and cross-owner page URLs before writing', async () => {
+void test('rejects reserved, dynamic, and cross-owner page URLs before writing', async () => {
   await Promise.all([
     withFixture(async (fixture) => {
       await writeFixtureFile(
@@ -3987,7 +3992,7 @@ test('rejects reserved, dynamic, and cross-owner page URLs before writing', asyn
   ]);
 });
 
-test('uses exact page identities and rejects edited generated wiring', async () => {
+void test('uses exact page identities and rejects edited generated wiring', async () => {
   await withFixture(async (fixture) => {
     await run(fixture, scaffoldCommand.microverticalPage, [
       scaffoldFlag.vertical,
@@ -4114,7 +4119,7 @@ test('uses exact page identities and rejects edited generated wiring', async () 
   ]);
 });
 
-test('migrates only exact legacy generated page output and then reruns as a no-op', async () => {
+void test('migrates only exact legacy generated page output and then reruns as a no-op', async () => {
   await withFixture(async (fixture) => {
     const generatorArguments = [
       scaffoldFlag.vertical,
@@ -4232,7 +4237,7 @@ export const loader = ({ request }: ShellPageLoaderArguments) =>
   });
 });
 
-test('rejects page generation when an owning locale has no truthful starter translation', async () => {
+void test('rejects page generation when an owning locale has no truthful starter translation', async () => {
   await withFixture(async (fixture) => {
     const packagePath = path.join(fixture.root, inventoryPackageFile);
     const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
@@ -4264,7 +4269,7 @@ test('rejects page generation when an owning locale has no truthful starter tran
   });
 });
 
-test('page prerequisite and nested-route failures are preflighted, while refresh failure is safely rerunnable', async () => {
+void test('page prerequisite and nested-route failures are preflighted, while refresh failure is safely rerunnable', async () => {
   await withFixture(async (fixture) => {
     await rm(
       path.join(fixture.root, 'verticals/inventory-stock/src/routes/ultramodern-route-head.tsx'),
@@ -4303,24 +4308,25 @@ test('page prerequisite and nested-route failures are preflighted, while refresh
 
   await withFixture(async (fixture) => {
     await assert.rejects(
-      runScaffold(
-        scaffoldCommand.microverticalPage,
-        [
-          scaffoldFlag.vertical,
-          inventorySlug,
-          '--page',
-          'orders',
-          scaffoldFlag.authorization,
-          'context_permission',
-          '--permission',
-          'module.access',
-        ],
-        {
-          routeRefresh: () => {
-            throw new Error('route refresh fixture failure');
+      runEffectTestPromise(
+        runScaffoldEffect(
+          scaffoldCommand.microverticalPage,
+          [
+            scaffoldFlag.vertical,
+            inventorySlug,
+            '--page',
+            'orders',
+            scaffoldFlag.authorization,
+            'context_permission',
+            '--permission',
+            'module.access',
+          ],
+          {
+            routeRefresh: () =>
+              Effect.fail(new ScaffoldingError({ message: 'route refresh fixture failure' })),
+            workspaceRoot: fixture.root,
           },
-          workspaceRoot: fixture.root,
-        },
+        ).pipe(Effect.provide(NodeServices.layer)),
       ),
       /route refresh fixture failure/u,
     );
@@ -4429,7 +4435,7 @@ const runCombinedScenario = async (fixture: Fixture): Promise<Readonly<Record<st
   return await snapshotTree(fixture.root);
 };
 
-test('all generators compose deterministically without crossing owner boundaries', async () => {
+void test('all generators compose deterministically without crossing owner boundaries', async () => {
   const first = await createFixture();
   const second = await createFixture();
   try {
@@ -4457,7 +4463,7 @@ test('all generators compose deterministically without crossing owner boundaries
   }
 });
 
-test('every generated TypeScript file is already formatter-stable', async () => {
+void test('every generated TypeScript file is already formatter-stable', async () => {
   await withFixture(async (fixture) => {
     await runCombinedScenario(fixture);
     await run(fixture, scaffoldCommand.outboxWorker, [
@@ -4518,7 +4524,7 @@ test('every generated TypeScript file is already formatter-stable', async () => 
   });
 });
 
-test('all generated files typecheck against the real workspace contracts', async () => {
+void test('all generated files typecheck against the real workspace contracts', async () => {
   await withFixture(async (fixture) => {
     await runCombinedScenario(fixture);
     await run(fixture, scaffoldCommand.outboxWorker, [

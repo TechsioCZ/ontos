@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { test as registerNodeTest } from 'node:test';
+import { test } from 'node:test';
 import { Option, Schema } from 'effect';
 import { generateOutboxWorkerDeployment } from '../generate-outbox-worker-deployment.mjs';
 import { materializeOutboxWorker } from '../materialize-outbox-worker.mjs';
@@ -22,10 +22,6 @@ const decodeExitEvent = Schema.decodeUnknownSync(
   Schema.Tuple([Schema.OptionFromNullOr(Schema.Number), Schema.Unknown]),
 );
 const decodeDataEvent = Schema.decodeUnknownSync(Schema.Tuple([Schema.Unknown]));
-
-const test = (name: string, run: () => void | Promise<void>): void => {
-  void registerNodeTest(name, run);
-};
 
 const makeFixture = async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'ontos-worker-artifact-'));
@@ -59,7 +55,7 @@ const makeFixture = async () => {
   return root;
 };
 
-test('generates a separate supervised worker setup without changing owner configuration', async () => {
+void test('generates a separate supervised worker setup without changing owner configuration', async () => {
   const root = await makeFixture();
   try {
     const owner = `zerops:\n  - setup: 'ledger'\n    build:\n      buildCommands:\n        - cd app && pnpm --filter '@app/ledger' run build\n        - cd app && pnpm run zerops:materialize -- --app 'ledger' --package '@app/ledger' --package-dir 'verticals/ledger'\n        - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/ledger/topology.json'\n      deployFiles:\n        - 'app/.zerops/runtime/ledger'\n    run:\n      envVariables:\n        PORT: '4110'\n        VERTICAL_LEDGER_PORT: '4110'\n        ONTOS_KEEP_ME: 'true'\n        ULTRAMODERN_ZEROPS_SERVICE: ledger\n      healthCheck:\n        httpGet:\n          path: '/ledger-api/ledger/readiness'\n      start: sh -c 'cd app/.zerops/runtime/ledger && exec npm run serve'\n`;
@@ -77,7 +73,7 @@ test('generates a separate supervised worker setup without changing owner config
   }
 });
 
-test('materializes and starts a relocatable production worker artifact', async () => {
+void test('materializes and starts a relocatable production worker artifact', async () => {
   const root = await makeFixture();
   try {
     const command = path.resolve('scripts/materialize-zerops-runtime.mjs');
@@ -138,7 +134,7 @@ test('materializes and starts a relocatable production worker artifact', async (
   }
 });
 
-test('keeps the live Party Registry worker deployment generated and independently supervised', async () => {
+void test('keeps the live Party Registry worker deployment generated and independently supervised', async () => {
   const root = process.cwd();
   const source = await readFile(path.join(root, 'zerops.yaml'), 'utf-8');
   assert.equal(await generateOutboxWorkerDeployment(root, source), source);
@@ -149,7 +145,7 @@ test('keeps the live Party Registry worker deployment generated and independentl
   assert.doesNotMatch(worker, /(?:^|\s)&(?:\s|$)/u);
 });
 
-test('bundles the real Party host including the production Effect HTTP health adapter', async () => {
+void test('bundles the real Party host including the production Effect HTTP health adapter', async () => {
   const runtimeDir = await mkdtemp(path.join(os.tmpdir(), 'ontos-party-worker-bundle-'));
   try {
     const runtimePackage = await materializeOutboxWorker({

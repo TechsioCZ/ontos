@@ -1,4 +1,5 @@
-/** Promise-shaped *callback parameters* are third-party continuations, not first-party ports. */
+// expect-count: 6
+/** First-party callback contracts must accept Effect operations. */
 export function withRetry(run: (attempt: number) => Promise<void>): void {
 	void run;
 }

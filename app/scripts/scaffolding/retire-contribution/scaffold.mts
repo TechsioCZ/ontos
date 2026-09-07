@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Schema } from 'effect';
+import { Effect, FileSystem, Schema, Predicate } from 'effect';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   ACTION_GENERATOR_HEADER,
@@ -58,7 +58,7 @@ const scaffoldError = (message: string, cause?: unknown): RetireContributionScaf
 
 const trySync = <Value,>(operation: () => Value, fallback: string) =>
   Effect.try({
-    catch: (cause) => scaffoldError(cause instanceof Error ? cause.message : fallback, cause),
+    catch: (cause) => scaffoldError(Predicate.isError(cause) ? cause.message : fallback, cause),
     try: operation,
   });
 

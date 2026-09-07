@@ -1,3 +1,4 @@
+import { NodeServices } from '@effect/platform-node';
 import {
   makeFaultInjectableCoreDatabase,
   TestQueryHook,
@@ -138,10 +139,7 @@ const testGatewayAssertionRedemption: GatewayAssertionRedemption = {
   consume: () => Effect.void,
 };
 
-interface OwnerHttpHandler {
-  readonly dispose: () => Promise<void>;
-  readonly handler: (request: Request) => Promise<Response>;
-}
+type OwnerHttpHandler = ReturnType<ReturnType<typeof defineEffectBff>['createHandler']>;
 
 const OwnerDetailSchema = Schema.Struct({
   fields: Schema.Array(Schema.Struct({ label: Schema.String, value: Schema.String })),
@@ -509,14 +507,19 @@ const principal = (
   tenantId,
 });
 
-test('Codesmith composes the disposable owner Action and receiving read BFFs', async () => {
-  const fixture = await createGeneratedOwnerFixture(
-    `generated_owner_${randomUUID().replaceAll('-', '')}`,
+void test('Codesmith composes the disposable owner Action and receiving read BFFs', async () => {
+  const fixture = await runEffectTestPromise(
+    createGeneratedOwnerFixture(`generated_owner_${randomUUID().replaceAll('-', '')}`).pipe(
+      Effect.provide(NodeServices.layer),
+      NativeScope.provide(nativeDatabaseScope),
+    ),
   );
-  const contract = await deriveOntosModuleDeploymentContract({
-    vertical: GENERATED_OWNER.slug,
-    workspaceRoot: fixture.root,
-  });
+  const contract = await runEffectTestPromise(
+    deriveOntosModuleDeploymentContract({
+      vertical: GENERATED_OWNER.slug,
+      workspaceRoot: fixture.root,
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
   const compileRuntime: ReadRuntimeService = {
     runRead: () => Effect.die(new Error('The compile fixture must not execute a governed read')),
   };
@@ -543,11 +546,10 @@ test('Codesmith composes the disposable owner Action and receiving read BFFs', a
       generated.list.dispose(),
       generated.search.dispose(),
     ]);
-    await fixture.dispose();
   }
 });
 
-test('generated owner enforces tenant and legal-entity isolation through Shell, BFF, CoreSDK, SpiceDB, and RLS', async () => {
+void test('generated owner enforces tenant and legal-entity isolation through Shell, BFF, CoreSDK, SpiceDB, and RLS', async () => {
   const schemaName = `generated_owner_${randomUUID().replaceAll('-', '')}`;
   const tenantA = randomUUID();
   const tenantB = randomUUID();
@@ -574,11 +576,18 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
       NativeScope.provide(nativeDatabaseScope),
     ),
   );
-  const fixture = await createGeneratedOwnerFixture(schemaName);
-  const contract = await deriveOntosModuleDeploymentContract({
-    vertical: GENERATED_OWNER.slug,
-    workspaceRoot: fixture.root,
-  });
+  const fixture = await runEffectTestPromise(
+    createGeneratedOwnerFixture(schemaName).pipe(
+      Effect.provide(NodeServices.layer),
+      NativeScope.provide(nativeDatabaseScope),
+    ),
+  );
+  const contract = await runEffectTestPromise(
+    deriveOntosModuleDeploymentContract({
+      vertical: GENERATED_OWNER.slug,
+      workspaceRoot: fixture.root,
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
   const capturedLogs: string[] = [];
   const loggerLayer = capturedLoggerLayer(capturedLogs);
   const testSpiceDb = await effectRuntime.runPromise(TestSpiceDbConfig);
@@ -1490,7 +1499,6 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
     );
     await runtimePool.end();
     await admin.end();
-    await fixture.dispose();
     await effectRuntime.dispose();
   }
 });

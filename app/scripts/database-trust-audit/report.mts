@@ -1,3 +1,4 @@
+// oxlint-disable-next-line max-classes-per-file -- This report owns the three related tagged audit failures.
 import type { Client } from 'pg';
 import { Cause, Option, Schema } from 'effect';
 
@@ -198,15 +199,15 @@ export class DatabaseTrustBoundaryAuditError extends Schema.TaggedError<Database
   { reason: Schema.String },
 ) {}
 
-export const DatabaseTargetMismatchError = Schema.TaggedError<unknown>()(
+export class DatabaseTargetMismatchError extends Schema.TaggedError<DatabaseTargetMismatchError>()(
   'DatabaseTargetMismatchError',
   { message: Schema.String },
-);
+) {}
 
-export const DatabaseSessionIdentityError = Schema.TaggedError<unknown>()(
+export class DatabaseSessionIdentityError extends Schema.TaggedError<DatabaseSessionIdentityError>()(
   'DatabaseSessionIdentityError',
   { message: Schema.String },
-);
+) {}
 
 export const genericAuditFailureMessage = 'Database trust-boundary audit failed';
 
@@ -214,7 +215,7 @@ export const getDatabaseTrustBoundaryFailureMessage = (
   cause: Cause.Cause<DatabaseTrustBoundaryAuditError>,
 ): string => {
   const failure = Cause.findErrorOption(cause);
-  return Option.isSome(failure) && failure.value instanceof DatabaseTrustBoundaryAuditError
+  return Option.isSome(failure) && Schema.is(DatabaseTrustBoundaryAuditError)(failure.value)
     ? failure.value.reason
     : genericAuditFailureMessage;
 };

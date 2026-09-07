@@ -14,7 +14,7 @@ import {
 } from 'effect';
 import assert from 'node:assert/strict';
 import test, { after as afterNativeDatabase } from 'node:test';
-import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
+import type { PoolClient } from 'pg';
 import { Pool } from 'pg';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations, domainEvents } from '../../src/db/schema.ts';
@@ -32,21 +32,11 @@ import { makeTestDatabaseFromPool } from '../support/database.ts';
 import { runEffectTestSync as runNativeSync } from '../support/effect-runtime.ts';
 
 const nativeDatabaseScope = runNativeSync(NativeScope.make());
-const databaseEffect = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise(() => operation());
 afterNativeDatabase(
   NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
 );
 
 const workerSnapshotRuntime = ManagedRuntime.make(NodeServices.layer);
-const queryPromise = <Row extends QueryResultRow = QueryResultRow>(
-  client: Pool | PoolClient,
-  statement: string,
-  values?: unknown[],
-): PromiseLike<QueryResult<Row>> => client.query<Row>(statement, values);
-const connectPromise = (pool: Pool): PromiseLike<PoolClient> => pool.connect();
-const endPromise = (pool: Pool): PromiseLike<void> => pool.end();
-
 const readLegalEntitySettings = (executor: CoreSearchSnapshotReadExecutor, eventId: string) =>
   executor
     .select({
@@ -76,10 +66,10 @@ const readSnapshotPosition = (
   );
 
 const beginTransaction = (client: PoolClient) =>
-  databaseEffect(() => queryPromise(client, 'begin'));
+  Effect.tryPromise(async () => await client.query('begin'));
 
 const commitTransaction = (client: PoolClient) =>
-  databaseEffect(() => queryPromise(client, 'commit'));
+  Effect.tryPromise(async () => await client.query('commit'));
 
 const insertPendingEvent = (
   client: PoolClient,
@@ -87,12 +77,12 @@ const insertPendingEvent = (
   tenantId: string,
   pendingSubjectId: string,
 ) =>
-  databaseEffect(() =>
-    queryPromise(
-      client,
-      `insert into core.domain_events (domain_event_id, tenant_id, producer_module_key, event_type, subject_module_key, subject_resource_type, subject_resource_id) values ($1, $2, 'party.registry', 'party.registry.party-updated.v1', 'party.registry', 'party.registry.party', $3)`,
-      [pendingEventId, tenantId, pendingSubjectId],
-    ),
+  Effect.tryPromise(
+    async () =>
+      await client.query(
+        `insert into core.domain_events (domain_event_id, tenant_id, producer_module_key, event_type, subject_module_key, subject_resource_type, subject_resource_id) values ($1, $2, 'party.registry', 'party.registry.party-updated.v1', 'party.registry', 'party.registry.party', $3)`,
+        [pendingEventId, tenantId, pendingSubjectId],
+      ),
   );
 
 const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
@@ -118,52 +108,58 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
   const insertEvent = (id: string) =>
     Effect.gen(function* insertDomainEvent() {
       const subjectId = yield* crypto.randomUUIDv4;
-      const result = yield* databaseEffect(() =>
-        queryPromise<{ tenant_sequence_no: string }>(
-          admin,
-          `insert into core.domain_events (domain_event_id, tenant_id, producer_module_key, event_type, subject_module_key, subject_resource_type, subject_resource_id) values ($1, $2, 'party.registry', 'party.registry.party-updated.v1', 'party.registry', 'party.registry.party', $3) returning tenant_sequence_no::text`,
-          [id, tenantId, subjectId],
-        ),
+      const result = yield* Effect.tryPromise(
+        async () =>
+          await admin.query<{ tenant_sequence_no: string }>(
+            `insert into core.domain_events (domain_event_id, tenant_id, producer_module_key, event_type, subject_module_key, subject_resource_type, subject_resource_id) values ($1, $2, 'party.registry', 'party.registry.party-updated.v1', 'party.registry', 'party.registry.party', $3) returning tenant_sequence_no::text`,
+            [id, tenantId, subjectId],
+          ),
       );
       const [row] = result.rows;
       assert.ok(row);
       return row.tenant_sequence_no;
     });
   const cleanup = Effect.gen(function* cleanupWorkerSnapshot() {
-    yield* databaseEffect(() =>
-      queryPromise(admin, 'delete from core.search_projection_generations where tenant_id = $1', [
-        tenantId,
-      ]),
+    yield* Effect.tryPromise(
+      async () =>
+        await admin.query('delete from core.search_projection_generations where tenant_id = $1', [
+          tenantId,
+        ]),
     );
-    yield* databaseEffect(() =>
-      queryPromise(admin, 'delete from core.domain_events where tenant_id = $1', [tenantId]),
+    yield* Effect.tryPromise(
+      async () =>
+        await admin.query('delete from core.domain_events where tenant_id = $1', [tenantId]),
     );
-    yield* databaseEffect(() =>
-      queryPromise(admin, 'delete from core.legal_entities where tenant_id = $1', [tenantId]),
+    yield* Effect.tryPromise(
+      async () =>
+        await admin.query('delete from core.legal_entities where tenant_id = $1', [tenantId]),
     );
-    yield* databaseEffect(() =>
-      queryPromise(admin, 'delete from core.tenants where tenant_id = $1', [tenantId]),
+    yield* Effect.tryPromise(
+      async () => await admin.query('delete from core.tenants where tenant_id = $1', [tenantId]),
     );
     yield* Effect.all(
-      [databaseEffect(() => endPromise(admin)), databaseEffect(() => endPromise(runtimePool))],
+      [
+        Effect.tryPromise(async () => await admin.end()),
+        Effect.tryPromise(async () => await runtimePool.end()),
+      ],
       { concurrency: 'unbounded' },
     );
   }).pipe(Effect.orDie);
 
   yield* Effect.gen(function* exerciseWorkerSnapshots() {
-    yield* databaseEffect(() =>
-      queryPromise(
-        admin,
-        `insert into core.tenants (tenant_id, slug, name, status, default_locale) values ($1, $2, 'Snapshot tenant', 'active', 'en')`,
-        [tenantId, `snapshot-${tenantId}`],
-      ),
+    yield* Effect.tryPromise(
+      async () =>
+        await admin.query(
+          `insert into core.tenants (tenant_id, slug, name, status, default_locale) values ($1, $2, 'Snapshot tenant', 'active', 'en')`,
+          [tenantId, `snapshot-${tenantId}`],
+        ),
     );
-    yield* databaseEffect(() =>
-      queryPromise(
-        admin,
-        `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values ($1::uuid, $2, 'Snapshot LE', 'CZ', $1::uuid::text, 'active')`,
-        [legalEntityId, tenantId],
-      ),
+    yield* Effect.tryPromise(
+      async () =>
+        await admin.query(
+          `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values ($1::uuid, $2, 'Snapshot LE', 'CZ', $1::uuid::text, 'active')`,
+          [legalEntityId, tenantId],
+        ),
     );
     const originalVersion = yield* insertEvent(eventId);
     const [claimId, deliveryId, messageId] = yield* Effect.all(
@@ -241,14 +237,14 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
       (blocked) =>
         blocked
           ? Effect.succeed(true)
-          : databaseEffect(() => queryPromise(admin, 'select pg_sleep(0.01)')).pipe(
+          : Effect.tryPromise(async () => await admin.query('select pg_sleep(0.01)')).pipe(
               Effect.andThen(
-                databaseEffect(() =>
-                  queryPromise<{ count: number }>(
-                    admin,
-                    `select count(*)::int as count from pg_stat_activity where application_name = $1 and wait_event_type = 'Lock'`,
-                    [applicationName],
-                  ),
+                Effect.tryPromise(
+                  async () =>
+                    await admin.query<{ count: number }>(
+                      `select count(*)::int as count from pg_stat_activity where application_name = $1 and wait_event_type = 'Lock'`,
+                      [applicationName],
+                    ),
                 ),
               ),
               Effect.map((activity) => activity.rows[0]?.count === 1),
@@ -288,10 +284,10 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
         });
       });
     yield* Effect.acquireUseRelease(
-      databaseEffect(() => connectPromise(admin)),
+      Effect.tryPromise(async () => await admin.connect()),
       lateCommitSnapshot,
       (pending) =>
-        databaseEffect(() => queryPromise(pending, 'rollback')).pipe(
+        Effect.tryPromise(async () => await pending.query('rollback')).pipe(
           Effect.orDie,
           Effect.ensuring(Effect.sync(() => pending.release())),
         ),
@@ -299,7 +295,7 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
   }).pipe(Effect.ensuring(cleanup));
 });
 
-test('worker projection uses independent generations and one repeatable snapshot across tenant and Legal Entity scopes', (_context, done) => {
+void test('worker projection uses independent generations and one repeatable snapshot across tenant and Legal Entity scopes', (_context, done) => {
   workerSnapshotRuntime.runCallback(workerSnapshotProgram, {
     onExit: Exit.match({
       onFailure: (cause) => done(Cause.squash(cause)),

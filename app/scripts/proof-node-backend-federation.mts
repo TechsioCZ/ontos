@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { NodeServices } from '@effect/platform-node';
-import { Config, Console, Effect, Exit, Option, Path, Schema, Stdio } from 'effect';
+import { Config, Console, Effect, Exit, Option, Path, Schema, Stdio, Predicate } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
 class BackendFederationProofLaunchError extends Schema.TaggedError<BackendFederationProofLaunchError>()(
@@ -54,7 +54,7 @@ const program = Effect.gen(function* backendFederationProofProgram() {
             return Effect.succeed(1);
           }
           const launchCause = cause.reason.cause;
-          const causeMessage = launchCause instanceof Error ? launchCause.message : cause.message;
+          const causeMessage = Predicate.isError(launchCause) ? launchCause.message : cause.message;
           return Effect.fail(
             new BackendFederationProofLaunchError({
               cause,

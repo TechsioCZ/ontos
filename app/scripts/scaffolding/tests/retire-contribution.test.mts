@@ -1,9 +1,12 @@
+import { runEffectTestPromise } from '../../../packages/core-runtime/src/testing/effect-runtime.ts';
+import { Effect } from 'effect';
+import { NodeServices } from '@effect/platform-node';
 import assert from 'node:assert/strict';
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { getHelpText, runScaffold } from '../cli.mts';
+import { getHelpText, runScaffoldEffect } from '../cli.mts';
 import type { JsonValue } from '../shared.mts';
 
 const json = (value: JsonValue): string => `${JSON.stringify(value, null, 2)}\n`;
@@ -197,16 +200,20 @@ const withFixture = async (run: (root: string) => Promise<void>): Promise<void> 
 };
 
 const retire = async (root: string, kind: 'action' | 'api' | 'page', name: string) =>
-  await runScaffold(
-    RETIRE_CONTRIBUTION_COMMAND,
-    ['--vertical', 'inventory', '--kind', kind, '--name', name],
-    { workspaceRoot: root },
+  await runEffectTestPromise(
+    runScaffoldEffect(
+      RETIRE_CONTRIBUTION_COMMAND,
+      ['--vertical', 'inventory', '--kind', kind, '--name', name],
+      { workspaceRoot: root },
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 
 await test('retire-contribution help is write-free and documents the narrow kinds', async () => {
-  const result = await runScaffold(RETIRE_CONTRIBUTION_COMMAND, ['--help'], {
-    workspaceRoot: path.join(tmpdir(), 'retire-help-missing'),
-  });
+  const result = await runEffectTestPromise(
+    runScaffoldEffect(RETIRE_CONTRIBUTION_COMMAND, ['--help'], {
+      workspaceRoot: path.join(tmpdir(), 'retire-help-missing'),
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
   assert.deepEqual(result, { help: getHelpText(RETIRE_CONTRIBUTION_COMMAND), kind: 'help' });
   assert.match(result.help, /--kind <action\|api\|page>/u);
 });

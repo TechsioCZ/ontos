@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Match, Option, Schema } from 'effect';
+import { Effect, FileSystem, Match, Option, Schema, Predicate } from 'effect';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   MODULE_REGISTRATION_IMPORT_SLOT_END,
@@ -46,7 +46,7 @@ class OutboxWorkerScaffoldError extends Schema.TaggedError<OutboxWorkerScaffoldE
 const scaffoldError = (cause: unknown, message?: string): OutboxWorkerScaffoldError =>
   new OutboxWorkerScaffoldError({
     cause,
-    message: message ?? (cause instanceof Error ? cause.message : String(cause)),
+    message: message ?? (Predicate.isError(cause) ? cause.message : String(cause)),
   });
 
 const trySync = <Value,>(operation: () => Value) =>

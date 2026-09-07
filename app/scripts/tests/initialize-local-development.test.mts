@@ -4,8 +4,8 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { NodeFileSystem, NodePath } from '@effect/platform-node';
-import { Effect, Exit, Layer } from 'effect';
+import { NodeServices } from '@effect/platform-node';
+import { Effect, Exit } from 'effect';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
 import type { deriveOntosModuleDeploymentContract } from '../generate-ontos-module-contract.mts';
@@ -43,7 +43,7 @@ const topology = JSON.stringify({ verticals: [{ id: 'party-registry' }, { id: 'i
 
 const moduleContract = (
   moduleId: string,
-): Awaited<ReturnType<typeof deriveOntosModuleDeploymentContract>> => ({
+): Effect.Success<ReturnType<typeof deriveOntosModuleDeploymentContract>> => ({
   deployment: { appId: 'test-module', buildMarker: 'test-build' },
   manifest: {
     activation: {
@@ -174,13 +174,11 @@ void test('derives only configured Party Registry through its generated owner co
   const root = await mkdtemp(path.join(os.tmpdir(), LOCAL_MODULES_DIRECTORY_PREFIX));
   await mkdir(path.join(root, TOPOLOGY_DIRECTORY), { recursive: true });
   await writeFile(path.join(root, TOPOLOGY_PATH), topology, 'utf-8');
-  const deriveContract = async ({ vertical }: { readonly vertical: string }) =>
-    moduleContract(`${vertical}.core`);
+  const deriveContract = ({ vertical }: { readonly vertical: string }) =>
+    Effect.succeed(moduleContract(`${vertical}.core`));
   assert.deepEqual(
     await runEffectTestPromise(
-      deriveActivatedModuleIds(root, deriveContract).pipe(
-        Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
-      ),
+      deriveActivatedModuleIds(root, deriveContract).pipe(Effect.provide(NodeServices.layer)),
     ),
     ['party-registry.core'],
   );
@@ -190,11 +188,11 @@ void test('rejects duplicate module IDs derived from different verticals', async
   const root = await mkdtemp(path.join(os.tmpdir(), LOCAL_MODULES_DIRECTORY_PREFIX));
   await mkdir(path.join(root, TOPOLOGY_DIRECTORY), { recursive: true });
   await writeFile(path.join(root, TOPOLOGY_PATH), topology, 'utf-8');
-  const deriveContract = async () => moduleContract('duplicate.core');
+  const deriveContract = () => Effect.succeed(moduleContract('duplicate.core'));
   await assert.rejects(
     runEffectTestPromise(
       deriveActivatedModuleIds(root, deriveContract, ['party-registry', 'inventory']).pipe(
-        Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
+        Effect.provide(NodeServices.layer),
       ),
     ),
     LocalDevelopmentInitializationError,

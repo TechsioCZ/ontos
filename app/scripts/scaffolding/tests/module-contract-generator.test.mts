@@ -1,15 +1,15 @@
+import { NodeServices } from '@effect/platform-node';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { NodeFileSystem } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
 import { runEffectTestPromise } from '../../../packages/core-runtime/src/testing/effect-runtime.ts';
 import { checkOntosModuleContracts } from '../../check-ontos-module-contracts.mts';
 import { privateOwnerImportViolation } from '../../ultramodern-api-boundary-rules.mts';
 import { generateOntosModuleContract } from '../../generate-ontos-module-contract.mts';
-import { getHelpText, runScaffold } from '../cli.mts';
+import { getHelpText, runScaffoldEffect } from '../cli.mts';
 import type { JsonValue } from '../shared.mts';
 
 const APP_ID = 'property-registry';
@@ -196,15 +196,19 @@ const withFixture = async (run: (root: string) => Promise<void>): Promise<void> 
 };
 
 const scaffold = async (root: string, vertical = APP_ID, module = MODULE_ID) =>
-  await runScaffold(MODULE_CONTRACT_COMMAND, [VERTICAL_FLAG, vertical, '--module', module], {
-    workspaceRoot: root,
-  });
+  await runEffectTestPromise(
+    runScaffoldEffect(MODULE_CONTRACT_COMMAND, [VERTICAL_FLAG, vertical, '--module', module], {
+      workspaceRoot: root,
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
 void test('module-contract help is exact and write-free', async () => {
   const missingRoot = path.join(tmpdir(), 'module-contract-help-does-not-exist');
-  const result = await runScaffold(MODULE_CONTRACT_COMMAND, ['--help'], {
-    workspaceRoot: missingRoot,
-  });
+  const result = await runEffectTestPromise(
+    runScaffoldEffect(MODULE_CONTRACT_COMMAND, ['--help'], {
+      workspaceRoot: missingRoot,
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
   assert.deepEqual(result, { help: getHelpText(MODULE_CONTRACT_COMMAND), kind: 'help' });
   assert.match(result.help, /--vertical <vertical> --module <dotted\.module-id>/u);
 });
@@ -269,7 +273,11 @@ void test('business generators fail closed before the mandatory module contract 
       commands.map(
         async ([command, flags]) =>
           await assert.rejects(
-            runScaffold(command, flags, { workspaceRoot: root }),
+            runEffectTestPromise(
+              runScaffoldEffect(command, flags, { workspaceRoot: root }).pipe(
+                Effect.provide(NodeServices.layer),
+              ),
+            ),
             /requires scaffold:module-contract/u,
           ),
       ),
@@ -373,11 +381,13 @@ void test('emits deterministic deployment-safe JSON and rejects damaged owner sl
         ),
       'utf-8',
     );
-    const first = await generateOntosModuleContract({
-      target: 'dist',
-      vertical: APP_ID,
-      workspaceRoot: root,
-    });
+    const first = await runEffectTestPromise(
+      generateOntosModuleContract({
+        target: 'dist',
+        vertical: APP_ID,
+        workspaceRoot: root,
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
     const firstContent = await readFile(first.path, 'utf-8');
     const packagePath = path.join(root, PROPERTY_PACKAGE_PATH);
     const packageContent = await readFile(packagePath, 'utf-8');
@@ -391,20 +401,24 @@ void test('emits deterministic deployment-safe JSON and rejects damaged owner sl
     };
     await writeFile(packagePath, json(incompatiblePackage), 'utf-8');
     await assert.rejects(
-      generateOntosModuleContract({
-        target: 'dist',
-        vertical: APP_ID,
-        workspaceRoot: root,
-      }),
+      runEffectTestPromise(
+        generateOntosModuleContract({
+          target: 'dist',
+          vertical: APP_ID,
+          workspaceRoot: root,
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ),
       /module marker does not match/u,
     );
     assert.equal(await readFile(first.path, 'utf-8'), firstContent);
     await writeFile(packagePath, packageContent, 'utf-8');
-    const second = await generateOntosModuleContract({
-      target: 'dist',
-      vertical: APP_ID,
-      workspaceRoot: root,
-    });
+    const second = await runEffectTestPromise(
+      generateOntosModuleContract({
+        target: 'dist',
+        vertical: APP_ID,
+        workspaceRoot: root,
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
     assert.equal(await readFile(second.path, 'utf-8'), firstContent);
     assert.equal(second.etag, first.etag);
     const document = decodeModuleContract(firstContent);
@@ -421,11 +435,13 @@ void test('emits deterministic deployment-safe JSON and rejects damaged owner sl
     assert.match(headers, /Cache-Control: no-cache/u);
     assert.match(headers, /Content-Type: application\/json/u);
     assert.match(headers, /ETag: "[a-f0-9]{64}"/u);
-    const secondDeployment = await generateOntosModuleContract({
-      target: 'dist',
-      vertical: DOCUMENTS_APP_ID,
-      workspaceRoot: root,
-    });
+    const secondDeployment = await runEffectTestPromise(
+      generateOntosModuleContract({
+        target: 'dist',
+        vertical: DOCUMENTS_APP_ID,
+        workspaceRoot: root,
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
     const secondDocument = decodeModuleContract(await readFile(secondDeployment.path, 'utf-8'));
     assert.equal(secondDocument.deployment.appId, DOCUMENTS_APP_ID);
     assert.equal(secondDocument.manifest.module.id, DOCUMENTS_MODULE_ID);
@@ -438,11 +454,13 @@ void test('emits deterministic deployment-safe JSON and rejects damaged owner sl
       'utf-8',
     );
     await assert.rejects(
-      generateOntosModuleContract({
-        target: 'dist',
-        vertical: APP_ID,
-        workspaceRoot: root,
-      }),
+      runEffectTestPromise(
+        generateOntosModuleContract({
+          target: 'dist',
+          vertical: APP_ID,
+          workspaceRoot: root,
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ),
       /exactly one.*slot/u,
     );
   });
@@ -452,17 +470,19 @@ void test('maps Cloudflare emission to the Modern output root and validates auth
   await withFixture(async (root) => {
     await scaffold(root);
     await scaffold(root, DOCUMENTS_APP_ID, DOCUMENTS_MODULE_ID);
-    const emitted = await generateOntosModuleContract({
-      target: 'cloudflare-dist',
-      vertical: APP_ID,
-      workspaceRoot: root,
-    });
+    const emitted = await runEffectTestPromise(
+      generateOntosModuleContract({
+        target: 'cloudflare-dist',
+        vertical: APP_ID,
+        workspaceRoot: root,
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
     assert.match(
       emitted.path,
       /verticals\/property-registry\/dist-cloudflare\/public\/\.well-known\/ontos-module-manifest\.json$/u,
     );
     await runEffectTestPromise(
-      checkOntosModuleContracts(root).pipe(Effect.provide(NodeFileSystem.layer)),
+      checkOntosModuleContracts(root).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 });

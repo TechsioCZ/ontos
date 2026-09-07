@@ -183,7 +183,10 @@ export default defineConfig({
     {
       // This guarded test-only entrypoint composes real services with boundary fakes.
       // database-access:check rejects imports of it from production source.
-      files: ['packages/core-runtime/src/testing/**/*.ts'],
+      files: [
+        'packages/core-runtime/src/testing/**/*.ts',
+        'apps/shell-super-app/tests/e2e/auth-fixture.ts',
+      ],
       rules: {
         'anti-slop-effect/no-service-constructor-imports': 'off',
       },
@@ -238,28 +241,6 @@ export default defineConfig({
       ],
       rules: {
         'typescript/no-require-imports': 'off',
-      },
-    },
-    {
-      // Rollback sentinels and Date hashing are intentional nominal boundaries inside the runtime.
-      files: [
-        'packages/core-runtime/src/actions/repository.ts',
-        'packages/core-runtime/src/actions/runtime.ts',
-        'packages/core-runtime/src/reads/runtime.ts',
-      ],
-      rules: {
-        '@nkzw/no-instanceof': 'off',
-      },
-    },
-    {
-      // DOM constructors are the platform-provided nominal narrowing boundary in these browser tests.
-      files: [
-        'apps/shell-super-app/tests/unit/layout.test.tsx',
-        'verticals/party-registry/tests/components/customer-create-page.test.tsx',
-        'verticals/party-registry/tests/components/customer-edit-page.test.tsx',
-      ],
-      rules: {
-        '@nkzw/no-instanceof': 'off',
       },
     },
     {
@@ -760,7 +741,6 @@ export default defineConfig({
       // can normalize declaration ordering and test doubles without mixing that churn into Issue 179.
       files: ['verticals/party-registry/**/*.ts'],
       rules: {
-        '@nkzw/no-instanceof': 'off',
         'github/filenames-match-regex': 'off',
         'github/js-class-name': 'off',
         'import/export': 'off',
@@ -803,7 +783,7 @@ export default defineConfig({
     },
   ],
   rules: {
-    '@nkzw/no-instanceof': 'error',
+    'effect-native/no-instanceof': 'error',
     '@nkzw/require-use-effect-arguments': 'error',
     // Ultracite core already enforces these policies through Unicorn and Promise rules.
     'github/array-foreach': 'off',

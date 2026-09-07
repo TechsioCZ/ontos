@@ -1,3 +1,4 @@
+import { NodeServices } from '@effect/platform-node';
 import { runEffectTestPromise } from '../../packages/core-runtime/src/testing/effect-runtime.ts';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -6,7 +7,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { v1 } from '@authzed/authzed-node';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Schema, Predicate } from 'effect';
 import {
   ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID,
   ActionAuthorizationProvisioningError,
@@ -105,7 +106,7 @@ const rejectionOf = async <Value,>(promise: Promise<Value>): Promise<Error> => {
   try {
     await promise;
   } catch (error) {
-    if (error instanceof Error) {
+    if (Predicate.isError(error)) {
       return error;
     }
     return assert.fail('Expected the Promise to reject with an Error');
@@ -634,41 +635,45 @@ const writeInventory = async (
 
 void test('rejects incomplete and duplicate public Action discovery', async () => {
   const workspaceRoot = path.resolve(import.meta.dirname, '../..');
-  const currentContract = await deriveOntosModuleDeploymentContract({
-    vertical: 'party-registry',
-    workspaceRoot,
-  });
+  const currentContract = await runEffectTestPromise(
+    deriveOntosModuleDeploymentContract({
+      vertical: 'party-registry',
+      workspaceRoot,
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
   const [currentPublicAction] = currentContract.manifest.publicSurface.actions;
   assert.ok(currentPublicAction !== undefined);
   const root = await mkdtemp(path.join(os.tmpdir(), 'ontos-action-discovery-'));
   try {
     const vertical = { id: 'example', package: '@app/example', path: 'verticals/example' };
     await writeInventory(root, [vertical]);
-    const incomplete: typeof deriveOntosModuleDeploymentContract = async () => ({
-      ...currentContract,
-      deployment: { ...currentContract.deployment, appId: 'example' },
-      manifest: {
-        ...currentContract.manifest,
-        publicSurface: { ...currentContract.manifest.publicSurface, actions: [] },
-      },
-    });
+    const incomplete: typeof deriveOntosModuleDeploymentContract = () =>
+      Effect.succeed({
+        ...currentContract,
+        deployment: { ...currentContract.deployment, appId: 'example' },
+        manifest: {
+          ...currentContract.manifest,
+          publicSurface: { ...currentContract.manifest.publicSurface, actions: [] },
+        },
+      });
     const incompleteError = await rejectionOf(discoverCurrentActionKeys(root, incomplete));
-    assert.ok(incompleteError instanceof ActionAuthorizationProvisioningError);
+    assert.ok(Schema.is(ActionAuthorizationProvisioningError)(incompleteError));
     assert.equal(incompleteError.code, 'action_authorization_discovery_failed');
 
-    const duplicate: typeof deriveOntosModuleDeploymentContract = async () => ({
-      ...currentContract,
-      deployment: { ...currentContract.deployment, appId: 'example' },
-      manifest: {
-        ...currentContract.manifest,
-        publicSurface: {
-          ...currentContract.manifest.publicSurface,
-          actions: [{ ...currentPublicAction, actionKey: 'core.identity.bind-managed-api-key' }],
+    const duplicate: typeof deriveOntosModuleDeploymentContract = () =>
+      Effect.succeed({
+        ...currentContract,
+        deployment: { ...currentContract.deployment, appId: 'example' },
+        manifest: {
+          ...currentContract.manifest,
+          publicSurface: {
+            ...currentContract.manifest.publicSurface,
+            actions: [{ ...currentPublicAction, actionKey: 'core.identity.bind-managed-api-key' }],
+          },
         },
-      },
-    });
+      });
     const duplicateError = await rejectionOf(discoverCurrentActionKeys(root, duplicate));
-    assert.ok(duplicateError instanceof ActionAuthorizationProvisioningError);
+    assert.ok(Schema.is(ActionAuthorizationProvisioningError)(duplicateError));
     assert.equal(duplicateError.code, 'action_authorization_discovery_failed');
 
     await writeInventory(root, [vertical, vertical]);

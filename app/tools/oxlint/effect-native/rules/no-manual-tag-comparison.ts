@@ -62,13 +62,9 @@
  * - **Effect's built-in ADT tags** (`Some`, `None`, `Success`, `Failure`, `Left`, `Right` —
  *   `adtTags`). `exit._tag === 'Failure'` is the sibling rule `no-raw-effect-adt-tag-check`'s
  *   concern; reporting it here too would double-report the same span.
- * - **`switch (error._tag)`** — switch exhaustiveness belongs to `prefer-match-over-tag-switch`;
- *   this rule never looks at a `SwitchStatement` discriminant or its `case` tests.
  * - **Type-level `_tag`** — `Extract<P, { readonly _tag: 'X' }>`, `P['_tag']`,
  *   `Failure extends { readonly _tag: infer Tag }`. Type positions contain no `BinaryExpression` or
  *   `CallExpression`, so they are structurally unreachable from these visitors.
- * - **Tag-to-tag equality** (`a._tag === b._tag`, and the same through aliases) — comparing two
- *   discriminants is an identity test, not a hand-written case analysis over a closed vocabulary.
  * - **Reading, building and annotating a tag** — `{ _tag: tag }`, `{ failureTag: error._tag }`,
  *   `const { _tag } = error` on its own. Only narrowing reports.
  * - **The Effect-native forms themselves**: `Effect.catchTag(s)`, `Match.tag`/`Match.tags`/
@@ -631,6 +627,8 @@ export const rule = defineRule({
         '`Schema.is(TaggedError)`, or `Effect.catchTag(s)`.',
     },
     messages: {
+      tagSwitch:
+        'Manual `_tag` switching must use Effect Match.tag/Match.tags or typed error handlers.',
       tagEquality:
         "Manual `_tag` comparison on `{{text}}` (`{{operator}} '{{tag}}'`) re-implements pattern matching by " +
         'hand and silently stops matching when the tag vocabulary moves (audit A4 / C2). Use ' +
@@ -707,6 +705,29 @@ export const rule = defineRule({
       !options.includeErrorCombinators && insideErrorCombinator(context, node, bindings);
     const tagOf = (node: ESTree.Node): TagReference | null => tagReference(context, node, options);
 
+    const comparedTag = (node: ESTree.Node, seen = new Set<ESTree.Node>()): TagReference | null => {
+      if (seen.has(node)) return null;
+      seen.add(node);
+      const direct = tagOf(node);
+      if (direct !== null) return direct;
+      const expression = unwrap(node);
+      const initialiser = constInitialiser(context, expression);
+      if (initialiser !== null) return comparedTag(initialiser, seen);
+      // Follow projections and boolean guards; object literals remain complete contract assertions.
+      if (expression.type === 'ObjectExpression' || expression.type === 'TemplateLiteral')
+        return null;
+      for (const [key, value] of Object.entries(expression)) {
+        if (key === 'parent' || key === 'typeAnnotation') continue;
+        const children = Array.isArray(value) ? value : [value];
+        for (const child of children) {
+          if (typeof child !== 'object' || child === null || !('type' in child)) continue;
+          const found = comparedTag(child as ESTree.Node, seen);
+          if (found !== null) return found;
+        }
+      }
+      return null;
+    };
+
     /** `[…]`/`new Set([…])` of nothing but Effect's own ADT tags — the sibling rule's territory. */
     const containerIsAdtOnly = (node: ESTree.Node): boolean => {
       const expression = unwrap(node);
@@ -731,6 +752,10 @@ export const rule = defineRule({
     };
 
     return {
+      SwitchStatement(node) {
+        if (tagOf(node.discriminant) === null || suppressed(node)) return;
+        context.report({ node, messageId: 'tagSwitch' });
+      },
       BinaryExpression(node) {
         if ((node.left as ESTree.Node).type === 'PrivateIdentifier') return;
 
@@ -770,8 +795,6 @@ export const rule = defineRule({
           other = node.left;
         }
         if (reference === null) return;
-        // `a._tag === b._tag` is an identity test, not a case analysis over a closed vocabulary.
-        if (tagOf(other) !== null) return;
 
         const tag = asStringLiteral(other);
         // Effect's own ADT tags belong to `no-raw-effect-adt-tag-check`; `allowTags` is the escape hatch.
@@ -825,7 +848,6 @@ export const rule = defineRule({
             other = first;
           }
           if (reference === null) return;
-          if (tagOf(other) !== null) return;
           const literal = asStringLiteral(other);
           if (literal !== null && exempt.has(literal)) return;
           if (suppressed(node)) return;
@@ -845,6 +867,48 @@ export const rule = defineRule({
         const method = memberPropertyName(callee);
         if (method === null) return;
         const receiver = callee.object as ESTree.Node;
+
+        // Assertions are comparisons too, including tag projections in arrays and aliased values.
+        const assertionMethods = new Set([
+          'equal',
+          'strictEqual',
+          'notEqual',
+          'notStrictEqual',
+          'deepEqual',
+          'deepStrictEqual',
+          'notDeepEqual',
+          'notDeepStrictEqual',
+          'toBe',
+          'toEqual',
+          'toStrictEqual',
+          'toContain',
+          'toContainEqual',
+          'toMatch',
+          'match',
+          'doesNotMatch',
+        ]);
+        if (assertionMethods.has(method)) {
+          const compared = [...node.arguments];
+          let subject = unwrap(receiver);
+          while (subject.type === 'MemberExpression')
+            subject = unwrap(subject.object as ESTree.Node);
+          if (subject.type === 'CallExpression') compared.push(...subject.arguments);
+          for (const argument of compared) {
+            if (argument.type === 'SpreadElement') continue;
+            const reference = comparedTag(argument);
+            if (reference === null) continue;
+            if (suppressed(node)) return;
+            context.report({
+              node,
+              messageId: 'tagEqualityCall',
+              data: {
+                callee: describe(context, node.callee as ESTree.Node),
+                text: referenceText(context, reference),
+              },
+            });
+            return;
+          }
+        }
 
         // `error._tag.startsWith('Contacts')`, `String(error._tag).endsWith('Problem')`.
         if (STRING_PROBES.has(method)) {

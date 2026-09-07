@@ -1,7 +1,7 @@
 import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
 import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import { CoreSearchProjectionUnavailable } from '../../src/search/projection.ts';
 import {
@@ -91,14 +91,10 @@ effectTest(
         (candidate) => Effect.flip(snapshot.read(candidate, () => Effect.succeed('unreachable'))),
         { concurrency: 'unbounded' },
       );
-      assert.deepEqual(
-        failures.map(({ _tag }) => _tag),
-        [
-          'CoreSearchProjectionInvalid',
-          'CoreSearchProjectionInvalid',
-          'CoreSearchProjectionInvalid',
-        ],
-      );
+      assert.equal(failures.length, 3);
+      for (const failure of failures) {
+        assert.ok(Predicate.isTagged(failure, 'CoreSearchProjectionInvalid'));
+      }
       assert.equal(calls, 0);
     });
   },
@@ -202,7 +198,7 @@ effectTest(
           view.forLegalEntity('20000000-0000-4000-8000-000000000002', () => Effect.succeed('no')),
         ),
       );
-      assert.equal(invalidScope._tag, 'CoreSearchProjectionInvalid');
+      assert.ok(Predicate.isTagged(invalidScope, 'CoreSearchProjectionInvalid'));
       assert.deepEqual(installedScopes, []);
       const failure = yield* Effect.flip(
         snapshot.read(verified, (view) =>
@@ -230,7 +226,7 @@ effectTest('worker snapshot maps persistence failure to a sanitized unavailable 
     const failure = yield* Effect.flip(
       snapshot.read(attestOutboxWorkerHandlerContext(context), () => Effect.succeed('no')),
     );
-    assert.equal(failure._tag, 'CoreSearchProjectionUnavailable');
+    assert.ok(Predicate.isTagged(failure, 'CoreSearchProjectionUnavailable'));
     assert.doesNotMatch(failure.reason, /private database/u);
   });
 });
@@ -292,7 +288,7 @@ effectTest('snapshot revokes escaped scope capabilities when the owner callback 
       Effect.succeed,
     );
     const failure = yield* Effect.flip(escaped.tenant(() => Effect.succeed('stale')));
-    assert.equal(failure._tag, 'CoreSearchProjectionInvalid');
+    assert.ok(Predicate.isTagged(failure, 'CoreSearchProjectionInvalid'));
   });
 });
 
@@ -310,8 +306,8 @@ effectTest('nested scope rejection does not unlock the active owner read', () =>
       Effect.gen(function* nestedReads() {
         const first = yield* Effect.flip(snapshot.forLegalEntity(legalEntityId, readInvalid));
         const second = yield* Effect.flip(snapshot.tenant(readStillInvalid));
-        assert.equal(first._tag, 'CoreSearchProjectionInvalid');
-        assert.equal(second._tag, 'CoreSearchProjectionInvalid');
+        assert.ok(Predicate.isTagged(first, 'CoreSearchProjectionInvalid'));
+        assert.ok(Predicate.isTagged(second, 'CoreSearchProjectionInvalid'));
       }),
     ),
   );

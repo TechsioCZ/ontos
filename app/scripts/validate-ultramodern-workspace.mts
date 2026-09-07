@@ -2593,6 +2593,7 @@ interface TsConfig {
 const BuildArtifactSchema = Schema.Struct({
   deliveryUnit: Schema.optionalKey(DeliveryUnitSchema),
 });
+// oxlint-disable-next-line effect-native/no-promise-shaped-port -- The dynamically loaded @vercel/nft SDK owns this Promise signature.
 type NodeFileTrace = (
   files: readonly string[],
   options: { readonly base: string; readonly log: boolean; readonly processCwd: string },

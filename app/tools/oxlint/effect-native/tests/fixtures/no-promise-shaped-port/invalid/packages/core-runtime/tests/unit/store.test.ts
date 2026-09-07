@@ -1,4 +1,4 @@
-/** Tests are excluded by default (includeTests: false). */
+// expect-count: 2
 export interface FakeStore {
 	readonly load: () => Promise<string>;
 }

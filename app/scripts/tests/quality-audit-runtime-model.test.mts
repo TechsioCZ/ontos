@@ -275,7 +275,9 @@ await test('real Knip keeps unused neighboring files, dependency names and expor
         consumerPath,
       ).pipe(Effect.provide(NodeServices.layer)),
     );
-    const run = await runPinnedKnip(root, consumerPath, model);
+    const run = await runEffectTestPromise(
+      runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer)),
+    );
     assert.equal(run.error, undefined);
     assert.ok(run.status === 0 || run.status === 1, run.stderr);
     const report = await runEffectTestPromise(

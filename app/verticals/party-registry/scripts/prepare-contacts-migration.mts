@@ -44,26 +44,19 @@ const RootConfigProvider = ConfigProvider.layer(
 const databaseFailure = (message: string, cause: unknown): ContactsMigrationError =>
   new ContactsMigrationError({ cause, message });
 
-const invokePromiseWithoutSignal =
-  <Value,>(operation: () => PromiseLike<Value>) =>
-  (_signal: AbortSignal): PromiseLike<Value> =>
-    operation();
-
 const query = <Row extends QueryResultRow = QueryResultRow>(
   client: Client,
   text: string,
-): Effect.Effect<QueryResult<Row>, ContactsMigrationError> => {
-  const executeQuery: (queryText: string) => Promise<QueryResult<Row>> = client.query.bind(client);
-  return Effect.tryPromise({
+): Effect.Effect<QueryResult<Row>, ContactsMigrationError> =>
+  Effect.tryPromise({
     catch: (cause) => databaseFailure(`PostgreSQL query failed: ${text}`, cause),
-    try: invokePromiseWithoutSignal(executeQuery.bind(undefined, text)),
+    try: async () => await client.query<Row>(text),
   }).pipe(
     Effect.timeoutOrElse({
       duration: POSTGRES_OPERATION_TIMEOUT,
       orElse: () => Effect.fail(databaseFailure(`PostgreSQL query timed out: ${text}`, 'timeout')),
     }),
   );
-};
 
 const connect = Effect.fn('ContactsMigration.connect')(function* connectEffect(
   connectionString: Redacted.Redacted,
@@ -74,7 +67,7 @@ const connect = Effect.fn('ContactsMigration.connect')(function* connectEffect(
   });
   yield* Effect.tryPromise({
     catch: (cause) => databaseFailure('Unable to connect to PostgreSQL', cause),
-    try: invokePromiseWithoutSignal(client.connect.bind(client)),
+    try: async () => await client.connect(),
   }).pipe(
     Effect.timeoutOrElse({
       duration: POSTGRES_OPERATION_TIMEOUT,
@@ -88,7 +81,7 @@ const connect = Effect.fn('ContactsMigration.connect')(function* connectEffect(
 const close = (client: Client) =>
   Effect.tryPromise({
     catch: (cause) => databaseFailure('Unable to close the PostgreSQL connection', cause),
-    try: invokePromiseWithoutSignal(client.end.bind(client)),
+    try: async () => await client.end(),
   }).pipe(
     Effect.timeoutOrElse({
       duration: POSTGRES_OPERATION_TIMEOUT,

@@ -6,7 +6,6 @@ import {
   Console,
   Effect,
   Exit,
-  flow,
   ManagedRuntime,
   Number as EffectNumber,
   Redacted,
@@ -492,7 +491,7 @@ const acquireSpiceDbClient = (configuration: SpiceDbConfigValue) =>
     (client) => Effect.sync(() => client.close()),
   );
 
-const migrateContactsAuthorizationEffect = (
+export const migrateContactsAuthorization = (
   mode: ContactsAuthorizationMigrationMode,
 ): Effect.Effect<ContactsAuthorizationMigrationResult, ContactsAuthorizationMigrationError> =>
   Effect.gen(function* migrateContactsAuthorizationProgram() {
@@ -521,21 +520,12 @@ const migrateContactsAuthorizationEffect = (
     };
   }).pipe(Effect.scoped);
 
-const migrationRuntime = ManagedRuntime.make(NodeServices.layer);
-
-export const migrateContactsAuthorization: (
-  mode: ContactsAuthorizationMigrationMode,
-) => Promise<ContactsAuthorizationMigrationResult> = flow(
-  migrateContactsAuthorizationEffect,
-  migrationRuntime.runPromise,
-);
-
 const command = Command.make(
   'migrate-contacts-authorization',
   { mode: Argument.choice('mode', ['prepare', 'verify', 'finalize']) },
   ({ mode }) =>
     Effect.gen(function* migrateContactsAuthorizationCommand() {
-      const result = yield* migrateContactsAuthorizationEffect(mode).pipe(
+      const result = yield* migrateContactsAuthorization(mode).pipe(
         Effect.tapError((error) => Console.error(error.message)),
       );
       yield* Console.log(
@@ -546,6 +536,7 @@ const command = Command.make(
 
 const [, invokedPath] = process.argv;
 if (invokedPath !== undefined && import.meta.url === pathToFileURL(invokedPath).href) {
+  const migrationRuntime = ManagedRuntime.make(NodeServices.layer);
   const exit = await migrationRuntime.runPromiseExit(Command.run(command, { version: '1.0.0' }));
   process.exitCode = Exit.isSuccess(exit) ? 0 : 1;
 }

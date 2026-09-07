@@ -1,4 +1,4 @@
-import { Effect, Equal, FileSystem, Schema } from 'effect';
+import { Effect, Equal, FileSystem, Schema, Predicate } from 'effect';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import { tailwindPrefixForNamespace } from '../tailwind-prefix.mts';
 import {
@@ -13,8 +13,8 @@ import {
   MODULE_REGISTRATION_PAGE_SLOT_END,
   MODULE_REGISTRATION_PAGE_SLOT_START,
   asJsonObject,
-  createMutation,
-  discoverOntosModule,
+  createMutationEffect as createSharedMutation,
+  discoverOntosModuleEffect as discoverSharedModule,
   ensureUniqueMutationPaths,
   generatedSlotContainsExactEntry,
   insertModuleFederationExposure,
@@ -22,7 +22,7 @@ import {
   isModuleManifestImport,
   moduleFederationExposureSource,
   patchJsonObjectProperty,
-  readJson,
+  readJsonEffect as readSharedJson,
   readGeneratedSlotEntries,
   requireCanonicalSlug,
   requiredString,
@@ -80,42 +80,29 @@ const pageScaffoldFailure = (message: string, cause?: unknown): PageScaffoldErro
   new PageScaffoldError(cause === undefined ? { message } : { cause, message });
 
 const pageScaffoldFailureFromUnknown = (cause: unknown, fallback: string): PageScaffoldError =>
-  cause instanceof PageScaffoldError
+  Schema.is(PageScaffoldError)(cause)
     ? cause
-    : pageScaffoldFailure(cause instanceof Error ? cause.message : fallback, cause);
+    : pageScaffoldFailure(Predicate.isError(cause) ? cause.message : fallback, cause);
 
-const discoverOntosModuleEffect = (
-  workspaceRoot: string,
-  requestedVertical: string,
-): Effect.Effect<OntosVerticalMetadata, PageScaffoldError> =>
-  Effect.tryPromise({
-    catch: (cause) =>
+const discoverOntosModuleEffect = (workspaceRoot: string, requestedVertical: string) =>
+  discoverSharedModule(workspaceRoot, requestedVertical).pipe(
+    Effect.mapError((cause) =>
       pageScaffoldFailureFromUnknown(
         cause,
         `vertical ${requestedVertical} could not be discovered`,
       ),
-    try: async () => await discoverOntosModule(workspaceRoot, requestedVertical),
-  });
+    ),
+  );
 
-const readJsonEffect = (
-  filePath: string,
-  description: string,
-  fallback: string,
-): Effect.Effect<Awaited<ReturnType<typeof readJson>>, PageScaffoldError> =>
-  Effect.tryPromise({
-    catch: (cause) => pageScaffoldFailureFromUnknown(cause, fallback),
-    try: async () => await readJson(filePath, description),
-  });
+const readJsonEffect = (filePath: string, description: string, fallback: string) =>
+  readSharedJson(filePath, description).pipe(
+    Effect.mapError((cause) => pageScaffoldFailureFromUnknown(cause, fallback)),
+  );
 
-const createMutationEffect = (
-  filePath: string,
-  content: string,
-  fallback: string,
-): Effect.Effect<Mutation, PageScaffoldError> =>
-  Effect.tryPromise({
-    catch: (cause) => pageScaffoldFailureFromUnknown(cause, fallback),
-    try: async () => await createMutation(filePath, content),
-  });
+const createMutationEffect = (filePath: string, content: string, fallback: string) =>
+  createSharedMutation(filePath, content).pipe(
+    Effect.mapError((cause) => pageScaffoldFailureFromUnknown(cause, fallback)),
+  );
 
 const mapFileSystemError = <Value, Failure, Requirements>(
   operation: Effect.Effect<Value, Failure, Requirements>,
@@ -227,7 +214,7 @@ const validateLocale = (
   namespace: string,
   packageExports: JsonObject,
   locale: string,
-): Effect.Effect<void, PageScaffoldError> =>
+): Effect.Effect<void, PageScaffoldError, FileSystem.FileSystem> =>
   Effect.gen(function* validateLocaleEffect() {
     const expectedExport = `./locales/${locale}/${namespace}.json`;
     if (packageExports[`./locales/${locale}`] !== expectedExport) {
@@ -475,7 +462,7 @@ const renderReadAuthorization = (
 
 const validateReadAuthorization = (
   config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
-): Effect.Effect<void, PageScaffoldError> =>
+): Effect.Effect<void, PageScaffoldError, FileSystem.FileSystem> =>
   Effect.gen(function* validateReadAuthorizationEffect() {
     if (
       config.authorization === 'context_permission' &&
@@ -790,7 +777,7 @@ const patchLocale = (
   vertical: PageVerticalMetadata,
   locale: string,
   page: string,
-): Effect.Effect<Mutation, PageScaffoldError> =>
+): Effect.Effect<Mutation, PageScaffoldError, FileSystem.FileSystem> =>
   Effect.gen(function* patchLocaleEffect() {
     const localePath = resolveContainedPath(
       workspaceRoot,
@@ -835,7 +822,7 @@ const migrateLegacyLocale = (
   vertical: PageVerticalMetadata,
   locale: string,
   page: string,
-): Effect.Effect<Mutation, PageScaffoldError> =>
+): Effect.Effect<Mutation, PageScaffoldError, FileSystem.FileSystem> =>
   Effect.gen(function* migrateLegacyLocaleEffect() {
     const localePath = resolveContainedPath(
       workspaceRoot,
@@ -1193,7 +1180,7 @@ const generatedLocaleState = (
   vertical: PageVerticalMetadata,
   locale: string,
   pageKey: string,
-): Effect.Effect<GeneratedPageState, PageScaffoldError> =>
+): Effect.Effect<GeneratedPageState, PageScaffoldError, FileSystem.FileSystem> =>
   Effect.gen(function* generatedLocaleStateEffect() {
     const localePath = resolveContainedPath(
       workspaceRoot,

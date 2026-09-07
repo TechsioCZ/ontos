@@ -69,8 +69,8 @@ export const auditDatabaseTrustBoundaries = (): Effect.Effect<
           (error) =>
             new DatabaseTrustBoundaryAuditError({
               reason:
-                error instanceof DatabaseTargetMismatchError ||
-                error instanceof DatabaseSessionIdentityError
+                Schema.is(DatabaseTargetMismatchError)(error) ||
+                Schema.is(DatabaseSessionIdentityError)(error)
                   ? error.message
                   : 'Database trust-boundary evidence could not be collected',
             }),

@@ -1,4 +1,4 @@
-/** .tsx: JSX, generic arrows and Promise props are the framework adapter surface (includeTsx: false). */
+// expect-count: 2
 const identity = <T,>(value: T): T => value;
 
 export interface PageProps {

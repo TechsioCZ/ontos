@@ -117,9 +117,7 @@ const component = defineTenantModuleEntrypoint({
 const compatibleRemoteModule = (value: { readonly default: unknown }) =>
   Predicate.isFunction(value.default);
 
-type EffectTestCallback = () => Promise<void>;
-
-const runEffectTest = <Failure>(effect: Effect.Effect<void, Failure>): EffectTestCallback =>
+const runEffectTest = <Failure>(effect: Effect.Effect<void, Failure>) =>
   Fn.flow(Fn.constant(effect), runEffectTestPromise);
 
 test(
@@ -500,44 +498,52 @@ test(
   ),
 );
 
-test('does not surface a late remote rejection after a timeout', async () => {
-  const pending = Promise.withResolvers<RemoteModule>();
-  const loadSettled = Promise.withResolvers<null>();
-  const result = await runEffectTestPromise(
-    settleModuleEntrypointLoads([
-      {
-        identity: 'late-rejection/page',
-        isCompatible: compatibleRemoteModule,
-        load: async () => {
-          try {
-            return await pending.promise;
-          } finally {
-            loadSettled.resolve(null);
-          }
+test(
+  'does not surface a late remote rejection after a timeout',
+  runEffectTest(
+    Effect.gen(function* verifyLateRemoteRejection() {
+      const pending = Promise.withResolvers<RemoteModule>();
+      const loadStarted = Promise.withResolvers<null>();
+      const loadSettled = Promise.withResolvers<null>();
+      const resultFiber = yield* Effect.forkChild(
+        settleModuleEntrypointLoads([
+          {
+            identity: 'late-rejection/page',
+            isCompatible: compatibleRemoteModule,
+            load: async () => {
+              loadStarted.resolve(null);
+              try {
+                return await pending.promise;
+              } finally {
+                loadSettled.resolve(null);
+              }
+            },
+            timeoutMs: 10,
+          },
+        ]),
+      );
+      yield* Effect.promise(async () => await loadStarted.promise);
+      yield* TestClock.adjust('10 millis');
+      const result = yield* Fiber.join(resultFiber);
+      expect(result).toEqual([
+        {
+          identity: 'late-rejection/page',
+          reason: 'timeout',
+          state: 'unavailable',
         },
-        timeoutMs: 10,
-      },
-    ]),
-  );
-
-  expect(result).toEqual([
-    {
-      identity: 'late-rejection/page',
-      reason: 'timeout',
-      state: 'unavailable',
-    },
-  ]);
-
-  pending.reject(new Error('remote unavailable'));
-  await loadSettled.promise;
-  expect(result).toEqual([
-    {
-      identity: 'late-rejection/page',
-      reason: 'timeout',
-      state: 'unavailable',
-    },
-  ]);
-});
+      ]);
+      pending.reject(new Error('remote unavailable'));
+      yield* Effect.promise(async () => await loadSettled.promise);
+      expect(result).toEqual([
+        {
+          identity: 'late-rejection/page',
+          reason: 'timeout',
+          state: 'unavailable',
+        },
+      ]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  ),
+);
 
 test.each(['selection_required', 'not_found', 'forbidden', 'unavailable'] as const)(
   'never invokes a remote loader after a %s target resolution',

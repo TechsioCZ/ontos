@@ -215,7 +215,9 @@ await test('real pinned Knip models exact consumers and preserves neighboring fi
     const model = await runEffectTestPromise(
       buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer)),
     );
-    const run = await runPinnedKnip(root, consumerPath, model);
+    const run = await runEffectTestPromise(
+      runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer)),
+    );
     assert.equal(run.status, 1, `${run.stdout}\n${run.stderr}`);
     assert.equal(run.stderr, '');
     const report = await runEffectTestPromise(
@@ -461,7 +463,9 @@ await test('vendor ownership rejects a different installed copy and accepts the 
     );
     assert.equal(mismatch.resolved, realpathSync(path.join(root, ownerTarget, 'index.js')));
     assert.match(mismatch.reason, /different canonical target/u);
-    const run = await runPinnedKnip(root, consumerPath, differentCopies);
+    const run = await runEffectTestPromise(
+      runPinnedKnip(root, consumerPath, differentCopies).pipe(Effect.provide(NodeServices.layer)),
+    );
     assert.equal(run.status, 1, run.stderr);
     const report = Schema.decodeUnknownSync(Schema.fromJsonString(ReportSchema))(run.stdout);
     assert.ok(

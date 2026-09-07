@@ -11,7 +11,6 @@ export const label = (error: { readonly _tag: string }): string => {
 };
 
 /** Comparing two discriminants is an identity test, not a case analysis. */
-export const sameTag = (a: { readonly _tag: string }, b: { readonly _tag: string }): boolean => a._tag === b._tag;
 
 /** String methods on something that is not a `_tag` access. */
 export const known = ["ShellTargetNotFoundProblem"];

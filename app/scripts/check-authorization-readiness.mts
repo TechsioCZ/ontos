@@ -577,7 +577,7 @@ const authorizationReadinessCommand = Command.make(
       const nowEpochMs = yield* Clock.currentTimeMillis;
       const evidence = yield* Effect.try({
         catch: (error) =>
-          error instanceof AuthorizationReadinessError
+          Schema.is(AuthorizationReadinessError)(error)
             ? error
             : new AuthorizationReadinessError({ reason: 'authorization evidence is invalid' }),
         try: () =>

@@ -1,4 +1,4 @@
-// expect-count: 4
+// expect-count: 5
 import type { Exit } from "effect";
 
 interface DomainError {

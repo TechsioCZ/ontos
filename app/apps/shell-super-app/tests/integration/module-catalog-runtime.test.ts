@@ -1,4 +1,7 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import {
+  makeEffectTestCallback,
+  runEffectTestPromise,
+} from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
@@ -193,11 +196,6 @@ const propertySafeRuntime = extractVerticalRuntimeSafeDescriptors(propertyRuntim
 
 const ContractDocumentJsonSchema = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
 
-type EffectTestCallback = () => Promise<void>;
-
-const runEffectTest = <Failure>(effect: Effect.Effect<void, Failure>): EffectTestCallback =>
-  Fn.flow(Fn.constant(effect), runEffectTestPromise);
-
 const makeContractFetch = (
   documents: ReadonlyMap<string, unknown>,
   requests: Map<string, number>,
@@ -223,7 +221,7 @@ const makeContractFetch = (
 
 void test(
   'keeps discovered metadata separate from one complete owner-local runtime',
-  runEffectTest(
+  makeEffectTestCallback(
     Effect.gen(function* verifyInstalledModuleCatalogRuntime() {
       const propertyUrl = 'https://property-registry.test/.well-known/ontos-module-manifest.json';
       const documentsUrl = 'https://documents-center.test/.well-known/ontos-module-manifest.json';

@@ -1,9 +1,9 @@
 import { NodePath } from '@effect/platform-node';
+import { scaffoldingRuntime } from '../scaffolding-runtime.mts';
 import type { GeneratorCore } from '@modern-js/codesmith';
-import { Effect, FileSystem, flow, Path, Predicate, Result, Schema } from 'effect';
+import { Effect, FileSystem, Path, Predicate, Result, Schema } from 'effect';
 import { format } from 'oxfmt';
 import ultraciteOxfmt from 'ultracite/oxfmt';
-import { scaffoldingRuntime } from '../scaffolding-runtime.mts';
 import { ONTOS_MODULE_CONTRACT_SCHEMA_VERSION } from '../../packages/core-runtime/src/index.ts';
 
 /* eslint-disable unicorn/prefer-number-coercion -- The schema version is parsed as a base-10 integer by contract. expires: 2026-12-31. */
@@ -400,11 +400,6 @@ const pathExistsEffect = (targetPath: string) =>
       .pipe(Effect.mapError((cause) => scaffoldFailure(`failed to inspect ${targetPath}`, cause)));
   });
 
-export const pathExists: (targetPath: string) => Promise<boolean> = flow(
-  pathExistsEffect,
-  scaffoldingRuntime.runPromise,
-);
-
 const regexMayStartAt = (content: string, index: number): boolean => {
   const prefix = content.slice(0, index).trimEnd();
   if (prefix.length === 0) {
@@ -765,14 +760,6 @@ export const readJsonEffect = (filePath: string, label: string) =>
     return { content, value: asJsonObject(parsed.success, label) };
   });
 
-export const readJson: (
-  filePath: string,
-  label: string,
-) => Promise<{ content: string; value: JsonObject }> = flow(
-  readJsonEffect,
-  scaffoldingRuntime.runPromise,
-);
-
 interface JsonPropertySpan {
   readonly key: string;
   readonly keyStart: number;
@@ -1110,11 +1097,6 @@ export const discoverVerticalEffect = (
     return { ...vertical, topologyEntry };
   });
 
-export const discoverVertical: (
-  workspaceRoot: string,
-  requestedVertical: string,
-) => Promise<VerticalMetadata> = flow(discoverVerticalEffect, scaffoldingRuntime.runPromise);
-
 const readGeneratedModuleOwnerEffect = (
   filePath: string,
   vertical: VerticalMetadata,
@@ -1200,14 +1182,6 @@ export const discoverOntosModuleEffect = (
     };
   });
 
-export const discoverOntosModule: (
-  workspaceRoot: string,
-  requestedVertical: string,
-) => Promise<OntosVerticalMetadata> = flow(
-  discoverOntosModuleEffect,
-  scaffoldingRuntime.runPromise,
-);
-
 export const createMutationEffect = (
   filePath: string,
   content: string,
@@ -1235,11 +1209,6 @@ export const createMutationEffect = (
     return { content: formatted.code, kind: 'create', path: filePath };
   });
 
-export const createMutation: (filePath: string, content: string) => Promise<Mutation> = flow(
-  createMutationEffect,
-  scaffoldingRuntime.runPromise,
-);
-
 export const updateMutation = (
   filePath: string,
   previous: string,
@@ -1256,11 +1225,6 @@ export const deleteMutationEffect = (
     }
     return { kind: 'delete', path: filePath };
   });
-
-export const deleteMutation: (filePath: string) => Promise<DeleteMutation> = flow(
-  deleteMutationEffect,
-  scaffoldingRuntime.runPromise,
-);
 
 const CORE_RUNTIME_PACKAGE = '@app/core-runtime';
 const WORKSPACE_DEPENDENCY_VERSION = 'workspace:*';
@@ -1373,7 +1337,7 @@ export const applyMutationPlanEffect = <Result,>(
               mutation.content,
               'utf-8',
             ),
-        }),
+        }).pipe(Effect.uninterruptible),
       { concurrency: 'unbounded', discard: true },
     );
     const fileSystem = yield* FileSystem.FileSystem;
@@ -1385,14 +1349,6 @@ export const applyMutationPlanEffect = <Result,>(
     );
     return plan.result;
   });
-
-const makeApplyMutationPlanEffect = <Result,>(core: GeneratorCore, plan: ScaffoldPlan<Result>) =>
-  applyMutationPlanEffect(core, plan);
-
-export const applyMutationPlan: <Result>(
-  core: GeneratorCore,
-  plan: ScaffoldPlan<Result>,
-) => Promise<Result> = flow(makeApplyMutationPlanEffect, scaffoldingRuntime.runPromise);
 
 const dedentGeneratedSlotBody = (slotBody: string): string => {
   const lines = slotBody.split('\n');

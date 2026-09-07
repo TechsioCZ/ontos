@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import nodeTest from 'node:test';
+import test from 'node:test';
 import { NodeServices } from '@effect/platform-node';
 import { ManagedRuntime } from 'effect';
 import { checkModuleEntrypointBoundaries as checkModuleEntrypointBoundariesEffect } from '../check-module-entrypoint-boundaries.mts';
@@ -18,11 +18,8 @@ import {
 const boundaryCheckRuntime = ManagedRuntime.make(NodeServices.layer);
 const checkModuleEntrypointBoundaries = async (root: string): Promise<void> =>
   await boundaryCheckRuntime.runPromise(checkModuleEntrypointBoundariesEffect(root));
-const test = (name: string, body: () => Promise<void> | void): void => {
-  void nodeTest(name, body);
-};
 
-nodeTest.after(async () => {
+test.after(async () => {
   await boundaryCheckRuntime.dispose();
 });
 
@@ -119,7 +116,7 @@ export const routeMeta = { moduleId: 'inventory.stock', ownerAppId: 'inventory-s
   return root;
 };
 
-test('accepts governed generated Actions, pages, Workers, catalogs, and route manifests', async () => {
+void test('accepts governed generated Actions, pages, Workers, catalogs, and route manifests', async () => {
   const root = await makeFixture();
   try {
     await checkModuleEntrypointBoundaries(root);
@@ -191,7 +188,7 @@ export const manifest = { api: { 'stock-list': StockListApi, } };`,
   );
 };
 
-test('accepts only a complete generated governed module API seam', async () => {
+void test('accepts only a complete generated governed module API seam', async () => {
   const root = await makeFixture();
   try {
     await writeGovernedModuleApi(root);
@@ -307,7 +304,7 @@ const violations = [
 ] as const;
 
 for (const violation of violations) {
-  test(`rejects bypass ${violation.file}`, async () => {
+  void test(`rejects bypass ${violation.file}`, async () => {
     const root = await makeFixture();
     try {
       await write(root, violation.file, violation.source);
@@ -326,7 +323,7 @@ for (const violation of violations) {
   });
 }
 
-test('rejects missing headers, spoofed metadata, and stale generated descriptors', async () => {
+void test('rejects missing headers, spoofed metadata, and stale generated descriptors', async () => {
   const root = await makeFixture();
   try {
     await write(
@@ -446,12 +443,12 @@ const assertPublishedPartyUsage = (
     ...overrides,
   });
 
-test('accepts an exact generated PartyRef contract import', () => {
+void test('accepts an exact generated PartyRef contract import', () => {
   assert.doesNotThrow(() => assertPublishedPartyUsage());
   assert.deepEqual(publishedResourceRefContractExports(partyPackage), ['./resources/party']);
 });
 
-test('rejects a ResourceRef contract with a spoofed Codesmith header', () => {
+void test('rejects a ResourceRef contract with a spoofed Codesmith header', () => {
   assert.throws(
     () =>
       assertPublishedPartyUsage({
@@ -462,7 +459,7 @@ test('rejects a ResourceRef contract with a spoofed Codesmith header', () => {
   );
 });
 
-test('rejects a ResourceRef export whose target is not its exact generated shared path', () => {
+void test('rejects a ResourceRef export whose target is not its exact generated shared path', () => {
   assert.throws(
     () =>
       assertPublishedPartyUsage({
@@ -475,7 +472,7 @@ test('rejects a ResourceRef export whose target is not its exact generated share
   );
 });
 
-test('rejects a ResourceRef import whose public path is not resources/<slug>', () => {
+void test('rejects a ResourceRef import whose public path is not resources/<slug>', () => {
   assert.throws(
     () =>
       assertPublishedPartyUsage({
@@ -489,7 +486,7 @@ test('rejects a ResourceRef import whose public path is not resources/<slug>', (
   );
 });
 
-test('rejects owner runtime imports hidden in a generated ResourceRef file', () => {
+void test('rejects owner runtime imports hidden in a generated ResourceRef file', () => {
   assert.throws(
     () =>
       assertPublishedPartyUsage({
@@ -500,21 +497,21 @@ test('rejects owner runtime imports hidden in a generated ResourceRef file', () 
   );
 });
 
-test('rejects a ResourceRef import without the consuming workspace dependency', () => {
+void test('rejects a ResourceRef import without the consuming workspace dependency', () => {
   assert.throws(
     () => assertPublishedPartyUsage({ dependencyDeclared: false }),
     /must declare @app\/party-registry as a workspace dependency/u,
   );
 });
 
-test('rejects a ResourceRef import without the consuming TypeScript project reference', () => {
+void test('rejects a ResourceRef import without the consuming TypeScript project reference', () => {
   assert.throws(
     () => assertPublishedPartyUsage({ projectReferenceDeclared: false }),
     /must project-reference @app\/party-registry/u,
   );
 });
 
-test('rejects barrels and arbitrary exported owner subpaths', () => {
+void test('rejects barrels and arbitrary exported owner subpaths', () => {
   for (const specifier of [
     PARTY_PACKAGE_NAME,
     '@app/party-registry/shared/domain/party',
@@ -528,7 +525,7 @@ test('rejects barrels and arbitrary exported owner subpaths', () => {
   }
 });
 
-test('preserves existing exact Outbox contract dependency behavior', () => {
+void test('preserves existing exact Outbox contract dependency behavior', () => {
   assert.deepEqual(publishedOutboxContractExports(partyPackage), ['./outbox/party-created']);
   assert.doesNotThrow(() =>
     assertPublishedOutboxDependencyUsage({
@@ -563,7 +560,7 @@ test('preserves existing exact Outbox contract dependency behavior', () => {
   );
 });
 
-test('accepts an exact published Party Registry Effect client aggregate', () => {
+void test('accepts an exact published Party Registry Effect client aggregate', () => {
   assert.doesNotThrow(() =>
     assertPublishedPartyUsage({
       moduleSpecifiers: [PARTY_API_CLIENT_SPECIFIER],
@@ -580,7 +577,7 @@ test('accepts an exact published Party Registry Effect client aggregate', () => 
   );
 });
 
-test('rejects a published client export that points at backend implementation', () => {
+void test('rejects a published client export that points at backend implementation', () => {
   assert.throws(
     () =>
       assertPublishedPartyUsage({
@@ -594,7 +591,7 @@ test('rejects a published client export that points at backend implementation', 
   );
 });
 
-test('rejects a client aggregate that imports provider backend or private source', () => {
+void test('rejects a client aggregate that imports provider backend or private source', () => {
   for (const forbiddenImport of [
     '../../api/index.ts',
     '../db/repository.ts',
@@ -617,7 +614,7 @@ test('rejects a client aggregate that imports provider backend or private source
   }
 });
 
-test('rejects an aggregate whose client leaf has no Codesmith metadata', () => {
+void test('rejects an aggregate whose client leaf has no Codesmith metadata', () => {
   assert.throws(
     () =>
       assertPublishedPartyUsage({
@@ -631,7 +628,7 @@ test('rejects an aggregate whose client leaf has no Codesmith metadata', () => {
   );
 });
 
-test('accepts an exact generated MicroVertical command client leaf', () => {
+void test('accepts an exact generated MicroVertical command client leaf', () => {
   assert.doesNotThrow(() =>
     assertPublishedPartyUsage({
       moduleSpecifiers: [PARTY_API_CLIENT_SPECIFIER],
@@ -651,7 +648,7 @@ test('accepts an exact generated MicroVertical command client leaf', () => {
   );
 });
 
-test('rejects a command client leaf whose generated owner marker names another deployment', () => {
+void test('rejects a command client leaf whose generated owner marker names another deployment', () => {
   assert.throws(
     () =>
       assertPublishedPartyUsage({
@@ -673,7 +670,7 @@ test('rejects a command client leaf whose generated owner marker names another d
   );
 });
 
-test('rejects API barrels and arbitrary client subpaths', () => {
+void test('rejects API barrels and arbitrary client subpaths', () => {
   for (const specifier of [
     '@app/party-registry/api',
     '@app/party-registry/api/client/internal',
@@ -702,7 +699,7 @@ export const OutboxPayloadSchema = Schema.Struct({ partyId: Schema.String });
 export const outboxProducerModuleKey = '${PARTY_MODULE_ID}' as const;
 `;
 
-test('validates Outbox producer module identity when deployment appId differs from moduleId', () => {
+void test('validates Outbox producer module identity when deployment appId differs from moduleId', () => {
   const moduleId = resolvePublishedContractModuleId({
     dependencyPackageJson: partyPackage,
     dependencyPackageName: PARTY_PACKAGE_NAME,
@@ -719,7 +716,7 @@ test('validates Outbox producer module identity when deployment appId differs fr
   );
 });
 
-test('rejects an Outbox producer that substitutes deployment appId for moduleId', () => {
+void test('rejects an Outbox producer that substitutes deployment appId for moduleId', () => {
   assert.throws(
     () =>
       assertPublishedOutboxContractSource({
@@ -734,7 +731,7 @@ test('rejects an Outbox producer that substitutes deployment appId for moduleId'
   );
 });
 
-test('rejects mismatched package and generated manifest ownership for published contracts', () => {
+void test('rejects mismatched package and generated manifest ownership for published contracts', () => {
   assert.throws(
     () =>
       resolvePublishedContractModuleId({
@@ -747,7 +744,7 @@ test('rejects mismatched package and generated manifest ownership for published 
   );
 });
 
-test('keeps executable owner behavior out of published Outbox contracts', () => {
+void test('keeps executable owner behavior out of published Outbox contracts', () => {
   assert.throws(
     () =>
       assertPublishedOutboxContractSource({
@@ -758,7 +755,7 @@ test('keeps executable owner behavior out of published Outbox contracts', () => 
     /must remain a generated schema-only Outbox contract/u,
   );
 });
-test('rejects missing, orphaned, and cross-owner route manifest entries', async () => {
+void test('rejects missing, orphaned, and cross-owner route manifest entries', async () => {
   const root = await makeFixture();
   try {
     await write(

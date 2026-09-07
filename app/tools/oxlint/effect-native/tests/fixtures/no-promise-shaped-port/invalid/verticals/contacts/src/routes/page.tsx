@@ -1,4 +1,4 @@
-/** .tsx is the framework adapter surface (includeTsx: false). */
+// expect-count: 1
 export const loader = async () => await Promise.resolve({ ok: true });
 
 export interface PageProps {

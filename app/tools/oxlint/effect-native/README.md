@@ -1,12 +1,12 @@
 # Effect-native Oxlint rules
 
-71 custom diagnostic rules derived from
+Custom diagnostic rules derived from
 [`EFFECT_V4_ANTIPATTERN_AUDIT.md`](../../../docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md).
 All are explicitly registered and configured at **error** severity. There are **no autofixers or
 suggestions**. This change introduces enforcement, not an application migration.
 
 See the [audit-to-rule catalog and diagnostic snapshot](../../../docs/architecture/EFFECT_V4_LINT_ENFORCEMENT.md)
-for all 71 rule counts, primary audit mappings, and intentionally non-static guarantees.
+for the original rule counts, primary audit mappings, and intentionally non-static guarantees.
 
 ## Run from the app workspace
 
@@ -49,7 +49,8 @@ for its other lint rules. Each rule's source documents its audit mapping, defaul
 exceptions, and limitations. Configured re-export barrels are explicit trust assumptions, not
 cross-file resolution.
 
-The audit remains authoritative. Preserve forced outer process/framework Promise adapters, correct
+The audit records the original findings; focused architecture documents own current behavior.
+Preserve forced outer process/framework Promise adapters, correct
 Drizzle JSONB and HttpApi encoding, external test-body JSON serialization, deliberate malformed
 rejection fixtures, legitimate `as const`/`satisfies`, line-preserving `.env` editing, native collection
 operations, and correctly scoped fibers. Startup `Layer.orDie` requires the deliberate outer seam
@@ -124,3 +125,15 @@ Fixture config template:
 Place examples under `invalid/` and `valid/`; `// expect-count: N` at the start of a positive fixture
 pins its positive diagnostic count. False-positive repairs need negative regressions. Preserve
 existing test evidence unless its expectation conflicts with the audit, and explain such corrections.
+
+## Native interface and operator policy
+
+`no-promise-shaped-port` covers application packages, scripts, tests, and TSX. Owned interfaces
+return Effect, including generic aliases, overloads, and callback parameters. Real SDK and test
+runner callbacks keep their required Promise boundary. Private helpers qualify only when lexical
+references establish that boundary; an exported Promise helper remains an owned interface.
+
+`repository-policy.config.ts` checks all repository source for `instanceof` and manual `_tag`
+comparisons, switches, and assertions. Negative lint fixtures are excluded because they deliberately
+contain forbidden syntax. Use Schema, native predicates, and Effect failure combinators to inspect
+values; full serialized-object assertions and diagnostic tag output remain valid.

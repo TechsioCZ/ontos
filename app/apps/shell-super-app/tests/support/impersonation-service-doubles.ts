@@ -8,6 +8,7 @@ import type { AuthenticationServiceContract } from '../../api/auth/service.ts';
 
 const unconfiguredEffect = (operation: string) =>
   Effect.die(`${operation} is not configured in this test`);
+// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Rejection belongs to the Better Auth SDK fixture API.
 const unconfiguredPromise = async (operation: string) => {
   throw new Error(`${operation} is not configured in this test`);
 };
@@ -25,8 +26,11 @@ const authenticationDefaults: AuthenticationServiceContract = {
 };
 
 const providerDefaults: SupportAuthProvider['api'] = {
+  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements Better Auth's foreign Promise API.
   getSession: async () => await unconfiguredPromise('getSession'),
+  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements Better Auth's foreign Promise API.
   impersonateUser: async () => await unconfiguredPromise('impersonateUser'),
+  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements Better Auth's foreign Promise API.
   stopImpersonating: async () => await unconfiguredPromise('stopImpersonating'),
 };
 

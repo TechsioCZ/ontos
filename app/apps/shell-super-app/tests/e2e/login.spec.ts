@@ -1,4 +1,5 @@
-import { Predicate } from 'effect';
+import { Exit, Predicate, Scope } from 'effect';
+import { runEffectTestPromise, runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { shellAuthenticationApiContract } from '../../shared/api.ts';
@@ -37,16 +38,13 @@ const gotoHydratedLogin = async (page: Page, language: 'cs' | 'en') => {
   });
 };
 
-let cleanupFixture: (() => Promise<void>) | undefined;
+const fixtureScope = runEffectTestSync(Scope.make());
 
 test.beforeAll(
   async () =>
-    await createAuthenticationFixture().then((cleanup) => {
-      cleanupFixture = cleanup;
-    }),
+    await runEffectTestPromise(createAuthenticationFixture().pipe(Scope.provide(fixtureScope))),
 );
-
-test.afterAll(async () => await cleanupFixture?.());
+test.afterAll(async () => await runEffectTestPromise(Scope.close(fixtureScope, Exit.void)));
 
 test('renders the exact anonymous English and Czech home states', async ({ page }) =>
   await page

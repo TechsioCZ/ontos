@@ -1,6 +1,17 @@
 #!/usr/bin/env node
 import { NodeServices } from '@effect/platform-node';
-import { Config, ConfigProvider, Console, Effect, Exit, Option, Path, Schema, Stdio } from 'effect';
+import {
+  Config,
+  ConfigProvider,
+  Console,
+  Effect,
+  Exit,
+  Option,
+  Path,
+  Schema,
+  Stdio,
+  Predicate,
+} from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
 class AgentSkillsBootstrapError extends Schema.TaggedError<AgentSkillsBootstrapError>()(
@@ -63,10 +74,9 @@ const program = Effect.gen(function* bootstrapAgentSkills() {
             return Effect.succeed(1);
           }
           const launchCause = error.reason.cause;
-          const causeMessage =
-            launchCause instanceof Error
-              ? launchCause.message.replace(/^spawn /u, 'spawnSync ')
-              : error.message;
+          const causeMessage = Predicate.isError(launchCause)
+            ? launchCause.message.replace(/^spawn /u, 'spawnSync ')
+            : error.message;
           return Effect.fail(
             failure(
               `Failed to launch ${launch.target} for UltraModern command "${ultramodernArgs

@@ -61,16 +61,20 @@ interface ReleaseEnvelope {
 }
 
 interface ReleaseFramework {
+  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- Structural mirror of the installed Modern.js release-envelope SDK.
   readonly emitFrameworkMicroVerticalReleaseEnvelope: (input: {
     readonly apiOnly: boolean;
     readonly distDirectory: string;
     readonly target: string;
   }) => Promise<ReleaseEnvelope>;
+  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- Structural mirror of the installed Modern.js release-envelope SDK.
   readonly emitNodeStagedReleaseEnvelope: (input: {
     readonly distDirectory: string;
     readonly outputDirectory: string;
   }) => Promise<ReleaseEnvelope>;
+  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- Structural mirror of the installed Modern.js release-envelope SDK.
   readonly verifyBuildOutputReleaseEnvelope: (root: string, target: string) => Promise<void>;
+  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- Structural mirror of the installed Modern.js release-envelope SDK.
   readonly verifyNodeReleaseEnvelopeStaging: (input: {
     readonly outputDirectory: string;
   }) => Promise<void>;
@@ -85,6 +89,7 @@ type CreateLayout = (appId: typeof AppIdSchema.Type) => string;
 type CreateAppModernConfig = (applicationRoot: string, app: WorkspaceAppFixture) => string;
 type CreateBackendModuleFederationConfig = (app: WorkspaceAppFixture) => string;
 type CreateUltramodernBuildModule = (applicationRoot: string, app: WorkspaceAppFixture) => string;
+// oxlint-disable-next-line effect-native/no-promise-shaped-port -- The dynamically loaded Modern.js validator owns this Promise signature.
 type ValidateCloudflareApp = (
   app: ApiOnlyAppFixture,
   applicationPublicUrl: string,
@@ -301,11 +306,11 @@ const releaseFrameworkRoot = path.join(
   workspaceRoot,
   'verticals/party-registry/node_modules/@modern-js/app-tools/dist',
 );
-const releaseFramework = await loadReleaseFramework(
-  path.join(releaseFrameworkRoot, 'esm-node/ultramodern-release-envelope/framework-output.mjs'),
-);
 
 const releaseFixture = async (context: TestContext) => {
+  const releaseFramework = await loadReleaseFramework(
+    path.join(releaseFrameworkRoot, 'esm-node/ultramodern-release-envelope/framework-output.mjs'),
+  );
   const root = await mkdtemp(path.join(os.tmpdir(), 'ontos-empty-producer-'));
   context.after(async (): Promise<void> => {
     await rm(root, { force: true, recursive: true });
@@ -359,7 +364,7 @@ const releaseFixture = async (context: TestContext) => {
       distDirectory: root,
       target: 'node',
     });
-  return { artifact, emit, manifest, putJson, putText, root };
+  return { artifact, emit, framework: releaseFramework, manifest, putJson, putText, root };
 };
 
 void test('empty MF producers retain complete build and Node staged release evidence in every framework format', async (context) => {
@@ -395,7 +400,7 @@ void test('empty MF producers retain complete build and Node staged release evid
   await fixture.emit();
   await fixture.putText(compiledUiAssetPath, 'console.log("tampered");');
   await assert.rejects(
-    async () => await releaseFramework.verifyBuildOutputReleaseEnvelope(fixture.root, 'node'),
+    async () => await fixture.framework.verifyBuildOutputReleaseEnvelope(fixture.root, 'node'),
     /digest|hash|size/iu,
   );
 });

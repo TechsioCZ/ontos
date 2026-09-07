@@ -1,3 +1,8 @@
+import { runEffectTestPromise } from '../../../packages/core-runtime/src/testing/effect-runtime.ts';
+import { Effect, Fiber, FileSystem, Schema } from 'effect';
+import { CodeSmith, GeneratorCore } from '@modern-js/codesmith';
+import { applyMutationPlanEffect } from '../shared.mts';
+import { NodeServices } from '@effect/platform-node';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -6,8 +11,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
-import { Schema } from 'effect';
-import { getHelpText, runScaffold } from '../cli.mts';
+import { getHelpText, runScaffoldEffect, ScaffoldingError } from '../cli.mts';
 
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
 const tscPath = path.join(appRoot, 'node_modules', '.bin', 'tsc');
@@ -156,9 +160,11 @@ export declare const ShellSearchContributionSchema: Schema.Codec<unknown, unknow
     'dir',
   );
   await symlink(path.join(appRoot, 'node_modules/effect'), path.join(root, 'node_modules/effect'));
-  await runScaffold('module-contract', ['--vertical', verticalName, '--module', moduleId], {
-    workspaceRoot: root,
-  });
+  await runEffectTestPromise(
+    runScaffoldEffect('module-contract', ['--vertical', verticalName, '--module', moduleId], {
+      workspaceRoot: root,
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
   return root;
 };
 
@@ -172,15 +178,19 @@ const withFixture = async (run: (root: string) => Promise<void>): Promise<void> 
 };
 
 const scaffoldResource = async (root: string, resource = resourceName) =>
-  await runScaffold('resource', ['--vertical', verticalName, '--resource', resource], {
-    workspaceRoot: root,
-  });
+  await runEffectTestPromise(
+    runScaffoldEffect('resource', ['--vertical', verticalName, '--resource', resource], {
+      workspaceRoot: root,
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
 await test('resource help documents the public command and writes nothing', async () => {
   const missingRoot = path.join(tmpdir(), 'resource-help-does-not-exist');
-  const result = await runScaffold('resource', ['--help'], {
-    workspaceRoot: missingRoot,
-  });
+  const result = await runEffectTestPromise(
+    runScaffoldEffect('resource', ['--help'], {
+      workspaceRoot: missingRoot,
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
   assert.deepEqual(result, { help: getHelpText('resource'), kind: 'help' });
   assert.match(result.help, /scaffold:resource -- --vertical <vertical> --resource <resource>/u);
   assert.match(result.help, /lower-kebab-case/u);
@@ -352,5 +362,71 @@ await test('resource scaffold upgrades the previous generated empty resourceType
     const upgraded = await readFile(manifestPath, 'utf-8');
     assert.match(upgraded, /\/\/ <generated-module-manifest-resources>/u);
     assert.match(upgraded, /rentalUnitResourceDescriptor,/u);
+  });
+});
+
+void test('waits for an interrupted Codesmith write before removing its scoped output', async (context) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'ontos-scaffold-cancellation-'));
+  context.after(async () => await rm(root, { force: true, recursive: true }));
+  const smith = new CodeSmith({ namespace: 'ontos-scaffolding-test' });
+  const core = new GeneratorCore({
+    logger: smith.logger,
+    materialsManager: smith.materialsManager,
+    outputPath: root,
+  });
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const events: string[] = [];
+  context.mock.method(core.output, 'fs', async () => {
+    started.resolve();
+    await release.promise;
+    await mkdir(root, { recursive: true });
+    await writeFile(path.join(root, 'generated.ts'), 'export {};');
+    events.push('write');
+  });
+  await runEffectTestPromise(
+    Effect.gen(function* verifyWriteCleanupOrder() {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const worker = yield* Effect.forkChild(
+        Effect.scoped(
+          Effect.gen(function* writeScopedOutput() {
+            yield* Effect.addFinalizer(() =>
+              fileSystem
+                .remove(root, { recursive: true, force: true })
+                .pipe(Effect.orDie, Effect.andThen(Effect.sync(() => events.push('cleanup')))),
+            );
+            yield* applyMutationPlanEffect(core, {
+              mutations: [
+                { kind: 'create', path: path.join(root, 'generated.ts'), content: 'export {};' },
+              ],
+              result: undefined,
+            });
+          }),
+        ),
+      );
+      yield* Effect.promise(async () => await started.promise);
+      const interruption = yield* Effect.forkChild(Fiber.interrupt(worker));
+      yield* Effect.yieldNow;
+      assert.deepEqual(events, []);
+      release.resolve();
+      yield* Fiber.join(interruption);
+      assert.deepEqual(events, ['write', 'cleanup']);
+      assert.equal(yield* fileSystem.exists(root), false);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+void test('reports synchronous malformed-owner validation through the typed command channel', async () => {
+  await withFixture(async (root) => {
+    await writeFile(path.join(root, verticalPackagePath), '[]');
+    const before = await snapshotTree(root);
+    const failure = await runEffectTestPromise(
+      runScaffoldEffect('resource', ['--vertical', verticalName, '--resource', resourceName], {
+        workspaceRoot: root,
+      }).pipe(Effect.flip, Effect.provide(NodeServices.layer)),
+    );
+    assert.ok(Schema.is(ScaffoldingError)(failure));
+    assert.match(failure.message, /JSON object/u);
+    assert.deepEqual(await snapshotTree(root), before);
   });
 });
