@@ -117,6 +117,10 @@ const linkRuntimeDependencies = Effect.fn('linkRuntimeDependencies')(
           path.join(root, 'node_modules/@app/shared-contracts'),
         ),
         fileSystem.symlink(
+          path.join(appRoot, 'packages/gateway-principal-verifier'),
+          path.join(root, 'node_modules/@app/gateway-principal-verifier'),
+        ),
+        fileSystem.symlink(
           path.join(appRoot, 'apps/shell-super-app/node_modules/@modern-js/plugin-bff'),
           path.join(root, 'node_modules/@modern-js/plugin-bff'),
         ),

@@ -1350,24 +1350,24 @@ void test('generates one immutable Action identity boundary and exact direct dep
       assert.match(source, /@ontos-action-boundary-audience inventory-stock/u);
       assert.match(source, /ACTION_GATEWAY_AUDIENCE = 'inventory-stock'/u);
     }
-    assert.match(server, /algorithms: \['EdDSA'\]/u);
-    assert.match(server, /@app\/core-runtime\/actions\/principal-context/u);
-    assert.match(server, /TrustedPrincipalContextSchema/u);
-    assert.match(server, /\^Bearer /u);
-    assert.match(server, /Clock\.currentTimeMillis/u);
-    assert.doesNotMatch(server, /Date\.now|Effect\.runPromise|decodeUnknownSync/u);
+    assert.match(server, /@app\/gateway-principal-verifier\/server/u);
+    assert.match(server, /bindGatewayPrincipalVerifier\(ACTION_GATEWAY_AUDIENCE\)/u);
+    assert.doesNotMatch(
+      server,
+      /createLocalJWKSet|decodeProtectedHeader|jwtVerify|PublicVerificationKeySchema/u,
+    );
     assert.match(client, /acquire\(\{ audience: ACTION_GATEWAY_AUDIENCE \}/u);
     assert.doesNotMatch(client, /localStorage|sessionStorage/u);
-    assert.match(server, /options\.redemption/u);
+    assert.match(server, /verifyAndRedeem/u);
     assert.match(redemption, /GatewayAssertionRedemptionUnavailableError/u);
     const packageJson = decodeFixturePackage(
       await readFixtureFile(fixture.root, inventoryPackageFile),
     );
     assert.deepEqual(packageJson.dependencies, {
       '@app/core-runtime': workspaceVersion,
+      '@app/gateway-principal-verifier': workspaceVersion,
       '@app/shared-contracts': workspaceVersion,
       effect: '4.0.0-beta.107',
-      jose: '6.2.5',
       zeta: '1.0.0',
     });
     assert.equal(packageJson.scripts['existing'], preservedFixtureValue);
@@ -1390,15 +1390,12 @@ void test('Action identity boundary preflight refuses unsafe writes', async () =
     assert.deepEqual(await snapshotTree(fixture.root), afterFirstRun);
   });
   await withFixture(async (fixture) => {
-    const packagePath = path.join(fixture.root, inventoryPackageFile);
-    const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
-    await writeFile(
-      packagePath,
-      json({
-        ...packageJson,
-        dependencies: { ...packageJson.dependencies, jose: '^5.0.0' },
-      }),
-      'utf-8',
+    await writeFixtureFile(
+      fixture.root,
+      inventoryActionPrincipalFile,
+      `// Owner-authored identity adapter
+export const ownerCode = true;
+`,
     );
     const before = await snapshotTree(fixture.root);
     await assert.rejects(
@@ -1406,7 +1403,7 @@ void test('Action identity boundary preflight refuses unsafe writes', async () =
         scaffoldFlag.vertical,
         inventorySlug,
       ]),
-      /incompatible jose dependency/u,
+      /refusing to overwrite existing business file/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), before);
   });
@@ -1418,6 +1415,10 @@ void test('generated verifier executes real Shell assertions and overlapping Ed2
       scaffoldFlag.vertical,
       inventorySlug,
     ]);
+    await run(fixture, scaffoldCommand.microverticalActionBoundary, [
+      scaffoldFlag.vertical,
+      'billing',
+    ]);
     await mkdir(path.join(fixture.root, 'node_modules', '@app'), { recursive: true });
     await symlink(
       path.join(appRoot, 'packages/core-runtime'),
@@ -1427,6 +1428,11 @@ void test('generated verifier executes real Shell assertions and overlapping Ed2
     await symlink(
       path.join(appRoot, 'packages/shared-contracts'),
       path.join(fixture.root, 'node_modules/@app/shared-contracts'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'packages/gateway-principal-verifier'),
+      path.join(fixture.root, 'node_modules/@app/gateway-principal-verifier'),
       'dir',
     );
     await symlink(
@@ -1471,6 +1477,12 @@ void test('generated verifier executes real Shell assertions and overlapping Ed2
     const generatedModule = Schema.decodeUnknownSync(GeneratedPrincipalModuleSchema)(
       await import(pathToFileURL(path.join(fixture.root, inventoryActionPrincipalFile)).href),
     );
+    const billingGeneratedModule = Schema.decodeUnknownSync(GeneratedPrincipalModuleSchema)(
+      await import(
+        pathToFileURL(path.join(fixture.root, 'verticals/billing/api/auth/action-principal.ts'))
+          .href
+      ),
+    );
     const generatedClientModule = Schema.decodeUnknownSync(GeneratedActionGatewayModuleSchema)(
       await import(pathToFileURL(path.join(fixture.root, inventoryActionGatewayFile)).href),
     );
@@ -1507,6 +1519,7 @@ void test('generated verifier executes real Shell assertions and overlapping Ed2
       }),
     };
     const currentAssertion = await issue(current.configuration, 1_700_000_000);
+    const billingAssertion = await issue(current.configuration, 1_700_000_000, 'billing');
     const retiringAssertion = await issue(retiring.configuration, 1_700_000_000);
     const testRedemption = { consume: () => Effect.void };
     const verify = async (token: string, override = environment, now = 1_700_000_001) =>
@@ -1519,6 +1532,36 @@ void test('generated verifier executes real Shell assertions and overlapping Ed2
       );
 
     assert.deepEqual(await verify(currentAssertion.token), principal);
+    assert.deepEqual(
+      await runEffectTestPromise(
+        billingGeneratedModule.verifyActionPrincipal(`Bearer ${billingAssertion.token}`, {
+          currentTimeSeconds: Effect.succeed(1_700_000_001),
+          environment,
+          redemption: testRedemption,
+        }),
+      ),
+      principal,
+    );
+    await assert.rejects(
+      runEffectTestPromise(
+        generatedModule.verifyActionPrincipal(`Bearer ${billingAssertion.token}`, {
+          currentTimeSeconds: Effect.succeed(1_700_000_001),
+          environment,
+          redemption: testRedemption,
+        }),
+      ),
+      isGeneratedPrincipalError('ActionPrincipalScopeError'),
+    );
+    await assert.rejects(
+      runEffectTestPromise(
+        billingGeneratedModule.verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
+          currentTimeSeconds: Effect.succeed(1_700_000_001),
+          environment,
+          redemption: testRedemption,
+        }),
+      ),
+      isGeneratedPrincipalError('ActionPrincipalScopeError'),
+    );
     assert.deepEqual(await verify(retiringAssertion.token), principal);
     await assert.rejects(
       verify('not-a-jwt'),
@@ -4686,6 +4729,9 @@ void test('all generated files typecheck against the real workspace contracts', 
             ],
             '@app/core-runtime/outbox/worker': [
               path.join(appRoot, 'packages/core-runtime/src/outbox/worker-entrypoint.ts'),
+            ],
+            '@app/gateway-principal-verifier/server': [
+              path.join(appRoot, 'packages/gateway-principal-verifier/src/server.ts'),
             ],
             '@app/inventory-stock/outbox/*': ['./verticals/inventory-stock/shared/outbox/*.ts'],
             '@app/shared-contracts': [path.join(appRoot, 'packages/shared-contracts/src/index.ts')],
