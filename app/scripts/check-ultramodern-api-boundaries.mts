@@ -131,11 +131,6 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     configuredMicroVerticalApiStem(verticalPath, topology.verticals ?? []) ??
     path.basename(verticalPath);
 
-  const verticalOwnerId = (verticalPath: string): string =>
-    (topology.verticals ?? []).find(
-      (vertical) => (vertical.path ?? `verticals/${vertical.id}`) === verticalPath,
-    )?.id ?? path.basename(verticalPath);
-
   const topologyVertical = (verticalPath: string) =>
     (topology.verticals ?? []).find(
       (vertical) => (vertical.path ?? `verticals/${vertical.id}`) === verticalPath,
@@ -203,6 +198,10 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     content: string,
   ): boolean => {
     const stem = verticalApiStem(verticalPath);
+    const apiPrefix = topologyVertical(verticalPath)?.api?.bff?.prefix;
+    const contractStem = stem.replaceAll(/-(?<letter>[a-z0-9])/gu, (_match, letter: string) =>
+      letter.toUpperCase(),
+    );
     const endpoints = [
       ...content.matchAll(
         /HttpApiEndpoint\.(?<method>get|post)\(\s*'(?<name>[^']+)'\s*,\s*'(?<route>[^']+)'/gu,
@@ -214,10 +213,12 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       return `${method}:${name}:${route}`;
     });
     return (
+      apiPrefix !== undefined &&
       endpoints.length === 1 &&
+      [...content.matchAll(/\.addHttpApi\s*\(/gu)].length === 1 &&
       endpoints[0] === `get:readiness:/${stem}/readiness` &&
-      content.includes(`export const ${stem}ApiContract = {`) &&
-      content.includes(`readinessPath: '/${stem}-api/${stem}/readiness'`)
+      content.includes(`export const ${contractStem}ApiContract = {`) &&
+      content.includes(`readinessPath: '${apiPrefix}/${stem}/readiness'`)
     );
   };
 
@@ -485,26 +486,34 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
         if (appPath.startsWith('verticals/')) {
           const apiStem = verticalApiStem(appPath);
           const vertical = topologyVertical(appPath);
-          const baselineViolation = microVerticalApiBaselineViolation(
-            apiStem,
-            path.join(workspaceRoot, sharedApi),
-            {
-              additionalPaths:
-                apiStem === 'checkout'
-                  ? { checkoutCartPath: `${vertical?.api?.basePath ?? ''}/cart` }
-                  : {},
-              apiPrefix: vertical?.api?.bff?.prefix ?? '',
-              basePath: vertical?.api?.basePath ?? '',
-              effectClientPackage: '@modern-js/plugin-bff/effect-client',
-              ownerId: vertical?.id ?? verticalOwnerId(appPath),
-              readinessPath: `${vertical?.api?.basePath ?? ''}/readiness`,
-              sharedContractsPackage: '@app/shared-contracts',
-            },
-          );
-          assert(
-            baselineViolation === undefined,
-            `${sharedApi}: ${baselineViolation ?? 'invalid MicroVertical API baseline'}.`,
-          );
+          const basePath = vertical?.api?.basePath;
+          const apiPrefix = vertical?.api?.bff?.prefix;
+          if (vertical === undefined) {
+            fail(`${sharedApi}: topology must declare this MicroVertical owner.`);
+          } else if (basePath === undefined || basePath.length === 0) {
+            fail(`${sharedApi}: topology must declare api.basePath.`);
+          } else if (apiPrefix === undefined || apiPrefix.length === 0) {
+            fail(`${sharedApi}: topology must declare api.bff.prefix.`);
+          } else {
+            const baselineViolation = microVerticalApiBaselineViolation(
+              apiStem,
+              path.join(workspaceRoot, sharedApi),
+              {
+                additionalPaths:
+                  apiStem === 'checkout' ? { checkoutCartPath: `${basePath}/cart` } : {},
+                apiPrefix,
+                basePath,
+                effectClientPackage: '@modern-js/plugin-bff/effect-client',
+                ownerId: vertical.id,
+                readinessPath: `${basePath}/readiness`,
+                sharedContractsPackage: '@app/shared-contracts',
+              },
+            );
+            assert(
+              baselineViolation === undefined,
+              `${sharedApi}: ${baselineViolation ?? 'invalid MicroVertical API baseline'}.`,
+            );
+          }
         }
       }
 

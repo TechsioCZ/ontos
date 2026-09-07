@@ -1,7 +1,7 @@
 /// <reference types="node" />
 
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type { ExecFileSyncOptionsWithStringEncoding } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
@@ -29,6 +29,7 @@ const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 const partyId = 'party-registry';
 const generatedFixtureId = 'inventory-stock';
 const generatedApiPrefix = '/inventory-stock-api';
+const generatedServiceModuleName = 'api/service';
 const generatedApiServiceModule = 'dist/esm-node/ultramodern-workspace/api/service.js';
 const generatedSharedApiImport = '../shared/api.ts';
 const generatedSharedRpcImport = '../shared/rpc.ts';
@@ -52,11 +53,13 @@ const generatedSharedApiModule = 'api/shared';
 const generatedSharedContractsPackage = '@generated-proof/shared-contracts';
 const effectClientPackage = '@modern-js/plugin-bff/effect-client';
 const generatedBaselineTemplateEntry = 'src/index.ts';
+const apiBoundaryCheckerPath = 'scripts/check-ultramodern-api-boundaries.mts';
 const topologyReferencePath = 'topology/reference-topology.json';
 const checkoutId = 'checkout';
 const checkoutApiPrefix = '/checkout-api';
 const inventoryStockId = 'inventory-stock';
 const warehouseItemsApiStem = 'warehouse-items';
+const warehouseApiPrefix = '/warehouse-api';
 const partyReadinessMetadataLine =
   "  readinessPath: '/party-registry-api/party-registry/readiness',";
 
@@ -2178,7 +2181,7 @@ void test('all published scaffold formats generate the shared MicroVertical API 
       const descriptorPath = generatorModulePath('descriptors');
       const sharedApiPath = generatorModulePath(generatedSharedApiModule);
       const clientPath = generatorModulePath('api/client');
-      const servicePath = generatorModulePath('api/service');
+      const servicePath = generatorModulePath(generatedServiceModuleName);
       const descriptorSource: unknown =
         moduleFormat === 'cjs'
           ? require(descriptorPath)
@@ -2234,7 +2237,7 @@ void test('all published scaffold formats generate the shared MicroVertical API 
 
       const customStemApp = {
         ...app,
-        api: { ...app.api, prefix: '/warehouse-api', stem: warehouseItemsApiStem },
+        api: { ...app.api, prefix: warehouseApiPrefix, stem: warehouseItemsApiStem },
       };
       const customStemContract = sharedApiModule.createSharedApi(
         generatedProofScope,
@@ -2243,7 +2246,7 @@ void test('all published scaffold formats generate the shared MicroVertical API 
       assert.equal(
         microVerticalApiBaselineViolation(warehouseItemsApiStem, customStemContract, {
           ...generatedBaselineExpectation,
-          apiPrefix: '/warehouse-api',
+          apiPrefix: warehouseApiPrefix,
           basePath: `/warehouse-api/${warehouseItemsApiStem}`,
           readinessPath: `/warehouse-api/${warehouseItemsApiStem}/readiness`,
         }),
@@ -2309,9 +2312,7 @@ void test('all published scaffold formats emit the executable AST baseline valid
       const helper = artifacts.find(
         ({ relativePath }) => relativePath === 'scripts/microvertical-api-baseline-boundary.mts',
       );
-      const checker = artifacts.find(
-        ({ relativePath }) => relativePath === 'scripts/check-ultramodern-api-boundaries.mts',
-      );
+      const checker = artifacts.find(({ relativePath }) => relativePath === apiBoundaryCheckerPath);
       assert.ok(helper, `${moduleFormat} must emit the AST baseline helper`);
       assert.ok(checker, `${moduleFormat} must emit the API checker`);
       assert.equal(
@@ -2349,6 +2350,12 @@ void test('all published scaffold formats emit the executable AST baseline valid
         api: { prefix: checkoutApiPrefix, stem: checkoutId },
         exposes: {},
       };
+      const servicePath = generatorModulePath(generatedServiceModuleName);
+      const serviceSource: unknown =
+        moduleFormat === 'cjs'
+          ? require(servicePath)
+          : await import(pathToFileURL(servicePath).href);
+      const serviceModule = Schema.decodeUnknownSync(ApiServiceGeneratorSchema)(serviceSource);
       const checkoutWorkspace = path.join(formatRoot, 'checkout-workspace');
       await writeText(
         checkoutWorkspace,
@@ -2358,11 +2365,11 @@ void test('all published scaffold formats emit the executable AST baseline valid
       await writeText(
         checkoutWorkspace,
         'verticals/shopping/api/index.ts',
-        `import { HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';
-import { Layer } from 'effect';
-import { checkoutApi } from '../shared/api.ts';
-export const runtime = defineEffectBff(checkoutApi, HttpApiBuilder, Layer);
-`,
+        serviceModule.createApiServiceEntry(
+          generatedProofScope,
+          checkoutStemDescriptor,
+          generatedSharedApiImport,
+        ),
       );
       await writeText(
         checkoutWorkspace,
@@ -2517,7 +2524,11 @@ void test('two generated MicroVertical root contracts execute invariant readines
       await writeText(
         ownerRoot,
         apiIndexFile,
-        apiServiceModule.createApiServiceEntry('app', generatedDescriptor, generatedSharedApiImport),
+        apiServiceModule.createApiServiceEntry(
+          'app',
+          generatedDescriptor,
+          generatedSharedApiImport,
+        ),
       );
       const clientEntryPath = `src/api/${fixture.id}-client.ts`;
       await writeText(
@@ -2649,6 +2660,124 @@ void test('generated shared-contracts baseline template is lint-clean and type-s
     [path.join(workspaceRoot, 'node_modules/@typescript/native-preview/bin/tsc'), '-p', proofRoot],
     { cwd: workspaceRoot },
   );
+});
+
+void test('baseline imports require values even with comments after the type keyword', async () => {
+  const contract = await readFile(
+    path.join(workspaceRoot, `verticals/${partyId}/shared/api.ts`),
+    'utf-8',
+  );
+  assert.equal(microVerticalApiBaselineViolation(partyId, contract), undefined);
+  for (const declaration of [
+    'import type ',
+    'import type/* comment */ ',
+    'import /* comment */ ',
+  ]) {
+    const mutated = contract.replace(
+      'import {\n  MicroVerticalBuildMarkerSchema,',
+      `${declaration}{\n  MicroVerticalBuildMarkerSchema,`,
+    );
+    const violation = microVerticalApiBaselineViolation(partyId, mutated);
+    if (declaration.startsWith('import type')) {
+      assert.match(violation ?? '', /import exact baseline primitives/u);
+    } else {
+      assert.equal(violation, undefined);
+    }
+  }
+});
+
+void test('repository checker respects custom readiness prefixes and diagnoses missing topology', async (context) => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), 'ontos-baseline-topology-'));
+  context.after(async (): Promise<void> => {
+    await rm(fixture, { force: true, recursive: true });
+  });
+  const generatorModulePath = (name: string): string =>
+    path.join(generatorRoot, `dist/esm-node/ultramodern-workspace/${name}.js`);
+  const descriptors = Schema.decodeUnknownSync(DescriptorModuleSchema)(
+    await import(pathToFileURL(generatorModulePath('descriptors')).href),
+  );
+  const shared = Schema.decodeUnknownSync(SharedApiGeneratorSchema)(
+    await import(pathToFileURL(generatorModulePath(generatedSharedApiModule)).href),
+  );
+  const service = Schema.decodeUnknownSync(ApiServiceGeneratorSchema)(
+    await import(pathToFileURL(generatorModulePath(generatedServiceModuleName)).href),
+  );
+  const app = {
+    ...descriptors.createVerticalDescriptor(inventoryStockId, 4103),
+    api: { prefix: warehouseApiPrefix, stem: warehouseItemsApiStem },
+    exposes: {},
+  };
+  const ownerPath = `verticals/${inventoryStockId}`;
+  const readinessContract = shared
+    .createSharedApi('app', app)
+    .replace(
+      /(?<foundation>\.addHttpApi\(warehouseItemsFoundationApi\))[\s\S]*?(?=export const warehouseItemsOperationContexts)/u,
+      '$<foundation>;\n\n',
+    )
+    .replace(
+      /(?<declaration>export const warehouseItemsOperationContexts = \{)[\s\S]*?(?= {2}readiness:)/u,
+      '$<declaration>\n',
+    );
+  await writeText(fixture, `${ownerPath}/shared/api.ts`, readinessContract);
+  await writeText(
+    fixture,
+    `${ownerPath}/api/index.ts`,
+    service.createApiServiceEntry('app', app, generatedSharedApiImport),
+  );
+  await writeText(
+    fixture,
+    `${ownerPath}/src/api/warehouse-client.ts`,
+    'export const client = true;\n',
+  );
+  await writeJson(fixture, `${ownerPath}/package.json`, { exports: {} });
+  const api = {
+    basePath: '/warehouse-api/warehouse-items',
+    bff: { prefix: warehouseApiPrefix, strictEffectApproach: true },
+    readiness: { endpoint: '/warehouse-items/readiness' },
+    runtime: 'effect',
+    serverEntry: `${ownerPath}/api/index.ts`,
+  };
+  const vertical = { api, id: inventoryStockId, path: ownerPath };
+  await writeJson(fixture, topologyReferencePath, { verticals: [vertical] });
+  const check = (): string =>
+    runNode([path.join(workspaceRoot, apiBoundaryCheckerPath)], {
+      env: { ULTRAMODERN_WORKSPACE_ROOT: fixture },
+    });
+  assert.match(check(), /UltraModern API boundary check passed/u);
+  const cases = [
+    { expected: /topology must declare this MicroVertical owner/u, verticals: [] },
+    {
+      expected: /topology must declare api\.basePath/u,
+      verticals: [
+        {
+          ...vertical,
+          api: {
+            bff: api.bff,
+            readiness: api.readiness,
+            runtime: api.runtime,
+            serverEntry: api.serverEntry,
+          },
+        },
+      ],
+    },
+    {
+      expected: /topology must declare api\.bff\.prefix/u,
+      verticals: [{ ...vertical, api: { ...api, bff: { strictEffectApproach: true } } }],
+    },
+  ];
+  for (const entry of cases) {
+    writeFileSync(
+      path.join(fixture, topologyReferencePath),
+      JSON.stringify({ verticals: entry.verticals }),
+    );
+    const result = spawnSync(process.execPath, [path.join(workspaceRoot, apiBoundaryCheckerPath)], {
+      encoding: 'utf-8',
+      env: { ULTRAMODERN_WORKSPACE_ROOT: fixture },
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, entry.expected);
+    assert.doesNotMatch(result.stderr, /exact owner and API path metadata/u);
+  }
 });
 
 // oxlint-disable-next-line complexity -- This table-driven adversarial test keeps every fail-closed mutation visible. expires: 2026-12-31.

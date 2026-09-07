@@ -278,7 +278,7 @@ const importsExactBindings = (
     if (
       !isImportDeclaration(statement) ||
       stringLiteral(statement.moduleSpecifier) !== expectedPackage ||
-      statement.importClause?.getText().trimStart().startsWith('type ') === true ||
+      statement.importClause?.phaseModifier === SyntaxKind.TypeKeyword ||
       statement.importClause?.namedBindings === undefined ||
       !isNamedImports(statement.importClause.namedBindings)
     ) {

@@ -4031,7 +4031,7 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..8571da05a5600012e01001a97e6e1bac
    }
   if (exists(backendEffectExpose)) {
   const backendExpose = readText(backendEffectExpose);
-@@ -300,6 +1417,48 @@ function assertApiSurface(appPath) {
+@@ -300,6 +1417,62 @@ function assertApiSurface(appPath) {
        /\bSchema\./u,
        'must use Schema for request, response and error shapes.',
      );
@@ -4051,7 +4051,21 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..8571da05a5600012e01001a97e6e1bac
 +        vertical !== undefined,
 +        `${sharedApi}: topology must declare this MicroVertical owner.`,
 +      );
-+      if (apiStem !== undefined && vertical !== undefined) {
++      const basePath = vertical?.api?.basePath;
++      const apiPrefix = vertical?.api?.bff?.prefix;
++      assert(
++        typeof basePath === 'string' && basePath.length > 0,
++        `${sharedApi}: topology must declare api.basePath.`,
++      );
++      assert(
++        typeof apiPrefix === 'string' && apiPrefix.length > 0,
++        `${sharedApi}: topology must declare api.bff.prefix.`,
++      );
++      if (
++        apiStem !== undefined && vertical !== undefined &&
++        typeof basePath === 'string' && basePath.length > 0 &&
++        typeof apiPrefix === 'string' && apiPrefix.length > 0
++      ) {
 +        const sharedContractsPackage = JSON.parse(
 +          readText('packages/shared-contracts/package.json'),
 +        ).name;
@@ -4061,13 +4075,13 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..8571da05a5600012e01001a97e6e1bac
 +          {
 +            additionalPaths:
 +              apiStem === 'checkout'
-+                ? { checkoutCartPath: `${vertical.api?.basePath}/cart` }
++                ? { checkoutCartPath: `${basePath}/cart` }
 +                : {},
-+            apiPrefix: vertical.api?.bff?.prefix,
-+            basePath: vertical.api?.basePath,
++            apiPrefix,
++            basePath,
 +            effectClientPackage: '@modern-js/plugin-bff/effect-client',
 +            ownerId: vertical.id,
-+            readinessPath: `${vertical.api?.basePath}/readiness`,
++            readinessPath: `${basePath}/readiness`,
 +            sharedContractsPackage,
 +          },
 +        );
@@ -4080,7 +4094,7 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..8571da05a5600012e01001a97e6e1bac
    }
  
    if (exists(modernConfig)) {
-@@ -373,7 +1532,6 @@ if (exists('package.json')) {
+@@ -373,7 +1546,6 @@ if (exists('package.json')) {
  }
  
  if (exists('topology/reference-topology.json')) {
@@ -4374,7 +4388,7 @@ index 0000000000000000000000000000000000000000..654b081d089f3dd1980b477aa657dc8c
 +    if (
 +      !isImportDeclaration(statement) ||
 +      stringLiteral(statement.moduleSpecifier) !== expectedPackage ||
-+      statement.importClause?.getText().trimStart().startsWith('type ') === true ||
++      statement.importClause?.phaseModifier === SyntaxKind.TypeKeyword ||
 +      statement.importClause?.namedBindings === undefined ||
 +      !isNamedImports(statement.importClause.namedBindings)
 +    ) {
