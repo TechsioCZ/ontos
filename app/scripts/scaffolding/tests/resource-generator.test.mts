@@ -18,6 +18,7 @@ const tscPath = path.join(appRoot, 'node_modules', '.bin', 'tsc');
 const verticalName = 'property-registry';
 const moduleId = 'property.registry';
 const resourceName = 'rental-unit';
+const verticalFlag = '--vertical';
 const resourceType = `${moduleId}.${resourceName}`;
 const tenantId = '00000000-0000-4000-8000-000000000001';
 const verticalRoot = `verticals/${verticalName}`;
@@ -161,7 +162,7 @@ export declare const ShellSearchContributionSchema: Schema.Codec<unknown, unknow
   );
   await symlink(path.join(appRoot, 'node_modules/effect'), path.join(root, 'node_modules/effect'));
   await runEffectTestPromise(
-    runScaffoldEffect('module-contract', ['--vertical', verticalName, '--module', moduleId], {
+    runScaffoldEffect('module-contract', [verticalFlag, verticalName, '--module', moduleId], {
       workspaceRoot: root,
     }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -179,7 +180,7 @@ const withFixture = async (run: (root: string) => Promise<void>): Promise<void> 
 
 const scaffoldResource = async (root: string, resource = resourceName) =>
   await runEffectTestPromise(
-    runScaffoldEffect('resource', ['--vertical', verticalName, '--resource', resource], {
+    runScaffoldEffect('resource', [verticalFlag, verticalName, '--resource', resource], {
       workspaceRoot: root,
     }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -374,11 +375,11 @@ void test('waits for an interrupted Codesmith write before removing its scoped o
     materialsManager: smith.materialsManager,
     outputPath: root,
   });
-  const started = Promise.withResolvers<void>();
-  const release = Promise.withResolvers<void>();
+  const started = Promise.withResolvers<null>();
+  const release = Promise.withResolvers<null>();
   const events: string[] = [];
   context.mock.method(core.output, 'fs', async () => {
-    started.resolve();
+    started.resolve(null);
     await release.promise;
     await mkdir(root, { recursive: true });
     await writeFile(path.join(root, 'generated.ts'), 'export {};');
@@ -392,14 +393,14 @@ void test('waits for an interrupted Codesmith write before removing its scoped o
           Effect.gen(function* writeScopedOutput() {
             yield* Effect.addFinalizer(() =>
               fileSystem
-                .remove(root, { recursive: true, force: true })
+                .remove(root, { force: true, recursive: true })
                 .pipe(Effect.orDie, Effect.andThen(Effect.sync(() => events.push('cleanup')))),
             );
             yield* applyMutationPlanEffect(core, {
               mutations: [
-                { kind: 'create', path: path.join(root, 'generated.ts'), content: 'export {};' },
+                { content: 'export {};', kind: 'create', path: path.join(root, 'generated.ts') },
               ],
-              result: undefined,
+              result: null,
             });
           }),
         ),
@@ -408,7 +409,7 @@ void test('waits for an interrupted Codesmith write before removing its scoped o
       const interruption = yield* Effect.forkChild(Fiber.interrupt(worker));
       yield* Effect.yieldNow;
       assert.deepEqual(events, []);
-      release.resolve();
+      release.resolve(null);
       yield* Fiber.join(interruption);
       assert.deepEqual(events, ['write', 'cleanup']);
       assert.equal(yield* fileSystem.exists(root), false);
@@ -421,7 +422,7 @@ void test('reports synchronous malformed-owner validation through the typed comm
     await writeFile(path.join(root, verticalPackagePath), '[]');
     const before = await snapshotTree(root);
     const failure = await runEffectTestPromise(
-      runScaffoldEffect('resource', ['--vertical', verticalName, '--resource', resourceName], {
+      runScaffoldEffect('resource', [verticalFlag, verticalName, '--resource', resourceName], {
         workspaceRoot: root,
       }).pipe(Effect.flip, Effect.provide(NodeServices.layer)),
     );

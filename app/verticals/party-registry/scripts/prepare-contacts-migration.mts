@@ -50,7 +50,8 @@ const query = <Row extends QueryResultRow = QueryResultRow>(
 ): Effect.Effect<QueryResult<Row>, ContactsMigrationError> =>
   Effect.tryPromise({
     catch: (cause) => databaseFailure(`PostgreSQL query failed: ${text}`, cause),
-    try: async () => await client.query<Row>(text),
+    // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+    try: () => client.query<Row>(text),
   }).pipe(
     Effect.timeoutOrElse({
       duration: POSTGRES_OPERATION_TIMEOUT,
@@ -67,7 +68,8 @@ const connect = Effect.fn('ContactsMigration.connect')(function* connectEffect(
   });
   yield* Effect.tryPromise({
     catch: (cause) => databaseFailure('Unable to connect to PostgreSQL', cause),
-    try: async () => await client.connect(),
+    // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+    try: () => client.connect(),
   }).pipe(
     Effect.timeoutOrElse({
       duration: POSTGRES_OPERATION_TIMEOUT,
@@ -81,7 +83,8 @@ const connect = Effect.fn('ContactsMigration.connect')(function* connectEffect(
 const close = (client: Client) =>
   Effect.tryPromise({
     catch: (cause) => databaseFailure('Unable to close the PostgreSQL connection', cause),
-    try: async () => await client.end(),
+    // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+    try: () => client.end(),
   }).pipe(
     Effect.timeoutOrElse({
       duration: POSTGRES_OPERATION_TIMEOUT,

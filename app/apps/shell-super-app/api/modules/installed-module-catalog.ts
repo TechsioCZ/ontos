@@ -137,7 +137,8 @@ const readResponseChunks = (
 > =>
   Effect.tryPromise({
     catch: unavailable,
-    try: async () => await reader.read(),
+    // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign stream Promise boundary.
+    try: () => reader.read(),
   }).pipe(
     Effect.timeout(timeout),
     Effect.flatMap((next) => {
@@ -195,7 +196,8 @@ const readBoundedContract = Effect.fn('ShellInstalledModuleCatalog.readBoundedCo
     const text = yield* Effect.acquireUseRelease(
       Effect.succeed(reader),
       (bodyReader) => collectResponseBody(bodyReader, maxBytes, timeout),
-      (bodyReader) => Effect.promise(async () => await bodyReader.cancel()).pipe(Effect.ignore),
+      // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign stream Promise boundary.
+      (bodyReader) => Effect.promise(() => bodyReader.cancel()).pipe(Effect.ignore),
     );
     return yield* decodeContractDocument(text).pipe(Effect.mapError((cause) => invalid(cause)));
   },

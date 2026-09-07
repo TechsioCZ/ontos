@@ -66,10 +66,18 @@ const readSnapshotPosition = (
   );
 
 const beginTransaction = (client: PoolClient) =>
-  Effect.tryPromise(async () => await client.query('begin'));
+  Effect.tryPromise({
+    catch: (cause) => new Cause.UnknownError(cause),
+    // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+    try: () => client.query('begin'),
+  });
 
 const commitTransaction = (client: PoolClient) =>
-  Effect.tryPromise(async () => await client.query('commit'));
+  Effect.tryPromise({
+    catch: (cause) => new Cause.UnknownError(cause),
+    // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+    try: () => client.query('commit'),
+  });
 
 const insertPendingEvent = (
   client: PoolClient,
@@ -77,13 +85,15 @@ const insertPendingEvent = (
   tenantId: string,
   pendingSubjectId: string,
 ) =>
-  Effect.tryPromise(
-    async () =>
-      await client.query(
+  Effect.tryPromise({
+    catch: (cause) => new Cause.UnknownError(cause),
+    // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+    try: () =>
+      client.query(
         `insert into core.domain_events (domain_event_id, tenant_id, producer_module_key, event_type, subject_module_key, subject_resource_type, subject_resource_id) values ($1, $2, 'party.registry', 'party.registry.party-updated.v1', 'party.registry', 'party.registry.party', $3)`,
         [pendingEventId, tenantId, pendingSubjectId],
       ),
-  );
+  });
 
 const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
   const crypto = yield* Crypto.Crypto;
@@ -108,59 +118,79 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
   const insertEvent = (id: string) =>
     Effect.gen(function* insertDomainEvent() {
       const subjectId = yield* crypto.randomUUIDv4;
-      const result = yield* Effect.tryPromise(
-        async () =>
-          await admin.query<{ tenant_sequence_no: string }>(
+      const result = yield* Effect.tryPromise({
+        catch: (cause) => new Cause.UnknownError(cause),
+        // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+        try: () =>
+          admin.query<{ tenant_sequence_no: string }>(
             `insert into core.domain_events (domain_event_id, tenant_id, producer_module_key, event_type, subject_module_key, subject_resource_type, subject_resource_id) values ($1, $2, 'party.registry', 'party.registry.party-updated.v1', 'party.registry', 'party.registry.party', $3) returning tenant_sequence_no::text`,
             [id, tenantId, subjectId],
           ),
-      );
+      });
       const [row] = result.rows;
       assert.ok(row);
       return row.tenant_sequence_no;
     });
   const cleanup = Effect.gen(function* cleanupWorkerSnapshot() {
-    yield* Effect.tryPromise(
-      async () =>
-        await admin.query('delete from core.search_projection_generations where tenant_id = $1', [
+    yield* Effect.tryPromise({
+      catch: (cause) => new Cause.UnknownError(cause),
+      // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+      try: () =>
+        admin.query('delete from core.search_projection_generations where tenant_id = $1', [
           tenantId,
         ]),
-    );
-    yield* Effect.tryPromise(
-      async () =>
-        await admin.query('delete from core.domain_events where tenant_id = $1', [tenantId]),
-    );
-    yield* Effect.tryPromise(
-      async () =>
-        await admin.query('delete from core.legal_entities where tenant_id = $1', [tenantId]),
-    );
-    yield* Effect.tryPromise(
-      async () => await admin.query('delete from core.tenants where tenant_id = $1', [tenantId]),
-    );
+    });
+    yield* Effect.tryPromise({
+      catch: (cause) => new Cause.UnknownError(cause),
+      // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+      try: () => admin.query('delete from core.domain_events where tenant_id = $1', [tenantId]),
+    });
+    yield* Effect.tryPromise({
+      catch: (cause) => new Cause.UnknownError(cause),
+      // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+      try: () => admin.query('delete from core.legal_entities where tenant_id = $1', [tenantId]),
+    });
+    yield* Effect.tryPromise({
+      catch: (cause) => new Cause.UnknownError(cause),
+      // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+      try: () => admin.query('delete from core.tenants where tenant_id = $1', [tenantId]),
+    });
     yield* Effect.all(
       [
-        Effect.tryPromise(async () => await admin.end()),
-        Effect.tryPromise(async () => await runtimePool.end()),
+        Effect.tryPromise({
+          catch: (cause) => new Cause.UnknownError(cause),
+          // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+          try: () => admin.end(),
+        }),
+        Effect.tryPromise({
+          catch: (cause) => new Cause.UnknownError(cause),
+          // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+          try: () => runtimePool.end(),
+        }),
       ],
       { concurrency: 'unbounded' },
     );
   }).pipe(Effect.orDie);
 
   yield* Effect.gen(function* exerciseWorkerSnapshots() {
-    yield* Effect.tryPromise(
-      async () =>
-        await admin.query(
+    yield* Effect.tryPromise({
+      catch: (cause) => new Cause.UnknownError(cause),
+      // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+      try: () =>
+        admin.query(
           `insert into core.tenants (tenant_id, slug, name, status, default_locale) values ($1, $2, 'Snapshot tenant', 'active', 'en')`,
           [tenantId, `snapshot-${tenantId}`],
         ),
-    );
-    yield* Effect.tryPromise(
-      async () =>
-        await admin.query(
+    });
+    yield* Effect.tryPromise({
+      catch: (cause) => new Cause.UnknownError(cause),
+      // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+      try: () =>
+        admin.query(
           `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values ($1::uuid, $2, 'Snapshot LE', 'CZ', $1::uuid::text, 'active')`,
           [legalEntityId, tenantId],
         ),
-    );
+    });
     const originalVersion = yield* insertEvent(eventId);
     const [claimId, deliveryId, messageId] = yield* Effect.all(
       [crypto.randomUUIDv4, crypto.randomUUIDv4, crypto.randomUUIDv4],
@@ -237,15 +267,21 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
       (blocked) =>
         blocked
           ? Effect.succeed(true)
-          : Effect.tryPromise(async () => await admin.query('select pg_sleep(0.01)')).pipe(
+          : Effect.tryPromise({
+              catch: (cause) => new Cause.UnknownError(cause),
+              // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+              try: () => admin.query('select pg_sleep(0.01)'),
+            }).pipe(
               Effect.andThen(
-                Effect.tryPromise(
-                  async () =>
-                    await admin.query<{ count: number }>(
+                Effect.tryPromise({
+                  catch: (cause) => new Cause.UnknownError(cause),
+                  // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+                  try: () =>
+                    admin.query<{ count: number }>(
                       `select count(*)::int as count from pg_stat_activity where application_name = $1 and wait_event_type = 'Lock'`,
                       [applicationName],
                     ),
-                ),
+                }),
               ),
               Effect.map((activity) => activity.rows[0]?.count === 1),
             ),
@@ -284,13 +320,18 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
         });
       });
     yield* Effect.acquireUseRelease(
-      Effect.tryPromise(async () => await admin.connect()),
+      Effect.tryPromise({
+        catch: (cause) => new Cause.UnknownError(cause),
+        // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+        try: () => admin.connect(),
+      }),
       lateCommitSnapshot,
       (pending) =>
-        Effect.tryPromise(async () => await pending.query('rollback')).pipe(
-          Effect.orDie,
-          Effect.ensuring(Effect.sync(() => pending.release())),
-        ),
+        Effect.tryPromise({
+          catch: (cause) => new Cause.UnknownError(cause),
+          // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+          try: () => pending.query('rollback'),
+        }).pipe(Effect.orDie, Effect.ensuring(Effect.sync(() => pending.release()))),
     );
   }).pipe(Effect.ensuring(cleanup));
 });
