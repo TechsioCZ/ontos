@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./problem-details": "./src/problem-details.ts",
-    "./client-runtime": "./src/client-runtime.ts"
+    "./client-runtime": "./src/client-runtime.ts",
+    "./server/effect-bff-runtime": "./src/effect-bff-runtime.ts"
   },
   "scripts": {
     "test:types": "node ../../scripts/ultramodern-typecheck.mts --project tests/tsconfig.json && node ../../scripts/ultramodern-typecheck.mts --project tests/client-runtime-types.tsconfig.json",
