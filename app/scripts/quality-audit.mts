@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import nodePath from 'node:path';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import {
   Array as EffectArray,
@@ -459,11 +460,17 @@ export const validateReport = Effect.fn('qualityAudit.validateReport')(
 );
 
 const collectSourceFiles = Effect.fn('qualityAudit.collectSourceFiles')(
-  function* collectSourceFilesEffect(root: string) {
+  function* collectSourceFilesEffect(root: string, output: string) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const source = yield* fs.readFileString(path.join(root, 'quality-audit/scope.json'));
     const scope = yield* decodeReport(ScopeSchema, source, 'quality-audit/scope.json');
+    const consumerSnapshot = path.join(path.relative(root, output), 'knip-consumers.mts');
+    if (scope.patterns.some((pattern) => nodePath.matchesGlob(consumerSnapshot, pattern))) {
+      return yield* failure(
+        'Choose an output directory outside configured source roots, such as .codex/reports/quality-audit',
+      );
+    }
     const groups = yield* Effect.forEach(
       scope.patterns,
       (pattern) =>
@@ -939,7 +946,7 @@ export const runQualityAudit = Effect.fn('qualityAudit.runQualityAudit')(
       },
     ]);
     const collected = yield* Effect.gen(function* collectAudit() {
-      const files = yield* collectSourceFiles(root);
+      const files = yield* collectSourceFiles(root, output);
       yield* writeJson(path.join(runDirectory, 'source-inventory.json'), {
         count: files.length,
         entries: files.map((file) => ({ group: sourceGroup(file), path: file })),

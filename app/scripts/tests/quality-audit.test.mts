@@ -25,6 +25,7 @@ const FALLOW_HEALTH = 'fallow-health';
 const CONFIG_DIRECTORY = 'quality-audit';
 const REPORT_DIRECTORY = 'reports';
 const KNIP_CONFIG = 'quality-audit/knip.json';
+const CALLER_OWNED_FILE = 'caller-owned.txt';
 const ProvenanceSchema = Schema.fromJsonString(
   Schema.Struct({
     sourceState: Schema.String,
@@ -345,7 +346,7 @@ await test('real pinned tools report debt successfully and isolate stale reports
   try {
     await runFixture(root, output, 'all');
     const first = await summary(output);
-    assert.deepEqual(readdirSync(path.join(root, '.codex')), ['caller-owned.txt']);
+    assert.deepEqual(readdirSync(path.join(root, '.codex')), [CALLER_OWNED_FILE]);
     assert.equal(first.status, 'reported');
     assert.equal(first.results.length, 6);
     for (const name of ['knip', 'jscpd', FALLOW_CLONES, FALLOW_HEALTH]) {
@@ -362,7 +363,7 @@ await test('real pinned tools report debt successfully and isolate stale reports
     assert.equal(second.status, 'error');
     assert.notEqual(second.runDirectory, first.runDirectory);
     assert.equal(second.results[0]?.status, 'error');
-    assert.deepEqual(readdirSync(path.join(root, '.codex')), ['caller-owned.txt']);
+    assert.deepEqual(readdirSync(path.join(root, '.codex')), [CALLER_OWNED_FILE]);
     assert.equal(readFileSync(path.join(root, '.codex/caller-owned.txt'), 'utf-8'), 'keep');
     assert.match(
       readFileSync(path.join(output, 'summary.md'), 'utf-8'),
@@ -443,6 +444,24 @@ await test('the CLI handles escaped paths, foreign cwd and untracked source prov
     assert.equal(provenance.sourceState, 'modified');
     assert.ok(provenance.workingTreeChanges.some((file) => file === '?? scripts/index.ts'));
     assert.ok(!provenance.workingTreeChanges.some((file) => file.startsWith('?? reports/')));
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+await test('output inside a source root fails before creating analyzer snapshots', async () => {
+  const root = await createFixture();
+  const output = path.join(root, 'scripts/reports');
+  try {
+    await assert.rejects(runFixture(root, output, 'all'), /analysis failed/u);
+    const report = await summary(output);
+    assert.equal(report.results[0]?.name, 'setup');
+    assert.match(
+      readFileSync(path.join(output, 'summary.md'), 'utf-8'),
+      /output directory outside configured source roots/u,
+    );
+    assert.deepEqual(readdirSync(report.runDirectory), []);
+    assert.deepEqual(readdirSync(path.join(root, '.codex')), [CALLER_OWNED_FILE]);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
