@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import nodeTest from 'node:test';
@@ -37,6 +37,59 @@ const PARTY_MANIFEST_PATH = './vertical.manifest.ts';
 const PARTY_MODULE_ID = 'party.registry';
 const PARTY_OUTBOX_SPECIFIER = '@app/party-registry/outbox/party-created';
 const PARTY_PACKAGE_NAME = '@app/party-registry';
+const INVENTORY_REGISTRATION_FILE = 'verticals/inventory-stock/vertical.registration.ts';
+const STOCK_LIST_LAYER_EXPORT = 'export const stockListReadApiLive =';
+const governedProblemSchemas = (stem: string): string => `error: [
+        ${stem}InvalidProblemSchema,
+        ${stem}AuthenticationProblemSchema,
+        ${stem}ForbiddenProblemSchema,
+        ${stem}NotFoundProblemSchema,
+        ${stem}PolicyConflictProblemSchema,
+        ${stem}PolicyProblemSchema,
+        ${stem}UnavailableProblemSchema,
+        ${stem}InternalProblemSchema,
+      ],`;
+const governedProblemImports = (stem: string): string =>
+  [
+    'Authentication',
+    'Forbidden',
+    'Internal',
+    'Invalid',
+    'NotFound',
+    'PolicyConflict',
+    'Policy',
+    'Unavailable',
+  ]
+    .map((suffix) => `${stem}${suffix}ProblemSchema`)
+    .join(', ');
+const governedProblemDefinitions = (stem: string): string =>
+  (
+    [
+      ['Invalid', 400, false],
+      ['Authentication', 401, false],
+      ['Forbidden', 403, false],
+      ['NotFound', 404, false],
+      ['PolicyConflict', 409, false],
+      ['Policy', 422, false],
+      ['Unavailable', 503, true],
+      ['Internal', 500, false],
+    ] as const
+  )
+    .map(
+      ([suffix, status, retryable]) =>
+        `export const ${stem}${suffix}ProblemSchema = Schema.TaggedStruct('${stem}${suffix}Problem', { detail: Schema.String, ${retryable ? 'retryable: Schema.Literal(true), ' : ''}status: Schema.Literal(${String(status)}), title: Schema.String, type: Schema.String }).pipe(HttpApiSchema.asJson({ contentType: 'application/problem+json' }), HttpApiSchema.status(${String(status)}));`,
+    )
+    .join('\n');
+const governedProblems = (stem: string): string => `const problems = {
+  authentication: () => ${stem}AuthenticationProblemSchema.make({ status: governedReadHttpStatus.authentication }),
+  forbidden: () => ${stem}ForbiddenProblemSchema.make({ status: governedReadHttpStatus.forbidden }),
+  internal: () => ${stem}InternalProblemSchema.make({ status: governedReadHttpStatus.internal }),
+  invalid: () => ${stem}InvalidProblemSchema.make({ status: governedReadHttpStatus.invalid }),
+  notFound: () => ${stem}NotFoundProblemSchema.make({ status: governedReadHttpStatus.notFound }),
+  policyConflict: () => ${stem}PolicyConflictProblemSchema.make({ status: governedReadHttpStatus.policyConflict }),
+  policyIneligible: () => ${stem}PolicyProblemSchema.make({ status: governedReadHttpStatus.policyIneligible }),
+  unavailable: () => ${stem}UnavailableProblemSchema.make({ retryable: true, status: governedReadHttpStatus.unavailable }),
+};`;
 const validAction = `${ACTION_HEADER_FOR_TEST}
 // @ontos-action-owner inventory.stock
 // @ontos-action-slug reserve
@@ -134,60 +187,231 @@ const writeGovernedModuleApi = async (root: string): Promise<void> => {
   await write(
     root,
     `${vertical}/shared/api.ts`,
-    `import { StockListApi } from './apis/stock-list.ts';
+    `// <generated-governed-http-api-imports>
+import { InventorySearchSearchApi } from './apis/inventory-search-search.ts';
+import { StockLevelsReportApi } from './apis/stock-levels-report.ts';
+import { StockListApi } from './apis/stock-list.ts';
+// </generated-governed-http-api-imports>
 export const endpoint = HttpApiEndpoint.post('listStock', '/stock/list');
-export const api = HttpApi.make('InventoryApi').addHttpApi(StockListApi);`,
+export const api = HttpApi.make('InventoryApi')
+  // <generated-governed-http-api-additions>
+  .addHttpApi(InventorySearchSearchApi)
+  .addHttpApi(StockLevelsReportApi)
+  .addHttpApi(StockListApi)
+  // </generated-governed-http-api-additions>
+  .pipe(identity);
+export const governedHttpApi = api;`,
   );
   await write(
     root,
     `${vertical}/shared/apis/stock-list.ts`,
-    `${header}export const StockListApi = HttpApi.make('StockListApi');`,
+    `${header}import { Schema } from 'effect';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from 'effect/unstable/httpapi';
+${governedProblemDefinitions('StockList')}
+export const StockListApi = HttpApi.make('StockListApi').add(
+  HttpApiGroup.make('stockList').add(
+    HttpApiEndpoint.post('execute', '/reads/stock-list', {
+      ${governedProblemSchemas('StockList')}
+      payload: StockListRequestSchema,
+      success: StockListResponseSchema,
+    }),
+  ),
+);`,
   );
   await write(
     root,
     `${vertical}/src/api/stock-list.read.ts`,
-    `${header}export const stockListEntrypoint = defineTenantModuleEntrypoint({ access: 'read', authorization: { kind: 'context_permission', permission: 'module.access' }, entrypointKey: 'inventory.stock.api.stock-list', moduleKey: 'inventory.stock', role: 'api' });
-export const stockListRead = defineRead({ entrypoint: stockListEntrypoint, legalEntityScope: 'optional', permissionTarget: 'tenant', policies: [] });`,
+    `${header}import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
+export const stockListEntrypoint = defineTenantModuleEntrypoint({ access: 'read', authorization: { kind: 'context_permission', permission: 'module.access' }, entrypointKey: 'inventory.stock.api.stock-list', moduleKey: 'inventory.stock', role: 'api' });
+export const stockListRead = defineRead({ accessKind: 'list', entrypoint: stockListEntrypoint, inputSchema: StockListRequestSchema, legalEntityScope: 'optional', owningModuleKey: 'inventory.stock', permissionTarget: 'tenant', policies: [], readKey: 'inventory.stock.api.stock-list', resultSchema: StockListResponseSchema }, () => Effect.succeed({}), () => Effect.succeed({}), () => ({ kind: 'tenant' }));`,
   );
   await write(
     root,
     `${vertical}/src/api/stock-list-client.ts`,
-    `${header}const client = makeEffectHttpApiClient(StockListApi);
-export const execute = () => operationGateway.invoke((authorization) => client.pipe(setHeaders({ authorization, 'x-correlation-id': 'required' })));`,
+    `${header}import { makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
+import { StockListApi } from '../../shared/apis/stock-list.ts';
+import { operationGateway } from './action-gateway.ts';
+const stockListClient = makeEffectHttpApiClient(StockListApi, {});
+export const executeStockListWithAuthorization = () => stockListClient.pipe((client) => client.stockList.execute({ payload: {}, headers: { authorization: 'required', 'x-correlation-id': 'required' } }));
+export const executeStockList = () => operationGateway.invoke((authorization) => executeStockListWithAuthorization(authorization));`,
   );
   await write(
     root,
     `${vertical}/api/stock-list-read-server.ts`,
-    `${header}export const stockListReadApiLive = HttpApiBuilder.group(StockListApi, 'reads', () => authenticateOperationPrincipal(authorization, { authentication: authenticationProblem, unavailable: unavailableProblem }).pipe(Effect.flatMap(() => ReadRuntime), Effect.flatMap((runtime) => runtime.runRead({ registration: stockListRead }))));`,
+    `${header}import { governedReadHttpStatus, makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
+import { HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';
+import { governedHttpApi } from '../shared/api.ts';
+import { ${governedProblemImports('StockList')} } from '../shared/apis/stock-list.ts';
+import { stockListRead } from '../src/api/stock-list.read.ts';
+import { authenticateOperationPrincipal } from './auth/action-principal.ts';
+${governedProblems('StockList')}
+export const stockListReadApiLive = HttpApiBuilder.group(governedHttpApi, 'stockList', (handlers) => handlers.handle('execute', makeGovernedReadHttpHandler({ authenticatePrincipal: authenticateOperationPrincipal, problems, registration: stockListRead })));`,
   );
   await write(
     root,
     `${vertical}/api/auth/action-principal.ts`,
     `// @generated by OntOS Codesmith MicroVertical Action Boundary v1
-export const authenticateOperationPrincipal = true;`,
+import { makeMicroverticalHttpPrincipalAuthentication } from '@app/core-runtime/http/principal-authentication';
+export const authenticateOperationPrincipal = makeMicroverticalHttpPrincipalAuthentication(verifyOperationPrincipal);`,
   );
   await write(
     root,
     `${vertical}/src/api/action-gateway.ts`,
     `// @generated by OntOS Codesmith MicroVertical Action Boundary v1
-export const operationGateway = true;`,
+const actionGateway = makeActionGateway();
+export const operationGateway = actionGateway;`,
+  );
+  await write(
+    root,
+    `${vertical}/api/index.ts`,
+    `// <generated-governed-http-handler-imports>
+import { inventorySearchReadApiLive } from './inventory-search-search-server.ts';
+import { stockLevelsReadApiLive } from './stock-levels-report-server.ts';
+import { stockListReadApiLive } from './stock-list-read-server.ts';
+// </generated-governed-http-handler-imports>
+const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(GovernedReadLayer.provide(governedReadRuntimeDependenciesLive));
+const apiHandlersLive = Layer.mergeAll(
+  // <generated-governed-http-handler-layers>
+  inventorySearchReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  stockLevelsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  // </generated-governed-http-handler-layers>
+);
+const layer = HttpApiBuilder.layer(api).pipe(
+  Layer.provide(apiHandlersLive),
+) satisfies EffectRuntimeLayer;
+export default defineEffectBff({ api, layer });`,
   );
   await write(
     root,
     `${vertical}/vertical.manifest.ts`,
-    `import { StockListApi } from './shared/apis/stock-list.ts';
-export const manifest = { api: { 'stock-list': StockListApi, } };`,
+    `// @ontos-module-id inventory.stock
+// <generated-module-manifest-imports>
+import { StockListApi } from './shared/apis/stock-list.ts';
+// </generated-module-manifest-imports>
+export const manifest = {
+  api: {
+    // <generated-module-manifest-apis>
+    'stock-list': StockListApi,
+    // </generated-module-manifest-apis>
+  },
+  reports: [
+    // <generated-module-manifest-reports>
+    { key: 'inventory.stock.stock-levels' },
+    // </generated-module-manifest-reports>
+  ],
+  search: [
+    // <generated-module-manifest-search>
+    { key: 'inventory.stock.inventory-search' },
+    // </generated-module-manifest-search>
+  ],
+  shellContributions: {
+    reports: [
+      // <generated-module-shell-reports>
+      reportContribution({ contributionKey: 'inventory.stock.report.stock-levels', entrypoint: { entrypointKey: 'inventory.stock.report.stock-levels', role: 'report' } }),
+      // </generated-module-shell-reports>
+    ],
+    search: [
+      // <generated-module-shell-search>
+      searchContribution({ contributionKey: 'inventory.stock.search.inventory-search', entrypoint: { entrypointKey: 'inventory.stock.search.inventory-search', role: 'search' } }),
+      // </generated-module-shell-search>
+    ],
+  },
+};`,
   );
   await write(
     root,
     `${vertical}/vertical.registration.ts`,
-    `export const registration = { api: { 'stock-list': () => import('./src/api/stock-list-client.ts'), } };
+    `export const registration = {
+  api: {
+    // <generated-module-registration-apis>
+    'stock-list': () => import('./src/api/stock-list-client.ts'),
+    // </generated-module-registration-apis>
+  },
+  reports: {
+    // <generated-module-registration-reports>
+    'stock-levels': () => import('./src/api/stock-levels-report-client.ts'),
+    // </generated-module-registration-reports>
+  },
+  search: {
+    // <generated-module-registration-search>
+    'inventory-search': () => import('./src/api/inventory-search-search-client.ts'),
+    // </generated-module-registration-search>
+  },
+};
 // <generated-public-component-registrations>
 // </generated-public-component-registrations>
 // <generated-search-registrations>
 // </generated-search-registrations>
 // <generated-report-registrations>
 // </generated-report-registrations>`,
+  );
+  await Promise.all(
+    (
+      [
+        { kind: 'search-provider', name: 'inventory-search', role: 'search', suffix: 'search' },
+        { kind: 'report', name: 'stock-levels', role: 'report', suffix: 'report' },
+      ] as const
+    ).flatMap((contribution) => {
+      const type = contribution.name
+        .split('-')
+        .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+        .join('');
+      const camel = `${type.slice(0, 1).toLowerCase()}${type.slice(1)}`;
+      const contract = `${contribution.name}-${contribution.suffix}`;
+      const group = `${camel}${contribution.role === 'report' ? 'Report' : 'Search'}`;
+      const apiValue = `${type}${contribution.role === 'report' ? 'Report' : 'Search'}Api`;
+      const contributionHeader = `// @generated by OntOS Codesmith Governed Contribution v1
+// @ontos-contribution-kind ${contribution.kind}
+`;
+      return [
+        write(
+          root,
+          `${vertical}/shared/apis/${contract}.ts`,
+          `${contributionHeader}import { Schema } from 'effect';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from 'effect/unstable/httpapi';
+${governedProblemDefinitions(`${type}Provider`)}
+export const ${apiValue} = HttpApi.make('${apiValue}').add(
+  HttpApiGroup.make('${group}').add(
+    HttpApiEndpoint.post('execute', '/inventory.stock/${contribution.role === 'report' ? 'reports' : 'search'}/${contribution.name}', {
+      ${governedProblemSchemas(`${type}Provider`)}
+      payload: ${type}ProviderRequestSchema,
+      success: ${type}ProviderResponseSchema,
+    }),
+  ),
+);`,
+        ),
+        write(
+          root,
+          `${vertical}/src/${contribution.role === 'report' ? 'reports' : 'search'}/${contribution.name}.provider.ts`,
+          `${contributionHeader}import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
+export const ${camel}Entrypoint = defineTenantModuleEntrypoint({ access: 'read', entrypointKey: 'inventory.stock.${contribution.role}.${contribution.name}', moduleKey: 'inventory.stock', role: '${contribution.role}' });
+export const ${camel}Read = defineRead({ accessKind: '${contribution.role}', entrypoint: ${camel}Entrypoint, inputSchema: ${type}ProviderRequestSchema, legalEntityScope: 'required', owningModuleKey: 'inventory.stock', permissionTarget: 'legal_entity', policies: [], readKey: 'inventory.stock.${contribution.role}.${contribution.name}', resultSchema: ${type}ProviderResponseSchema }, () => Effect.succeed({}), () => Effect.succeed({}), () => ({ kind: 'legal_entity' })${contribution.role === 'search' ? ', (result) => result.map(({ ref }) => ref)' : ''});`,
+        ),
+        write(
+          root,
+          `${vertical}/src/api/${contract}-client.ts`,
+          `${contributionHeader}import { makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
+import { ${apiValue} } from '../../shared/apis/${contract}.ts';
+import { operationGateway } from './action-gateway.ts';
+const ${camel}Client = makeEffectHttpApiClient(${apiValue}, {});
+export const load${type}ClientWithAuthorization = () => ${camel}Client.pipe((client) => client.${group}.execute({ payload: {}, headers: { authorization: 'required', 'x-correlation-id': 'required' } }));
+export const load${type}Client = () => operationGateway.invoke((authorization) => load${type}ClientWithAuthorization(authorization));`,
+        ),
+        write(
+          root,
+          `${vertical}/api/${contract}-server.ts`,
+          `${contributionHeader}import { governedReadHttpStatus, makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
+import { HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';
+import { governedHttpApi } from '../shared/api.ts';
+import { ${governedProblemImports(`${type}Provider`)} } from '../shared/apis/${contract}.ts';
+import { ${camel}Read } from '../src/${contribution.role === 'report' ? 'reports' : 'search'}/${contribution.name}.provider.ts';
+import { authenticateOperationPrincipal } from './auth/action-principal.ts';
+${governedProblems(`${type}Provider`)}
+export const ${camel}ReadApiLive = HttpApiBuilder.group(governedHttpApi, '${group}', (handlers) => handlers.handle('execute', makeGovernedReadHttpHandler({ authenticatePrincipal: authenticateOperationPrincipal, problems, registration: ${camel}Read })));`,
+        ),
+      ];
+    }),
   );
 };
 
@@ -195,36 +419,413 @@ test('accepts only a complete generated governed module API seam', async () => {
   const root = await makeFixture();
   try {
     await writeGovernedModuleApi(root);
-    await write(
-      root,
-      'verticals/inventory-stock/shared/apis/inventory-search.ts',
-      `// @generated by OntOS Codesmith Governed Contribution v1
-// @ontos-contribution-kind search-provider
-export const InventorySearchApi = HttpApi.make('InventorySearchApi');`,
-    );
-    await write(
-      root,
-      'verticals/inventory-stock/src/search/inventory.provider.ts',
-      `// @generated by OntOS Codesmith Governed Contribution v1
-// @ontos-contribution-kind search-provider
-export const inventoryProvider = true;`,
-    );
     await checkModuleEntrypointBoundaries(root);
 
     await write(
       root,
       'verticals/inventory-stock/src/api/stock-list.read.ts',
       `// @generated by OntOS Codesmith module-api v1
+import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 export const stockListEntrypoint = defineTenantModuleEntrypoint({ access: 'historical_read', authorization: { kind: 'context_permission', permission: 'module.access' }, entrypointKey: 'inventory.stock.api.stock-list', moduleKey: 'inventory.stock', role: 'api' });
-export const stockListRead = defineRead({ entrypoint: stockListEntrypoint, legalEntityScope: 'optional', permissionTarget: 'tenant', policies: [] });`,
+export const stockListRead = defineRead({ accessKind: 'list', entrypoint: stockListEntrypoint, inputSchema: StockListRequestSchema, legalEntityScope: 'optional', owningModuleKey: 'inventory.stock', permissionTarget: 'tenant', policies: [], readKey: 'inventory.stock.api.stock-list', resultSchema: StockListResponseSchema }, () => Effect.succeed({}), () => Effect.succeed({}), () => ({ kind: 'tenant' }));`,
     );
     await checkModuleEntrypointBoundaries(root);
 
+    const readPath = 'verticals/inventory-stock/src/api/stock-list.read.ts';
+    const validHistoricalRead = await readFile(path.join(root, readPath), 'utf-8');
     await write(
       root,
-      'verticals/inventory-stock/vertical.registration.ts',
-      `export const registration = { api: { 'stock-list': () =>
-  import('./src/api/stock-list-client.ts'), } };
+      readPath,
+      validHistoricalRead.replace(
+        'entrypoint: stockListEntrypoint,',
+        'entrypoint: unrelatedEntrypoint,',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(
+      root,
+      readPath,
+      validHistoricalRead.replace(
+        'resultSchema: StockListResponseSchema',
+        'resultSchema: WrongResponseSchema',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(
+      root,
+      readPath,
+      validHistoricalRead.replace(
+        'resultSchema: StockListResponseSchema',
+        'resultSchema: StockListResponseSchema, ...wrongDescriptor',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(
+      root,
+      readPath,
+      validHistoricalRead.replace("role: 'api'", "role: 'api', ...wrongEntrypointDescriptor"),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(
+      root,
+      readPath,
+      `// @generated by OntOS Codesmith module-api v1
+export const stockListEntrypoint = defineTenantModuleEntrypoint({ access: 'read', role: 'api' });
+export const stockListRead = defineRead(
+  /* { entrypoint: stockListEntrypoint, inputSchema: StockListRequestSchema, resultSchema: StockListResponseSchema, legalEntityScope: 'optional', permissionTarget: 'tenant', policies: [] } */
+  { entrypoint: unrelatedEntrypoint, inputSchema: WrongRequestSchema, resultSchema: WrongResponseSchema, legalEntityScope: 'optional', permissionTarget: 'tenant', policies: [] },
+);`,
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, readPath, validHistoricalRead);
+    await write(
+      root,
+      readPath,
+      validHistoricalRead.replace(
+        '() => Effect.succeed({}), () => Effect.succeed({}),',
+        '() => (0 as never), () => Effect.succeed({}),',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(
+      root,
+      readPath,
+      validHistoricalRead.replace(
+        '() => Effect.succeed({}), () => Effect.succeed({}),',
+        '() => { const unused = Effect.succeed({}); return 0 as never; }, () => Effect.succeed({}),',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, readPath, validHistoricalRead);
+    await write(
+      root,
+      readPath,
+      validHistoricalRead.replaceAll('inventory.stock', 'attacker.module'),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    const nestedRead = `${validHistoricalRead.replace(
+      'export const stockListEntrypoint',
+      'const lexicalDepthShift = /}/u;\nnamespace Decoy {\nexport const stockListEntrypoint',
+    )}\n}\nexport const stockListEntrypoint = null as never;\nexport const stockListRead = null as never;\n`;
+    await write(root, readPath, nestedRead);
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, readPath, validHistoricalRead);
+    const searchReadPath = 'verticals/inventory-stock/src/search/inventory-search.provider.ts';
+    const validSearchRead = await readFile(path.join(root, searchReadPath), 'utf-8');
+    await write(
+      root,
+      searchReadPath,
+      validSearchRead
+        .replace("accessKind: 'search'", "accessKind: 'detail'")
+        .replace('policies: []', "policies: [{ accessKind: 'search' } as never]"),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, searchReadPath, validSearchRead);
+    await write(
+      root,
+      searchReadPath,
+      validSearchRead
+        .replace("owningModuleKey: 'inventory.stock'", "owningModuleKey: 'attacker.module'")
+        .replace('policies: []', "policies: [{ owningModuleKey: 'inventory.stock' } as never]"),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, searchReadPath, validSearchRead);
+
+    const contractPath = 'verticals/inventory-stock/shared/apis/stock-list.ts';
+    const validContract = await readFile(path.join(root, contractPath), 'utf-8');
+    await write(
+      root,
+      contractPath,
+      validContract.replace(
+        'success: StockListResponseSchema,',
+        'success: StockListResponseSchema, ...wrongEndpointSchemas,',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(
+      root,
+      contractPath,
+      validContract.replace('StockListInternalProblemSchema,', 'Schema.Unknown,'),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    const decoyContract = validContract.replace('export const StockListApi =', 'const decoy =');
+    await write(
+      root,
+      contractPath,
+      `${decoyContract}
+export const StockListApi = HttpApi.make('StockListApi');
+`,
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, contractPath, validContract);
+    await write(
+      root,
+      contractPath,
+      validContract.replace('HttpApiSchema.status(401)', 'HttpApiSchema.status(500)'),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(
+      root,
+      contractPath,
+      validContract.replace("'/reads/stock-list'", "'/reads/counterfeit'"),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(
+      root,
+      contractPath,
+      validContract.replace(
+        "contentType: 'application/problem+json'",
+        "contentType: 'application/json'",
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(
+      root,
+      contractPath,
+      validContract
+        .replace('payload: StockListRequestSchema,', 'payload: Schema.Unknown,')
+        .replace(
+          'success: StockListResponseSchema,',
+          'success: Schema.Unknown, decoy: { payload: StockListRequestSchema, success: StockListResponseSchema },',
+        ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, contractPath, validContract);
+
+    const clientPath = 'verticals/inventory-stock/src/api/stock-list-client.ts';
+    const validClient = await readFile(path.join(root, clientPath), 'utf-8');
+    await write(
+      root,
+      clientPath,
+      `${validClient
+        .replace('export const executeStockListWithAuthorization', 'const unusedAuthorized')
+        .replace('export const executeStockList', 'const unusedPublic')}
+export const executeStockListWithAuthorization = null as never;
+export const executeStockList = null as never;
+`,
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, clientPath, validClient);
+    await write(
+      root,
+      clientPath,
+      validClient.replace(
+        'export const executeStockList = () => operationGateway.invoke((authorization) => executeStockListWithAuthorization(authorization));',
+        'export const executeStockList = () => { const unused = () => operationGateway.invoke((authorization) => executeStockListWithAuthorization(authorization)); return 0 as never; };',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, clientPath, validClient);
+    await write(
+      root,
+      clientPath,
+      validClient.replace(
+        'const stockListClient = makeEffectHttpApiClient(StockListApi, {});',
+        'const stockListClient = (() => null as never) as typeof makeEffectHttpApiClient;',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, clientPath, validClient);
+    await write(
+      root,
+      clientPath,
+      `${validClient.replace("'x-correlation-id': 'required'", "'x-wrong-header': 'required'")}
+// 'x-correlation-id'
+`,
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, clientPath, validClient);
+    const ownerInvokerClient = `// @generated by OntOS Codesmith module-api v1
+import { operationGateway } from './action-gateway.ts';
+import { authenticateInventoryStockHttpRequest, invokeInventoryStockHttpClient } from './inventory-stock-http-client.ts';
+const makeEffectHttpApiClientBoundary = invokeInventoryStockHttpClient;
+export const executeStockListWithAuthorization = (payload, credential, requestCorrelation) =>
+  makeEffectHttpApiClientBoundary(
+    authenticateInventoryStockHttpRequest(requestContext, Redacted.make(credential), requestCorrelation, 'x-correlation-id'),
+    (client) => client.stockList.execute({ payload }),
+  );
+export const executeStockList = (payload, requestCorrelation) => operationGateway.invoke((credential) => executeStockListWithAuthorization(payload, credential, requestCorrelation));`;
+    await write(root, clientPath, ownerInvokerClient);
+    await checkModuleEntrypointBoundaries(root);
+    await write(
+      root,
+      clientPath,
+      `${ownerInvokerClient.replace("'x-correlation-id'", "'x-wrong-header'")}
+// 'x-correlation-id'
+`,
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, clientPath, validClient);
+
+    const principalPath = 'verticals/inventory-stock/api/auth/action-principal.ts';
+    const validPrincipal = await readFile(path.join(root, principalPath), 'utf-8');
+    await write(
+      root,
+      principalPath,
+      `${validPrincipal.replace(
+        'export const authenticateOperationPrincipal',
+        'export const decoyPrincipal',
+      )}
+const expectedName = "authenticateOperationPrincipal";
+`,
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, principalPath, validPrincipal);
+
+    const gatewayPath = 'verticals/inventory-stock/src/api/action-gateway.ts';
+    const validGateway = await readFile(path.join(root, gatewayPath), 'utf-8');
+    await write(
+      root,
+      gatewayPath,
+      validGateway.replace(
+        'export const operationGateway = actionGateway;',
+        'const expectedName = "operationGateway";\nexport const decoyGateway = actionGateway;',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, gatewayPath, validGateway);
+
+    const sharedApiPath = 'verticals/inventory-stock/shared/api.ts';
+    const validSharedApi = await readFile(path.join(root, sharedApiPath), 'utf-8');
+    await write(
+      root,
+      sharedApiPath,
+      validSharedApi.replace(
+        'export const governedHttpApi = api;',
+        'export const governedHttpApi = null as never;',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    const sharedSlot =
+      /\/\/ <generated-governed-http-api-additions>[\s\S]*?\/\/ <\/generated-governed-http-api-additions>/u.exec(
+        validSharedApi,
+      )?.[0];
+    if (sharedSlot === undefined) {
+      assert.fail('expected generated governed API slot');
+    }
+    await write(
+      root,
+      sharedApiPath,
+      `${validSharedApi.replace(sharedSlot, '')}\nconst unusedComposition = String.raw\`${sharedSlot}\`;\n`,
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, sharedApiPath, validSharedApi);
+    await write(
+      root,
+      sharedApiPath,
+      validSharedApi.replace(
+        '  // </generated-governed-http-api-additions>',
+        "  .pipe(() => HttpApi.make('CounterfeitApi'))\n  // </generated-governed-http-api-additions>",
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, sharedApiPath, validSharedApi);
+
+    await write(
+      root,
+      INVENTORY_REGISTRATION_FILE,
+      `export const registration = {
+  api: {
+    // <generated-module-registration-apis>
+    'stock-list': () => import('./src/api/stock-list-client.ts'),
+    // </generated-module-registration-apis>
+  },
+  reports: {
+    // <generated-module-registration-reports>
+    'stock-levels': () => import('./src/api/stock-levels-report-client.ts'),
+    // </generated-module-registration-reports>
+  },
+  search: {
+    // <generated-module-registration-search>
+    'inventory-search': () =>
+      import('./src/api/inventory-search-search-client.ts'),
+    // </generated-module-registration-search>
+  },
+};
 // <generated-public-component-registrations>
 // </generated-public-component-registrations>
 // <generated-search-registrations>
@@ -234,10 +835,356 @@ export const stockListRead = defineRead({ entrypoint: stockListEntrypoint, legal
     );
     await checkModuleEntrypointBoundaries(root);
 
+    const registrationPath = INVENTORY_REGISTRATION_FILE;
+    const validRegistration = await readFile(path.join(root, registrationPath), 'utf-8');
+    await write(root, registrationPath, validRegistration.replace('  api: {', '  components: {'));
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
     await write(
       root,
-      'verticals/inventory-stock/api/stock-list-read-server.ts',
-      `// @generated by OntOS Codesmith module-api v1\nexport const server = true;`,
+      registrationPath,
+      validRegistration
+        .replace('  api: {', '  components: {\n    /* api: { */')
+        .replace(
+          '    // </generated-module-registration-apis>',
+          '    // </generated-module-registration-apis>\n    /* } */',
+        ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(
+      root,
+      registrationPath,
+      validRegistration
+        .replace(
+          "'stock-list': () => import('./src/api/stock-list-client.ts'),",
+          "'stock-list': null as never,",
+        )
+        .replace(
+          '    // </generated-module-registration-apis>',
+          "    __stockListDecoy: String.raw`'stock-list': () => import('./src/api/stock-list-client.ts')` as never,\n    // </generated-module-registration-apis>",
+        ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, registrationPath, validRegistration);
+    await write(
+      root,
+      registrationPath,
+      validRegistration.replace(
+        '    // </generated-module-registration-search>',
+        '    "stock-list": () => import("./src/api/stock-list-client.ts"),\n    // </generated-module-registration-search>',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, registrationPath, validRegistration);
+
+    const manifestPath = 'verticals/inventory-stock/vertical.manifest.ts';
+    const validManifest = await readFile(path.join(root, manifestPath), 'utf-8');
+    await write(
+      root,
+      manifestPath,
+      validManifest
+        .replace("'stock-list': StockListApi,", "'stock-list': null as never,")
+        .replace(
+          '    // </generated-module-manifest-apis>',
+          "    __stockListDecoy: String.raw`'stock-list': StockListApi,` as never,\n    // </generated-module-manifest-apis>",
+        ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, manifestPath, validManifest);
+
+    const handlerRootPath = 'verticals/inventory-stock/api/index.ts';
+    const validHandlerRoot = await readFile(path.join(root, handlerRootPath), 'utf-8');
+    await write(
+      root,
+      handlerRootPath,
+      validHandlerRoot
+        .replace(
+          'const apiHandlersLive = Layer.mergeAll(',
+          'const apiHandlersLive = Layer.mergeAll(Layer.empty);\nconst deadLayers = Layer.mergeAll(',
+        )
+        .replace(
+          'const layer = HttpApiBuilder.layer(api).pipe(',
+          `const deadRuntime = HttpApiBuilder.layer(api).pipe(
+  Layer.provide(deadLayers),
+) satisfies EffectRuntimeLayer;
+const layer = HttpApiBuilder.layer(api).pipe(`,
+        ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(
+      root,
+      handlerRootPath,
+      validHandlerRoot.replace(
+        'Layer.provide(apiHandlersLive),',
+        '// Layer.provide(apiHandlersLive),',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(
+      root,
+      handlerRootPath,
+      validHandlerRoot.replace(
+        'const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(GovernedReadLayer.provide(governedReadRuntimeDependenciesLive));',
+        'const governedReadRuntimeLive = null as never;',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(
+      root,
+      handlerRootPath,
+      validHandlerRoot.replace(
+        'export default defineEffectBff({ api, layer });',
+        'export default null as never;',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(
+      root,
+      handlerRootPath,
+      validHandlerRoot.replace(
+        'stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),',
+        'null as never,\n  String.raw`stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive))` as never,',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(
+      root,
+      handlerRootPath,
+      validHandlerRoot.replace(
+        'stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),',
+        'stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), GovernedReadLayer.provide(ownerCustomizedRuntime)),',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(
+      root,
+      handlerRootPath,
+      validHandlerRoot.replace(
+        'export default defineEffectBff({ api, layer });',
+        'export default defineEffectBff({ api: foundationApi, layer });',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, handlerRootPath, validHandlerRoot);
+
+    const serverPath = 'verticals/inventory-stock/api/stock-list-read-server.ts';
+    const validServer = await readFile(path.join(root, serverPath), 'utf-8');
+    await write(
+      root,
+      serverPath,
+      validServer.replace(/const problems = \{[\s\S]*?\n\};/u, 'const problems = null as never;'),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, serverPath, validServer);
+    await write(
+      root,
+      serverPath,
+      validServer.replace(
+        'authentication: () => StockListAuthenticationProblemSchema.make({ status: governedReadHttpStatus.authentication }),',
+        'authentication: () => StockListAuthenticationProblemSchema.make({ status: 500, decoy: { status: governedReadHttpStatus.authentication } }),',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, serverPath, validServer);
+    const inertProblemDecoy = `const problems = {
+  authentication: null as never,
+  forbidden: null as never,
+  internal: null as never,
+  invalid: null as never,
+  notFound: null as never,
+  policyConflict: null as never,
+  policyIneligible: null as never,
+  unavailable: null as never,
+  decoy: String.raw\`${governedProblems('StockList')}\` as never,
+};`;
+    await write(
+      root,
+      serverPath,
+      validServer.replace(/const problems = \{[\s\S]*?\n\};/u, inertProblemDecoy),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, serverPath, validServer);
+    await write(
+      root,
+      serverPath,
+      validServer.replace(
+        'authentication: () => StockListAuthenticationProblemSchema.make({ status: governedReadHttpStatus.authentication }),',
+        'authentication: () => (StockListAuthenticationProblemSchema.make({ status: governedReadHttpStatus.authentication }), null as never),',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, serverPath, validServer);
+    await write(
+      root,
+      serverPath,
+      `// @generated by OntOS Codesmith module-api v1
+import { makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
+const decoy = makeGovernedReadHttpHandler({ authenticatePrincipal: authenticateOperationPrincipal, problems, registration: stockListRead });
+export const stockListReadApiLive = HttpApiBuilder.group(governedHttpApi, 'stockList', (handlers) => handlers.handle('execute', () => Effect.succeed(fakeResult)));`,
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, serverPath, validServer);
+    const decoyLayer = validServer.replace(STOCK_LIST_LAYER_EXPORT, 'const unusedCanonicalLayer =');
+    await write(
+      root,
+      serverPath,
+      `${decoyLayer}
+export const stockListReadApiLive = Layer.empty;
+`,
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(
+      root,
+      serverPath,
+      validServer
+        .replace("import { governedHttpApi } from '../shared/api.ts';\n", '')
+        .replace(
+          STOCK_LIST_LAYER_EXPORT,
+          `const governedHttpApi = counterfeitApi;\n${STOCK_LIST_LAYER_EXPORT}`,
+        ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(
+      root,
+      serverPath,
+      validServer
+        .replace("import { HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';\n", '')
+        .replace(
+          STOCK_LIST_LAYER_EXPORT,
+          `const HttpApiBuilder = counterfeitBuilder;\n${STOCK_LIST_LAYER_EXPORT}`,
+        ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, serverPath, validServer);
+    const nestedCanonicalLayer = validServer
+      .replace(STOCK_LIST_LAYER_EXPORT, `namespace Decoy {\n${STOCK_LIST_LAYER_EXPORT}`)
+      .replace(/;\s*$/u, `;\n}\n${STOCK_LIST_LAYER_EXPORT} null as never;`);
+    await write(root, serverPath, nestedCanonicalLayer);
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, serverPath, validServer);
+    await write(
+      root,
+      serverPath,
+      validServer.replace(
+        "import { governedReadHttpStatus, makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';",
+        `const importSpoof = "import { makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';";
+const { makeGovernedReadHttpHandler } = counterfeitModule;`,
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, serverPath, validServer);
+    await write(
+      root,
+      serverPath,
+      validServer.replace(
+        '(handlers) =>',
+        '(handlers, makeGovernedReadHttpHandler = counterfeitHelper) =>',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, serverPath, validServer);
+    await write(
+      root,
+      serverPath,
+      `// @generated by OntOS Codesmith module-api v1
+import { governedReadHttpStatus } from '@app/core-runtime/http/governed-read';
+import { stockListRead } from '../src/api/stock-list.read.ts';
+const authenticateOperationPrincipal = () => Effect.succeed(fakePrincipal);
+const makeGovernedReadHttpHandler = () => () => Effect.succeed(fakeResult);
+export const stockListReadApiLive = HttpApiBuilder.group(governedHttpApi, 'stockList', (handlers) => handlers.handle('execute', makeGovernedReadHttpHandler({ authenticatePrincipal: authenticateOperationPrincipal, problems, registration: stockListRead })));`,
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, serverPath, validServer);
+    await write(
+      root,
+      serverPath,
+      validServer.replace(
+        'registration: stockListRead }',
+        'registration: stockListRead, ...wrongOptions }',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, serverPath, validServer);
+
+    await write(
+      root,
+      serverPath,
+      `// @generated by OntOS Codesmith module-api v1
+export const stockListReadApiLive = HttpApiBuilder.group(StockListApi, 'reads', () => authenticateOperationPrincipal(authorization, { authentication: authenticationProblem, unavailable: unavailableProblem }).pipe(Effect.flatMap(() => ReadRuntime), Effect.flatMap((runtime) => runtime.runRead({ registration: stockListRead }))));`,
     );
     await assert.rejects(
       checkModuleEntrypointBoundaries(root),
@@ -247,6 +1194,31 @@ export const stockListRead = defineRead({ entrypoint: stockListEntrypoint, legal
     await rm(root, { force: true, recursive: true });
   }
 });
+
+for (const provider of [
+  { kind: 'search-provider', path: 'inventory-search-search-server.ts' },
+  { kind: 'report', path: 'stock-levels-report-server.ts' },
+] as const) {
+  test(`rejects an incomplete generated ${provider.kind} HTTP seam`, async () => {
+    const root = await makeFixture();
+    try {
+      await writeGovernedModuleApi(root);
+      await write(
+        root,
+        `verticals/inventory-stock/api/${provider.path}`,
+        `// @generated by OntOS Codesmith Governed Contribution v1
+// @ontos-contribution-kind ${provider.kind}
+export const bypass = HttpApiBuilder.group(governedHttpApi, 'wrong', () => ReadRuntime);`,
+      );
+      await assert.rejects(
+        checkModuleEntrypointBoundaries(root),
+        /module APIs require an approved Codesmith generator/u,
+      );
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+}
 
 const violations = [
   {
@@ -296,7 +1268,7 @@ const violations = [
   },
   {
     expected: /reserved generated-public-component-registrations slots/u,
-    file: 'verticals/inventory-stock/vertical.registration.ts',
+    file: INVENTORY_REGISTRATION_FILE,
     source: `export const registration = {};`,
   },
   {

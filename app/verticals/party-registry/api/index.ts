@@ -27,7 +27,7 @@ import type {
   EffectRuntimeLayer,
 } from '@modern-js/plugin-bff/effect-edge';
 import { FetchHttpClient } from 'effect/unstable/http';
-import { Logger, References, Schema, Tracer } from 'effect';
+import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
 
 import {
   partyRegistryApi,
@@ -43,12 +43,13 @@ import {
   GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive,
 } from './auth/gateway-assertion-redemption.ts';
+// <generated-governed-http-handler-imports>
 import { aresLookupReadApiLive } from './ares-lookup-read-server.ts';
 import { counterpartiesReadApiLive } from './counterparties-search-server.ts';
 import { counterpartyReadReadApiLive } from './counterparty-read-read-server.ts';
 import { counterpartyRoleHistoryReadApiLive } from './counterparty-role-history-read-server.ts';
 import { duplicateCandidateDetailReadApiLive } from './duplicate-candidate-detail-read-server.ts';
-import { engagementProfileApiHandlersLive } from './engagement-profile-server.ts';
+import { organizationEngagementProfileReadApiLive } from './organization-engagement-profile-read-server.ts';
 import { partiesReadApiLive } from './parties-search-server.ts';
 import { partyContactPointDetailReadApiLive } from './party-contact-point-detail-read-server.ts';
 import { partyContactPointsReadApiLive } from './party-contact-points-read-server.ts';
@@ -60,6 +61,9 @@ import { partyMergeReadinessReadApiLive } from './party-merge-readiness-read-ser
 import { partyOfficialIdentifierDetailReadApiLive } from './party-official-identifier-detail-read-server.ts';
 import { partyOfficialIdentifierHistoryReadApiLive } from './party-official-identifier-history-read-server.ts';
 import { partyRelationshipDetailReadApiLive } from './party-relationship-detail-read-server.ts';
+import { personEngagementProfileReadApiLive } from './person-engagement-profile-read-server.ts';
+// </generated-governed-http-handler-imports>
+import { engagementProfileApiHandlersLive } from './engagement-profile-server.ts';
 import {
   partyRegistryCommandRecoveryLive,
   partyRegistryCommandsLive,
@@ -130,6 +134,7 @@ const readRuntimeDependenciesLive = Layer.mergeAll(
   ),
 );
 const readRuntimeLive = ReadRuntimeLive.pipe(Layer.provide(readRuntimeDependenciesLive));
+const governedReadRuntimeLive = readRuntimeLive;
 const actionRuntimeDependenciesLive = Layer.mergeAll(
   CorePersistenceLive,
   ActionRepositoryLive,
@@ -164,35 +169,42 @@ export const makePartyRegistryApiRuntime = (): EffectBffDefinition<typeof partyR
     partyRegistryFoundationLive,
     partyRegistryCommandsLive.pipe(Layer.provide(actionRuntimeLive)),
     partyRegistryCommandRecoveryLive.pipe(Layer.provide(actionRuntimeLive)),
-    engagementProfileApiHandlersLive.pipe(
-      Layer.provide(actionRuntimeLive),
-      Layer.provide(readRuntimeLive),
+    engagementProfileApiHandlersLive.pipe(Layer.provide(actionRuntimeLive)),
+    // <generated-governed-http-handler-layers>
+    counterpartyReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    counterpartyRoleHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    duplicateCandidateDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    organizationEngagementProfileReadApiLive.pipe(
+      GovernedReadLayer.provide(governedReadRuntimeLive),
     ),
-    partyDetailReadApiLive.pipe(Layer.provide(readRuntimeLive)),
-    partyMatchReadApiLive.pipe(Layer.provide(readRuntimeLive)),
-    partyMatchDecisionReadApiLive.pipe(Layer.provide(readRuntimeLive)),
-    duplicateCandidateDetailReadApiLive.pipe(Layer.provide(readRuntimeLive)),
-    partyOfficialIdentifierDetailReadApiLive.pipe(Layer.provide(readRuntimeLive)),
-    partyOfficialIdentifierHistoryReadApiLive.pipe(Layer.provide(readRuntimeLive)),
-    partyContactPointsReadApiLive.pipe(Layer.provide(readRuntimeLive)),
-    partyContactPointDetailReadApiLive.pipe(Layer.provide(readRuntimeLive)),
-    partyRelationshipDetailReadApiLive.pipe(Layer.provide(readRuntimeLive)),
-    counterpartyReadReadApiLive.pipe(Layer.provide(readRuntimeLive)),
-    counterpartyRoleHistoryReadApiLive.pipe(Layer.provide(readRuntimeLive)),
-    partyCorrectionReadApiLive.pipe(Layer.provide(readRuntimeLive)),
-    partyMergeReadinessReadApiLive.pipe(Layer.provide(readRuntimeLive)),
+    partyContactPointDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    partyContactPointsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    partyCorrectionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    partyDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    partyMatchDecisionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    partyMatchReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    partyMergeReadinessReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    partyOfficialIdentifierDetailReadApiLive.pipe(
+      GovernedReadLayer.provide(governedReadRuntimeLive),
+    ),
+    partyOfficialIdentifierHistoryReadApiLive.pipe(
+      GovernedReadLayer.provide(governedReadRuntimeLive),
+    ),
+    partyRelationshipDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    personEngagementProfileReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     aresLookupReadApiLive.pipe(
-      Layer.provide(readRuntimeLive),
+      GovernedReadLayer.provide(governedReadRuntimeLive),
       Layer.provide(aresSubjectServiceLive),
     ),
     partiesReadApiLive.pipe(
-      Layer.provide(readRuntimeLive),
+      GovernedReadLayer.provide(governedReadRuntimeLive),
       Layer.provide(searchProjectionGatewayLive),
     ),
     counterpartiesReadApiLive.pipe(
-      Layer.provide(readRuntimeLive),
+      GovernedReadLayer.provide(governedReadRuntimeLive),
       Layer.provide(searchProjectionGatewayLive),
     ),
+    // </generated-governed-http-handler-layers>
   ).pipe(
     Layer.provide(Layer.mergeAll(ActionPrincipalVerifierLive, gatewayAssertionRedemptionLive)),
   );

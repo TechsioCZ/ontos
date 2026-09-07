@@ -69,6 +69,24 @@ const write = async (root: string, relative: string, content: string): Promise<v
   await writeFile(target, content, 'utf-8');
 };
 
+const writePinnedEffectApi = async (root: string, slug: string): Promise<void> => {
+  await write(
+    root,
+    `verticals/${slug}/shared/api.ts`,
+    `export const fixtureApi = HttpApi.make('FixtureApi').add(HttpApiGroup.make('fixture'));\n`,
+  );
+  await write(
+    root,
+    `verticals/${slug}/api/index.ts`,
+    `const fixtureLayer = HttpApiBuilder.group(fixtureApi, 'fixture', handlers => handlers);
+const layer = HttpApiBuilder.layer(fixtureApi).pipe(
+  Layer.provide(fixtureLayer),
+) satisfies EffectRuntimeLayer;
+export default defineEffectBff({ api: fixtureApi, layer });
+`,
+  );
+};
+
 const createFixture = async (): Promise<string> => {
   const root = await mkdtemp(path.join(tmpdir(), 'ontos-module-contract-'));
   await write(root, 'package.json', json({ name: 'fixture', private: true, type: 'module' }));
@@ -137,6 +155,10 @@ const createFixture = async (): Promise<string> => {
     'verticals/documents-center/module-federation.config.ts',
     'export default {};\n',
   );
+  await Promise.all([
+    writePinnedEffectApi(root, APP_ID),
+    writePinnedEffectApi(root, DOCUMENTS_APP_ID),
+  ]);
   await write(
     root,
     'topology/reference-topology.json',

@@ -5,31 +5,33 @@ import {
   HttpApiGroup,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
-import { Brand } from 'effect';
+import { Brand, identity } from 'effect';
 
+// <generated-governed-http-api-imports>
 import { AresLookupApi } from './apis/ares-lookup.ts';
 import { CounterpartiesSearchApi } from './apis/counterparties-search.ts';
 import { CounterpartyReadApi } from './apis/counterparty-read.ts';
 import { CounterpartyRoleHistoryApi } from './apis/counterparty-role-history.ts';
 import { DuplicateCandidateDetailApi } from './apis/duplicate-candidate-detail.ts';
+import { OrganizationEngagementProfileApi } from './apis/organization-engagement-profile.ts';
 import { PartiesSearchApi } from './apis/parties-search.ts';
 import { PartyContactPointDetailApi } from './apis/party-contact-point-detail.ts';
 import { PartyContactPointsApi } from './apis/party-contact-points.ts';
 import { PartyCorrectionApi } from './apis/party-correction.ts';
 import { PartyDetailApi } from './apis/party-detail.ts';
-import { PartyMatchDecisionApi } from './apis/party-match-decision.ts';
 import { PartyMatchApi } from './apis/party-match.ts';
+import { PartyMatchDecisionApi } from './apis/party-match-decision.ts';
 import { PartyMergeReadinessApi } from './apis/party-merge-readiness.ts';
 import { PartyOfficialIdentifierDetailApi } from './apis/party-official-identifier-detail.ts';
 import { PartyOfficialIdentifierHistoryApi } from './apis/party-official-identifier-history.ts';
 import { PartyRelationshipDetailApi } from './apis/party-relationship-detail.ts';
+import { PersonEngagementProfileApi } from './apis/person-engagement-profile.ts';
+// </generated-governed-http-api-imports>
 import { partyRegistryCommandRecoveryApi, partyRegistryCommandsApi } from './command-api.ts';
 import {
   organizationEngagementMutationApi,
   personEngagementMutationApi,
 } from './engagement-profile-api.ts';
-import { OrganizationEngagementProfileApi } from './apis/organization-engagement-profile.ts';
-import { PersonEngagementProfileApi } from './apis/person-engagement-profile.ts';
 
 export * from './command-api.ts';
 export * from './engagement-profile-api.ts';
@@ -110,31 +112,36 @@ export const partyRegistryFoundationApi = HttpApi.make('PartyRegistryFoundationA
   ),
 );
 
+// PartyMatch remains a read-only UX preview; durable matching is the explicit matchParty command.
 export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(partyRegistryFoundationApi)
   .addHttpApi(partyRegistryCommandsApi)
   .addHttpApi(partyRegistryCommandRecoveryApi)
   .addHttpApi(organizationEngagementMutationApi)
   .addHttpApi(personEngagementMutationApi)
-  .addHttpApi(OrganizationEngagementProfileApi)
-  .addHttpApi(PersonEngagementProfileApi)
-  .addHttpApi(PartyDetailApi)
-  // Read-only UX preview; durable matching is the explicit matchParty command.
-  .addHttpApi(PartyMatchApi)
-  .addHttpApi(PartyMatchDecisionApi)
-  .addHttpApi(DuplicateCandidateDetailApi)
-  .addHttpApi(PartyOfficialIdentifierDetailApi)
-  .addHttpApi(PartyOfficialIdentifierHistoryApi)
-  .addHttpApi(PartyContactPointsApi)
-  .addHttpApi(PartyContactPointDetailApi)
-  .addHttpApi(PartyRelationshipDetailApi)
+  // <generated-governed-http-api-additions>
+  .addHttpApi(AresLookupApi)
+  .addHttpApi(CounterpartiesSearchApi)
   .addHttpApi(CounterpartyReadApi)
   .addHttpApi(CounterpartyRoleHistoryApi)
-  .addHttpApi(PartyCorrectionApi)
-  .addHttpApi(PartyMergeReadinessApi)
-  .addHttpApi(AresLookupApi)
+  .addHttpApi(DuplicateCandidateDetailApi)
+  .addHttpApi(OrganizationEngagementProfileApi)
   .addHttpApi(PartiesSearchApi)
-  .addHttpApi(CounterpartiesSearchApi);
+  .addHttpApi(PersonEngagementProfileApi)
+  .addHttpApi(PartyContactPointDetailApi)
+  .addHttpApi(PartyContactPointsApi)
+  .addHttpApi(PartyCorrectionApi)
+  .addHttpApi(PartyDetailApi)
+  .addHttpApi(PartyMatchApi)
+  .addHttpApi(PartyMatchDecisionApi)
+  .addHttpApi(PartyMergeReadinessApi)
+  .addHttpApi(PartyOfficialIdentifierDetailApi)
+  .addHttpApi(PartyOfficialIdentifierHistoryApi)
+  .addHttpApi(PartyRelationshipDetailApi)
+  // </generated-governed-http-api-additions>
+  .pipe(identity);
+/** Canonical composition-root binding consumed by generated governed HTTP adapters. */
+export const governedHttpApi = partyRegistryApi;
 
 const operation = (method: string, routePath: string): OperationContext => ({
   method,

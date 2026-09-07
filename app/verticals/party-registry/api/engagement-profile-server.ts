@@ -40,8 +40,6 @@ import { attachPersonEngagementAction } from '../src/actions/attach-person-engag
 import { unarchiveOrganizationEngagementAction } from '../src/actions/unarchive-organization-engagement.action.ts';
 import { unarchivePersonEngagementAction } from '../src/actions/unarchive-person-engagement.action.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
-import { organizationEngagementProfileReadApiLive } from './organization-engagement-profile-read-server.ts';
-import { personEngagementProfileReadApiLive } from './person-engagement-profile-read-server.ts';
 
 const problem = {
   authentication: () =>
@@ -331,6 +329,4 @@ const personEngagementMutationsLive = HttpApiBuilder.group(
 export const engagementProfileApiHandlersLive = Layer.mergeAll(
   organizationEngagementMutationsLive,
   personEngagementMutationsLive,
-  organizationEngagementProfileReadApiLive,
-  personEngagementProfileReadApiLive,
 );

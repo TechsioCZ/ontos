@@ -6,13 +6,31 @@ import { ConfigProvider, Context, Effect, Layer, Schema } from 'effect';
 import {
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
-  ReadRuntime,
+  ModuleStateCheckUnavailableError,
+  ModuleStateDeniedError,
+  OperationAuthenticationRequired,
+  OperationContextDenied,
+  OperationContextInvalid,
+  OperationContextUnavailable,
+  ReadEvidencePersistenceError,
+  ReadEvidenceValidationError,
+  ReadHandlerExecutionError,
   ReadHandlerNotFound,
+  ReadHandlerUnavailable,
+  ReadInputValidationError,
   ReadPermissionDenied,
+  ReadPermissionUnavailable,
+  ReadPolicyDenied,
+  ReadPolicyEvaluationError,
   ReadResultValidationError,
+  ReadRuntime,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
-import type { GatewayAssertionRedemption, ReadRuntimeService } from '@app/core-runtime';
+import type {
+  GatewayAssertionRedemption,
+  ReadCoreError,
+  ReadRuntimeService,
+} from '@app/core-runtime';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/plugin-bff/effect-edge';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
@@ -267,10 +285,15 @@ const recoveryRequest = (invocationId: string, token?: string) => {
   });
 };
 
-const decisionRequest = (actionInvocationId: string, token?: string) => {
+const decisionRequest = (
+  actionInvocationId: string,
+  token?: string,
+  extraHeaders: Readonly<Record<string, string>> = {},
+) => {
   const headers = new Headers({
     'content-type': 'application/json',
     'x-correlation-id': 'decision-recovery-test',
+    ...extraHeaders,
   });
   if (token !== undefined) {
     headers.set('authorization', `Bearer ${token}`);
@@ -476,9 +499,188 @@ test('generated governed reads authenticate through the shared adapter before st
       assert.equal(body._tag, 'PartyMatchDecisionAuthenticationProblem');
       assert.equal(reads, 0);
     });
+    const missingCorrelation = await handle(
+      app,
+      decisionRequest(randomUUID(), assertion.token, { 'x-correlation-id': '' }),
+    );
+    assert.equal(missingCorrelation.status, 400);
+    assert.equal(reads, 0);
     const valid = await handle(app, decisionRequest(randomUUID(), assertion.token));
     assert.equal(valid.status, 404);
     assert.equal(reads, 1);
+  } finally {
+    await app.dispose();
+  }
+
+  const unavailableApp = mounted(harness, {}, readRuntime);
+  try {
+    const unavailable = await handle(
+      unavailableApp,
+      decisionRequest(randomUUID(), assertion.otherToken),
+    );
+    assert.equal(unavailable.status, 503);
+    assert.equal(unavailable.headers.get('www-authenticate'), null);
+    const body = await unavailable.json();
+    assert.equal(body._tag, 'PartyMatchDecisionUnavailableProblem');
+    assert.equal(body.retryable, true);
+    assert.equal(reads, 1);
+  } finally {
+    await unavailableApp.dispose();
+  }
+});
+
+test('the complete generated governed Read seam maps every Core failure to its declared HTTP problem', async () => {
+  const assertion = await makeAssertion();
+  const reason = 'private governed Read diagnostic';
+  const initialFailure = new ModuleStateCheckUnavailableError({
+    code: 'module_state_check_unavailable',
+    reason,
+  });
+  const cases: readonly [ReadCoreError, number, string][] = [
+    [initialFailure, 503, 'PartyMatchDecisionUnavailableProblem'],
+    [
+      new ModuleStateDeniedError({ code: 'module_state_denied', reason }),
+      403,
+      'PartyMatchDecisionForbiddenProblem',
+    ],
+    [
+      new OperationAuthenticationRequired({ code: 'operation_authentication_required', reason }),
+      401,
+      'PartyMatchDecisionAuthenticationProblem',
+    ],
+    [
+      new OperationContextDenied({ code: 'operation_context_denied', reason }),
+      403,
+      'PartyMatchDecisionForbiddenProblem',
+    ],
+    [
+      new OperationContextInvalid({ code: 'operation_context_invalid', reason }),
+      403,
+      'PartyMatchDecisionForbiddenProblem',
+    ],
+    [
+      new OperationContextUnavailable({ code: 'operation_context_unavailable', reason }),
+      503,
+      'PartyMatchDecisionUnavailableProblem',
+    ],
+    [
+      new ReadEvidencePersistenceError({ code: 'read_evidence_persistence_failed', reason }),
+      503,
+      'PartyMatchDecisionUnavailableProblem',
+    ],
+    [
+      new ReadEvidenceValidationError({ code: 'read_evidence_invalid', reason }),
+      500,
+      'PartyMatchDecisionInternalProblem',
+    ],
+    [
+      new ReadHandlerExecutionError({ code: 'read_handler_execution_failed', reason }),
+      500,
+      'PartyMatchDecisionInternalProblem',
+    ],
+    [
+      new ReadHandlerNotFound({ code: 'read_handler_not_found', reason }),
+      404,
+      'PartyMatchDecisionNotFoundProblem',
+    ],
+    [
+      new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason }),
+      503,
+      'PartyMatchDecisionUnavailableProblem',
+    ],
+    [
+      new ReadInputValidationError({ code: 'read_input_invalid', reason }),
+      400,
+      'PartyMatchDecisionInvalidProblem',
+    ],
+    [
+      new ReadPermissionDenied({ code: 'read_permission_denied', reason }),
+      403,
+      'PartyMatchDecisionForbiddenProblem',
+    ],
+    [
+      new ReadPermissionUnavailable({ code: 'read_permission_unavailable', reason }),
+      503,
+      'PartyMatchDecisionUnavailableProblem',
+    ],
+    [
+      new ReadPolicyDenied({
+        code: 'read_policy_denied',
+        httpStatus: 409,
+        policyReasonCode: 'policy_conflict',
+        reason,
+      }),
+      409,
+      'PartyMatchDecisionPolicyConflictProblem',
+    ],
+    [
+      new ReadPolicyDenied({
+        code: 'read_policy_denied',
+        httpStatus: 422,
+        policyReasonCode: 'policy_ineligible',
+        reason,
+      }),
+      422,
+      'PartyMatchDecisionPolicyProblem',
+    ],
+    [
+      new ReadPolicyEvaluationError({ code: 'read_policy_evaluation_failed', reason }),
+      503,
+      'PartyMatchDecisionUnavailableProblem',
+    ],
+    [
+      new ReadResultValidationError({ code: 'read_result_invalid', reason }),
+      500,
+      'PartyMatchDecisionInternalProblem',
+    ],
+  ];
+  let failure: ReadCoreError = initialFailure;
+  let reads = 0;
+  const readRuntime: ReadRuntimeService = {
+    runRead: () => {
+      reads += 1;
+      return Effect.fail(failure);
+    },
+  };
+  const app = mounted(makeActionTestHarness(), assertion.environment, readRuntime);
+  try {
+    await forEachSequential(cases, async ([nextFailure, expectedStatus, expectedTag]) => {
+      failure = nextFailure;
+      const response = await handle(app, decisionRequest(randomUUID(), assertion.token));
+      assert.equal(response.status, expectedStatus, nextFailure._tag);
+      assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
+      assert.equal(
+        response.headers.get('www-authenticate'),
+        expectedStatus === 401 ? 'Bearer' : null,
+      );
+      const body = await response.json();
+      assert.equal(body._tag, expectedTag, nextFailure._tag);
+      assert.equal(body.status, expectedStatus, nextFailure._tag);
+      assert.equal(JSON.stringify(body).includes(reason), false, nextFailure._tag);
+      if (expectedStatus === 503) {
+        assert.equal(body.retryable, true, nextFailure._tag);
+      }
+    });
+    assert.equal(reads, cases.length);
+  } finally {
+    await app.dispose();
+  }
+});
+
+test('the generated governed Read seam sanitizes unexpected runtime defects', async () => {
+  const assertion = await makeAssertion();
+  const readRuntime: ReadRuntimeService = {
+    runRead: () => Effect.die('private governed Read defect'),
+  };
+  const app = mounted(makeActionTestHarness(), assertion.environment, readRuntime);
+  try {
+    const response = await handle(app, decisionRequest(randomUUID(), assertion.token));
+    assert.equal(response.status, 500);
+    assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
+    const body = await response.json();
+    assert.equal(body._tag, 'PartyMatchDecisionInternalProblem');
+    assert.equal(body.status, 500);
+    assert.equal(JSON.stringify(body).includes('private'), false);
   } finally {
     await app.dispose();
   }

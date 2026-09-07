@@ -104,6 +104,28 @@ const createFixture = async (): Promise<string> => {
   );
   await write(
     root,
+    'verticals/property-registry/shared/api.ts',
+    `import { HttpApi } from 'effect/unstable/httpapi';
+
+export const propertyRegistryApi = HttpApi.make('PropertyRegistryApi');
+`,
+  );
+  await write(
+    root,
+    'verticals/property-registry/api/index.ts',
+    `import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
+import type { EffectRuntimeLayer } from '@modern-js/plugin-bff/effect-edge';
+import { propertyRegistryApi } from '../shared/api.ts';
+
+const layer = HttpApiBuilder.layer(propertyRegistryApi).pipe(
+  Layer.provide(Layer.empty),
+) satisfies EffectRuntimeLayer;
+
+export default defineEffectBff({ api: propertyRegistryApi, layer });
+`,
+  );
+  await write(
+    root,
     'topology/reference-topology.json',
     json({
       schemaVersion: 1,
