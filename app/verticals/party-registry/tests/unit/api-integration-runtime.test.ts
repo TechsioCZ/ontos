@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { ActionRuntime, ReadRuntime } from '@app/core-runtime';
+import { ActionRuntime, ReadRuntime, GatewayAssertionRedemptionService } from '@app/core-runtime';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/plugin-bff/effect-edge';
 import { Context, Effect, Layer, Schema } from 'effect';
@@ -69,6 +69,9 @@ test('builds every declared handler through the injectable runtime without produ
     Layer.succeed(AresSubjectService, aresSubjectService),
     Layer.succeed(PartySearchProjectionGateway, searchProjectionGateway),
     Layer.succeed(ActionRuntime, actionRuntime),
+    Layer.succeed(GatewayAssertionRedemptionService, {
+      consume: () => Effect.die('The route-coverage fixture never redeems an assertion'),
+    }),
   ).createHandler();
   try {
     const endpoints = Object.values(partyRegistryApi.groups).flatMap((group) =>

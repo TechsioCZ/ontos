@@ -362,11 +362,15 @@ test('every registered command is mounted and rejects missing structural input o
         );
         assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
         const body = await response.json();
-        assert.equal(
-          body._tag,
-          response.status === 400
-            ? 'PartyCommandInvalidRequestProblem'
-            : 'PartyCommandAuthenticationProblem',
+        assert.ok(
+          Schema.is(
+            Schema.TaggedStruct(
+              response.status === 400
+                ? 'PartyCommandInvalidRequestProblem'
+                : 'PartyCommandAuthenticationProblem',
+              {},
+            ),
+          )(body),
         );
         assert.equal(body.status, response.status);
       },
@@ -385,7 +389,9 @@ test('every registered command is mounted and rejects missing structural input o
     assert.equal(malformed.status, 400);
     assert.match(malformed.headers.get('content-type') ?? '', /application\/problem\+json/u);
     const malformedBody = await malformed.json();
-    assert.equal(malformedBody._tag, 'PartyCommandInvalidRequestProblem');
+    assert.ok(
+      Schema.is(Schema.TaggedStruct('PartyCommandInvalidRequestProblem', {}))(malformedBody),
+    );
     assert.equal(harness.snapshot().invocations.length, 0);
   } finally {
     await app.dispose();
@@ -427,7 +433,7 @@ test('missing, malformed, expired, tampered, wrong-audience, and wrong-issuer as
       assert.equal(response.headers.get('www-authenticate'), 'Bearer');
       assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
       const body = await response.json();
-      assert.equal(body._tag, 'PartyCommandAuthenticationProblem');
+      assert.ok(Schema.is(Schema.TaggedStruct('PartyCommandAuthenticationProblem', {}))(body));
       assert.equal(body.status, 401);
       assert.equal(JSON.stringify(body).includes(assertion.token), false);
       assert.equal(harness.snapshot().invocations.length, 0);
@@ -459,7 +465,7 @@ test('missing and malformed verification configuration are retryable and never r
         assert.equal(response.headers.get('www-authenticate'), null);
         assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
         const body = await response.json();
-        assert.equal(body._tag, 'PartyCommandUnavailableProblem');
+        assert.ok(Schema.is(Schema.TaggedStruct('PartyCommandUnavailableProblem', {}))(body));
         assert.equal(body.retryable, true);
         assert.equal(harness.snapshot().invocations.length, 0);
       } finally {
@@ -496,7 +502,9 @@ test('generated governed reads authenticate through the shared adapter before st
       assert.equal(response.headers.get('www-authenticate'), 'Bearer');
       assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
       const body = await response.json();
-      assert.equal(body._tag, 'PartyMatchDecisionAuthenticationProblem');
+      assert.ok(
+        Schema.is(Schema.TaggedStruct('PartyMatchDecisionAuthenticationProblem', {}))(body),
+      );
       assert.equal(reads, 0);
     });
     const missingCorrelation = await handle(
@@ -521,7 +529,7 @@ test('generated governed reads authenticate through the shared adapter before st
     assert.equal(unavailable.status, 503);
     assert.equal(unavailable.headers.get('www-authenticate'), null);
     const body = await unavailable.json();
-    assert.equal(body._tag, 'PartyMatchDecisionUnavailableProblem');
+    assert.ok(Schema.is(Schema.TaggedStruct('PartyMatchDecisionUnavailableProblem', {}))(body));
     assert.equal(body.retryable, true);
     assert.equal(reads, 1);
   } finally {
@@ -654,7 +662,7 @@ test('the complete generated governed Read seam maps every Core failure to its d
         expectedStatus === 401 ? 'Bearer' : null,
       );
       const body = await response.json();
-      assert.equal(body._tag, expectedTag, nextFailure._tag);
+      assert.ok(Schema.is(Schema.TaggedStruct(expectedTag, {}))(body), nextFailure._tag);
       assert.equal(body.status, expectedStatus, nextFailure._tag);
       assert.equal(JSON.stringify(body).includes(reason), false, nextFailure._tag);
       if (expectedStatus === 503) {
@@ -678,7 +686,7 @@ test('the generated governed Read seam sanitizes unexpected runtime defects', as
     assert.equal(response.status, 500);
     assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
     const body = await response.json();
-    assert.equal(body._tag, 'PartyMatchDecisionInternalProblem');
+    assert.ok(Schema.is(Schema.TaggedStruct('PartyMatchDecisionInternalProblem', {}))(body));
     assert.equal(body.status, 500);
     assert.equal(JSON.stringify(body).includes('private'), false);
   } finally {
@@ -752,7 +760,9 @@ test('correlation and idempotency are mandatory before the Core Action lifecycle
     );
     assert.equal(missingKey.status, 428);
     const missingKeyBody = await missingKey.json();
-    assert.equal(missingKeyBody._tag, 'PartyCommandPreconditionRequiredProblem');
+    assert.ok(
+      Schema.is(Schema.TaggedStruct('PartyCommandPreconditionRequiredProblem', {}))(missingKeyBody),
+    );
     const missingCorrelation = await handle(
       app,
       commandRequest('request-search-rebuild', {}, assertion.token, {
@@ -762,7 +772,11 @@ test('correlation and idempotency are mandatory before the Core Action lifecycle
     );
     assert.equal(missingCorrelation.status, 400);
     const missingCorrelationBody = await missingCorrelation.json();
-    assert.equal(missingCorrelationBody._tag, 'PartyCommandInvalidRequestProblem');
+    assert.ok(
+      Schema.is(Schema.TaggedStruct('PartyCommandInvalidRequestProblem', {}))(
+        missingCorrelationBody,
+      ),
+    );
     assert.equal(harness.snapshot().invocations.length, 0);
   } finally {
     await app.dispose();
@@ -785,7 +799,7 @@ test('real Core permission denial is a durable 403 and does not execute the comm
     );
     assert.equal(response.status, 403);
     const body = await response.json();
-    assert.equal(body._tag, 'PartyCommandForbiddenProblem');
+    assert.ok(Schema.is(Schema.TaggedStruct('PartyCommandForbiddenProblem', {}))(body));
     assert.equal(harness.snapshot().invocations.length, 1);
     assert.equal(harness.snapshot().permissionDenials.length, 1);
   } finally {
@@ -814,7 +828,7 @@ test('the real handler translates domain conflicts and rolls back without succes
     );
     assert.equal(response.status, 409);
     const body = await response.json();
-    assert.equal(body._tag, 'PartyCommandConflictProblem');
+    assert.ok(Schema.is(Schema.TaggedStruct('PartyCommandConflictProblem', {}))(body));
     assert.equal(body.code, 'party_lifecycle_conflict');
     assert.equal(harness.snapshot().invocations.length, 1);
     assert.equal(harness.snapshot().committed.length, 0);
@@ -853,7 +867,7 @@ test('alias conflicts preserve only safe canonical recovery metadata', async () 
     );
     assert.equal(response.status, 409);
     const body = await response.json();
-    assert.equal(body._tag, 'PartyCommandAliasWriteRejectedProblem');
+    assert.ok(Schema.is(Schema.TaggedStruct('PartyCommandAliasWriteRejectedProblem', {}))(body));
     assert.deepEqual(body.aliasPartyRef, partyRef);
     assert.deepEqual(body.canonicalPartyRef, canonicalPartyRef);
     assert.equal(JSON.stringify(body).includes('Private diagnostic'), false);
@@ -890,7 +904,7 @@ test('committed request replay stays a terminal 409 and does not execute or emit
     );
     assert.equal(replay.status, 409);
     const body = await replay.json();
-    assert.equal(body._tag, 'PartyCommandAlreadyCommittedProblem');
+    assert.ok(Schema.is(Schema.TaggedStruct('PartyCommandAlreadyCommittedProblem', {}))(body));
     assert.equal(body.code, 'action_already_committed');
     assert.equal(body.invocationId, harness.snapshot().invocations[0]?.actionInvocationId);
     assert.equal(body.retryCommand, false);
@@ -950,7 +964,7 @@ test('declared not-found, capability-unavailable and unexpected defects retain s
       assert.equal(response.status, item.status);
       assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
       const body = await response.json();
-      assert.equal(body._tag, item.tag);
+      assert.ok(Schema.is(Schema.TaggedStruct(item.tag, {}))(body));
       assert.equal(body.status, item.status);
       assert.equal(JSON.stringify(body).includes('private'), false);
       if (item.status === 503) {
@@ -1061,7 +1075,9 @@ test('commit resolution requires authentication and a valid invocation without c
     const malformed = await handle(app, recoveryRequest('not-an-id', assertion.token));
     assert.equal(malformed.status, 400);
     const malformedBody = await malformed.json();
-    assert.equal(malformedBody._tag, 'PartyCommandInvalidRequestProblem');
+    assert.ok(
+      Schema.is(Schema.TaggedStruct('PartyCommandInvalidRequestProblem', {}))(malformedBody),
+    );
     const absent = await handle(app, recoveryRequest(randomUUID(), assertion.token));
     assert.equal(absent.status, 404);
     assert.equal(harness.snapshot().invocations.length, 0);
@@ -1210,7 +1226,7 @@ test('actual Core commit acknowledgement loss resolves and the mounted governed 
     );
     assert.equal(uncertain.status, 503);
     const body = await uncertain.json();
-    assert.equal(body._tag, 'PartyCommandCommitIndeterminateProblem');
+    assert.ok(Schema.is(Schema.TaggedStruct('PartyCommandCommitIndeterminateProblem', {}))(body));
     assert.equal(body.resolution, 'RESOLVE_COMMIT');
     assert.equal(body.retryCommand, false);
     const invocationId = harness.snapshot().invocations[0]?.actionInvocationId;
@@ -1243,7 +1259,9 @@ test('actual Core commit acknowledgement loss resolves and the mounted governed 
     );
     assert.equal(replay.status, 409);
     const replayBody = await replay.json();
-    assert.equal(replayBody._tag, 'PartyCommandAlreadyCommittedProblem');
+    assert.ok(
+      Schema.is(Schema.TaggedStruct('PartyCommandAlreadyCommittedProblem', {}))(replayBody),
+    );
     assert.equal(replayBody.invocationId, invocationId);
     assert.equal(replayBody.retryCommand, false);
     assert.equal(executions, 1);

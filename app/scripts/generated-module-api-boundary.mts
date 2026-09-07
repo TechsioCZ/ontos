@@ -326,19 +326,45 @@ const isWholeCallExpression = (source: string, declaration: RegExp): boolean => 
   return opening !== -1 && closing === source.length - 1;
 };
 
-const codeDepthBeforePosition = (source: string, target: number): number => {
+interface SourceDepthAnalysis {
+  readonly code: string;
+  readonly prefixDepths: Int32Array;
+}
+
+// Source strings are immutable cache keys. Bound retained analyses because scripts may validate
+// many disposable owners in one process; repeated contributions reuse the same owner sources.
+const sourceDepthAnalyses = new Map<string, SourceDepthAnalysis>();
+const MAX_SOURCE_DEPTH_ANALYSES = 32;
+const sourceDepthAnalysis = (source: string): SourceDepthAnalysis => {
+  const cached = sourceDepthAnalyses.get(source);
+  if (cached !== undefined) {
+    return cached;
+  }
   const code = maskNonCode(source);
+  const prefixDepths = new Int32Array(code.length + 1);
   let depth = 0;
-  for (let index = 0; index < target; index += 1) {
+  for (let index = 0; index < code.length; index += 1) {
     const character = code[index];
     if (character === '{' || character === '(' || character === '[') {
       depth += 1;
     } else if (character === '}' || character === ')' || character === ']') {
       depth -= 1;
     }
+    prefixDepths[index + 1] = depth;
   }
-  return depth;
+  if (sourceDepthAnalyses.size >= MAX_SOURCE_DEPTH_ANALYSES) {
+    const oldest = sourceDepthAnalyses.keys().next().value;
+    if (oldest !== undefined) {
+      sourceDepthAnalyses.delete(oldest);
+    }
+  }
+  const analysis = { code, prefixDepths };
+  sourceDepthAnalyses.set(source, analysis);
+  return analysis;
 };
+
+const codeDepthBeforePosition = (source: string, target: number): number =>
+  sourceDepthAnalysis(source).prefixDepths[target] ?? 0;
 
 const codeDepthAtPosition = (source: string, target: number): number | undefined =>
   isCodePosition(source, target) ? codeDepthBeforePosition(source, target) : undefined;
@@ -354,7 +380,7 @@ interface SourceRange {
 
 const assignedExpressionRange = (source: string, declaration: RegExp): SourceRange | undefined => {
   const code = maskComments(source);
-  const structure = maskNonCode(source);
+  const structure = sourceDepthAnalysis(source).code;
   const flags = declaration.flags.includes('g') ? declaration.flags : `${declaration.flags}g`;
   const declarations = [...structure.matchAll(new RegExp(declaration.source, flags))].filter(
     (candidate) => candidate.index !== undefined && isTopLevelCodePosition(source, candidate.index),
@@ -442,7 +468,7 @@ const generatedSlotEntries = (
   if (slot === undefined) {
     return undefined;
   }
-  const structure = maskNonCode(source);
+  const structure = sourceDepthAnalysis(source).code;
   const entries: string[] = [];
   let start = slot.bodyStart;
   for (let index = slot.bodyStart; index < slot.bodyEnd; index += 1) {
@@ -675,6 +701,35 @@ const returnedEffectBffDefinition = (source: string): string | undefined => {
   return objectArgument(source.slice(callStart, closing + 1), /^defineEffectBff\(/u);
 };
 
+const exportedRuntimeFactory = (source: string): SourceRange | undefined => {
+  const exported = defaultExportExpression(source);
+  if (exported === undefined || !/^[A-Za-z][A-Za-z0-9]*$/u.test(exported)) {
+    return undefined;
+  }
+  const runtimeInitializer = assignedExpression(
+    source,
+    new RegExp(`const ${escapeRegExp(exported)}\\s*=\\s*`, 'u'),
+  );
+  const factory = /^(?<factory>make[A-Za-z][A-Za-z0-9]*ApiRuntime)\(/u.exec(
+    runtimeInitializer ?? '',
+  )?.groups?.factory;
+  const factoryExpression =
+    factory === undefined
+      ? undefined
+      : assignedExpressionRange(
+          source,
+          new RegExp(`export const ${escapeRegExp(factory)}\\s*=\\s*`, 'u'),
+        );
+  return factoryExpression === undefined ||
+    runtimeInitializer === undefined ||
+    !isWholeCallExpression(
+      runtimeInitializer,
+      new RegExp(`^${escapeRegExp(factory ?? '')}\\(`, 'u'),
+    )
+    ? undefined
+    : factoryExpression;
+};
+
 const effectBffDefinition = (source: string): string | undefined => {
   const exported = defaultExportExpression(source);
   if (exported === undefined) {
@@ -688,26 +743,49 @@ const effectBffDefinition = (source: string): string | undefined => {
   if (!/^[A-Za-z][A-Za-z0-9]*$/u.test(exported)) {
     return undefined;
   }
-  const runtimeInitializer = assignedExpression(
-    source,
-    new RegExp(`const ${escapeRegExp(exported)}\\s*=\\s*`, 'u'),
+  const factory = exportedRuntimeFactory(source);
+  return factory === undefined ? undefined : returnedEffectBffDefinition(factory.value);
+};
+
+const hasInjectedGovernedReadRuntime = (source: string): boolean => {
+  const factory = exportedRuntimeFactory(source);
+  if (factory === undefined) {
+    return false;
+  }
+  const code = maskNonCode(factory.value);
+  // The generated binding may be the first explicitly typed injection in an owner runtime
+  // factory. Its caller and mounted layers are checked separately, and TS checks the layer type.
+  const injection =
+    /const\s+\[\s*governedReadRuntimeLive,\s*[A-Za-z0-9_,\s]+\]\s*=\s*(?<args>[A-Za-z][A-Za-z0-9]*)\s*;/u.exec(
+      code,
+    );
+  const args = injection?.groups?.args;
+  if (
+    args === undefined ||
+    injection?.index === undefined ||
+    codeDepthAtPosition(factory.value, injection.index) !== 1
+  ) {
+    return false;
+  }
+  const signature = new RegExp(
+    `\\.\\.\\.${escapeRegExp(args)}:\\s*(?<type>[A-Za-z][A-Za-z0-9]*)`,
+    'u',
+  ).exec(code);
+  const type = signature?.groups?.type;
+  return (
+    type !== undefined &&
+    new RegExp(
+      `type ${escapeRegExp(type)}\\s*=\\s*readonly\\s*\\[\\s*readRuntime:\\s*Layer\\.Layer<ReadRuntime\\s*[,>]`,
+      'u',
+    ).test(maskNonCode(source)) &&
+    effectBffDefinition(source) !== undefined
   );
-  const factory = /^(?<factory>make[A-Za-z][A-Za-z0-9]*ApiRuntime)\(\)$/u.exec(
-    runtimeInitializer ?? '',
-  )?.groups?.factory;
-  const factoryExpression =
-    factory === undefined
-      ? undefined
-      : assignedExpression(
-          source,
-          new RegExp(`export const ${escapeRegExp(factory)}\\s*=\\s*`, 'u'),
-        );
-  return factoryExpression === undefined
-    ? undefined
-    : returnedEffectBffDefinition(factoryExpression);
 };
 
 const hasGovernedHandlerRoot = (source: string): boolean => {
+  if (hasInjectedGovernedReadRuntime(source)) {
+    return true;
+  }
   const runtime = assignedExpression(source, /const governedReadRuntimeLive\s*=\s*/u);
   if (
     runtime === undefined ||

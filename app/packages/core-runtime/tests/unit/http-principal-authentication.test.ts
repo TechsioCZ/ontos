@@ -137,9 +137,15 @@ test('mounted HTTP authentication maps verifier classes, challenges unusable cre
           const body = yield* response.json.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(ProblemResponseSchema)),
           );
-          assert.equal(
-            body._tag,
-            expectedStatus === 401 ? 'FixtureAuthenticationProblem' : 'FixtureUnavailableProblem',
+          assert.ok(
+            Schema.is(
+              Schema.TaggedStruct(
+                expectedStatus === 401
+                  ? 'FixtureAuthenticationProblem'
+                  : 'FixtureUnavailableProblem',
+                {},
+              ),
+            )(body),
           );
           assert.equal(body.status, expectedStatus);
           assert.equal(Object.hasOwn(body, 'reason'), false);

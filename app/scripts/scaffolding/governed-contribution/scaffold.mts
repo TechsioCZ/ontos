@@ -862,10 +862,7 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
           candidate.includes('GovernedReadLayer.provide(governedReadRuntimeLive)') &&
           candidate.endsWith('),'),
       );
-      if (
-        next.includes(GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START) ||
-        next.includes(GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START)
-      ) {
+      if (next.includes(GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START)) {
         for (const supportImport of [
           "import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';",
           "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';",
@@ -878,6 +875,8 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
             (candidate) => candidate.startsWith('import { ') && candidate.endsWith("';"),
           );
         }
+      }
+      if (next.includes(GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START)) {
         next = insertSortedSlotIdempotently(
           next,
           GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,

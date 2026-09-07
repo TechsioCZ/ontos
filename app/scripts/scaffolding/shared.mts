@@ -1608,8 +1608,8 @@ const splitGeneratedSlotEntries = (slotBody: string): readonly string[] => {
     entries.push(
       ...current
         .trim()
-        .split('\n')
-        .map((line) => line.trim()),
+        .split(/\n\s*(?=\.)/u)
+        .map((entry) => entry.trim()),
     );
     current = '';
   }

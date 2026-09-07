@@ -1,4 +1,4 @@
-import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect';
+import { Array as EffectArray, Effect, FileSystem, Option, Predicate, Schema } from 'effect';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   MODULE_CONTRACT_GENERATOR_HEADER,
@@ -65,6 +65,7 @@ import {
   createMutationEffect,
   discoverVerticalEffect,
   ensureUniqueMutationPaths,
+  maskNonCode,
   patchJsonObjectProperty,
   raiseScaffoldFailure,
   readJsonEffect,
@@ -104,6 +105,31 @@ export const governedHttpApi = HttpApi.make('${toCamelCase(vertical.slug)}Govern
   .pipe(identity);
 `;
 
+const topLevelStatementEnd = (structure: string, start: number): number => {
+  let roundDepth = 0;
+  let squareDepth = 0;
+  let curlyDepth = 0;
+  for (let index = start; index < structure.length; index += 1) {
+    const character = structure[index];
+    if (character === '(') {
+      roundDepth += 1;
+    } else if (character === ')') {
+      roundDepth -= 1;
+    } else if (character === '[') {
+      squareDepth += 1;
+    } else if (character === ']') {
+      squareDepth -= 1;
+    } else if (character === '{') {
+      curlyDepth += 1;
+    } else if (character === '}') {
+      curlyDepth -= 1;
+    } else if (character === ';' && roundDepth === 0 && squareDepth === 0 && curlyDepth === 0) {
+      return index;
+    }
+  }
+  return -1;
+};
+
 const initializeGovernedHttpApiRoot = (source: string, vertical: VerticalMetadata): string => {
   if (
     source.includes(GOVERNED_HTTP_API_IMPORT_SLOT_START) ||
@@ -114,8 +140,9 @@ const initializeGovernedHttpApiRoot = (source: string, vertical: VerticalMetadat
       `vertical ${vertical.slug} shared API already uses reserved governed-read composition`,
     );
   }
+  const structure = maskNonCode(source);
   const declarations = [
-    ...source.matchAll(/export const (?<api>[A-Za-z][A-Za-z0-9]*)\s*=\s*HttpApi\.make\(/gu),
+    ...structure.matchAll(/export const (?<api>[A-Za-z][A-Za-z0-9]*)\s*=\s*HttpApi\.make\(/gu),
   ];
   if (declarations.length !== 1) {
     return raiseScaffoldFailure(
@@ -128,7 +155,7 @@ const initializeGovernedHttpApiRoot = (source: string, vertical: VerticalMetadat
   if (apiValue === undefined || declarationStart === undefined) {
     return raiseScaffoldFailure(`vertical ${vertical.slug} shared API root is malformed`);
   }
-  const statementEnd = source.indexOf(';', declarationStart);
+  const statementEnd = topLevelStatementEnd(structure, declarationStart);
   if (statementEnd === -1) {
     return raiseScaffoldFailure(`vertical ${vertical.slug} shared API root has no terminator`);
   }
@@ -228,9 +255,9 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   return `${generatedRoot}\n${source.slice(0, runtimeLayerStart)}${source.slice(
     runtimeLayerStart,
     runtimeLayerEnd,
-  )}  Layer.provide(governedReadApiHandlersLive),
-  Layer.provide(GovernedDatabaseConfigLive),
-  Layer.orDie,
+  )}  GovernedReadLayer.provide(governedReadApiHandlersLive),
+  GovernedReadLayer.provide(GovernedDatabaseConfigLive),
+  GovernedReadLayer.orDie,
 ${source.slice(runtimeLayerEnd)}`;
 };
 
@@ -248,10 +275,10 @@ const scaffoldError = (message: string, cause?: unknown): ModuleContractScaffold
 const trySync = <Value,>(operation: () => Value) =>
   Effect.try({
     catch: (cause) =>
-      cause instanceof ModuleContractScaffoldError
+      Schema.is(ModuleContractScaffoldError)(cause)
         ? cause
         : scaffoldError(
-            cause instanceof Error ? cause.message : 'module contract update failed',
+            Predicate.isError(cause) ? cause.message : 'module contract update failed',
             cause,
           ),
     try: operation,

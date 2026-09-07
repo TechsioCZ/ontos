@@ -1,5 +1,9 @@
 import { DatabaseConfigLive } from '@app/core-runtime';
-import type { ActionRuntime, ReadRuntime } from '@app/core-runtime';
+import type {
+  ActionRuntime,
+  ReadRuntime,
+  GatewayAssertionRedemptionService,
+} from '@app/core-runtime';
 import {
   defineEffectBff,
   HttpApiBuilder,
@@ -108,14 +112,23 @@ type PartyRegistryApiRuntimeArguments = readonly [
     Layer.Error<typeof productionSearchProjectionGatewayLive>
   >,
   actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof productionActionRuntimeLive>>,
+  assertionRedemption: Layer.Layer<
+    GatewayAssertionRedemptionService,
+    Layer.Error<typeof gatewayAssertionRedemptionLive>
+  >,
 ];
 
 export const makePartyRegistryApiRuntime = (
   ...args: PartyRegistryApiRuntimeArguments
 ): EffectBffDefinition<typeof partyRegistryApi, EffectRuntimeLayer> &
   EffectBffRuntime<typeof partyRegistryApi, EffectRuntimeLayer> => {
-  const [governedReadRuntimeLive, aresSubjectService, searchProjectionGateway, actionRuntime] =
-    args;
+  const [
+    governedReadRuntimeLive,
+    aresSubjectService,
+    searchProjectionGateway,
+    actionRuntime,
+    assertionRedemption,
+  ] = args;
   const apiHandlersLive = Layer.mergeAll(
     partyRegistryFoundationLive,
     partyRegistryCommandsLive.pipe(Layer.provide(actionRuntime)),
@@ -156,9 +169,7 @@ export const makePartyRegistryApiRuntime = (
       Layer.provide(searchProjectionGateway),
     ),
     // </generated-governed-http-handler-layers>
-  ).pipe(
-    Layer.provide(Layer.mergeAll(ActionPrincipalVerifierLive, gatewayAssertionRedemptionLive)),
-  );
+  ).pipe(Layer.provide(Layer.mergeAll(ActionPrincipalVerifierLive, assertionRedemption)));
   const layer = HttpApiBuilder.layer(partyRegistryApi).pipe(
     Layer.provide(apiHandlersLive),
     Layer.provide(runtimeObservabilityLive),
@@ -180,6 +191,7 @@ const apiRuntime = makePartyRegistryApiRuntime(
   partyRegistryAresSubjectServiceLive,
   productionSearchProjectionGatewayLive,
   productionActionRuntimeLive,
+  gatewayAssertionRedemptionLive,
 );
 
 export default apiRuntime;

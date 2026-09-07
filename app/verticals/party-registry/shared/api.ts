@@ -127,7 +127,6 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(DuplicateCandidateDetailApi)
   .addHttpApi(OrganizationEngagementProfileApi)
   .addHttpApi(PartiesSearchApi)
-  .addHttpApi(PersonEngagementProfileApi)
   .addHttpApi(PartyContactPointDetailApi)
   .addHttpApi(PartyContactPointsApi)
   .addHttpApi(PartyCorrectionApi)
@@ -138,6 +137,7 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(PartyOfficialIdentifierDetailApi)
   .addHttpApi(PartyOfficialIdentifierHistoryApi)
   .addHttpApi(PartyRelationshipDetailApi)
+  .addHttpApi(PersonEngagementProfileApi)
   // </generated-governed-http-api-additions>
   .pipe(identity);
 /** Canonical composition-root binding consumed by generated governed HTTP adapters. */

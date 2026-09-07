@@ -524,3 +524,47 @@ void test('permits owner-local registration imports but rejects cross-deployment
     /may not import/u,
   );
 });
+
+void test('module-contract ignores non-code roots and nested semicolons when inserting API slots', async () => {
+  await withFixture(async (root) => {
+    const source = `// export const commentApi = HttpApi.make('Comment');
+const example = "export const stringApi = HttpApi.make('String');";
+export const fixtureApi = HttpApi.make('Fixture;Api')
+  /* semicolon ; before the end of the expression */
+  .pipe((api) => { const label = ';'; return api; });
+export const untouched = true;
+`;
+    await write(root, 'verticals/property-registry/shared/api.ts', source);
+    await scaffold(root);
+    const generated = await readFile(
+      path.join(root, 'verticals/property-registry/shared/api.ts'),
+      'utf-8',
+    );
+    assert.match(generated, /HttpApi\.make\('Fixture;Api'\)/u);
+    assert.match(generated, /return api; \}\)\s*\/\/ <generated-governed-http-api-additions>/u);
+    assert.match(generated, /export const governedHttpApi = fixtureApi;/u);
+    assert.match(generated, /export const untouched = true;/u);
+  });
+});
+
+void test('module-contract injects only its own Layer binding into pinned handler roots', async () => {
+  await withFixture(async (root) => {
+    await write(
+      root,
+      'verticals/property-registry/api/index.ts',
+      `const layer = HttpApiBuilder.layer(fixtureApi).pipe(
+  identity,
+) satisfies EffectRuntimeLayer;
+export default defineEffectBff({ api: fixtureApi, layer });
+`,
+    );
+    await scaffold(root);
+    const generated = await readFile(
+      path.join(root, 'verticals/property-registry/api/index.ts'),
+      'utf-8',
+    );
+    assert.match(generated, /GovernedReadLayer\.provide\(governedReadApiHandlersLive\)/u);
+    assert.match(generated, /GovernedReadLayer\.orDie/u);
+    assert.doesNotMatch(generated, /\bLayer\./u);
+  });
+});

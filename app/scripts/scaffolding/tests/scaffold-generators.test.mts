@@ -35,13 +35,19 @@ import {
 } from '../../../apps/shell-super-app/api/auth/gateway-issuer.ts';
 import type { GatewayIssuerConfigValue } from '../../../apps/shell-super-app/api/auth/gateway-issuer-config.ts';
 import { getHelpText, runScaffold } from '../cli.mts';
+import { hasValidGovernedHttpCompositionRoot } from '../../generated-module-api-boundary.mts';
 import type { ScaffoldCommand } from '../cli.mts';
 import {
   GOVERNED_HTTP_API_ADDITION_SLOT_END,
   GOVERNED_HTTP_API_ADDITION_SLOT_START,
   GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
   GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
+  GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+  GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
+  GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
+  GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
   insertSortedSlot,
+  readGeneratedSlotEntries,
 } from '../shared.mts';
 import type { JsonValue } from '../shared.mts';
 import {
@@ -315,6 +321,7 @@ const contactsVertical: FixtureVertical = {
 };
 
 const json = (value: JsonValue): string => `${JSON.stringify(value, null, 2)}\n`;
+const inventoryHandlerRootFile = 'verticals/inventory-stock/api/index.ts';
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
 const require = createRequire(import.meta.url);
 const createEntry = require.resolve('@modern-js/create');
@@ -1075,10 +1082,7 @@ test('governed contribution generators patch owner contracts and lazy adapters a
       fixture.root,
       'verticals/inventory-stock/shared/api.ts',
     );
-    const composedHandlers = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/api/index.ts',
-    );
+    const composedHandlers = await readFixtureFile(fixture.root, inventoryHandlerRootFile);
     assert.match(searchClient, /makeEffectHttpApiClient\(InventoryItemsSearchApi, \{/u);
     assert.match(reportClient, /makeEffectHttpApiClient\(StockLevelsReportApi, \{/u);
     assert.match(
@@ -1496,7 +1500,7 @@ try {
     }
     await writeFile(registrationPath, validRegistration, 'utf-8');
 
-    const handlerRootPath = path.join(fixture.root, 'verticals/inventory-stock/api/index.ts');
+    const handlerRootPath = path.join(fixture.root, inventoryHandlerRootFile);
     const validHandlerRoot = await readFile(handlerRootPath, 'utf-8');
     await writeFile(
       handlerRootPath,
@@ -5227,4 +5231,120 @@ test('all generated files typecheck against the real workspace contracts', async
     });
     assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
   });
+});
+
+test('generated fluent slots preserve multiline call entries', () => {
+  const source = `${GOVERNED_HTTP_API_ADDITION_SLOT_START}
+  .addHttpApi(
+    FirstApi,
+  )
+  .addHttpApi(SecondApi)
+  ${GOVERNED_HTTP_API_ADDITION_SLOT_END}`;
+  const next = insertSortedSlot(
+    source,
+    GOVERNED_HTTP_API_ADDITION_SLOT_START,
+    GOVERNED_HTTP_API_ADDITION_SLOT_END,
+    ['.addHttpApi(ThirdApi)'],
+    (entry) => entry.startsWith('.addHttpApi(') && entry.endsWith(')'),
+  );
+  const entries = readGeneratedSlotEntries(
+    next,
+    GOVERNED_HTTP_API_ADDITION_SLOT_START,
+    GOVERNED_HTTP_API_ADDITION_SLOT_END,
+  );
+  assert.equal(entries.length, 3);
+  assert.match(entries[0] ?? '', /FirstApi/u);
+});
+
+for (const [start, end] of [
+  [GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START, GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END],
+  [GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START, GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END],
+] as const) {
+  test(`governed generation accepts the independent support slot without ${start}`, async () => {
+    await withFixture(async (fixture) => {
+      const rootPath = path.join(fixture.root, inventoryHandlerRootFile);
+      const source = await readFile(rootPath, 'utf-8');
+      assert.ok(source.includes(start));
+      await writeFile(rootPath, source.replace(start, '').replace(end, ''), 'utf-8');
+      await run(fixture, scaffoldCommand.moduleApi, [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--name',
+        fixtureName.resourceDetail,
+      ]);
+      const generated = await readFile(rootPath, 'utf-8');
+      assert.match(generated, /resourceDetailReadApiLive/u);
+    });
+  });
+}
+
+test('Action identity boundary rejects an owned file without the authentication adapter', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, scaffoldCommand.microverticalActionBoundary, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+    ]);
+    const serverPath = path.join(fixture.root, inventoryActionPrincipalFile);
+    const source = await readFile(serverPath, 'utf-8');
+    await writeFile(
+      serverPath,
+      source.replaceAll('authenticateOperationPrincipal', 'removedAuthenticationAdapter'),
+      'utf-8',
+    );
+    const before = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, scaffoldCommand.microverticalActionBoundary, [
+        scaffoldFlag.vertical,
+        inventorySlug,
+      ]),
+      /refusing|owned|boundary/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), before);
+  });
+});
+
+test('typed injected governed runtime stays bound to the exported owner composition', async () => {
+  const shared = await readFile(
+    path.join(appRoot, 'verticals/party-registry/shared/api.ts'),
+    'utf-8',
+  );
+  const handler = await readFile(
+    path.join(appRoot, 'verticals/party-registry/api/index.ts'),
+    'utf-8',
+  );
+  assert.equal(hasValidGovernedHttpCompositionRoot(shared, handler), true);
+  assert.equal(
+    hasValidGovernedHttpCompositionRoot(
+      shared,
+      handler.replace(
+        'readRuntime: Layer.Layer<ReadRuntime,',
+        'readRuntime: Layer.Layer<UnrelatedRuntime,',
+      ),
+    ),
+    false,
+  );
+  assert.equal(
+    hasValidGovernedHttpCompositionRoot(
+      shared,
+      handler.replace('Layer.provide(apiHandlersLive)', 'Layer.provide(Layer.empty)'),
+    ),
+    false,
+  );
+  assert.equal(
+    hasValidGovernedHttpCompositionRoot(
+      shared,
+      handler.replace(
+        'return defineEffectBff({ api: partyRegistryApi, layer });',
+        'return defineEffectBff({ api: unrelatedApi, layer });',
+      ),
+    ),
+    false,
+  );
+  assert.equal(
+    hasValidGovernedHttpCompositionRoot(
+      shared,
+      handler.replace('export default apiRuntime;', 'export default unrelatedRuntime;'),
+    ),
+    false,
+  );
 });
