@@ -902,6 +902,11 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       'dir',
     );
     await symlink(
+      path.join(appRoot, 'packages/gateway-principal-verifier'),
+      path.join(generatedFixtureRoot, 'node_modules/@app/gateway-principal-verifier'),
+      'dir',
+    );
+    await symlink(
       path.join(appRoot, 'node_modules/effect'),
       path.join(generatedFixtureRoot, 'node_modules/effect'),
       'dir',

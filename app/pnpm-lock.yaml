@@ -343,6 +343,28 @@ importers:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc
 
+  packages/gateway-principal-verifier:
+    dependencies:
+      '@app/core-runtime':
+        specifier: workspace:*
+        version: link:../core-runtime
+      '@app/shared-contracts':
+        specifier: workspace:*
+        version: link:../shared-contracts
+      effect:
+        specifier: 4.0.0-beta.107
+        version: 4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)
+      jose:
+        specifier: 6.2.5
+        version: 6.2.5
+    devDependencies:
+      '@effect/tsgo':
+        specifier: 0.19.0
+        version: 0.19.0
+      '@types/node':
+        specifier: 20.19.43
+        version: 20.19.43
+
   packages/shared-contracts:
     dependencies:
       '@app/core-runtime':
@@ -373,6 +395,9 @@ importers:
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
+      '@app/gateway-principal-verifier':
+        specifier: workspace:*
+        version: link:../../packages/gateway-principal-verifier
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
@@ -430,9 +455,6 @@ importers:
       i18next:
         specifier: 26.3.6
         version: 26.3.6(typescript@7.0.2)
-      jose:
-        specifier: 6.2.5
-        version: 6.2.5
       node-fetch:
         specifier: ^3.3.2
         version: 3.3.2
@@ -494,6 +516,9 @@ importers:
       happy-dom:
         specifier: 20.8.3
         version: 20.8.3
+      jose:
+        specifier: 6.2.5
+        version: 6.2.5
       tailwindcss:
         specifier: ^4.3.2
         version: 4.3.3
@@ -12862,7 +12887,7 @@ snapshots:
 
   '@types/ws@8.18.1':
     dependencies:
-      '@types/node': 26.4.1
+      '@types/node': 20.19.43
 
   '@types/yargs-parser@21.0.3': {}
 
