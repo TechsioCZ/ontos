@@ -1,17 +1,8 @@
+import type { ActionInvocationPersistenceError, ActionTransactionError } from './errors.ts';
+import type { Cause } from 'effect';
 import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
-import {
-  Cause,
-  Context,
-  DateTime,
-  Duration,
-  Effect,
-  Function as EffectFunction,
-  Layer,
-  Predicate,
-  Result,
-  Schema,
-} from 'effect';
+import { Context, DateTime, Duration, Effect, Layer, Predicate, Result, Schema } from 'effect';
 import {
   actionInvocations,
   auditEvents,
@@ -21,15 +12,20 @@ import {
   tenants,
 } from '../db/schema.ts';
 import type { ActionInvocationStatus } from '../db/schema.ts';
+import { runCoreTransaction } from '../db/transaction-bridge.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import type { ActionAuditProfile } from './definition.ts';
 import type { ActionEvidenceSnapshot } from './events.ts';
 import {
+  createActionInvocationPersistenceErrorWithCause,
+  getActionInvocationPersistenceErrorCause,
   ActionInvocationNotFound,
-  ActionInvocationPersistenceError,
   ActionInvocationStateError,
-  ActionTransactionError,
 } from './errors.ts';
+import {
+  createActionTransactionErrorWithCause,
+  getActionTransactionErrorCause,
+} from './transaction-error.ts';
 import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
 
 const withOptionalProperty = <
@@ -273,32 +269,36 @@ const invocationSelection = {
   status: actionInvocations.status,
 } as const;
 
-const FAILURE_CAUSE_PROPERTY = 'ontosRepositoryFailureCause';
-
 const persistenceFailure = <FailureCause>(reason: string, cause?: FailureCause) => {
-  const failure = new ActionInvocationPersistenceError({
-    code: 'action_invocation_persistence_failed',
-    reason,
-  });
-  if (cause !== undefined) {
-    Object.defineProperty(failure, FAILURE_CAUSE_PROPERTY, { value: cause });
-  }
+  const failure = createActionInvocationPersistenceErrorWithCause(
+    {
+      code: 'action_invocation_persistence_failed',
+      reason,
+    },
+    cause,
+  );
   return failure;
 };
 
-/** Internal bridge used by the transaction boundary to preserve the original defect. */
+/**
+ * Bridge used by the transaction boundary to preserve the original defect.
+ *
+ * @internal
+ */
 export const getActionInvocationPersistenceFailureCause = (
   failure: ActionInvocationPersistenceError,
-): Cause.Cause<never> | undefined => {
-  const cause = FAILURE_CAUSE_PROPERTY in failure ? failure[FAILURE_CAUSE_PROPERTY] : undefined;
-  return cause === undefined ? undefined : Cause.die(cause);
-};
+): Cause.Cause<never> | undefined => getActionInvocationPersistenceErrorCause(failure);
 
+/**
+ * Logs the privately retained persistence defect.
+ *
+ * @internal
+ */
 export const logActionInvocationPersistenceFailureCause = (
   failure: ActionInvocationPersistenceError,
   annotations: Readonly<Record<string, string>>,
 ): Effect.Effect<void> => {
-  const cause = FAILURE_CAUSE_PROPERTY in failure ? failure[FAILURE_CAUSE_PROPERTY] : undefined;
+  const cause = getActionInvocationPersistenceErrorCause(failure);
   return cause === undefined
     ? Effect.void
     : Effect.annotateLogs(
@@ -308,30 +308,36 @@ export const logActionInvocationPersistenceFailureCause = (
 };
 
 const transactionFailure = <FailureCause>(reason: string, cause?: FailureCause) => {
-  const failure = new ActionTransactionError({
-    code: 'action_transaction_failed',
-    reason,
-  });
-  if (cause !== undefined) {
-    Object.defineProperty(failure, FAILURE_CAUSE_PROPERTY, { value: cause });
-  }
+  const failure = createActionTransactionErrorWithCause(
+    {
+      code: 'action_transaction_failed',
+      reason,
+    },
+    cause,
+  );
   return failure;
 };
 
-/** Internal bridge used by the transaction boundary to preserve the original defect. */
+/**
+ * Bridge used by the transaction boundary to preserve the original defect.
+ *
+ * @internal
+ */
 export const getActionTransactionFailureCause = (
   failure: ActionTransactionError,
-): Cause.Cause<never> | undefined => {
-  const cause = FAILURE_CAUSE_PROPERTY in failure ? failure[FAILURE_CAUSE_PROPERTY] : undefined;
-  return cause === undefined ? undefined : Cause.die(cause);
-};
+): Cause.Cause<never> | undefined => getActionTransactionErrorCause(failure);
 
+/**
+ * Logs the privately retained transaction defect.
+ *
+ * @internal
+ */
 export const logActionTransactionFailureCause = (
   failure: ActionTransactionError,
   message: string,
   annotations: Readonly<Record<string, string>>,
 ): Effect.Effect<void> => {
-  const cause = FAILURE_CAUSE_PROPERTY in failure ? failure[FAILURE_CAUSE_PROPERTY] : undefined;
+  const cause = getActionTransactionErrorCause(failure);
   return cause === undefined
     ? Effect.void
     : Effect.annotateLogs(Effect.logError(message, cause), annotations);
@@ -350,12 +356,6 @@ const tryDatabasePromise = <Value, Failure>(
       orElse: () => Effect.fail(mapFailure('Database operation timed out')),
     }),
   );
-
-const keepPersistenceFailure = (
-  cause: unknown,
-  reason: string,
-): ActionInvocationPersistenceError =>
-  Schema.is(ActionInvocationPersistenceError)(cause) ? cause : persistenceFailure(reason, cause);
 
 const tryPersistenceQuery = <Value>(
   reason: string,
@@ -624,20 +624,11 @@ export const makeActionRepository = (): ActionRepositoryService => {
       },
     );
 
-    const runTransactionBody = EffectFunction.flow(
-      transactionBody,
-      Effect.runPromiseWith(yield* Effect.context()),
+    yield* runCoreTransaction(executor, transactionBody).pipe(
+      Effect.catchTag('CoreTransactionBridgeFailure', (failure) =>
+        Effect.fail(transactionFailure(failureReason, failure.original)),
+      ),
     );
-    yield* tryDatabasePromise(executor.transaction.bind(executor, runTransactionBody), (cause) => {
-      if (
-        Schema.is(ActionInvocationPersistenceError)(cause) ||
-        Schema.is(ActionInvocationStateError)(cause) ||
-        Schema.is(ActionTransactionError)(cause)
-      ) {
-        return cause;
-      }
-      return transactionFailure(failureReason, cause);
-    });
     return yield* Effect.void;
   });
 
@@ -755,12 +746,10 @@ export const makeActionRepository = (): ActionRepositoryService => {
       },
     );
 
-    const runTransactionBody = EffectFunction.flow(
-      transactionBody,
-      Effect.runPromiseWith(yield* Effect.context()),
-    );
-    yield* tryDatabasePromise(executor.transaction.bind(executor, runTransactionBody), (cause) =>
-      keepPersistenceFailure(cause, failureReason),
+    yield* runCoreTransaction(executor, transactionBody).pipe(
+      Effect.catchTag('CoreTransactionBridgeFailure', (failure) =>
+        Effect.fail(persistenceFailure(failureReason, failure.original)),
+      ),
     );
     return yield* Effect.void;
   });

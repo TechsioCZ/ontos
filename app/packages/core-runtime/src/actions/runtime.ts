@@ -1,18 +1,6 @@
-import {
-  Cause,
-  Context,
-  Duration,
-  Effect,
-  Exit,
-  Function as Fn,
-  Layer,
-  Option,
-  Predicate,
-  Ref,
-  Result,
-  Schema,
-} from 'effect';
+import { Cause, Context, Effect, Exit, Layer, Option, Ref, Result, Schema } from 'effect';
 import { CoreDatabase as CoreDatabaseService } from '../db/client.ts';
+import { CoreTransactionBridgeFailure, runCoreTransaction } from '../db/transaction-bridge.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import { createActionCollector } from './collector.ts';
 import { ActionTransportMetadataSchema } from './context.ts';
@@ -81,11 +69,6 @@ import { OperationalScopeResolver } from '../operations/context.ts';
 import type { OperationalScope, OperationalScopeResolverService } from '../operations/context.ts';
 import { ContextAccess } from '../permissions/context-access.ts';
 import { isDatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
-
-const invokePromiseWithoutSignal =
-  <Value>(operation: () => PromiseLike<Value>) =>
-  (_signal: AbortSignal): PromiseLike<Value> =>
-    operation();
 
 const withOptionalProperty = <
   Base extends object,
@@ -570,7 +553,6 @@ export const makeActionRuntime = (
         HandlerRequirements
       >,
     ) {
-      const handlerRequirements = yield* Effect.context<HandlerRequirements>();
       const payload = yield* decodeActionPayload(
         input.registration.descriptor.payloadSchema,
         input.payload,
@@ -927,10 +909,6 @@ export const makeActionRuntime = (
       notifyStage('invocation_running');
 
       const transactionBodyCompleted = yield* Ref.make(false);
-      const transactionRollbackCause = yield* Ref.make<
-        Option.Option<Cause.Cause<ActionCoreError | DomainErrorSchema['Type']>>
-      >(Option.none());
-      const runTransactionProgram = Effect.runPromiseWith(handlerRequirements);
       const transactionProgram = Effect.fn('ActionRuntime.transaction')(
         function* executeTransaction(drizzleTransaction: CoreTransaction) {
           const lockedInvocation = yield* repository
@@ -1065,53 +1043,61 @@ export const makeActionRuntime = (
           return result;
         },
       );
-      const transactionCallback = Fn.flow(
-        (drizzleTransaction: CoreTransaction) =>
-          transactionProgram(drizzleTransaction).pipe(
-            Effect.tapCause((cause) => Ref.set(transactionRollbackCause, Option.some(cause))),
-          ),
-        runTransactionProgram,
-      );
-      const transactionOperation = database.executor.transaction.bind(
-        database.executor,
-        transactionCallback,
-        undefined,
-      );
+      // The driver/body stay interruptible; classify the settled Cause before interruption resumes.
+      return yield* Effect.uninterruptibleMask(
+        Effect.fn('ActionRuntime.classifyTransactionOutcome')(function* classifyTransactionOutcome(
+          restore: <Value, Failure, Requirements>(
+            effect: Effect.Effect<Value, Failure, Requirements>,
+          ) => Effect.Effect<Value, Failure, Requirements>,
+        ) {
+          const transactionExit = yield* Effect.exit(
+            restore(runCoreTransaction(database.executor, transactionProgram)),
+          );
+          if (Exit.isSuccess(transactionExit)) {
+            return transactionExit.value;
+          }
 
-      const transactionExit = yield* Effect.exit(
-        Effect.tryPromise({
-          catch: (failure) =>
-            Predicate.isObjectKeyword(failure) && failure !== null
-              ? failure
-              : Object.freeze({ rejection: failure }),
-          try: invokePromiseWithoutSignal(transactionOperation),
-        }).pipe(Effect.timeout(Duration.infinity)),
+          const bodyCompleted = yield* Ref.get(transactionBodyCompleted);
+          yield* Effect.forEach(
+            transactionExit.cause.reasons,
+            (reason) =>
+              Cause.isFailReason(reason) &&
+              Schema.is(CoreTransactionBridgeFailure)(reason.error) &&
+              reason.error.outcome === 'unknown' &&
+              !(bodyCompleted && isCommitAcknowledgementFailure(reason.error.original))
+                ? Effect.logError('Unexpected Action transaction failure', reason.error.original)
+                : Effect.void,
+            { concurrency: 1, discard: true },
+          );
+          return yield* Effect.failCause(
+            Cause.fromReasons(
+              transactionExit.cause.reasons.map((reason) => {
+                if (
+                  !Cause.isFailReason(reason) ||
+                  !Schema.is(CoreTransactionBridgeFailure)(reason.error)
+                ) {
+                  return reason;
+                }
+                const failure = reason.error;
+                if (failure.outcome === 'committed') {
+                  // A committed interruption is not a recoverable Action failure or a plain cancel.
+                  // Retain its outcome marker as a defect alongside the original interruption.
+                  return Cause.makeDieReason(failure);
+                }
+                return Cause.makeFailReason(
+                  bodyCompleted && isCommitAcknowledgementFailure(failure.original)
+                    ? new ActionCommitIndeterminate({
+                        code: 'action_commit_indeterminate',
+                        invocationId: invocation.actionInvocationId,
+                        reason: 'The database did not confirm whether the Action commit completed',
+                      })
+                    : transactionFailure(),
+                );
+              }),
+            ),
+          );
+        }),
       );
-      const rollbackCause = yield* Ref.get(transactionRollbackCause);
-      if (Option.isSome(rollbackCause)) {
-        return yield* Effect.failCause(rollbackCause.value);
-      }
-      if (Exit.isSuccess(transactionExit)) {
-        return transactionExit.value;
-      }
-
-      const failureReasons = transactionExit.cause.reasons.filter(Cause.isFailReason);
-      const [failureReason] = failureReasons;
-      const transactionCause =
-        failureReasons.length === transactionExit.cause.reasons.length &&
-        failureReason !== undefined
-          ? failureReason.error
-          : transactionExit.cause;
-      const bodyCompleted = yield* Ref.get(transactionBodyCompleted);
-      if (bodyCompleted && isCommitAcknowledgementFailure(transactionCause)) {
-        return yield* new ActionCommitIndeterminate({
-          code: 'action_commit_indeterminate',
-          invocationId: invocation.actionInvocationId,
-          reason: 'The database did not confirm whether the Action commit completed',
-        });
-      }
-      yield* Effect.logError('Unexpected Action transaction failure', transactionCause);
-      return yield* transactionFailure();
     },
   );
 

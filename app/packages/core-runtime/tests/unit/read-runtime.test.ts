@@ -4,7 +4,7 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect, Option, Predicate, Schema } from 'effect';
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
 import { Pool } from 'pg';
 import { defineRead } from '../../src/reads/definition.ts';
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
@@ -57,6 +57,7 @@ const makeHarness = (
     readonly resultPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly resultTenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly tenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
+    readonly transactionEvents?: string[];
   } = {},
 ) => {
   let evidence = 0;
@@ -94,6 +95,16 @@ const makeHarness = (
   const database = {
     executor: drizzle({ client: pool, relations: coreRelations }),
   };
+  const transact = database.executor.transaction.bind(database.executor);
+  Object.defineProperty(database.executor, 'transaction', {
+    value: async (...args: Parameters<typeof transact>) => {
+      try {
+        return await transact(...args);
+      } finally {
+        options.transactionEvents?.push('transaction_settled');
+      }
+    },
+  });
   const stages: string[] = [];
   const runtime = makeReadRuntime(
     database,
@@ -1008,4 +1019,72 @@ test('preserves declared owner read availability and not-found failures but sani
       assert.equal(harness.evidence(), 0);
     }),
   );
+});
+
+void test('keeps read interruption and waits for transaction settlement', async () => {
+  const events: string[] = [];
+  const harness = makeHarness({ transactionEvents: events });
+  const exit = await runEffectTestPromise(
+    Effect.gen(function* interruptReadTest() {
+      const entered = yield* Deferred.make<boolean>();
+      const blocked = yield* Deferred.make<boolean>();
+      const governed = defineRead(
+        registration().descriptor,
+        () =>
+          Effect.gen(function* blockedReadHandler() {
+            yield* Deferred.succeed(entered, true);
+            yield* Deferred.await(blocked);
+            return { evidence: { resultCount: 0 }, result: [] };
+          }),
+        () => Effect.succeed({}),
+        () => ({ kind: 'module', moduleId: 'core.shell' }),
+      );
+      const fiber = yield* harness.runtime
+        .runRead({
+          input: {},
+          principal: scope,
+          registration: governed,
+          transport: { correlationId: scope.correlationId },
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(entered);
+      yield* Fiber.interrupt(fiber);
+      events.push('read_completed');
+      return yield* Fiber.await(fiber);
+    }),
+  );
+  assert.ok(Exit.isFailure(exit));
+  assert.ok(Cause.hasInterruptsOnly(exit.cause));
+  assert.deepEqual(events, ['transaction_settled', 'read_completed']);
+  assert.equal(harness.evidence(), 0);
+});
+
+void test('prioritizes failed denial evidence while retaining permission denial in the cause', async () => {
+  const harness = makeHarness({ failEvidence: true });
+  const denied = new ReadPermissionDenied({
+    code: 'read_permission_denied',
+    reason: 'Denied by read handler',
+  });
+  const governed = defineRead(
+    registration().descriptor,
+    () => Effect.fail(denied),
+    () => Effect.succeed({}),
+    () => ({ kind: 'module', moduleId: 'core.shell' }),
+  );
+  const exit = await runEffectTestPromise(
+    Effect.exit(
+      harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: governed,
+        transport: { correlationId: scope.correlationId },
+      }),
+    ),
+  );
+  assert.ok(Exit.isFailure(exit));
+  const failures = exit.cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error);
+  assert.equal(failures.length, 2);
+  assert.equal(failures[0]?._tag, 'ReadEvidencePersistenceError');
+  assert.equal(failures[1], denied);
+  assert.equal(failures[1]._tag, 'ReadPermissionDenied');
 });

@@ -1,16 +1,8 @@
 import { eq, sql } from 'drizzle-orm';
-import {
-  DateTime,
-  Duration,
-  Effect,
-  Function as EffectFunction,
-  Layer,
-  Option,
-  Result,
-  Schema,
-} from 'effect';
+import { DateTime, Duration, Effect, Layer, Option, Result, Schema } from 'effect';
 import { CoreDatabase } from '../db/client.ts';
 import { searchIndexEntries, searchProjectionRebuilds } from '../db/schema.ts';
+import { runCoreTransaction } from '../db/transaction-bridge.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import {
   CoreSearchAliasSchema,
@@ -629,13 +621,10 @@ export const makePostgresCoreSearchProjectionStore = (
     const updatedAt = DateTime.toDateUtc(yield* DateTime.now);
     const transactionBody = (transaction: CoreTransaction) =>
       transactionOperations.applyMutationTransaction(transaction, mutation, updatedAt);
-    const runTransactionBody = EffectFunction.flow(
-      transactionBody,
-      Effect.runPromiseWith(yield* Effect.context()),
-    );
-    const execute = database.executor.transaction.bind(database.executor, runTransactionBody);
-    yield* tryDatabasePromise(execute, (error) =>
-      Schema.is(CoreSearchProjectionInvalid)(error) ? error : unavailable(error),
+    yield* runCoreTransaction(database.executor, transactionBody).pipe(
+      Effect.catchTag('CoreTransactionBridgeFailure', (failure) =>
+        Effect.fail(unavailable(failure.original)),
+      ),
     );
   });
   const queryCandidates: CoreSearchProjectionStoreService['queryCandidates'] = Effect.fn(
@@ -643,12 +632,11 @@ export const makePostgresCoreSearchProjectionStore = (
   )(function* queryCoreSearchCandidates(input: CoreSearchQuery) {
     const transactionBody = (transaction: CoreTransaction) =>
       transactionOperations.queryCandidatesTransaction(transaction, input);
-    const runTransactionBody = EffectFunction.flow(
-      transactionBody,
-      Effect.runPromiseWith(yield* Effect.context()),
+    const documents = yield* runCoreTransaction(database.executor, transactionBody).pipe(
+      Effect.catchTag('CoreTransactionBridgeFailure', (failure) =>
+        Effect.fail(unavailable(failure.original)),
+      ),
     );
-    const execute = database.executor.transaction.bind(database.executor, runTransactionBody);
-    const documents = yield* tryDatabasePromise(execute, unavailable);
     return yield* Schema.decodeUnknownEffect(Schema.Array(CoreSearchProjectionDocumentSchema))(
       documents,
     ).pipe(Effect.mapError(unavailable));
@@ -660,13 +648,10 @@ export const makePostgresCoreSearchProjectionStore = (
     const updatedAt = DateTime.toDateUtc(yield* DateTime.now);
     const transactionBody = (transaction: CoreTransaction) =>
       transactionOperations.replaceProjectionTransaction(transaction, replacement, updatedAt);
-    const runTransactionBody = EffectFunction.flow(
-      transactionBody,
-      Effect.runPromiseWith(yield* Effect.context()),
-    );
-    const execute = database.executor.transaction.bind(database.executor, runTransactionBody);
-    yield* tryDatabasePromise(execute, (error) =>
-      Schema.is(CoreSearchProjectionInvalid)(error) ? error : unavailable(error),
+    yield* runCoreTransaction(database.executor, transactionBody).pipe(
+      Effect.catchTag('CoreTransactionBridgeFailure', (failure) =>
+        Effect.fail(unavailable(failure.original)),
+      ),
     );
   });
   return Object.freeze({ apply, queryCandidates, replace });

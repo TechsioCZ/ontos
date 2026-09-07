@@ -4,11 +4,12 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
+import { Cause, DateTime, Effect, Exit, Fiber, Option, Schema, Predicate } from 'effect';
 import { Pool } from 'pg';
 import type { PrincipalManagementRepositoryService } from '../../src/auth/principal-management.ts';
 import { PrincipalManagementRepository } from '../../src/auth/principal-management.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
+import { CoreTransactionBridgeFailure } from '../../src/db/transaction-bridge.ts';
 import type {
   ActionInvocationRecord,
   ActionRepositoryService,
@@ -19,6 +20,9 @@ import type {
 import {
   computeActionRequestHash,
   computeCanonicalValueHash,
+  getActionInvocationPersistenceFailureCause,
+  getActionTransactionFailureCause,
+  makeActionRepository,
 } from '../../src/actions/repository.ts';
 import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
 import type { ActionRuntimeStage } from '../../src/actions/runtime.ts';
@@ -114,6 +118,7 @@ const providePrincipalManagementRepository = Effect.provideService(
 );
 
 interface HarnessOptions {
+  readonly commit?: () => Promise<{ rows: [] }>;
   readonly commitFailureCode?: string;
   readonly createRecord?: ActionInvocationRecord;
   readonly legalEntityPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
@@ -242,7 +247,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
   let installedTenantId: string = principal.tenantId;
   let installedLegalEntityId: string = principal.legalEntityId;
   const query = async <Query, Values>(queryInput: Query, values?: Values) =>
-    await Promise.resolve().then(() => {
+    await Promise.resolve().then(async () => {
       const { text } = Schema.decodeUnknownSync(QueryConfigSchema)(queryInput);
       if (text.includes('set_config') && Array.isArray(values)) {
         const [tenantId, legalEntityId] = values;
@@ -270,6 +275,9 @@ const makeHarness = (options: HarnessOptions = {}) => {
         }
         if (options.transactionMode === 'commit-definite') {
           throw Object.assign(new Error('serialization failure'), { code: '40001' });
+        }
+        if (options.commit !== undefined) {
+          return await options.commit();
         }
       }
       if (text.includes('current_setting')) {
@@ -430,6 +438,107 @@ const makeHarness = (options: HarnessOptions = {}) => {
     tenantChecks,
   };
 };
+
+const makeRepositoryFailures = async () => {
+  const cause = new Error('private repository defect');
+  const executor = drizzle({ client: new Pool(), relations: coreRelations });
+  Object.defineProperty(executor, 'transaction', {
+    value: async () => await Promise.reject(cause),
+  });
+  const repository = makeActionRepository();
+  const input = {
+    actionInvocationId: 'invocation-1',
+    actionKey: 'shell.counter.denied',
+    auditProfile: 'sensitive',
+    principal,
+    transport: transport('denied'),
+  } as const;
+  const transactionFailure = await runEffectTestPromise(
+    Effect.flip(repository.rejectPermissionDenied(executor, input)),
+  );
+  const persistenceFailure = await runEffectTestPromise(
+    Effect.flip(
+      repository.finalizePolicyDenial(executor, {
+        ...input,
+        policy: { policyKey: 'global.counter-locked.v1', scope: 'global' },
+        reasonCode: 'counter_locked',
+      }),
+    ),
+  );
+  assert.ok(Schema.is(ActionTransactionError)(transactionFailure));
+  assert.ok(Schema.is(ActionInvocationPersistenceError)(persistenceFailure));
+  return { cause, persistenceFailure, transactionFailure };
+};
+
+test('repository constructors retain original causes across Effect Cause propagation', async () => {
+  const { cause, persistenceFailure, transactionFailure } = await makeRepositoryFailures();
+  const propagatedTransaction = await runEffectTestPromise(
+    Effect.flip(Effect.failCause(Cause.fail(transactionFailure))),
+  );
+  const propagatedPersistence = await runEffectTestPromise(
+    Effect.flip(Effect.failCause(Cause.fail(persistenceFailure))),
+  );
+  assert.equal(propagatedTransaction, transactionFailure);
+  assert.equal(propagatedPersistence, persistenceFailure);
+  assert.deepEqual(getActionTransactionFailureCause(propagatedTransaction), Cause.die(cause));
+  assert.deepEqual(
+    getActionInvocationPersistenceFailureCause(propagatedPersistence),
+    Cause.die(cause),
+  );
+});
+
+test('public error classes expose no retained-cause accessors', () => {
+  for (const errorClass of [ActionTransactionError, ActionInvocationPersistenceError]) {
+    assert.equal('withCause' in errorClass, false);
+    assert.equal('causeOf' in errorClass, false);
+  }
+});
+
+test('repository causes are absent from reflection, JSON, and Schema encoding', async () => {
+  const { persistenceFailure, transactionFailure } = await makeRepositoryFailures();
+  const publicTransaction = new ActionTransactionError({
+    code: transactionFailure.code,
+    reason: transactionFailure.reason,
+  });
+  const publicPersistence = new ActionInvocationPersistenceError({
+    code: persistenceFailure.code,
+    reason: persistenceFailure.reason,
+  });
+  assert.deepEqual(Object.keys(transactionFailure), Object.keys(publicTransaction));
+  assert.deepEqual(Object.keys(persistenceFailure), Object.keys(publicPersistence));
+  assert.deepEqual(Reflect.ownKeys(transactionFailure), Reflect.ownKeys(publicTransaction));
+  assert.deepEqual(Reflect.ownKeys(persistenceFailure), Reflect.ownKeys(publicPersistence));
+  assert.equal(JSON.stringify(transactionFailure), JSON.stringify(publicTransaction));
+  assert.equal(JSON.stringify(persistenceFailure), JSON.stringify(publicPersistence));
+  assert.deepEqual(Schema.encodeSync(ActionTransactionError)(transactionFailure), {
+    _tag: 'ActionTransactionError',
+    code: transactionFailure.code,
+    reason: transactionFailure.reason,
+  });
+  assert.deepEqual(Schema.encodeSync(ActionInvocationPersistenceError)(persistenceFailure), {
+    _tag: 'ActionInvocationPersistenceError',
+    code: persistenceFailure.code,
+    reason: persistenceFailure.reason,
+  });
+});
+
+test('repository cause readers reject foreign objects carrying the former cause property', () => {
+  const formerCauseProperty = ['ontos', 'Repository', 'Failure', 'Cause'].join('');
+  const cause = new Error('foreign defect');
+  const transactionFailure = Object.assign(
+    new ActionTransactionError({ code: 'action_transaction_failed', reason: 'foreign failure' }),
+    { [formerCauseProperty]: cause },
+  );
+  const persistenceFailure = Object.assign(
+    new ActionInvocationPersistenceError({
+      code: 'action_invocation_persistence_failed',
+      reason: 'foreign failure',
+    }),
+    { [formerCauseProperty]: cause },
+  );
+  assert.equal(getActionTransactionFailureCause(transactionFailure), undefined);
+  assert.equal(getActionInvocationPersistenceFailureCause(persistenceFailure), undefined);
+});
 
 const registration = () =>
   defineAction(
@@ -2160,6 +2269,51 @@ test('handles committed, conflict, definite rollback, and indeterminate commit b
     acknowledgementErrors.map((error) => error._tag),
     acknowledgementFailureCodes.map(() => 'ActionCommitIndeterminate'),
   );
+});
+
+test('preserves interruption and a committed defect after the Action commit settles', async () => {
+  const commitStarted = Promise.withResolvers<null>();
+  const commitSettlement = Promise.withResolvers<{ rows: [] }>();
+  const harness = makeHarness({
+    commit: async () => {
+      commitStarted.resolve(null);
+      return await commitSettlement.promise;
+    },
+  });
+  const { exit, pendingBeforeSettlement } = await runEffectTestPromise(
+    Effect.gen(function* interruptCommittedAction() {
+      const actionFiber = yield* harness.runtime
+        .runAction({
+          payload: { amount: 1 },
+          principal,
+          registration: registration(),
+          transport: transport('interrupted-commit'),
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(async () => await commitStarted.promise);
+      const interruption = yield* Fiber.interrupt(actionFiber).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      const pending = actionFiber.pollUnsafe() === undefined;
+      commitSettlement.resolve({ rows: [] });
+      yield* Fiber.join(interruption);
+      const actionExit = yield* Fiber.await(actionFiber);
+      return { exit: actionExit, pendingBeforeSettlement: pending };
+    }),
+  );
+  assert.equal(pendingBeforeSettlement, true);
+  assert.equal(Exit.isFailure(exit), true);
+  if (Exit.isFailure(exit)) {
+    assert.equal(Cause.hasInterrupts(exit.cause), true);
+    const defects = exit.cause.reasons.filter(Cause.isDieReason);
+    assert.equal(defects.length, 1, Cause.pretty(exit.cause));
+    const [defect] = defects;
+    assert.ok(defect !== undefined);
+    assert.equal(Schema.is(CoreTransactionBridgeFailure)(defect.defect), true);
+    if (Schema.is(CoreTransactionBridgeFailure)(defect.defect)) {
+      assert.equal(defect.defect.outcome, 'committed');
+    }
+    assert.equal(exit.cause.reasons.filter(Cause.isFailReason).length, 0);
+  }
 });
 
 test('resolves commit state explicitly and keeps unavailable outcomes indeterminate', async () => {
