@@ -946,7 +946,7 @@ const slotLine = (
 };
 
 /* eslint-disable unicorn/no-array-reduce -- Slot patches intentionally flow through the accumulated document. */
-const directSlotIdentity = (
+const directTokenStringProperty = (
   tokens: ReturnType<typeof tokenizeGovernedClient>,
   property: string,
 ): string | undefined => {
@@ -985,7 +985,7 @@ const slotEntryIdentity = (source: string): string | undefined => {
     return registrationProperty.value;
   }
   for (const property of ['contributionKey', 'key']) {
-    const identity = directSlotIdentity(tokens, property);
+    const identity = directTokenStringProperty(tokens, property);
     if (identity !== undefined) {
       return identity;
     }
@@ -1012,31 +1012,8 @@ const readStringArray = (
   return undefined;
 };
 
-const directStringProperty = (source: string, property: string): string | undefined => {
-  const tokens = tokenizeGovernedClient(source);
-  const values: string[] = [];
-  let braceDepth = 0;
-  for (let index = 0; index < tokens.length - 2; index += 1) {
-    if (
-      braceDepth === 1 &&
-      tokens[index]?.kind === SyntaxKind.Identifier &&
-      tokens[index]?.value === property &&
-      tokens[index + 1]?.kind === SyntaxKind.ColonToken &&
-      tokens[index + 2]?.kind === SyntaxKind.StringLiteral
-    ) {
-      const value = tokens[index + 2]?.value;
-      if (value !== undefined) {
-        values.push(value);
-      }
-    }
-    if (tokens[index]?.kind === SyntaxKind.OpenBraceToken) {
-      braceDepth += 1;
-    } else if (tokens[index]?.kind === SyntaxKind.CloseBraceToken) {
-      braceDepth -= 1;
-    }
-  }
-  return values.length === 1 ? values[0] : undefined;
-};
+const directStringProperty = (source: string, property: string): string | undefined =>
+  directTokenStringProperty(tokenizeGovernedClient(source), property);
 
 const directStringArrayProperty = (
   source: string,
@@ -1063,6 +1040,8 @@ const directStringArrayProperty = (
   return undefined;
 };
 
+// Owners may adapt accessFiltering/tenantPermission and report label/dimensions. These describe
+// presentation and report shape; the generated provider identity and resource ownership stay fixed.
 const acceptsAdaptedProviderDescriptor = (
   start: string,
   current: string,
@@ -1236,13 +1215,17 @@ const acceptsGeneratedClient = (
     );
 };
 
+const operationBoundaryPaths = (vertical: OntosVerticalMetadata) => ({
+  gatewayPath: `${vertical.directory}/src/api/action-gateway.ts`,
+  principalPath: `${vertical.directory}/api/auth/action-principal.ts`,
+});
+
 const hasExistingOperationBoundary = (
   vertical: OntosVerticalMetadata,
 ): Effect.Effect<boolean, ScaffoldFailure, FileSystem.FileSystem> =>
   Effect.gen(function* hasExistingOperationBoundaryEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
-    const principalPath = `${vertical.directory}/api/auth/action-principal.ts`;
-    const gatewayPath = `${vertical.directory}/src/api/action-gateway.ts`;
+    const { gatewayPath, principalPath } = operationBoundaryPaths(vertical);
     const exists = yield* Effect.all([
       fileSystem.exists(principalPath),
       fileSystem.exists(gatewayPath),
@@ -1274,9 +1257,10 @@ const planOperationBoundary = Effect.fn('GovernedContributionScaffold.planOperat
   function* planOperationBoundary(workspaceRoot: string, vertical: OntosVerticalMetadata) {
     if (!(yield* hasExistingOperationBoundary(vertical))) {
       const fileSystem = yield* FileSystem.FileSystem;
+      const { gatewayPath, principalPath } = operationBoundaryPaths(vertical);
       const existingBoundaryFiles = yield* Effect.all([
-        fileSystem.exists(`${vertical.directory}/api/auth/action-principal.ts`),
-        fileSystem.exists(`${vertical.directory}/src/api/action-gateway.ts`),
+        fileSystem.exists(principalPath),
+        fileSystem.exists(gatewayPath),
       ]).pipe(
         Effect.mapError((cause) =>
           scaffoldFailure('failed to inspect operation boundary files', cause),

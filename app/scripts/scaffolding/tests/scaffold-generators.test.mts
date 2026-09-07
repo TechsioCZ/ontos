@@ -1171,6 +1171,17 @@ test('governed contribution generators patch owner contracts and lazy adapters a
       }),
     );
 
+    const adaptedManifest = await readFixtureFile(fixture.root, inventoryManifestFile);
+    assert.match(adaptedManifest, /dimensions: \[\]/u);
+    assert.match(adaptedManifest, /label: 'Stock Levels'/u);
+    await writeFixtureFile(
+      fixture.root,
+      inventoryManifestFile,
+      adaptedManifest
+        .replace('dimensions: []', "dimensions: ['warehouse']")
+        .replace("label: 'Stock Levels'", "label: 'Warehouse stock'"),
+    );
+
     const beforeRepeat = await snapshotTree(fixture.root);
     await run(fixture, scaffoldCommand.moduleApi, [
       scaffoldFlag.vertical,

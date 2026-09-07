@@ -166,6 +166,15 @@ correlation headers explicitly. If validation reports a governed client-runtime 
 that shared factory import and rerun the governing scaffold instead of recreating low-level
 framework client or HTTP request transforms.
 
+Generated report descriptor `label` and `dimensions` are owner-adaptable presentation and report
+shape metadata. Search/report `accessFiltering` may also be adapted; `tenant_scope` requires an
+explicit `tenantPermission`. Reruns preserve these adaptations but keep the generated descriptor
+identity, owning module, and resource types fixed.
+
+Client `baseUrl` overrides are trusted application/test transport configuration, never request,
+form, query-string, or tenant-controlled input. Callers supplying an override are responsible for
+selecting the owning BFF destination; payload data must not choose where an assertion is sent.
+
 Do not add legacy nested API paths, Hono server imports, raw handlers, manual body parsing, manual
 `Response` construction, or generic JSON schemas in API modules. `api:check`, type checking, and
 linting enforce the boundary. Staff authentication and service identity remain Shell/Core

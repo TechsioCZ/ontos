@@ -399,6 +399,45 @@ export const manifest = {
   );
 };
 
+for (const suffix of ['search', 'report']) {
+  test(`accepts module API names ending in ${suffix} without reclassifying them`, async () => {
+    const root = await makeFixture();
+    try {
+      await writeGovernedModuleApi(root);
+      const files = [
+        'shared/api.ts',
+        'shared/apis/stock-list.ts',
+        'src/api/stock-list.read.ts',
+        'src/api/stock-list-client.ts',
+        'api/stock-list-read-server.ts',
+        'vertical.manifest.ts',
+        'vertical.registration.ts',
+      ];
+      await Promise.all(
+        files.map(async (file) => {
+          const original = `${INVENTORY_VERTICAL_PATH}/${file}`;
+          const source = await readFile(path.join(root, original), 'utf-8');
+          const renamed = original.replaceAll('stock-list', `stock-${suffix}`);
+          await write(
+            root,
+            renamed,
+            source
+              .replaceAll('stock-list', `stock-${suffix}`)
+              .replaceAll('StockList', suffix === 'search' ? 'StockSearch' : 'StockReport')
+              .replaceAll('stockList', suffix === 'search' ? 'stockSearch' : 'stockReport'),
+          );
+          if (renamed !== original) {
+            await rm(path.join(root, original));
+          }
+        }),
+      );
+      await checkModuleEntrypointBoundaries(root);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+}
+
 test('accepts only a complete generated governed module API seam', async () => {
   const root = await makeFixture();
   try {
@@ -753,8 +792,9 @@ const stockListClient = (`,
     );
     const nestedCanonicalHelperClient = validClient
       .replace(
-        'const stockListClient = (credential, requestCorrelation, options) => {',
-        `const stockListClient = (credential, requestCorrelation, options) => {
+        '  options: StockListClientOptions,\n) => {',
+        `  options: StockListClientOptions,
+) => {
   const deadCanonicalClient = () => {`,
       )
       .replace(
@@ -765,6 +805,7 @@ const stockListClient = (`,
 };
 export const executeStockListWithAuthorization`,
       );
+    assert.match(nestedCanonicalHelperClient, /const deadCanonicalClient = \(\) => \{/u);
     const decoyOperationClient = `${validClient
       .replaceAll('executeStockListWithAuthorization', 'decoyWithAuthorization')
       .replaceAll('executeStockList', 'decoy')}

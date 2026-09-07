@@ -38,7 +38,7 @@ const MANIFEST_SHELL_SEARCH_SLOT = [
 const escapeRegExp = (value: string): string =>
   value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
 
-const toPascalCase = (value: string): string =>
+export const toPascalCase = (value: string): string =>
   value
     .split('-')
     .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
@@ -2679,12 +2679,16 @@ const importedServerContractApi = (tokens: readonly GovernedClientToken[]): stri
 };
 
 const expectedServerGroups = (
+  source: string,
   tokens: readonly GovernedClientToken[],
   exportedName: string,
 ): ReadonlySet<string> => {
   const camel = exportedName.endsWith('ReadApiLive')
     ? exportedName.slice(0, -'ReadApiLive'.length)
     : '';
+  if (hasGeneratedHeader(source)) {
+    return camel.length === 0 ? new Set() : new Set([camel]);
+  }
   const specifiers = tokens
     .filter(
       ({ kind, value }) =>
@@ -2745,7 +2749,7 @@ export const hasGeneratedGovernedServerContract = (
       ? undefined
       : findClosingParenthesis(tokens, declaration + 7, declarationEnd);
   const apiBinding = importedServerContractApi(tokens);
-  const groups = expectedServerGroups(tokens, exportedName);
+  const groups = expectedServerGroups(source, tokens, exportedName);
   if (
     declaration === undefined ||
     declarationEnd === undefined ||
