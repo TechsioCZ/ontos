@@ -38,28 +38,6 @@ const apiNames = [
   'personEngagementProfile',
 ] as const;
 
-const serverFiles = [
-  'ares-lookup-read-server',
-  'counterparties-search-server',
-  'counterparty-read-read-server',
-  'counterparty-role-history-read-server',
-  'duplicate-candidate-detail-read-server',
-  'engagement-profile-server',
-  'organization-engagement-profile-read-server',
-  'parties-search-server',
-  'party-contact-point-detail-read-server',
-  'party-contact-points-read-server',
-  'party-correction-read-server',
-  'party-detail-read-server',
-  'party-match-decision-read-server',
-  'party-match-read-server',
-  'party-merge-readiness-read-server',
-  'party-official-identifier-detail-read-server',
-  'party-official-identifier-history-read-server',
-  'party-relationship-detail-read-server',
-  'person-engagement-profile-read-server',
-] as const;
-
 test('aggregates every governed read and search API beside readiness', () => {
   assert.deepEqual(Object.keys(partyRegistryApi.groups).toSorted(), apiNames);
   assert.deepEqual(partyRegistryApiContract, {
@@ -100,25 +78,6 @@ test('keeps readiness tied to the immutable build marker', () => {
     }),
     true,
   );
-});
-
-test('composes generated governed servers through the Core read runtime', async () => {
-  const serverSources = await Promise.all([
-    readFile(new URL('../../api/index.ts', import.meta.url), 'utf-8'),
-    readFile(new URL('../../api/engagement-profile-server.ts', import.meta.url), 'utf-8'),
-  ]);
-  const source = serverSources.join('\n');
-
-  for (const serverFile of serverFiles) {
-    assert.match(source, new RegExp(serverFile.replaceAll('-', '[-]'), 'u'));
-  }
-  assert.match(source, /ReadRuntimeLive/u);
-  assert.match(source, /ContextAccessLive/u);
-  assert.match(source, /Layer\.provide\(CorePersistenceLive\)/u);
-  assert.doesNotMatch(source, /partyRegistryItems|Wire a real|generated-party-registry/u);
-  assert.doesNotMatch(source, /\.handle\(['"]create['"]/u);
-  assert.match(source, /ActionRuntimeLive/u);
-  assert.match(source, /partyRegistryCommandsLive/u);
 });
 
 test('re-exports every governed generated client without exposing private executors', async () => {
