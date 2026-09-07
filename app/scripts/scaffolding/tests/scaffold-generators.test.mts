@@ -845,7 +845,7 @@ test('generated read clients fetch mounted owner URLs and support separately dep
         '--input-type=module',
         '--eval',
         `
-      import { Effect, Result } from 'effect';
+      import { Effect, Match, Result } from 'effect';
       import { FetchHttpClient } from 'effect/unstable/http';
       import { runEffectTestPromise } from '${pathToFileURL(path.join(appRoot, 'packages/core-runtime/src/testing/effect-runtime.ts')).href}';
       import { executeResourceDetail, executeResourceDetailWithAuthorization } from './verticals/inventory-stock/src/api/resource-detail-client.ts';
@@ -905,11 +905,13 @@ test('generated read clients fetch mounted owner URLs and support separately dep
         ),
       );
       if (!Result.isFailure(generatedFailure)) throw new Error('Expected generated client failure');
-      if (
-        generatedFailure.failure._tag !== generatedProblem._tag ||
-        generatedFailure.failure.status !== generatedProblem.status ||
-        generatedFailure.failure.retryable !== true
-      ) {
+      const preservesProblemDetails = Match.value(generatedFailure.failure).pipe(
+        Match.tag('ResourceDetailUnavailableProblem', ({ status, retryable }) =>
+          status === generatedProblem.status && retryable === true,
+        ),
+        Match.orElse(() => false),
+      );
+      if (!preservesProblemDetails) {
         throw new Error('Generated client did not preserve the concrete Problem Details error');
       }
       console.log(JSON.stringify(calls));
