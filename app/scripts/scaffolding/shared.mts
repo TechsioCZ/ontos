@@ -1249,11 +1249,11 @@ export const discoverOntosModule: (
   scaffoldingRuntime.runPromise,
 );
 
-const formatGeneratedSourceEffect = (
+const formatGeneratedMutationContent = (
   filePath: string,
   content: string,
 ): Effect.Effect<string, ScaffoldFailure> =>
-  Effect.gen(function* formatGeneratedSourceProgram() {
+  Effect.gen(function* formatGeneratedMutationContentProgram() {
     const extension = nodePath.extname(filePath);
     if (extension !== '.ts' && extension !== '.tsx') {
       return content;
@@ -1282,31 +1282,33 @@ export const createMutationEffect = (
       return yield* scaffoldFailure(`refusing to overwrite existing business file: ${filePath}`);
     }
     return {
-      content: yield* formatGeneratedSourceEffect(filePath, content),
+      content: yield* formatGeneratedMutationContent(filePath, content),
       kind: 'create',
       path: filePath,
     };
   });
 
-/** Accepts only byte-identical generated output on rerun; customized owner files still fail closed. */
 export const createOrAcceptGeneratedMutationEffect = (
   filePath: string,
   content: string,
+  acceptsCurrent: (current: string) => boolean = () => false,
 ): Effect.Effect<Option.Option<Mutation>, ScaffoldFailure, FileSystem.FileSystem> =>
   Effect.gen(function* createOrAcceptGeneratedMutationProgram() {
-    const formatted = yield* formatGeneratedSourceEffect(filePath, content);
     if (!(yield* pathExistsEffect(filePath))) {
-      return Option.some({ content: formatted, kind: 'create', path: filePath });
+      return Option.some(yield* createMutationEffect(filePath, content));
     }
     const fileSystem = yield* FileSystem.FileSystem;
-    const current = yield* fileSystem
-      .readFileString(filePath)
-      .pipe(
-        Effect.mapError((cause) =>
-          scaffoldFailure(`failed to read generated business file ${filePath}`, cause),
+    const [current, expected] = yield* Effect.all([
+      fileSystem
+        .readFileString(filePath)
+        .pipe(
+          Effect.mapError((cause) =>
+            scaffoldFailure(`failed to read generated business file ${filePath}`, cause),
+          ),
         ),
-      );
-    if (current === formatted) {
+      formatGeneratedMutationContent(filePath, content),
+    ]);
+    if (current === expected || acceptsCurrent(current)) {
       return Option.none();
     }
     return yield* scaffoldFailure(`refusing to overwrite existing business file: ${filePath}`);

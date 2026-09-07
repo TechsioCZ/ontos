@@ -2,7 +2,7 @@
 import { NodeFileSystem, NodePath, NodeRuntime } from '@effect/platform-node';
 import { Config, Console, Effect, FileSystem, Layer, Path, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
-import { hasCompleteGeneratedModuleApiSeam } from './generated-module-api-boundary.mts';
+import { hasCompleteGeneratedModuleApiSeam } from './generated-governed-http-boundary.mts';
 import {
   privateOwnerImportViolation,
   strictEffectRuntimeTopologyViolation,
