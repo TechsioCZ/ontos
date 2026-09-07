@@ -1,9 +1,9 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off globalDate:off -- Existing compatibility boundary; expires: 2026-12-31.
-/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type, unicorn/no-thenable -- This harness implements the correction service's Drizzle boundary. expires: 2026-12-31. */
+/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This harness implements the correction service's Drizzle boundary. expires: 2026-12-31. */
+import { Effect, Match, Option, Schema } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Match, Option, Schema } from 'effect';
 import {
   PartyCorrectionCommandSchema,
   PartyCorrectionDetailSchema,
@@ -187,24 +187,24 @@ const transactionHarness = (
   const insertValues: Readonly<Record<string, unknown>>[] = [];
   const updateSets: Readonly<Record<string, unknown>>[] = [];
   const chain = (rows: readonly Readonly<Record<string, unknown>>[]) => {
-    const value = {
-      for: () => Promise.resolve(rows),
-      from: () => value,
-      limit: () => value,
-      returning: () => Promise.resolve(rows),
-      set: (set: Readonly<Record<string, unknown>>) => {
-        updateSets.push(set);
-        return value;
+    const value = Object.assign(
+      Effect.sync(() => rows),
+      {
+        for: () => Effect.succeed(rows),
+        from: () => value,
+        limit: () => value,
+        returning: () => Effect.succeed(rows),
+        set: (set: Readonly<Record<string, unknown>>) => {
+          updateSets.push(set);
+          return value;
+        },
+        values: (insert: Readonly<Record<string, unknown>>) => {
+          insertValues.push(insert);
+          return value;
+        },
+        where: () => value,
       },
-      then: <Result>(
-        onfulfilled?: ((result: readonly Readonly<Record<string, unknown>>[]) => Result) | null,
-      ) => Promise.resolve(rows).then(onfulfilled),
-      values: (insert: Readonly<Record<string, unknown>>) => {
-        insertValues.push(insert);
-        return value;
-      },
-      where: () => value,
-    };
+    );
     return value;
   };
   // SAFETY: The harness implements exactly the select/insert/update fluent surface used by these cases.
@@ -217,7 +217,7 @@ const transactionHarness = (
             ...query,
             values: (insert: Readonly<Record<string, unknown>>) => {
               insertValues.push(insert);
-              return { returning: () => Promise.reject(insertFailure) };
+              return { returning: () => Effect.fail(insertFailure) };
             },
           };
     },

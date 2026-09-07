@@ -1,16 +1,17 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { DateTime, Effect, Exit, Option, Schema, flow } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DateTime, Effect, Exit, Schema, flow } from 'effect';
-import {
-  registerSystemWorkload,
-  systemPrincipalContextResolverFromRepository,
-} from '../../src/auth/system-principal-context.ts';
 import { supportRecoveryPrincipalContextResolverFromRepository } from '../../src/auth/support-recovery-principal-context.ts';
 import {
   decodeTrustedPrincipalContext,
   isTrustedSupportRecoveryPrincipalContext,
 } from '../../src/auth/system-principal-context-provenance.ts';
+import {
+  registerSystemWorkload,
+  systemPrincipalContextResolverFromRepository,
+} from '../../src/auth/system-principal-context.ts';
+import { recordSupportImpersonationAction } from '../../src/modules/actions/record-support-impersonation.action.ts';
 import { makeOperationalScopeResolver } from '../../src/operations/context.ts';
 import {
   OperationAuthenticationRequired,
@@ -18,7 +19,6 @@ import {
   OperationContextInvalid,
   OperationContextUnavailable,
 } from '../../src/operations/errors.ts';
-import { recordSupportImpersonationAction } from '../../src/modules/actions/record-support-impersonation.action.ts';
 
 const principal = {
   authBindingId: '00000000-0000-4000-8000-000000000004',
@@ -136,15 +136,12 @@ effectTest(
   'preserves resolver-issued system provenance across operational scope construction',
   Effect.gen(function* systemProvenance() {
     const systemContext = yield* systemPrincipalContextResolverFromRepository({
-      load: flow(
-        () =>
-          Effect.succeed({
-            kind: 'system' as const,
-            principalStatus: 'active' as const,
-            tenantStatus: 'active' as const,
-          }),
-        runEffectTestPromise,
-      ),
+      load: () =>
+        Effect.succeed({
+          kind: 'system' as const,
+          principalStatus: 'active' as const,
+          tenantStatus: 'active' as const,
+        }).pipe(Effect.map(Option.some)),
     }).resolve({
       principalId: principal.principalId,
       registration: registerSystemWorkload({ jobKey: 'operation-scope-test' }),
@@ -186,17 +183,14 @@ effectTest(
   'permits only a resolver-branded support-stop recovery through inactive historical scope',
   Effect.gen(function* supportRecovery() {
     const recoveryPrincipal = yield* supportRecoveryPrincipalContextResolverFromRepository({
-      load: flow(
-        () =>
-          Effect.succeed({
-            bindingPrincipalId: principal.principalId,
-            bindingTenantId: principal.tenantId,
-            principalKind: 'human' as const,
-            principalTenantId: principal.tenantId,
-            tenantId: principal.tenantId,
-          }),
-        runEffectTestPromise,
-      ),
+      load: () =>
+        Effect.succeed({
+          bindingPrincipalId: principal.principalId,
+          bindingTenantId: principal.tenantId,
+          principalKind: 'human' as const,
+          principalTenantId: principal.tenantId,
+          tenantId: principal.tenantId,
+        }).pipe(Effect.map(Option.some)),
     }).resolveStoppedImpersonation({
       originalAuthBindingId: principal.authBindingId,
       originalPrincipalId: principal.principalId,

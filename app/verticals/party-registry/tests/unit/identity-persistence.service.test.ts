@@ -1,22 +1,22 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import { DateTime, Effect, Match, Option, Result, Schema } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DateTime, Effect, Match, Option, Result, Schema } from 'effect';
-import type { SQL } from 'drizzle-orm';
-import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
 import type { AresAppliedEvidence } from '../../shared/domain/ares-application.ts';
+import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
 import { partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
-import { PgDialect } from 'drizzle-orm/pg-core';
-import { tenantIdentityWriteLockKey } from '../../src/services/party-identifier-claim.service.ts';
 import type {
-  PartyRecord,
   PartyOfficialIdentifierRecord,
+  PartyRecord,
+  duplicateCandidateCaseParties,
+  duplicateCandidateCases,
   parties,
   partyFactAssertions,
-  duplicateCandidateCases,
-  duplicateCandidateCaseParties,
   partyMatchDecisions,
 } from '../../src/db/schema.ts';
+import { tenantIdentityWriteLockKey } from '../../src/services/party-identifier-claim.service.ts';
 import {
   classifyUnarchiveClaimOwners,
   endedPartyFactTransition,
@@ -79,7 +79,7 @@ const identifierRow = (overrides: Partial<PartyOfficialIdentifierRecord> = {}) =
   ...overrides,
 });
 
-/* eslint-disable anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-chained-type-assertions, unicorn/no-thenable -- This local test double deliberately models Drizzle's overloaded thenable query boundary; no untrusted input enters it. expires: 2026-12-31. */
+/* eslint-disable anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-chained-type-assertions -- This local test double deliberately models Drizzle's overloaded thenable query boundary; no untrusted input enters it. expires: 2026-12-31. */
 const transactionHarness = (
   selectResponses: readonly unknown[][],
   updateResponses: readonly unknown[][] = [],
@@ -94,20 +94,22 @@ const transactionHarness = (
   const deletedTargets: unknown[] = [];
 
   const query = (take: () => unknown) => {
-    const chain = {
-      for: () => chain,
-      from: () => chain,
-      innerJoin: () => chain,
-      limit: () => chain,
-      orderBy: () => chain,
-      returning: () => chain,
-      set: (value: unknown) => {
-        updateSets.push(value);
-        return chain;
+    const chain = Object.assign(
+      Effect.sync(() => take()),
+      {
+        for: () => chain,
+        from: () => chain,
+        innerJoin: () => chain,
+        limit: () => chain,
+        orderBy: () => chain,
+        returning: () => chain,
+        set: (value: unknown) => {
+          updateSets.push(value);
+          return chain;
+        },
+        where: () => chain,
       },
-      then: (resolve: (value: unknown) => unknown) => Promise.resolve(take()).then(resolve),
-      where: () => chain,
-    };
+    );
     return chain;
   };
   // SAFETY: The harness implements exactly the select/insert/update fluent methods exercised by the scoped service under test.
@@ -138,7 +140,7 @@ const transactionHarness = (
   } as unknown as Parameters<typeof unarchivePartyRecord>[0];
   return { deletedTargets, insertedValues, selectSelections, transaction, updateSets };
 };
-/* eslint-enable anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-chained-type-assertions, unicorn/no-thenable */
+/* eslint-enable anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-chained-type-assertions */
 
 const assertTenantLockIsFirst = (harness: ReturnType<typeof transactionHarness>) => {
   // SAFETY: Every service under test first calls the tenant lock with one Drizzle SQL lock selection.

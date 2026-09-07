@@ -4589,6 +4589,11 @@ test('all generated files typecheck against the real workspace contracts', async
       'dir',
     );
     await symlink(
+      path.join(appRoot, 'packages/core-runtime/node_modules/@effect/sql-pg'),
+      path.join(fixture.root, 'node_modules/@effect/sql-pg'),
+      'dir',
+    );
+    await symlink(
       path.join(appRoot, 'packages/core-runtime/node_modules/@effect/platform-node'),
       path.join(fixture.root, 'node_modules/@effect/platform-node'),
       'dir',
@@ -4656,6 +4661,11 @@ test('all generated files typecheck against the real workspace contracts', async
     await symlink(
       path.join(appRoot, 'packages/core-runtime/src/operations'),
       path.join(fixture.root, 'packages/core-runtime/src/operations'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'packages/core-runtime/src/database'),
+      path.join(fixture.root, 'packages/core-runtime/src/database'),
       'dir',
     );
     await symlink(
