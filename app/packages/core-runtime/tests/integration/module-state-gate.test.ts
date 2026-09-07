@@ -1,10 +1,10 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
+import { and, eq } from 'drizzle-orm';
+import { Effect, Exit } from 'effect';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { and, eq } from 'drizzle-orm';
-import { Effect, Exit } from 'effect';
 import type { CoreDatabase } from '../../src/db/client.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
@@ -14,12 +14,12 @@ import {
   decideModuleStateAccess,
   makeModuleStateGate,
 } from '../../src/modules/module-state-gate.ts';
+import { TenantModuleStateReadUnavailableError } from '../../src/modules/tenant-module-state-errors.ts';
+import type { TenantModuleStateServiceContract } from '../../src/modules/tenant-module-state-service.ts';
 import {
   TENANT_MODULE_STATES,
   makeTenantModuleStateService,
 } from '../../src/modules/tenant-module-state-service.ts';
-import { TenantModuleStateReadUnavailableError } from '../../src/modules/tenant-module-state-errors.ts';
-import type { TenantModuleStateServiceContract } from '../../src/modules/tenant-module-state-service.ts';
 
 type DatabaseService = (typeof CoreDatabase)['Service'];
 
@@ -58,31 +58,35 @@ void test('batches tenant-isolated states once, rejects malformed/unavailable re
   const stateModuleKey = (state: (typeof TENANT_MODULE_STATES)[number]): string =>
     `${moduleKey}.${state.replaceAll('_', '-')}`;
   await databasePromise(async (database) => {
-    await database.executor.insert(tenants).values([
-      {
-        defaultLocale: 'en',
-        name: 'Gate Integration One',
-        slug: `gate-one-${tenantOne}`,
-        status: 'active',
-        tenantId: tenantOne,
-      },
-      {
-        defaultLocale: 'en',
-        name: 'Gate Integration Two',
-        slug: `gate-two-${tenantTwo}`,
-        status: 'active',
-        tenantId: tenantTwo,
-      },
-    ]);
-    await database.executor.insert(tenantModuleStates).values([
-      { moduleKey, state: 'active', tenantId: tenantOne },
-      { moduleKey, state: 'quarantined', tenantId: tenantTwo },
-      ...TENANT_MODULE_STATES.map((state) => ({
-        moduleKey: stateModuleKey(state),
-        state,
-        tenantId: tenantOne,
-      })),
-    ]);
+    await runEffectTestPromise(
+      database.executor.insert(tenants).values([
+        {
+          defaultLocale: 'en',
+          name: 'Gate Integration One',
+          slug: `gate-one-${tenantOne}`,
+          status: 'active',
+          tenantId: tenantOne,
+        },
+        {
+          defaultLocale: 'en',
+          name: 'Gate Integration Two',
+          slug: `gate-two-${tenantTwo}`,
+          status: 'active',
+          tenantId: tenantTwo,
+        },
+      ]),
+    );
+    await runEffectTestPromise(
+      database.executor.insert(tenantModuleStates).values([
+        { moduleKey, state: 'active', tenantId: tenantOne },
+        { moduleKey, state: 'quarantined', tenantId: tenantTwo },
+        ...TENANT_MODULE_STATES.map((state) => ({
+          moduleKey: stateModuleKey(state),
+          state,
+          tenantId: tenantOne,
+        })),
+      ]),
+    );
 
     try {
       let selects = 0;
@@ -176,22 +180,26 @@ void test('batches tenant-isolated states once, rejects malformed/unavailable re
       );
       assert.equal(missing._tag, 'ModuleStateDeniedError');
 
-      await database.executor.transaction(
-        async (transaction) =>
-          await runEffectTestPromise(gate.recheckWrite(transaction, tenantOne, write)),
+      await runEffectTestPromise(
+        database.executor.transaction((transaction) =>
+          gate.recheckWrite(transaction, tenantOne, write),
+        ),
       );
-      await database.executor
-        .update(tenantModuleStates)
-        .set({ state: 'read_only' })
-        .where(
-          and(
-            eq(tenantModuleStates.tenantId, tenantOne),
-            eq(tenantModuleStates.moduleKey, moduleKey),
+      await runEffectTestPromise(
+        database.executor
+          .update(tenantModuleStates)
+          .set({ state: 'read_only' })
+          .where(
+            and(
+              eq(tenantModuleStates.tenantId, tenantOne),
+              eq(tenantModuleStates.moduleKey, moduleKey),
+            ),
           ),
-        );
-      const lockedDenial = await database.executor.transaction(
-        async (transaction) =>
-          await runEffectTestPromise(Effect.flip(gate.recheckWrite(transaction, tenantOne, write))),
+      );
+      const lockedDenial = await runEffectTestPromise(
+        database.executor.transaction((transaction) =>
+          Effect.flip(gate.recheckWrite(transaction, tenantOne, write)),
+        ),
       );
       assert.equal(lockedDenial._tag, 'ModuleStateDeniedError');
 
@@ -217,14 +225,22 @@ void test('batches tenant-isolated states once, rejects malformed/unavailable re
       assert.equal(malformed._tag, 'ModuleStateCheckUnavailableError');
       assert.doesNotMatch(malformed.reason, /corrupt|storage/u);
     } finally {
-      await database.executor
-        .delete(tenantModuleStates)
-        .where(eq(tenantModuleStates.tenantId, tenantOne));
-      await database.executor
-        .delete(tenantModuleStates)
-        .where(eq(tenantModuleStates.tenantId, tenantTwo));
-      await database.executor.delete(tenants).where(eq(tenants.tenantId, tenantOne));
-      await database.executor.delete(tenants).where(eq(tenants.tenantId, tenantTwo));
+      await runEffectTestPromise(
+        database.executor
+          .delete(tenantModuleStates)
+          .where(eq(tenantModuleStates.tenantId, tenantOne)),
+      );
+      await runEffectTestPromise(
+        database.executor
+          .delete(tenantModuleStates)
+          .where(eq(tenantModuleStates.tenantId, tenantTwo)),
+      );
+      await runEffectTestPromise(
+        database.executor.delete(tenants).where(eq(tenants.tenantId, tenantOne)),
+      );
+      await runEffectTestPromise(
+        database.executor.delete(tenants).where(eq(tenants.tenantId, tenantTwo)),
+      );
     }
   });
 });

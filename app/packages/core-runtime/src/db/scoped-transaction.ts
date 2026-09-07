@@ -1,8 +1,7 @@
-// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { sql } from 'drizzle-orm';
-import { Context, Duration, Effect, Option } from 'effect';
-import { pgPolicy } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
+import { pgPolicy } from 'drizzle-orm/pg-core';
+import { Context, Effect, Option } from 'effect';
 import type { OperationalScope } from '../operations/context.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
 import type { CoreTransaction } from './types.ts';
@@ -48,34 +47,33 @@ const operationContextUnavailable = (cause?: unknown) => {
   return failure;
 };
 
-const transactionEffect = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: operationContextUnavailable, try: operation }).pipe(
-    Effect.timeoutOrElse({
-      duration: Duration.infinity,
-      orElse: () => Effect.fail(operationContextUnavailable()),
-    }),
-  );
-
 const operationalScopeTransactionFromCoreTransaction = (
   transaction: CoreTransaction,
 ): OperationalScopeTransactionService => ({
   delete: transaction.delete.bind(transaction),
   insert: transaction.insert.bind(transaction),
   install: (scope) =>
-    transactionEffect(() =>
-      transaction.execute(
+    transaction
+      .execute(
         sql`select set_config('ontos.tenant_id', ${scope.tenantId}, true), set_config('ontos.legal_entity_id', ${scope.legalEntityId ?? ''}, true)`,
-      ),
-    ).pipe(Effect.asVoid),
+        'objects',
+      )
+      .pipe(Effect.mapError(operationContextUnavailable), Effect.asVoid),
   select: transaction.select.bind(transaction),
   update: transaction.update.bind(transaction),
-  verify: transactionEffect(() =>
-    transaction.execute<SettingRow>(sql`
+  verify: transaction
+    .execute<SettingRow>(
+      sql`
       select
         current_setting('ontos.tenant_id', true) as tenant_id,
         current_setting('ontos.legal_entity_id', true) as legal_entity_id
-    `),
-  ).pipe(Effect.map((verified) => Option.fromUndefinedOr(verified.rows[0]))),
+    `,
+      'objects',
+    )
+    .pipe(
+      Effect.mapError(operationContextUnavailable),
+      Effect.map((verified) => Option.fromUndefinedOr(verified[0])),
+    ),
 });
 
 export const installOperationalScopeFromTransactionService = Effect.fn(
