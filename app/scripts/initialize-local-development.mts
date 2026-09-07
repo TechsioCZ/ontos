@@ -8,8 +8,6 @@ import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { verifyPassword } from 'better-auth/crypto';
 import { admin } from 'better-auth/plugins';
 import { and, eq, or } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import {
   Config,
   ConfigProvider,
@@ -17,21 +15,23 @@ import {
   Effect,
   FileSystem,
   Layer,
-  ManagedRuntime,
   Path,
   Redacted,
   Schema,
 } from 'effect';
-import { Pool } from 'pg';
+import { isSqlError } from 'effect/unstable/sql/SqlError';
+import { AuthConfig } from '../apps/shell-super-app/api/auth/config.ts';
+import { AuthDatabase, AuthDatabaseLive } from '../apps/shell-super-app/api/auth/db/client.ts';
+import type { AuthDatabaseExecutor } from '../apps/shell-super-app/api/auth/db/types.ts';
+import { CoreDatabase, CoreDatabaseLive } from '../packages/core-runtime/src/db/client.ts';
+import type { CoreDatabaseExecutor } from '../packages/core-runtime/src/db/types.ts';
+import { account, authDatabaseSchema, user } from '../apps/shell-super-app/api/auth/db/schema.ts';
 import {
-  account,
-  authDatabaseSchema,
-  authRelations,
-  user,
-} from '../apps/shell-super-app/api/auth/db/schema.ts';
-import { parseDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
+  DatabaseConfig,
+  parseDatabaseConfig,
+  parseDatabaseConnectionPair,
+} from '../packages/core-runtime/src/db/config.ts';
 import {
-  coreRelations,
   legalEntities,
   principalAuthBindings,
   principals,
@@ -58,10 +58,6 @@ export interface LocalDevelopmentEnvironment {
 }
 type Comparable = boolean | null | number | string;
 type ExactRecord = Readonly<Record<string, Comparable>>;
-
-const localDevelopmentRuntime = ManagedRuntime.make(
-  Layer.mergeAll(NodeFileSystem.layer, NodePath.layer),
-);
 
 const localDevelopmentPassword = Redacted.make(['password', '1234'].join(''));
 
@@ -243,31 +239,28 @@ export const classifyExactLocalRecord = <Expected extends ExactRecord>(
   label: string,
   existing: ExactRecord | undefined,
   expected: Expected,
-): 'create' | 'existing' => {
-  if (existing === undefined) {
-    return 'create';
-  }
-  const conflictingFields = Object.entries(expected)
-    .filter(([key, value]) => existing[key] !== value)
-    .map(([key]) => key);
-  if (conflictingFields.length > 0) {
-    return localDevelopmentRuntime.runSync(
-      Effect.fail(
-        failure(
-          'local_conflict',
-          `Existing ${label} conflicts with the local development definition (${conflictingFields.join(', ')})`,
-        ),
-      ),
-    );
-  }
-  return 'existing';
-};
+): Effect.Effect<'create' | 'existing', LocalDevelopmentInitializationError> =>
+  Effect.gen(function* classifyRecord() {
+    if (existing === undefined) {
+      return 'create' as const;
+    }
+    const conflictingFields = Object.entries(expected)
+      .filter(([key, value]) => existing[key] !== value)
+      .map(([key]) => key);
+    if (conflictingFields.length > 0) {
+      return yield* failure(
+        'local_conflict',
+        `Existing ${label} conflicts with the local development definition (${conflictingFields.join(', ')})`,
+      );
+    }
+    return 'existing' as const;
+  });
 
 export const classifyLocalModuleState = (
   label: string,
   existing: ExactRecord | undefined,
   expected: ExactRecord,
-): 'create' | 'existing' =>
+): Effect.Effect<'create' | 'existing', LocalDevelopmentInitializationError> =>
   classifyExactLocalRecord(label, existing, {
     moduleKey: expected.moduleKey ?? null,
     state: expected.state ?? null,
@@ -284,10 +277,10 @@ const TopologySchema = Schema.Struct({
 
 type DeriveContract = typeof deriveOntosModuleDeploymentContract;
 
-const deriveActivatedModuleIdsEffect = (
+export const deriveActivatedModuleIds = (
   workspaceRoot: string,
-  deriveContract: DeriveContract,
-  activatedVerticals: readonly string[],
+  deriveContract: DeriveContract = deriveOntosModuleDeploymentContract,
+  activatedVerticals: readonly string[] = LOCAL_DEVELOPMENT_VERTICALS,
 ) =>
   Effect.gen(function* deriveModuleIds() {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -366,20 +359,6 @@ const deriveActivatedModuleIdsEffect = (
     return sortedModuleIds;
   });
 
-export const deriveActivatedModuleIds = await localDevelopmentRuntime.runPromise(
-  Effect.promise(
-    async () =>
-      async (
-        workspaceRoot: string,
-        deriveContract: DeriveContract = deriveOntosModuleDeploymentContract,
-        activatedVerticals: readonly string[] = LOCAL_DEVELOPMENT_VERTICALS,
-      ): Promise<readonly string[]> =>
-        await localDevelopmentRuntime.runPromise(
-          deriveActivatedModuleIdsEffect(workspaceRoot, deriveContract, activatedVerticals),
-        ),
-  ),
-);
-
 export const moduleStateIdFor = (moduleId: string): string => {
   const hexadecimal = createHash('sha256')
     .update(`ontos-local-module-state:${moduleId}`, 'utf-8')
@@ -390,57 +369,60 @@ export const moduleStateIdFor = (moduleId: string): string => {
   return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
 };
 
-export const buildLocalDevelopmentRelationships = (
-  moduleIds: readonly string[],
-): readonly LocalDevelopmentRelationship[] => {
-  const context = LOCAL_DEVELOPMENT_CONTEXT;
-  const legalEntityObjectId = toLegalEntityAccessObjectId(context.tenantId, context.legalEntityId);
-  if (legalEntityObjectId === undefined) {
-    return localDevelopmentRuntime.runSync(
-      Effect.fail(
-        failure('local_contract_invalid', 'The local Legal Entity authorization ID is invalid'),
-      ),
+export const buildLocalDevelopmentRelationships = Effect.fn('LocalDevelopment.buildRelationships')(
+  function* buildRelationships(
+    moduleIds: readonly string[],
+  ): Effect.fn.Return<
+    readonly LocalDevelopmentRelationship[],
+    LocalDevelopmentInitializationError
+  > {
+    const context = LOCAL_DEVELOPMENT_CONTEXT;
+    const legalEntityObjectId = toLegalEntityAccessObjectId(
+      context.tenantId,
+      context.legalEntityId,
     );
-  }
-  const shared: LocalDevelopmentRelationship[] = [
-    {
-      relation: 'member',
-      resourceId: context.tenantId,
-      resourceType: 'tenant',
-      subjectId: context.principalId,
-      subjectType: 'principal',
-    },
-    {
-      relation: 'tenant',
-      resourceId: legalEntityObjectId,
-      resourceType: 'legal_entity',
-      subjectId: context.tenantId,
-      subjectType: 'tenant',
-    },
-    {
-      relation: 'member',
-      resourceId: legalEntityObjectId,
-      resourceType: 'legal_entity',
-      subjectId: context.principalId,
-      subjectType: 'principal',
-    },
-  ];
-  return [
-    ...shared,
-    ...moduleIds.flatMap((moduleId) => {
+    if (legalEntityObjectId === undefined) {
+      return yield* failure(
+        'local_contract_invalid',
+        'The local Legal Entity authorization ID is invalid',
+      );
+    }
+    const shared: LocalDevelopmentRelationship[] = [
+      {
+        relation: 'member',
+        resourceId: context.tenantId,
+        resourceType: 'tenant',
+        subjectId: context.principalId,
+        subjectType: 'principal',
+      },
+      {
+        relation: 'tenant',
+        resourceId: legalEntityObjectId,
+        resourceType: 'legal_entity',
+        subjectId: context.tenantId,
+        subjectType: 'tenant',
+      },
+      {
+        relation: 'member',
+        resourceId: legalEntityObjectId,
+        resourceType: 'legal_entity',
+        subjectId: context.principalId,
+        subjectType: 'principal',
+      },
+    ];
+    for (const moduleId of moduleIds) {
       const moduleObjectId = toModuleAccessObjectId(
         context.tenantId,
         context.legalEntityId,
         moduleId,
       );
       if (moduleObjectId === undefined) {
-        return localDevelopmentRuntime.runSync(
-          Effect.fail(
-            failure('local_contract_invalid', `Module ${moduleId} has an invalid authorization ID`),
-          ),
+        return yield* failure(
+          'local_contract_invalid',
+          `Module ${moduleId} has an invalid authorization ID`,
         );
       }
-      return [
+      shared.push(
         {
           relation: 'legal_entity',
           resourceId: moduleObjectId,
@@ -455,60 +437,77 @@ export const buildLocalDevelopmentRelationships = (
           subjectId: context.principalId,
           subjectType: 'principal',
         },
-      ];
-    }),
-  ];
-};
+      );
+    }
+    return shared;
+  },
+);
 
-const ensureAuthUser = (
+const ensureAuthUser = Effect.fn('LocalDevelopment.ensureAuthUser')(function* ensureAuthUserEffect(
   configuration: LocalDevelopmentConfiguration,
-  database: NodePgDatabase<typeof authRelations>,
-): Effect.Effect<
-  { readonly status: 'created' | 'existing'; readonly userId: string },
-  LocalDevelopmentInitializationError
-> =>
-  Effect.tryPromise({
-    catch: (cause) =>
-      cause instanceof LocalDevelopmentInitializationError
-        ? cause
-        : failure('local_persistence_failed', 'The local Better Auth user could not be reconciled'),
-    try: async () => {
-      const existingUsers = await database
+  database: AuthDatabaseExecutor,
+) {
+  const existingUsers = yield* Effect.tryPromise({
+    catch: () =>
+      failure('local_persistence_failed', 'The local Better Auth user could not be loaded'),
+    try: async () =>
+      await database
         .select({ email: user.email, id: user.id, name: user.name })
         .from(user)
         .where(eq(user.email, configuration.email))
-        .limit(2);
-      if (existingUsers.length > 1) {
-        return await Promise.reject(
-          failure('local_conflict', 'Multiple Better Auth users use the local email'),
-        );
-      }
-      const [existingUser] = existingUsers;
-      if (existingUser !== undefined) {
-        classifyExactLocalRecord('Better Auth user', existingUser, {
-          email: configuration.email,
-          name: configuration.principalDisplayName,
-        });
-        const credentials = await database
+        .limit(2),
+  });
+  if (existingUsers.length > 1) {
+    return yield* failure('local_conflict', 'Multiple Better Auth users use the local email');
+  }
+  const [existingUser] = existingUsers;
+  if (existingUser !== undefined) {
+    yield* classifyExactLocalRecord('Better Auth user', existingUser, {
+      email: configuration.email,
+      name: configuration.principalDisplayName,
+    });
+    const credentials = yield* Effect.tryPromise({
+      catch: () =>
+        failure(
+          'local_persistence_failed',
+          'The local Better Auth credentials could not be loaded',
+        ),
+      try: async () =>
+        await database
           .select({ password: account.password })
           .from(account)
           .where(and(eq(account.userId, existingUser.id), eq(account.providerId, 'credential')))
-          .limit(2);
-        const [credential] = credentials.length === 1 ? credentials : [];
-        if (
-          credential?.password === null ||
-          credential?.password === undefined ||
-          !(await verifyPassword({
-            hash: credential.password,
-            password: Redacted.value(configuration.password),
-          }))
-        ) {
-          return await Promise.reject(
-            failure('local_conflict', 'The existing local user has conflicting credentials'),
-          );
-        }
-        return { status: 'existing', userId: existingUser.id };
-      }
+          .limit(2),
+    });
+    const [credential] = credentials.length === 1 ? credentials : [];
+    if (credential?.password === null || credential?.password === undefined) {
+      return yield* failure(
+        'local_conflict',
+        'The existing local user has conflicting credentials',
+      );
+    }
+    const storedPassword = credential.password;
+    const validPassword = yield* Effect.tryPromise({
+      catch: () =>
+        failure('local_persistence_failed', 'The local Better Auth password could not be verified'),
+      try: async () =>
+        await verifyPassword({
+          hash: storedPassword,
+          password: Redacted.value(configuration.password),
+        }),
+    });
+    if (!validPassword) {
+      return yield* failure(
+        'local_conflict',
+        'The existing local user has conflicting credentials',
+      );
+    }
+    return { status: 'existing' as const, userId: existingUser.id };
+  }
+  const created = yield* Effect.tryPromise({
+    catch: () =>
+      failure('local_persistence_failed', 'The local Better Auth user could not be created'),
+    try: async () => {
       const authentication = betterAuth({
         baseURL: configuration.authBaseUrl,
         database: drizzleAdapter(database, {
@@ -521,31 +520,28 @@ const ensureAuthUser = (
         plugins: [admin()],
         secret: Redacted.value(configuration.authSecret),
       });
-      const created = await authentication.api.createUser({
+      return await authentication.api.createUser({
         body: {
           email: configuration.email,
           name: configuration.principalDisplayName,
           password: Redacted.value(configuration.password),
         },
       });
-      return { status: 'created', userId: created.user.id };
     },
   });
+  return { status: 'created' as const, userId: created.user.id };
+});
 
-const reconcileCoreContext = (
-  database: NodePgDatabase<typeof coreRelations>,
+export const reconcileCoreContext = (
+  database: CoreDatabaseExecutor,
   authUserId: string,
   moduleIds: readonly string[],
 ): Effect.Effect<void, LocalDevelopmentInitializationError> =>
-  Effect.tryPromise({
-    catch: (cause) =>
-      cause instanceof LocalDevelopmentInitializationError
-        ? cause
-        : failure('local_persistence_failed', 'The local Core context could not be reconciled'),
-    try: async () => {
-      const context = LOCAL_DEVELOPMENT_CONTEXT;
-      await database.transaction(async (transaction) => {
-        const tenantCandidates = await transaction
+  database
+    .transaction(
+      Effect.fn('LocalDevelopment.reconcileCoreContext')(function* reconcileContext(transaction) {
+        const context = LOCAL_DEVELOPMENT_CONTEXT;
+        const tenantCandidates = yield* transaction
           .select({
             defaultLocale: tenants.defaultLocale,
             name: tenants.name,
@@ -557,7 +553,7 @@ const reconcileCoreContext = (
           .where(or(eq(tenants.tenantId, context.tenantId), eq(tenants.slug, context.tenantSlug)))
           .limit(2);
         if (tenantCandidates.length > 1) {
-          await Promise.reject(failure('local_conflict', 'The local tenant identity conflicts'));
+          return yield* failure('local_conflict', 'The local tenant identity conflicts');
         }
         const expectedTenant = {
           defaultLocale: context.defaultLocale,
@@ -566,11 +562,14 @@ const reconcileCoreContext = (
           status: 'active',
           tenantId: context.tenantId,
         } as const;
-        if (classifyExactLocalRecord('tenant', tenantCandidates[0], expectedTenant) === 'create') {
-          await transaction.insert(tenants).values(expectedTenant);
+        if (
+          (yield* classifyExactLocalRecord('tenant', tenantCandidates[0], expectedTenant)) ===
+          'create'
+        ) {
+          yield* transaction.insert(tenants).values(expectedTenant);
         }
 
-        const legalCandidates = await transaction
+        const legalCandidates = yield* transaction
           .select({
             legalEntityId: legalEntities.legalEntityId,
             legalName: legalEntities.legalName,
@@ -592,9 +591,7 @@ const reconcileCoreContext = (
           )
           .limit(2);
         if (legalCandidates.length > 1) {
-          await Promise.reject(
-            failure('local_conflict', 'The local Legal Entity identity conflicts'),
-          );
+          return yield* failure('local_conflict', 'The local Legal Entity identity conflicts');
         }
         const expectedLegalEntity = {
           legalEntityId: context.legalEntityId,
@@ -605,10 +602,13 @@ const reconcileCoreContext = (
           tenantId: context.tenantId,
         } as const;
         if (
-          classifyExactLocalRecord('Legal Entity', legalCandidates[0], expectedLegalEntity) ===
-          'create'
+          (yield* classifyExactLocalRecord(
+            'Legal Entity',
+            legalCandidates[0],
+            expectedLegalEntity,
+          )) === 'create'
         ) {
-          await transaction.insert(legalEntities).values(expectedLegalEntity);
+          yield* transaction.insert(legalEntities).values(expectedLegalEntity);
         }
 
         const expectedPrincipal = {
@@ -618,7 +618,7 @@ const reconcileCoreContext = (
           status: 'active',
           tenantId: context.tenantId,
         } as const;
-        const principalCandidates = await transaction
+        const principalCandidates = yield* transaction
           .select({
             displayName: principals.displayName,
             kind: principals.kind,
@@ -630,13 +630,16 @@ const reconcileCoreContext = (
           .where(eq(principals.principalId, context.principalId))
           .limit(1);
         if (
-          classifyExactLocalRecord('principal', principalCandidates[0], expectedPrincipal) ===
-          'create'
+          (yield* classifyExactLocalRecord(
+            'principal',
+            principalCandidates[0],
+            expectedPrincipal,
+          )) === 'create'
         ) {
-          await transaction.insert(principals).values(expectedPrincipal);
+          yield* transaction.insert(principals).values(expectedPrincipal);
         }
 
-        const bindingCandidates = await transaction
+        const bindingCandidates = yield* transaction
           .select({
             principalAuthBindingId: principalAuthBindings.principalAuthBindingId,
             principalId: principalAuthBindings.principalId,
@@ -660,9 +663,7 @@ const reconcileCoreContext = (
           )
           .limit(2);
         if (bindingCandidates.length > 1) {
-          await Promise.reject(
-            failure('local_conflict', 'The local authentication binding conflicts'),
-          );
+          return yield* failure('local_conflict', 'The local authentication binding conflicts');
         }
         const expectedBinding = {
           principalAuthBindingId: context.authBindingId,
@@ -674,22 +675,18 @@ const reconcileCoreContext = (
           tenantId: context.tenantId,
         } as const;
         if (
-          classifyExactLocalRecord(
+          (yield* classifyExactLocalRecord(
             'authentication binding',
             bindingCandidates[0],
             expectedBinding,
-          ) === 'create'
+          )) === 'create'
         ) {
-          await transaction.insert(principalAuthBindings).values(expectedBinding);
+          yield* transaction.insert(principalAuthBindings).values(expectedBinding);
         }
 
-        const reconcileModule = async (index: number): Promise<void> => {
-          const moduleId = moduleIds[index];
-          if (moduleId === undefined) {
-            return;
-          }
+        for (const moduleId of moduleIds) {
           const moduleStateId = moduleStateIdFor(moduleId);
-          const moduleCandidates = await transaction
+          const moduleCandidates = yield* transaction
             .select({
               moduleKey: tenantModuleStates.moduleKey,
               state: tenantModuleStates.state,
@@ -708,8 +705,9 @@ const reconcileCoreContext = (
             )
             .limit(2);
           if (moduleCandidates.length > 1) {
-            await Promise.reject(
-              failure('local_conflict', `The ${moduleId} module-state identity conflicts`),
+            return yield* failure(
+              'local_conflict',
+              `The ${moduleId} module-state identity conflicts`,
             );
           }
           const expectedModuleState = {
@@ -719,20 +717,30 @@ const reconcileCoreContext = (
             tenantModuleStateId: moduleStateId,
           } as const;
           if (
-            classifyLocalModuleState(
+            (yield* classifyLocalModuleState(
               `${moduleId} module state`,
               moduleCandidates[0],
               expectedModuleState,
-            ) === 'create'
+            )) === 'create'
           ) {
-            await transaction.insert(tenantModuleStates).values(expectedModuleState);
+            yield* transaction.insert(tenantModuleStates).values(expectedModuleState);
           }
-          await reconcileModule(index + 1);
-        };
-        await reconcileModule(0);
-      });
-    },
-  });
+        }
+        return yield* Effect.void;
+      }),
+    )
+    .pipe(
+      // Native SQL commit/rollback errors are defects; preserve unrelated defects.
+      Effect.catchDefect((defect) =>
+        isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
+      ),
+      Effect.catchTag('EffectDrizzleQueryError', () =>
+        failure('local_persistence_failed', 'The local Core context could not be reconciled'),
+      ),
+      Effect.catchTag('SqlError', () =>
+        failure('local_persistence_failed', 'The local Core context could not be reconciled'),
+      ),
+    );
 
 const acquireSpiceDbClient = (configuration: LocalDevelopmentConfiguration) =>
   Effect.acquireRelease(
@@ -806,28 +814,6 @@ const loadRootConfiguration = () =>
     return yield* parseLocalDevelopmentConfigurationFromProvider(provider);
   });
 
-const acquireDatabasePool = (databaseAdminUrl: string) =>
-  Effect.acquireRelease(
-    Effect.sync(() => new Pool({ connectionString: databaseAdminUrl })),
-    (pool) =>
-      Effect.tryPromise({
-        catch: () =>
-          failure('local_persistence_failed', 'The local database pool could not be closed'),
-        try: async () => await pool.end(),
-      }).pipe(Effect.orDie),
-  );
-
-const withDatabasePool = <Value,>(
-  databaseAdminUrl: string,
-  use: (pool: Pool) => Effect.Effect<Value, LocalDevelopmentInitializationError>,
-): Effect.Effect<Value, LocalDevelopmentInitializationError> =>
-  Effect.scoped(
-    Effect.gen(function* useDatabasePool() {
-      const pool = yield* acquireDatabasePool(databaseAdminUrl);
-      return yield* use(pool);
-    }),
-  );
-
 export const initializeLocalDevelopment = (
   environmentEffect?: Effect.Effect<
     LocalDevelopmentEnvironment,
@@ -843,20 +829,53 @@ export const initializeLocalDevelopment = (
       environmentEffect === undefined
         ? yield* loadRootConfiguration()
         : yield* environmentEffect.pipe(Effect.flatMap(parseLocalDevelopmentConfiguration));
-    const moduleIds = yield* deriveActivatedModuleIdsEffect(
+    const moduleIds = yield* deriveActivatedModuleIds(
       path.join(import.meta.dirname, '..'),
       deriveOntosModuleDeploymentContract,
       LOCAL_DEVELOPMENT_VERTICALS,
     );
-    const relationships = buildLocalDevelopmentRelationships(moduleIds);
-    const authUser = yield* withDatabasePool(configuration.databaseAdminUrl, (pool) =>
-      ensureAuthUser(configuration, drizzle({ client: pool, relations: authRelations })),
+    const relationships = yield* buildLocalDevelopmentRelationships(moduleIds);
+    const authUser = yield* Effect.gen(function* initializeAuth() {
+      const database = yield* AuthDatabase;
+      return yield* ensureAuthUser(configuration, database.executor);
+    }).pipe(
+      Effect.provide(
+        AuthDatabaseLive.pipe(
+          Layer.provide(
+            Layer.succeed(AuthConfig, {
+              baseUrl: configuration.authBaseUrl,
+              connectionString: configuration.databaseAdminUrl,
+              secret: Redacted.value(configuration.authSecret),
+              secureCookies: false,
+              supportUserIds: [],
+              trustedOrigins: [configuration.authBaseUrl],
+            }),
+          ),
+        ),
+      ),
+      Effect.catchTag('AuthDatabaseConnectionError', () =>
+        failure(
+          'local_persistence_failed',
+          'The local authentication database could not be opened',
+        ),
+      ),
     );
-    yield* withDatabasePool(configuration.databaseAdminUrl, (pool) =>
-      reconcileCoreContext(
-        drizzle({ client: pool, relations: coreRelations }),
-        authUser.userId,
-        moduleIds,
+    const databaseConfiguration = yield* parseDatabaseConfig({
+      DATABASE_URL: configuration.databaseAdminUrl,
+    }).pipe(
+      Effect.mapError(() =>
+        failure('local_configuration_invalid', 'The local Core database configuration is invalid'),
+      ),
+    );
+    yield* Effect.gen(function* initializeCore() {
+      const database = yield* CoreDatabase;
+      yield* reconcileCoreContext(database.executor, authUser.userId, moduleIds);
+    }).pipe(
+      Effect.provide(
+        CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, databaseConfiguration))),
+      ),
+      Effect.catchTag('DatabaseConnectionError', () =>
+        failure('local_persistence_failed', 'The local Core database could not be opened'),
       ),
     );
     yield* touchRelationships(configuration, relationships);
@@ -882,7 +901,11 @@ if (
   process.argv[1] !== undefined &&
   import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
 ) {
-  const succeeded = await localDevelopmentRuntime.runPromise(runLocalDevelopmentInitialization);
+  const succeeded = await Effect.runPromise(
+    runLocalDevelopmentInitialization.pipe(
+      Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
+    ),
+  );
   if (!succeeded) {
     process.exitCode = 1;
   }
