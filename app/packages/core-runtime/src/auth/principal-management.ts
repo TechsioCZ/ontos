@@ -4,6 +4,8 @@ import { Context, DateTime, Effect, Option } from 'effect';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import { principalAuthBindings, principals } from '../db/schema.ts';
 import type { BindingStatus, PrincipalKind, PrincipalStatus } from '../db/schema.ts';
+// eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Pure Effect adapter constructor with no service dependencies; expires: 2027-03-01.
+import { makePersistenceAttempt } from '../persistence/attempt.ts';
 import {
   IdentityLifecycleConflictError,
   IdentityPersistenceUnavailableError,
@@ -29,7 +31,7 @@ const invalid = (reason: string) =>
 const PERSISTENCE_TIMEOUT = '30 seconds';
 
 const persistenceEffect = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: persistenceFailure, try: operation }).pipe(
+  makePersistenceAttempt(persistenceFailure)(operation).pipe(
     Effect.timeoutOrElse({
       duration: PERSISTENCE_TIMEOUT,
       orElse: () => Effect.fail(persistenceFailure()),

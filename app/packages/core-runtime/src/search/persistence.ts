@@ -12,6 +12,8 @@ import {
 import { CoreDatabase } from '../db/client.ts';
 import { searchIndexEntries, searchProjectionRebuilds } from '../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
+// eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Pure Effect adapter constructor with no service dependencies; expires: 2027-03-01.
+import { makePersistenceAttempt } from '../persistence/attempt.ts';
 import {
   CoreSearchAliasSchema,
   CoreSearchFacetSchema,
@@ -169,7 +171,7 @@ const tryDatabasePromise = <Value, Failure>(
   evaluate: () => PromiseLike<Value>,
   mapFailure: (cause: CoreSearchPersistenceCause) => Failure,
 ): Effect.Effect<Value, Failure> =>
-  Effect.tryPromise({ catch: mapFailure, try: () => evaluate() }).pipe(
+  makePersistenceAttempt(mapFailure)(evaluate).pipe(
     Effect.timeoutOrElse({
       duration: Duration.infinity,
       orElse: () => Effect.fail(mapFailure('Database operation timed out')),

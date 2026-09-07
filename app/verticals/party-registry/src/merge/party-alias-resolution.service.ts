@@ -1,3 +1,4 @@
+import { makePersistenceAttempt } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { Context, Duration, Effect, Option } from 'effect';
 import {
@@ -158,7 +159,7 @@ const unavailable = (cause?: unknown) =>
   );
 const ALIAS_LOOKUP_TIMEOUT = Duration.seconds(30);
 const attempt = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: unavailable, try: operation }).pipe(
+  makePersistenceAttempt(unavailable)(operation).pipe(
     Effect.timeoutOrElse({
       duration: ALIAS_LOOKUP_TIMEOUT,
       orElse: () => Effect.fail(unavailable()),

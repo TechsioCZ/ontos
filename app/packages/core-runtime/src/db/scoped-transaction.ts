@@ -5,6 +5,8 @@ import { pgPolicy } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { OperationalScope } from '../operations/context.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
+// eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Pure Effect adapter constructor with no service dependencies; expires: 2027-03-01.
+import { makePersistenceAttempt } from '../persistence/attempt.ts';
 import type { CoreTransaction } from './types.ts';
 
 const scopedTransaction: unique symbol = Symbol('@app/core-runtime/db/scoped-transaction');
@@ -49,7 +51,7 @@ const operationContextUnavailable = (cause?: unknown) => {
 };
 
 const transactionEffect = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: operationContextUnavailable, try: operation }).pipe(
+  makePersistenceAttempt(operationContextUnavailable)(operation).pipe(
     Effect.timeoutOrElse({
       duration: Duration.infinity,
       orElse: () => Effect.fail(operationContextUnavailable()),

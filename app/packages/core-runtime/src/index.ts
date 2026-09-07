@@ -180,6 +180,7 @@ export type {
   ResourceAccessTarget,
   TenantPermissionKey,
 } from './permissions/context-access.ts';
+export { makePersistenceAttempt } from './persistence/attempt.ts';
 export {
   defineAction,
   defineActionResourcePermission,

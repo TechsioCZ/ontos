@@ -4,6 +4,8 @@ import { and, asc, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { Context, DateTime, Duration, Effect, Layer, Option, Schema } from 'effect';
 import { CoreDatabase } from '../db/client.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
+// eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Pure Effect adapter constructor with no service dependencies; expires: 2027-03-01.
+import { makePersistenceAttempt } from '../persistence/attempt.ts';
 import {
   actionInvocations,
   domainEvents,
@@ -95,19 +97,18 @@ export class OutboxRepository extends Context.Service<OutboxRepository, OutboxRe
 ) {}
 
 const persistenceEffect = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: outboxPersistenceError, try: operation }).pipe(
+  makePersistenceAttempt(outboxPersistenceError)(operation).pipe(
     Effect.timeoutOrElse({
       duration: Duration.infinity,
       orElse: () => Effect.fail(outboxPersistenceError('Outbox persistence operation timed out')),
     }),
   );
 
+const claimLostOrPersistenceError = <Failure>(error: Failure) =>
+  Schema.is(OutboxClaimLostError)(error) ? error : outboxPersistenceError(error);
+
 const persistenceOrClaimLostEffect = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({
-    catch: (error) =>
-      Schema.is(OutboxClaimLostError)(error) ? error : outboxPersistenceError(error),
-    try: operation,
-  }).pipe(
+  makePersistenceAttempt(claimLostOrPersistenceError)(operation).pipe(
     Effect.timeoutOrElse({
       duration: Duration.infinity,
       orElse: () => Effect.fail(outboxPersistenceError('Outbox persistence operation timed out')),

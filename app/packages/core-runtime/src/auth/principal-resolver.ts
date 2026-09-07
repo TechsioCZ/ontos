@@ -10,6 +10,8 @@ import {
 } from '../db/schema.ts';
 import type { PrincipalKind } from '../db/schema.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
+// eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Pure Effect adapter constructor with no service dependencies; expires: 2027-03-01.
+import { makePersistenceAttempt } from '../persistence/attempt.ts';
 import {
   PrincipalBindingAmbiguousError,
   PrincipalBindingInactiveError,
@@ -97,10 +99,7 @@ const unavailable = (reason: string, cause?: unknown): PrincipalResolverUnavaila
 const DATABASE_OPERATION_TIMEOUT = Duration.seconds(30);
 
 const databaseOperation = <Value>(reason: string, operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({
-    catch: (cause) => unavailable(reason, cause),
-    try: operation,
-  }).pipe(
+  makePersistenceAttempt((cause) => unavailable(reason, cause))(operation).pipe(
     Effect.timeoutOrElse({
       duration: DATABASE_OPERATION_TIMEOUT,
       orElse: () => Effect.fail(unavailable(reason)),

@@ -2,7 +2,7 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { Context, Duration, Effect, Layer, Option } from 'effect';
-import { CoreSearchWorkerSnapshot } from '@app/core-runtime';
+import { CoreSearchWorkerSnapshot, makePersistenceAttempt } from '@app/core-runtime';
 import type {
   CoreSearchSnapshotReadExecutor,
   CoreSearchWorkerSnapshotService,
@@ -51,7 +51,7 @@ const unavailable = (cause?: unknown) => {
 };
 const SOURCE_READ_TIMEOUT = Duration.seconds(30);
 const attempt = <Value>(read: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: unavailable, try: read }).pipe(
+  makePersistenceAttempt(unavailable)(read).pipe(
     Effect.timeoutOrElse({
       duration: SOURCE_READ_TIMEOUT,
       orElse: () => Effect.fail(unavailable()),

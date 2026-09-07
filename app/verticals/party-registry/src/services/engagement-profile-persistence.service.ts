@@ -1,4 +1,5 @@
 // @generated-origin OntOS Codesmith Action Service v1
+import { makePersistenceAttempt } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { DateTime, Duration, Effect, Option, Schema } from 'effect';
 import type { CounterpartyRef, PartyRef } from '../../shared/party-registry-references.ts';
@@ -80,14 +81,14 @@ const mutationFailure = <Failure>(failure: Failure) =>
 
 const PERSISTENCE_TIMEOUT = Duration.seconds(30);
 const attempt = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: unavailable, try: operation }).pipe(
+  makePersistenceAttempt(unavailable)(operation).pipe(
     Effect.timeoutOrElse({
       duration: PERSISTENCE_TIMEOUT,
       orElse: () => Effect.fail(unavailable()),
     }),
   );
 const mutationAttempt = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: mutationFailure, try: operation }).pipe(
+  makePersistenceAttempt(mutationFailure)(operation).pipe(
     Effect.timeoutOrElse({
       duration: PERSISTENCE_TIMEOUT,
       orElse: () => Effect.fail(unavailable()),

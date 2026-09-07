@@ -5,6 +5,8 @@ import { tenantModuleStateChanges, tenantModuleStates, tenants } from '../db/sch
 import type { ActionAuthMethod } from '../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
+// eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Pure Effect adapter constructor with no service dependencies; expires: 2027-03-01.
+import { makePersistenceAttempt } from '../persistence/attempt.ts';
 import {
   TenantModuleStateConcurrentChangeError,
   TenantModuleStatePersistenceUnavailableError,
@@ -153,7 +155,7 @@ const tenantModuleStateReadUnavailable = (cause?: unknown) => {
 };
 
 const attemptTenantModuleStateRead = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: tenantModuleStateReadUnavailable, try: operation }).pipe(
+  makePersistenceAttempt(tenantModuleStateReadUnavailable)(operation).pipe(
     Effect.timeout('30 seconds'),
     Effect.mapError(tenantModuleStateReadUnavailable),
   );
@@ -246,7 +248,7 @@ const persistenceUnavailable = (cause?: unknown) => {
 };
 
 const attemptPersistence = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: persistenceUnavailable, try: operation }).pipe(
+  makePersistenceAttempt(persistenceUnavailable)(operation).pipe(
     Effect.timeout('30 seconds'),
     Effect.mapError(persistenceUnavailable),
   );

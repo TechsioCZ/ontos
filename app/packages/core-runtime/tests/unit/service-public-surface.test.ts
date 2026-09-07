@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { makePersistenceAttempt } from '../../src/index.ts';
 import type {
   ContextAccessService,
   InstalledModuleCatalogServiceContract,
@@ -29,4 +30,8 @@ const preservePublicServiceContract = <Service extends PublicServiceContract>(
 
 void test('exports the anti-slop-compliant Core service contracts', () => {
   assert.equal(preservePublicServiceContract.length, 1);
+});
+
+void test('exports the persistence attempt constructor from the CoreSDK server surface', () => {
+  assert.equal(makePersistenceAttempt.length, 1);
 });

@@ -2,6 +2,8 @@ import { and, eq } from 'drizzle-orm';
 import { Clock, Context, Duration, Effect, Layer, Schema } from 'effect';
 import type { CoreTransaction } from '../db/types.ts';
 import { tenantModuleStates, tenants } from '../db/schema.ts';
+// eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Pure Effect adapter constructor with no service dependencies; expires: 2027-03-01.
+import { makePersistenceAttempt } from '../persistence/attempt.ts';
 import type {
   ModuleEntrypointAccess,
   ModuleEntrypointDescriptor,
@@ -274,7 +276,7 @@ export interface ModuleStateGateService {
 const MODULE_STATE_RECHECK_TIMEOUT = Duration.seconds(30);
 
 const attemptModuleStateRecheck = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: unavailable, try: operation }).pipe(
+  makePersistenceAttempt(unavailable)(operation).pipe(
     Effect.timeoutOrElse({
       duration: MODULE_STATE_RECHECK_TIMEOUT,
       orElse: () => Effect.fail(unavailable('Module state write recheck timed out')),

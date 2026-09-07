@@ -5,6 +5,8 @@ import { Context, Duration, Effect, Exit, Layer, Option, Schema } from 'effect';
 import { CoreDatabase } from '../db/client.ts';
 import { domainEvents, legalEntities, searchProjectionGenerations } from '../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
+// eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Pure Effect adapter constructor with no service dependencies; expires: 2027-03-01.
+import { makePersistenceAttempt } from '../persistence/attempt.ts';
 import {
   DatabaseTransactionFailure,
   decodeDatabaseDriverFailure,
@@ -180,7 +182,7 @@ const snapshotDriverError = (cause: unknown): CoreSearchSnapshotDriverError =>
 const tryDriverPromise = <Value>(
   evaluate: () => PromiseLike<Value>,
 ): Effect.Effect<Value, CoreSearchSnapshotDriverError> =>
-  Effect.tryPromise({ catch: snapshotDriverError, try: evaluate }).pipe(
+  makePersistenceAttempt(snapshotDriverError)(evaluate).pipe(
     Effect.timeoutOrElse({
       duration: Duration.infinity,
       orElse: () => Effect.fail(unavailable()),
