@@ -1,15 +1,11 @@
-// @effect-diagnostics asyncFunction:off nodeBuiltinImport:off processEnv:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { reconcileStageContextBootstraps } from '@app/core-runtime/install/stage-context-bootstrap';
 import { betterAuth } from 'better-auth';
 import { verifyPassword } from 'better-auth/crypto';
-import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { admin } from 'better-auth/plugins';
 import { and, eq } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { Config, Duration, Effect, Option, Redacted, Schema } from 'effect';
-import { Pool } from 'pg';
-import { account, authDatabaseSchema, authRelations, user } from './db/schema.ts';
+import { Config, Effect, Option, Redacted } from 'effect';
+import { AuthDatabase } from './db/client.ts';
+import { account, user } from './db/schema.ts';
 import {
   StageDemoBootstrapError,
   classifyExactStageDemoRecord,
@@ -23,109 +19,96 @@ import type {
   StageDemoEnvironment,
 } from './stage-demo-bootstrap-contract.ts';
 
-const ensureAuthUser = async (
+const persistenceFailure = (cause?: unknown) =>
+  Object.defineProperty(
+    new StageDemoBootstrapError({
+      code: 'stage_demo_persistence_failed',
+      reason: 'The stage demo Better Auth user could not be reconciled',
+    }),
+    'cause',
+    { value: cause },
+  );
+
+const bootstrapSdkTimeout = Effect.timeoutOrElse({
+  duration: '30 seconds',
+  orElse: () => Effect.fail(persistenceFailure()),
+});
+
+const ensureAuthUser = Effect.fn('StageDemoBootstrap.ensureAuthUser')(function* ensureUser(
   configuration: StageDemoBootstrapConfig,
   accountConfiguration: StageDemoAccountConfig,
-  database: NodePgDatabase<typeof authRelations>,
-): Promise<{ readonly status: 'created' | 'existing'; readonly userId: string }> => {
-  const existingUsers = await database
+) {
+  const { adapter, executor: database } = yield* AuthDatabase;
+  const existingUsers = yield* database
     .select({ email: user.email, id: user.id, name: user.name })
     .from(user)
     .where(eq(user.email, accountConfiguration.email))
-    .limit(2);
+    .limit(2)
+    .pipe(Effect.mapError(persistenceFailure));
   if (existingUsers.length > 1) {
-    throw new StageDemoBootstrapError({
+    return yield* new StageDemoBootstrapError({
       code: 'stage_demo_conflict',
       reason: 'Multiple Better Auth users use the stage demo email',
     });
   }
   const [existingUser] = existingUsers;
   if (existingUser !== undefined) {
-    classifyExactStageDemoRecord('Better Auth user', existingUser, {
+    yield* classifyExactStageDemoRecord('Better Auth user', existingUser, {
       email: accountConfiguration.email,
       name: accountConfiguration.principalDisplayName,
     });
-    const credentials = await database
+    const credentials = yield* database
       .select({ password: account.password })
       .from(account)
       .where(and(eq(account.userId, existingUser.id), eq(account.providerId, 'credential')))
-      .limit(2);
+      .limit(2)
+      .pipe(Effect.mapError(persistenceFailure));
     const [credential] = credentials.length === 1 ? credentials : [];
-    if (
-      credential?.password === null ||
-      credential?.password === undefined ||
-      !(await verifyPassword({
-        hash: credential.password,
-        password: accountConfiguration.password,
-      }))
-    ) {
-      throw new StageDemoBootstrapError({
+    if (credential?.password === null || credential?.password === undefined) {
+      return yield* new StageDemoBootstrapError({
         code: 'stage_demo_conflict',
         reason: 'The existing stage demo user has conflicting credentials',
       });
     }
-    return { status: 'existing', userId: existingUser.id };
+    const hash = credential.password;
+    const validPassword = yield* Effect.tryPromise({
+      catch: persistenceFailure,
+      // oxlint-disable-next-line typescript/promise-function-async -- Effect owns the Better Auth crypto boundary.
+      try: () => verifyPassword({ hash, password: accountConfiguration.password }),
+    }).pipe(bootstrapSdkTimeout);
+    if (!validPassword) {
+      return yield* new StageDemoBootstrapError({
+        code: 'stage_demo_conflict',
+        reason: 'The existing stage demo user has conflicting credentials',
+      });
+    }
+    return { status: 'existing' as const, userId: existingUser.id };
   }
 
   const authentication = betterAuth({
     baseURL: configuration.authBaseUrl,
-    database: drizzleAdapter(database, {
-      provider: 'pg',
-      schema: authDatabaseSchema,
-      transaction: true,
-    }),
-    emailAndPassword: {
-      autoSignIn: false,
-      disableSignUp: true,
-      enabled: true,
-    },
+    database: adapter,
+    emailAndPassword: { autoSignIn: false, disableSignUp: true, enabled: true },
     logger: { disabled: true },
     plugins: [admin()],
     secret: configuration.authSecret,
   });
-  const created = await authentication.api.createUser({
-    body: {
-      email: accountConfiguration.email,
-      name: accountConfiguration.principalDisplayName,
-      password: accountConfiguration.password,
-    },
-  });
-  return { status: 'created', userId: created.user.id };
-};
-
-const reconcileAuthUser = (
-  configuration: StageDemoBootstrapConfig,
-  accountConfiguration: StageDemoAccountConfig,
-) =>
-  Effect.tryPromise({
-    catch: (cause) =>
-      Schema.is(StageDemoBootstrapError)(cause)
-        ? cause
-        : new StageDemoBootstrapError({
-            code: 'stage_demo_persistence_failed',
-            reason: 'The stage demo Better Auth user could not be reconciled',
-          }),
-    try: async () => {
-      const pool = new Pool({ connectionString: configuration.databaseAdminUrl });
-      try {
-        const authDatabase = drizzle({ client: pool, relations: authRelations });
-        return await ensureAuthUser(configuration, accountConfiguration, authDatabase);
-      } finally {
-        await pool.end();
-      }
-    },
-  }).pipe(
-    Effect.timeoutOrElse({
-      duration: Duration.infinity,
-      orElse: () =>
-        Effect.fail(
-          new StageDemoBootstrapError({
-            code: 'stage_demo_persistence_failed',
-            reason: 'The stage demo Better Auth user could not be reconciled',
-          }),
-        ),
-    }),
-  );
+  // Better Auth cannot cancel this write; keep the database scope alive until it settles.
+  // oxlint-disable-next-line effect-native/require-timeout-on-external-effect -- Remove when the SDK supports cancellation or a reconcilable write token.
+  const created = yield* Effect.tryPromise({
+    catch: persistenceFailure,
+    // oxlint-disable-next-line typescript/promise-function-async -- Effect owns the Better Auth SDK boundary.
+    try: () =>
+      authentication.api.createUser({
+        body: {
+          email: accountConfiguration.email,
+          name: accountConfiguration.principalDisplayName,
+          password: accountConfiguration.password,
+        },
+      }),
+  }).pipe(Effect.uninterruptible);
+  return { status: 'created' as const, userId: created.user.id };
+});
 
 const optionalString = (name: string) =>
   Config.option(Config.string(name)).pipe(Config.map(Option.getOrUndefined));
@@ -153,26 +136,31 @@ const loadStageDemoEnvironment = Effect.fn(
   return values satisfies StageDemoEnvironment;
 });
 
-export const bootstrapStageDemo: (
-  environment?: StageDemoEnvironment,
-) => Effect.Effect<StageDemoBootstrapResult, StageDemoBootstrapError> = Effect.fn(
-  'StageDemoBootstrapRuntimeInfrastructure.bootstrapStageDemo',
-)(function* bootstrapStageDemoEffect(environment) {
-  const runtimeEnvironment =
-    environment ??
-    (yield* loadStageDemoEnvironment().pipe(
-      Effect.mapError(
-        (error) =>
-          new StageDemoBootstrapError({
-            code: 'stage_demo_configuration_invalid',
-            reason: `The stage demo configuration could not be loaded: ${error.message}`,
-          }),
-      ),
-    ));
-  const configuration = yield* parseStageDemoBootstrapConfig(runtimeEnvironment);
+export const loadStageDemoConfiguration = Effect.fn('StageDemoBootstrap.loadConfiguration')(
+  function* loadConfiguration(environment?: StageDemoEnvironment) {
+    const runtimeEnvironment =
+      environment ??
+      (yield* loadStageDemoEnvironment().pipe(
+        Effect.mapError(
+          (error) =>
+            new StageDemoBootstrapError({
+              code: 'stage_demo_configuration_invalid',
+              reason: `The stage demo configuration could not be loaded: ${error.message}`,
+            }),
+        ),
+      ));
+    return yield* parseStageDemoBootstrapConfig(runtimeEnvironment);
+  },
+);
+
+export const bootstrapStageDemo = Effect.fn('StageDemoBootstrap.bootstrap')(function* bootstrap(
+  configuration: StageDemoBootstrapConfig,
+): Effect.fn.Return<StageDemoBootstrapResult, StageDemoBootstrapError, AuthDatabase> {
   const [techsioAccount, siamparkAccount] = configuration.accounts;
-  const techsioAuthUser = yield* reconcileAuthUser(configuration, techsioAccount);
-  const siamparkAuthUser = yield* reconcileAuthUser(configuration, siamparkAccount);
+  const [techsioAuthUser, siamparkAuthUser] = yield* Effect.all(
+    [ensureAuthUser(configuration, techsioAccount), ensureAuthUser(configuration, siamparkAccount)],
+    { concurrency: 1 },
+  );
   const [techsioContext, siamparkContext] = yield* reconcileStageContextBootstraps([
     techsioAuthUser.userId,
     siamparkAuthUser.userId,
