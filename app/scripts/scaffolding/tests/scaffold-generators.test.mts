@@ -4611,6 +4611,11 @@ test('all generated files typecheck against the real workspace contracts', async
       'dir',
     );
     await symlink(
+      path.join(appRoot, 'packages/core-runtime/src/persistence'),
+      path.join(fixture.root, 'packages/core-runtime/src/persistence'),
+      'dir',
+    );
+    await symlink(
       path.join(appRoot, 'packages/core-runtime/src/environment'),
       path.join(fixture.root, 'packages/core-runtime/src/environment'),
       'dir',
