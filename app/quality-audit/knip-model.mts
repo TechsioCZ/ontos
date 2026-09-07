@@ -794,26 +794,39 @@ const isPathJoin = (node: Node): boolean =>
   node.object.name === 'path' &&
   ['join', 'resolve'].includes(propertyName(node.property) ?? '');
 
+const resolverAnchor = (
+  node: Extract<Node, { type: 'CallExpression' }>,
+  variables: ReadonlyMap<string, Node>,
+): Node | undefined => {
+  const options = objectExpression(node.arguments[1], variables);
+  const anchors = unwrap(objectValue(options, 'paths'), variables);
+  return anchors?.type === 'ArrayExpression' && anchors.elements.length === 1
+    ? (anchors.elements[0] ?? undefined)
+    : undefined;
+};
+
+const resolveInstalledDependency = (dependency: string, anchor: string): string | undefined => {
+  try {
+    return resolver.resolve(dependency, { paths: [anchor] });
+  } catch {
+    return undefined;
+  }
+};
+
 const resolveStaticCall = (
   value: Extract<Node, { type: 'CallExpression' }>,
   variables: ReadonlyMap<string, Node>,
   resolvePath: (node: Node | undefined) => string | undefined,
 ): string | undefined => {
   const target = staticString(value.arguments[0], variables);
-  const options = objectExpression(value.arguments[1], variables);
-  const paths = unwrap(objectValue(options, 'paths'), variables);
-  if (target === undefined || paths?.type !== 'ArrayExpression' || paths.elements.length !== 1) {
+  const anchor = resolverAnchor(value, variables);
+  if (target === undefined || anchor === undefined) {
     return undefined;
   }
-  const anchor = resolvePath(paths.elements[0] ?? undefined);
-  if (anchor === undefined) {
-    return undefined;
-  }
-  try {
-    return resolver.resolve(target, { paths: [anchor] });
-  } catch {
-    return undefined;
-  }
+  const resolvedAnchor = resolvePath(anchor);
+  return resolvedAnchor === undefined
+    ? undefined
+    : resolveInstalledDependency(target, resolvedAnchor);
 };
 
 const isImportMetaUrl = (
@@ -894,17 +907,6 @@ const hasNativeRequire = (facts: SourceFacts, variables: ReadonlyMap<string, Nod
           specifier.local.name === 'createRequire',
       ),
   );
-};
-
-const resolverAnchor = (
-  node: Extract<Node, { type: 'CallExpression' }>,
-  variables: ReadonlyMap<string, Node>,
-): Node | undefined => {
-  const options = objectExpression(node.arguments[1], variables);
-  const anchors = unwrap(objectValue(options, 'paths'), variables);
-  return anchors?.type === 'ArrayExpression' && anchors.elements.length === 1
-    ? (anchors.elements[0] ?? undefined)
-    : undefined;
 };
 
 const resolverEvidence = (
@@ -1004,14 +1006,6 @@ const nearestPackage = Effect.fn('QualityAudit.nearestPackage')(function* readNe
     directory = parent;
   }
 });
-
-const resolveInstalledDependency = (dependency: string, anchor: string): string | undefined => {
-  try {
-    return resolver.resolve(dependency, { paths: [anchor] });
-  } catch {
-    return undefined;
-  }
-};
 
 const classifyProducerTarget = Effect.fn('QualityAudit.classifyProducerTarget')(
   function* classifyProducer(fact: KnipModelEvidence, manifest: string) {
