@@ -9,6 +9,8 @@ import {
   HttpApiGroup,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
+import { createMicroVerticalOperationContext } from '@app/shared-contracts';
+import type { MicroVerticalOperationContext } from '@app/shared-contracts';
 import {
   AttachOrganizationEngagementPayloadSchema,
   AttachPersonEngagementPayloadSchema,
@@ -21,13 +23,6 @@ import {
 export * from './domain/engagement-profile.ts';
 export * from './apis/organization-engagement-profile.ts';
 export * from './apis/person-engagement-profile.ts';
-
-interface OperationContext {
-  readonly method: string;
-  readonly operationId: string;
-  readonly routePath: string;
-  readonly source: 'generated-client';
-}
 
 export const ContactsMutationHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(
@@ -158,12 +153,15 @@ export const personEngagementMutationApi = HttpApi.make('PersonEngagementMutatio
     ),
 );
 
-const operation = (method: string, routePath: string): OperationContext => ({
-  method,
-  operationId: `PartyRegistryApi:${routePath}`,
-  routePath,
-  source: 'generated-client',
-});
+const operation = <const Method extends string, const RoutePath extends string>(
+  method: Method,
+  routePath: RoutePath,
+) =>
+  createMicroVerticalOperationContext({
+    method,
+    operationId: `PartyRegistryApi:${routePath}` as const,
+    routePath,
+  });
 
 export const engagementProfileOperationContexts = {
   archiveOrganizationEngagement: operation('POST', '/contacts/engagement/organizations/archive'),
@@ -177,4 +175,4 @@ export const engagementProfileOperationContexts = {
     '/contacts/engagement/organizations/unarchive',
   ),
   unarchivePersonEngagement: operation('POST', '/contacts/engagement/people/unarchive'),
-} satisfies Record<string, OperationContext>;
+} satisfies Record<string, MicroVerticalOperationContext>;

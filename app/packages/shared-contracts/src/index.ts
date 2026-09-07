@@ -39,6 +39,20 @@ export type {
   GatewayTrustedPrincipalContext,
   GatewayUnavailableProblem,
 } from './gateway-context.ts';
+export {
+  MicroVerticalBuildMarkerSchema,
+  MicroVerticalOperationContextSchema,
+  MicroVerticalOperationSourceSchema,
+  MicroVerticalReadinessSchema,
+  createMicroVerticalOperationContext,
+  microVerticalOperationAttributes,
+} from './microvertical-api-baseline.ts';
+export type {
+  MicroVerticalBuildMarker,
+  MicroVerticalOperationContext,
+  MicroVerticalOperationSource,
+  MicroVerticalReadiness,
+} from './microvertical-api-baseline.ts';
 export { makeOperationGateway } from './operation-gateway.ts';
 export type {
   OperationGateway,
