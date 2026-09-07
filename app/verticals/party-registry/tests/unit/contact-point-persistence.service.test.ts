@@ -1,19 +1,19 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type, unicorn/no-thenable -- This focused harness models only the Drizzle fluent/PromiseLike surface exercised by Contact Point ending. expires: 2026-12-31. */
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { DateTime, Effect, Option, Schema } from 'effect';
+/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This focused harness models only the Drizzle native Effect query surface exercised by Contact Point ending. expires: 2026-12-31. */
 import { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
+import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
+import { makePartyAliasResolutionService } from '../../src/merge/party-alias-resolution.service.ts';
 import {
   addContactPointRecord as addRecord,
   endContactPointRecord as endRecord,
   findPartyContactPointRecord,
   updateContactPointRecord as updateRecord,
 } from '../../src/services/party-contact-point-persistence.service.ts';
-import { makePartyAliasResolutionService } from '../../src/merge/party-alias-resolution.service.ts';
-import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
-import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const partyId = '20000000-0000-4000-8000-000000000001';
@@ -150,41 +150,45 @@ const transactionHarness = (
   const updateSets: Readonly<Record<string, unknown>>[] = [];
   const select = () => {
     const rows = selectQueue.shift() ?? [];
-    const chain = {
-      for: () => Promise.resolve(rows),
-      from: () => chain,
-      limit: () => chain,
-      orderBy: () => chain,
-      then: <Result>(
-        onfulfilled?: ((value: readonly Readonly<Record<string, unknown>>[]) => Result) | null,
-      ) => Promise.resolve(rows).then(onfulfilled),
-      where: (condition: SQL) => {
-        selectWheres.push(condition);
-        return chain;
+    const chain = Object.assign(
+      Effect.sync(() => rows),
+      {
+        for: () => Effect.succeed(rows),
+        from: () => chain,
+        limit: () => chain,
+        orderBy: () => chain,
+        where: (condition: SQL) => {
+          selectWheres.push(condition);
+          return chain;
+        },
       },
-    };
+    );
     return chain;
   };
   const update = () => {
-    const chain = {
-      set: (values: Readonly<Record<string, unknown>>) => {
-        updateSets.push(values);
-        return chain;
+    const chain = Object.assign(
+      Effect.sync(() => {}),
+      {
+        set: (values: Readonly<Record<string, unknown>>) => {
+          updateSets.push(values);
+          return chain;
+        },
+        where: () => chain,
       },
-      then: <Result>(onfulfilled?: (() => Result) | null) => Promise.resolve().then(onfulfilled),
-      where: () => chain,
-    };
+    );
     return chain;
   };
   const insert = () => {
-    const chain = {
-      returning: () => Promise.resolve(returningQueue.shift() ?? []),
-      then: <Result>(onfulfilled?: (() => Result) | null) => Promise.resolve().then(onfulfilled),
-      values: (values: Readonly<Record<string, unknown>>) => {
-        insertValues.push(values);
-        return chain;
+    const chain = Object.assign(
+      Effect.sync(() => {}),
+      {
+        returning: () => Effect.succeed(returningQueue.shift() ?? []),
+        values: (values: Readonly<Record<string, unknown>>) => {
+          insertValues.push(values);
+          return chain;
+        },
       },
-    };
+    );
     return chain;
   };
   // SAFETY: the harness implements precisely the select/update fluent methods used by this service.

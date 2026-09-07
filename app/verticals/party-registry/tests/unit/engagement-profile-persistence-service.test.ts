@@ -1,13 +1,15 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
+/* eslint-disable anti-slop/no-chained-type-assertions -- Focused harness implements only the mutation insert's Drizzle seam. expires: 2026-12-31. */
+import { DateTime, Effect } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DateTime, Effect } from 'effect';
+import type { OrganizationEngagementProfileRecord } from '../../src/db/engagement-schema.ts';
 import {
+  createOrganizationEngagementProfile,
   ensureReferencesBelongToTenant,
   organizationEngagementProfileFromRecord,
 } from '../../src/services/engagement-profile-persistence.service.ts';
-import type { OrganizationEngagementProfileRecord } from '../../src/db/engagement-schema.ts';
 
 const tenantId = 'c1000000-0000-4000-8000-000000000001';
 const refs = {
@@ -35,6 +37,14 @@ const row: OrganizationEngagementProfileRecord = {
   updatedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-09-03T08:00:00.000Z')),
 };
 
+const rejectingMutationTransaction = <Failure>(failure: Failure) =>
+  // SAFETY: The harness implements exactly the insert/values/returning chain used by create.
+  ({
+    insert: () => ({
+      values: () => ({ returning: () => Effect.fail(failure) }),
+    }),
+  }) as unknown as Parameters<typeof createOrganizationEngagementProfile>[0];
+
 test('reconstructs typed references from the owner-local persistence record', () => {
   const result = organizationEngagementProfileFromRecord(row);
   assert.deepEqual(result.partyRef, refs.partyRef);
@@ -59,4 +69,70 @@ test('fails closed when a caller-supplied ref crosses the trusted tenant', async
   );
   assert.equal(failure._tag, 'EngagementProfileConflict');
   assert.equal(failure.code, 'contacts_party_counterparty_mismatch');
+});
+
+test('maps a wrapped owner uniqueness constraint to the declared engagement conflict', async () => {
+  const failure = await runEffectTestPromise(
+    Effect.flip(
+      createOrganizationEngagementProfile(
+        rejectingMutationTransaction({
+          cause: {
+            cause: {
+              code: '23505',
+              constraint: 'contacts_organization_engagement_profiles_party_uk',
+            },
+          },
+        }),
+        { ...refs, tenantId },
+      ),
+    ),
+  );
+
+  assert.equal(failure._tag, 'EngagementProfileConflict');
+  assert.equal(failure.code, 'contacts_engagement_profile_already_exists');
+  assert.equal(
+    failure.reason,
+    'An engagement profile already exists for these canonical references',
+  );
+});
+
+test('continues past an unrelated wrapper code to the owner uniqueness constraint', async () => {
+  const failure = await runEffectTestPromise(
+    Effect.flip(
+      createOrganizationEngagementProfile(
+        rejectingMutationTransaction({
+          code: 'ERR_QUERY_FAILED',
+          cause: {
+            code: '23505',
+            constraint: 'contacts_organization_engagement_profiles_party_uk',
+          },
+        }),
+        { ...refs, tenantId },
+      ),
+    ),
+  );
+
+  assert.equal(failure._tag, 'EngagementProfileConflict');
+  assert.equal(failure.code, 'contacts_engagement_profile_already_exists');
+});
+
+test('maps an unrelated uniqueness constraint to the existing persistence fallback', async () => {
+  const failure = await runEffectTestPromise(
+    Effect.flip(
+      createOrganizationEngagementProfile(
+        rejectingMutationTransaction({
+          code: '23505',
+          constraint: 'contacts_future_internal_integrity_uk',
+        }),
+        { ...refs, tenantId },
+      ),
+    ),
+  );
+
+  assert.equal(failure._tag, 'EngagementProfilePersistenceUnavailable');
+  assert.equal(failure.code, 'contacts_engagement_profile_persistence_unavailable');
+  assert.equal(
+    failure.reason,
+    'Contacts engagement profile persistence is temporarily unavailable',
+  );
 });

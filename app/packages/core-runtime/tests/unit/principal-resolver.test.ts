@@ -1,16 +1,18 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { DateTime, Effect, flow } from 'effect';
+import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DateTime, Effect, flow } from 'effect';
+import type { PrincipalResolutionError } from '../../src/auth/principal-resolver-errors.ts';
+import type { PrincipalResolutionRecord } from '../../src/auth/principal-resolver.ts';
 import {
-  classifyAvailableTenants,
   classifyApiKeyPrincipal,
+  classifyAvailableTenants,
   classifyDefaultPrincipal,
   classifySelectedPrincipal,
-  listAvailableTenantsFromRepository,
+  makePrincipalResolver,
 } from '../../src/auth/principal-resolver.ts';
-import type { PrincipalResolutionRecord } from '../../src/auth/principal-resolver.ts';
-import type { PrincipalResolutionError } from '../../src/auth/principal-resolver-errors.ts';
+import { makeTestDatabase } from '../support/database.ts';
 
 const effectTest = <Value, Failure>(name: string, effect: Effect.Effect<Value, Failure>): void => {
   test(
@@ -256,12 +258,15 @@ effectTest(
   'types database failures as resolver unavailability',
   Effect.gen(function* sanitizesResolverDatabaseFailure() {
     const error = yield* Effect.flip(
-      listAvailableTenantsFromRepository(
-        {
-          load: flow(() => Effect.die(new Error('secret database error')), runEffectTestPromise),
-        },
-        'subject',
-      ),
+      makePrincipalResolver({
+        executor: makeTestDatabase(() =>
+          Effect.fail(
+            new SqlError({
+              reason: new ConnectionError({ cause: new Error('secret database error') }),
+            }),
+          ),
+        ),
+      }).listAvailableTenants('subject'),
     );
     assert.equal(error._tag, 'PrincipalResolverUnavailableError');
     assert.doesNotMatch(error.reason, /secret database error/u);

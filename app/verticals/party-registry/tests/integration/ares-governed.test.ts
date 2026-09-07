@@ -1,9 +1,13 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import test from 'node:test';
+import {
+  makeEffectTestCallback as nativeTestCallback,
+  runEffectTestPromise,
+  runEffectTestSync as runNativeSync,
+} from '@app/core-runtime/testing/effect-runtime';
 import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+
+import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/plugin-bff/effect-edge';
+import { eq } from 'drizzle-orm';
 import {
   ConfigProvider,
   Context,
@@ -11,63 +15,71 @@ import {
   Effect,
   Layer,
   Match,
+  Exit as NativeExit,
+  Scope as NativeScope,
   Option,
   Redacted,
   Schema,
 } from 'effect';
 import { FetchHttpClient, HttpClient, HttpClientResponse } from 'effect/unstable/http';
-import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/plugin-bff/effect-edge';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { eq } from 'drizzle-orm';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import test, { after as afterNativeDatabase } from 'node:test';
 import { Pool } from 'pg';
-import { partyRegistryApi } from '../../shared/api.ts';
-import { partyRegistryCommandsLive } from '../../api/party-command-server.ts';
+import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { aresLookupReadApiLive } from '../../api/ares-lookup-read-server.ts';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive,
 } from '../../api/auth/gateway-assertion-redemption.ts';
-import { aresLookupReadApiLive } from '../../api/ares-lookup-read-server.ts';
+import { partyRegistryCommandsLive } from '../../api/party-command-server.ts';
+import { partyContactPointsReadApiLive } from '../../api/party-contact-points-read-server.ts';
 import { partyDetailReadApiLive } from '../../api/party-detail-read-server.ts';
 import { partyOfficialIdentifierHistoryReadApiLive } from '../../api/party-official-identifier-history-read-server.ts';
-import { partyContactPointsReadApiLive } from '../../api/party-contact-points-read-server.ts';
-import { AresSubjectServiceLive } from '../../src/integrations/ares/ares-subject.service.ts';
-import { applyAresObservation } from '../../src/api/party-registry-client.ts';
+import { partyRegistryApi } from '../../shared/api.ts';
 import {
-  makeAresAppliedEvidence,
   deriveAresEvidenceApplication,
+  makeAresAppliedEvidence,
 } from '../../shared/domain/ares-application.ts';
 import {
   AresSubjectEvidenceSchema,
   AresSubjectLookupIcoSchema,
 } from '../../shared/domain/ares-evidence.ts';
 import { IdentityCorrectionCommandSchema } from '../../shared/domain/correction-contracts.ts';
-import { makeActionGateway } from '../../src/api/action-gateway.ts';
-import type { AresApplyRequest } from '../../src/api/action-gateway.ts';
-import {
-  createPartyWithAuthorization,
-  resolveDuplicateCandidateCreateWithAuthorization,
-  correctPartyFactWithAuthorization,
-  updatePartyWithAuthorization,
-} from '../../src/api/party-command-client.ts';
-import { executeAresLookupWithAuthorization } from '../../src/api/ares-lookup-client.ts';
-import { executePartyDetailWithAuthorization } from '../../src/api/party-detail-client.ts';
+import { partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
+import type { PartyRef } from '../../shared/resources/party.ts';
 import { addContactPointAction } from '../../src/actions/add-contact-point.action.ts';
 import { addPartyOfficialIdentifierAction } from '../../src/actions/add-party-official-identifier.action.ts';
 import { correctPartyFactAction } from '../../src/actions/correct-party-fact.action.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
 import { updatePartyAction } from '../../src/actions/update-party.action.ts';
+import type { AresApplyRequest } from '../../src/api/action-gateway.ts';
+import { makeActionGateway } from '../../src/api/action-gateway.ts';
+import { executeAresLookupWithAuthorization } from '../../src/api/ares-lookup-client.ts';
 import {
-  partyRelations,
-  partyFactAssertions,
-  partyOfficialIdentifiers,
-  partyIdentifierClaims,
+  correctPartyFactWithAuthorization,
+  createPartyWithAuthorization,
+  resolveDuplicateCandidateCreateWithAuthorization,
+  updatePartyWithAuthorization,
+} from '../../src/api/party-command-client.ts';
+import { executePartyDetailWithAuthorization } from '../../src/api/party-detail-client.ts';
+import { applyAresObservation } from '../../src/api/party-registry-client.ts';
+import {
   partyContactPoints,
+  partyFactAssertions,
+  partyIdentifierClaims,
+  partyOfficialIdentifiers,
+  partyRelations,
 } from '../../src/db/schema.ts';
-import type { PartyRef } from '../../shared/resources/party.ts';
-import { partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
+import { AresSubjectServiceLive } from '../../src/integrations/ares/ares-subject.service.ts';
+
+const nativeDatabaseScope = runNativeSync(NativeScope.make());
+afterNativeDatabase(
+  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
+);
 
 const subjectEvidence = [
   {
@@ -123,7 +135,9 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
           Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
           (resource) => promiseEffect(endPool.bind(undefined, resource)).pipe(Effect.orDie),
         );
-        const admin = drizzle({ client: pool, relations: partyRelations });
+        const admin = yield* makeTestDatabaseFromPool(pool, partyRelations).pipe(
+          NativeScope.provide(nativeDatabaseScope),
+        );
         const { privateKey, publicKey } = yield* promiseEffect(
           generateKeyPair.bind(undefined, 'Ed25519'),
         );
@@ -279,31 +293,23 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
         const state = Effect.fn('AresGovernedTest.state')(() =>
           Effect.all(
             {
-              assertions: promiseEffect(() =>
-                admin
-                  .select()
-                  .from(partyFactAssertions)
-                  .where(eq(partyFactAssertions.tenantId, fixture.tenantId)),
-              ),
-              claims: promiseEffect(() =>
-                admin
-                  .select()
-                  .from(partyIdentifierClaims)
-                  .where(eq(partyIdentifierClaims.tenantId, fixture.tenantId)),
-              ),
-              contacts: promiseEffect(() =>
-                admin
-                  .select()
-                  .from(partyContactPoints)
-                  .where(eq(partyContactPoints.tenantId, fixture.tenantId)),
-              ),
+              assertions: admin
+                .select()
+                .from(partyFactAssertions)
+                .where(eq(partyFactAssertions.tenantId, fixture.tenantId)),
+              claims: admin
+                .select()
+                .from(partyIdentifierClaims)
+                .where(eq(partyIdentifierClaims.tenantId, fixture.tenantId)),
+              contacts: admin
+                .select()
+                .from(partyContactPoints)
+                .where(eq(partyContactPoints.tenantId, fixture.tenantId)),
               core: fixture.evidence(),
-              identifiers: promiseEffect(() =>
-                admin
-                  .select()
-                  .from(partyOfficialIdentifiers)
-                  .where(eq(partyOfficialIdentifiers.tenantId, fixture.tenantId)),
-              ),
+              identifiers: admin
+                .select()
+                .from(partyOfficialIdentifiers)
+                .where(eq(partyOfficialIdentifiers.tenantId, fixture.tenantId)),
             },
             { concurrency: 5 },
           ),

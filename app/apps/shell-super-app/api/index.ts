@@ -271,6 +271,11 @@ const apiKeyChallenge = HttpEffect.appendPreResponseHandler((_request, response)
     HttpServerResponse.setHeader(response, 'www-authenticate', 'ApiKey realm="ontos-gateway"'),
   ),
 );
+export const noStoreResponse = (response: Parameters<typeof HttpServerResponse.setHeader>[0]) =>
+  HttpServerResponse.setHeader(response, 'cache-control', 'no-store');
+const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
+  Effect.succeed(noStoreResponse(response)),
+);
 
 const failGatewayProblem = <Failure extends GatewayContextProblem>(gatewayProblem: Failure) =>
   (Predicate.isTagged(gatewayProblem, 'GatewayAuthenticationRequiredProblem')
@@ -1388,7 +1393,10 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
                 },
               ),
             )
-            .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+            .pipe(
+              Effect.tap(() => noStore),
+              Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)),
+            );
           return yield* decodeResponse(ApiKeyIssueResponseSchema, response, shellInternalProblem);
         }),
       ),
@@ -1468,7 +1476,10 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
                 },
               ),
             )
-            .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+            .pipe(
+              Effect.tap(() => noStore),
+              Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)),
+            );
           return yield* decodeResponse(ApiKeyIssueResponseSchema, response, shellInternalProblem);
         }),
       ),
@@ -1615,7 +1626,10 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
                 },
               ),
             )
-            .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+            .pipe(
+              Effect.tap(() => noStore),
+              Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)),
+            );
           return yield* decodeResponse(ApiKeyIssueResponseSchema, response, shellInternalProblem);
         }),
       ),
@@ -1647,7 +1661,10 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
                 },
               ),
             )
-            .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+            .pipe(
+              Effect.tap(() => noStore),
+              Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)),
+            );
           return yield* decodeResponse(ApiKeyIssueResponseSchema, response, shellInternalProblem);
         }),
       ),

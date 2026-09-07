@@ -2,8 +2,10 @@
 
 Status: **applied**
 
-Cohort: `drizzle-orm@1.0.0-rc.4`, `drizzle-kit@1.0.0-rc.4`, `better-auth@1.7.2`,
+Cohort: `drizzle-orm@1.0.0-rc.5-ab785fc`, `drizzle-kit@1.0.0-rc.5-ab785fc`, `better-auth@1.7.2`,
 `@better-auth/api-key@1.7.2`, `@better-auth/drizzle-adapter@1.7.2`, `auth@1.7.2`
+
+Native persistence: `@effect/sql-pg@4.0.0-beta.107` with `effect@4.0.0-beta.107`.
 
 This document records how OntOS moved from the stable `0.45.2`/`0.31.10` pair to the Drizzle v1
 release candidate, which repository surfaces changed, how the three migration histories were
@@ -24,13 +26,18 @@ still used Relational Queries v1. Both blockers are resolved here:
 - Better Auth `1.7.2` ships the `@better-auth/drizzle-adapter/relations-v2` entrypoint, so the Auth
   owner moves to `defineRelations` with the officially supported adapter.
 
-The hash-suffixed `rc5` snapshot builds on npm (`1.0.0-rc.5-*`) are branch builds, not a tagged
-release, and were not adopted. Bump to `1.0.0-rc.5` or `1.0.0` only through the proof sequence in
+The initial upgrade adopted tagged `rc.4`. The native Effect migration in
+[PR #494](https://github.com/TechsioCZ/ontos/pull/494) adopts the exact published snapshot
+`1.0.0-rc.5-ab785fc` for both Drizzle packages. The `rc.4` Effect driver uses a removed
+Effect Schema API and fails with the workspace's Effect version
+([drizzle-team/drizzle-orm#6162](https://github.com/drizzle-team/drizzle-orm/issues/6162)).
+The selected snapshot contains the upstream API update; it is a pinned branch build,
+not a tagged `rc.5` release. Future bumps still require the
 [Re-proof checklist](#re-proof-checklist).
 
 ## What changed
 
-### Dependencies
+### Initial rc.4 dependencies
 
 | Package                        | Before   | After        | Owners                                   |
 | ------------------------------ | -------- | ------------ | ---------------------------------------- |
@@ -41,8 +48,8 @@ release, and were not adopted. Bump to `1.0.0-rc.5` or `1.0.0` only through the 
 | `@better-auth/drizzle-adapter` | indirect | 1.7.2 direct | root, Shell (`/relations-v2` entrypoint) |
 | `auth` (Better Auth CLI)       | 1.6.23   | 1.7.2        | Shell                                    |
 
-Every owner pins the identical Drizzle pair. `pnpm-lock.yaml` contains no `0.45.2`, `0.31.10`, or
-`1.6.23` entries; the workspace `minimumReleaseAge` policy (24 hours) is satisfied by all of them.
+This table records the original upgrade, when Party was named Contacts. The current cohort
+above supersedes its Drizzle versions. Every owner pins the identical Drizzle pair.
 
 ### Migration folder layout (v3)
 
@@ -136,7 +143,7 @@ Result on this repository: `normalized 333 fragments in 13 snapshots`. After nor
 owner's `db:generate` prints `No schema changes, nothing to migrate`. Snapshots are metadata for
 diffing; the normalization changes no SQL and no database object.
 
-### Typed schema and runtime code
+### Initial rc.4 schema and runtime changes
 
 - **Relational Queries v2.** `apps/shell-super-app/api/auth/db/schema.ts` replaces the four
   `relations(...)` declarations with one `authRelations = defineRelations(authDatabaseSchema, ...)`
@@ -197,7 +204,7 @@ The v1 migrator applies every migration folder missing from the table, not only 
 the last applied row. This requires the administrative identity that already runs
 `pnpm db:migrate`; no manual SQL is needed.
 
-## Proofs
+## Initial rc.4 proofs
 
 Environment: Darwin arm64, Node `26.5.0` and pnpm `11.25.0` through `mise exec --`, PostgreSQL 17
 in the local Compose container on port 5433.
@@ -219,7 +226,7 @@ in the local Compose container on port 5433.
 
 Use this sequence for `1.0.0-rc.5`, `1.0.0`, or any later Drizzle bump:
 
-1. Bump `drizzle-orm` and `drizzle-kit` together in the root, Core, Shell, and Contacts manifests,
+1. Bump `drizzle-orm` and `drizzle-kit` together in the root, Core, Shell, and Party manifests,
    plus the Better Auth cohort when its Drizzle peer range moves; run
    `mise exec -- pnpm install --no-frozen-lockfile`.
 2. Run `pnpm db:generate` and `pnpm db:check`; both must report no changes for unchanged schemas.
@@ -232,15 +239,40 @@ Use this sequence for `1.0.0-rc.5`, `1.0.0`, or any later Drizzle bump:
 5. Run `pnpm typecheck`, `pnpm lint`, `pnpm db:test`, `pnpm action:test:unit`, `pnpm outbox:test`,
    and `pnpm check`.
 
-## Next step: Effect-native driver
+## Native Effect adoption and rc.5 snapshot re-proof
 
-`drizzle-orm@1.0.0-rc.4` ships `drizzle-orm/effect-postgres` on top of `@effect/sql-pg`
-(peer `effect >= 4.0.0-beta.83`, satisfied by the workspace `4.0.0-beta.107`). Its queries are
-`Effect` values and `db.transaction` has the signature
-`(tx) => Effect<A, E, R>` returning `Effect<A, E | SqlError, R>`, which removes the Promise
-boundary that the [Effect v4 anti-pattern audit](./EFFECT_V4_ANTIPATTERN_AUDIT.md) identifies in
-the Action and Read runtimes. Adopting it is a separate assignment: it replaces the `pg.Pool`
-ownership in every owner `db/client.ts`, changes `CoreDbExecutor`/`CoreTransaction` from Promise
-executors to Effect executors, and touches every repository. This upgrade keeps
-`drizzle-orm/node-postgres` so that the Drizzle cohort and the executor model do not change in the
-same release.
+Core and Party now use `drizzle-orm/effect-postgres` with `@effect/sql-pg`. Their database
+factories retain scoped `pg.Pool` ownership, provide `PgClient.fromPool` and `Reactivity` to
+`makeWithDefaults`, and expose `EffectPgDatabase` executors. Queries and transaction callbacks
+are native Effects. The persistence-attempt wrappers and Effect–Promise–Effect transaction
+bridge are removed. Better Auth retains its supported `node-postgres` adapter integration.
+The four Drizzle Kit configurations omit the removed `strict` and `verbose` options.
+
+The current contracts, including raw `execute<Row>(sql, 'objects')` reads and native SQL
+settlement errors, are defined in [Database Architecture](./DATABASE.md). No migration SQL
+changes in this adoption. The latest Core, Party, and Contacts snapshots normalize 40, 81,
+and 7 check/index SQL fragments respectively by removing only their own table qualifier.
+This applies the same snapshot normalization described above to the current history heads.
+Every normalized entity matches the native Kit output; snapshot IDs, ancestry, RLS policies,
+and other fields remain unchanged. Without that normalization, Kit emits false constraint and
+index rebuilds for unchanged schemas. Those generated migrations must not be applied or committed.
+
+Re-proof on 2026-09-07 for commit `538e43a9a7b004e28eefc71df6e4a50eb814d51f`:
+
+- Frozen dependency installation passed with the exact cohort above.
+- All 890 workspace unit/component tests and 61 affected Core, Party, and Shell integration
+  tests passed, including generated-owner isolation, RLS, Action atomicity, outbox behavior,
+  repeatable-read snapshots, cancellation, rollback failure, and uncertain commit recovery.
+- Database schema verifiers passed for Core, Auth, Party, and Contacts and their journals.
+- All 19 [CI validation jobs](https://github.com/TechsioCZ/ontos/actions/runs/34147241046)
+  passed, including database/migration integration, generation and generated-code typechecking,
+  workspace contracts, lint, typecheck, and Node plus Cloudflare artifact proofs.
+- The full local production build passed, including federation types and performance readiness.
+
+These are the native adoption proofs. The historical populated-copy conversion results above
+belong to the initial rc.4 upgrade and are not a new snapshot conversion for this bump.
+
+Review follow-up verified `pnpm db:generate` reports no schema changes and `pnpm db:check`
+passes for all four histories after snapshot normalization. It also reran migrations twice
+against the populated disposable development database and verified the exact schemas and
+journals afterward. Fresh-database migration and verification passed in CI.

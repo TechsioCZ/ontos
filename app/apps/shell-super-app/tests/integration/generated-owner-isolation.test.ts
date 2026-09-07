@@ -1,8 +1,34 @@
+import {
+  makeFaultInjectableCoreDatabase,
+  TestQueryHook,
+} from '../../../../packages/core-runtime/tests/support/database-faults.ts';
+import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
+
+import {
+  Scope as NativeScope,
+  Exit as NativeExit,
+  Clock,
+  Config,
+  ConfigProvider,
+  Effect,
+  Layer,
+  Logger,
+  ManagedRuntime,
+  Predicate,
+  Redacted,
+  Schema,
+} from 'effect';
+import {
+  runEffectTestPromise,
+  runEffectTestSync as runNativeSync,
+  makeEffectTestCallback as nativeTestCallback,
+} from '@app/core-runtime/testing/effect-runtime';
+
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
-import test from 'node:test';
+import test, { after as afterNativeDatabase } from 'node:test';
 import { v1 } from '@authzed/authzed-node';
 import {
   ContextAccess,
@@ -27,19 +53,7 @@ import type {
 } from '@app/core-runtime';
 import { defineEffectBff, HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';
 import type { EffectRuntimeLayer } from '@modern-js/plugin-bff/effect-edge';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import {
-  Clock,
-  Config,
-  ConfigProvider,
-  Effect,
-  Layer,
-  Logger,
-  ManagedRuntime,
-  Predicate,
-  Redacted,
-  Schema,
-} from 'effect';
+
 import { HttpApi } from 'effect/unstable/httpapi';
 import { TestClock } from 'effect/testing';
 import { exportJWK, generateKeyPair } from 'jose';
@@ -48,10 +62,7 @@ import { GatewayPrincipalVerifierLive } from '../../../../packages/gateway-princ
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
-import {
-  coreRelations,
-  dataAccessEvents,
-} from '../../../../packages/core-runtime/src/db/schema.ts';
+
 import { makeModuleEntrypointGateway } from '../../../../packages/core-runtime/src/modules/module-entrypoint-gateway.ts';
 import { makeModuleStateGate } from '../../../../packages/core-runtime/src/modules/module-state-gate.ts';
 import { makeTenantModuleStateService } from '../../../../packages/core-runtime/src/modules/tenant-module-state-service.ts';
@@ -94,6 +105,8 @@ import {
 } from '../../api/modules/shell-resources.ts';
 import type { ShellResourceGateways } from '../../api/modules/shell-resources.ts';
 import { GENERATED_OWNER, createGeneratedOwnerFixture } from './generated-owner-fixture.ts';
+
+const nativeDatabaseScope = runNativeSync(NativeScope.make());
 
 const withOptionalProperty = <
   Base extends object,
@@ -446,19 +459,25 @@ const isRuntimeActionRegistration = Schema.is(RuntimeActionRegistrationSchema);
 
 const failingEvidenceDatabase = (database: CoreDatabaseService): CoreDatabaseService => {
   const transactionOverride = {
-    transaction: async (runInTransaction, configuration) =>
-      await database.executor.transaction(async (transaction) => {
-        const insert: typeof transaction.insert = (table) => {
-          if (Object.is(table, dataAccessEvents)) {
-            throw new Error('Injected evidence persistence failure');
-          }
-          return transaction.insert(table);
-        };
-        const faultingTransaction: typeof transaction = Object.assign(Object.create(transaction), {
-          insert,
-        });
-        return await runInTransaction(faultingTransaction);
-      }, configuration),
+    transaction: (runInTransaction, configuration) =>
+      database.executor.transaction(
+        (transaction) =>
+          runInTransaction(transaction).pipe(
+            Effect.provideService(TestQueryHook, (statement) =>
+              statement.startsWith('insert into "core"."data_access_events"')
+                ? Effect.fail(
+                    new SqlError({
+                      reason: new UnknownError({
+                        cause: new Error('Injected SQL failure'),
+                        message: 'Injected evidence persistence failure',
+                      }),
+                    }),
+                  )
+                : Effect.void,
+            ),
+          ),
+        configuration,
+      ),
   } satisfies Pick<CoreDatabaseService['executor'], 'transaction'>;
   const executor: CoreDatabaseService['executor'] = Object.assign(
     Object.create(database.executor),
@@ -551,9 +570,11 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
   // Shell and the independently deployed owner hold separate nested read transactions in this
   // in-process fixture, so the shared test pool needs more than one physical connection.
   const runtimePool = new Pool({ connectionString: connections.runtime.connectionString, max: 4 });
-  const runtimeDatabase = {
-    executor: drizzle({ client: runtimePool, relations: coreRelations }),
-  };
+  const runtimeDatabase = await runEffectTestPromise(
+    makeFaultInjectableCoreDatabase(connections.runtime).pipe(
+      NativeScope.provide(nativeDatabaseScope),
+    ),
+  );
   const fixture = await createGeneratedOwnerFixture(schemaName);
   const contract = await deriveOntosModuleDeploymentContract({
     vertical: GENERATED_OWNER.slug,
@@ -1474,3 +1495,6 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
     await effectRuntime.dispose();
   }
 });
+afterNativeDatabase(
+  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
+);

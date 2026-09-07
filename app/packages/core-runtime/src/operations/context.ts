@@ -1,26 +1,26 @@
 import { and, eq } from 'drizzle-orm';
-import { Context, Duration, Effect, Layer } from 'effect';
 import { alias } from 'drizzle-orm/pg-core';
+import { Context, Effect, Layer } from 'effect';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
-import { CoreDatabase } from '../db/client.ts';
-import { ContextAccess } from '../permissions/context-access.ts';
-import type { ContextAccessService } from '../permissions/context-access.ts';
 import {
   isTrustedSupportRecoveryPrincipalContext,
   isTrustedSystemPrincipalContext,
   preserveSystemPrincipalContextTrust,
 } from '../auth/system-principal-context-provenance.ts';
+import { CoreDatabase } from '../db/client.ts';
 import { legalEntities, principalAuthBindings, principals, tenants } from '../db/schema.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
+import type { ContextAccessService } from '../permissions/context-access.ts';
+import { ContextAccess } from '../permissions/context-access.ts';
+import type { OperationContextError } from './errors.ts';
 import {
   OperationAuthenticationRequired,
   OperationContextDenied,
   OperationContextInvalid,
   OperationContextUnavailable,
 } from './errors.ts';
-import type { OperationContextError } from './errors.ts';
-import { OperationalScopeRepositoryContext } from './repository-context.ts';
 import type { OperationalScopeRepository, PersistedScopeRecord } from './repository-context.ts';
+import { OperationalScopeRepositoryContext } from './repository-context.ts';
 
 export type { OperationalScopeRepository } from './repository-context.ts';
 
@@ -78,74 +78,68 @@ const operationContextUnavailable = (cause?: unknown) => {
   return failure;
 };
 
-// The Drizzle query exposes no AbortSignal. Keep the original unbounded driver lifetime instead of
-// introducing a deadline that abandons an in-flight query while reporting it as cancelled.
-const OPERATION_SCOPE_LOAD_TIMEOUT = Duration.infinity;
-
 export const makeOperationalScopeRepository = (database: {
   readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
 }): OperationalScopeRepository => ({
   load: (principal) =>
-    Effect.tryPromise({
-      catch: operationContextUnavailable,
-      try: () => {
-        const impersonators = alias(principals, 'impersonators');
-        return database.executor
-          .select({
-            bindingPrincipalId: principalAuthBindings.principalId,
-            bindingRevokedAt: principalAuthBindings.revokedAt,
-            bindingStatus: principalAuthBindings.status,
-            bindingTenantId: principalAuthBindings.tenantId,
-            impersonatorStatus: impersonators.status,
-            impersonatorTenantId: impersonators.tenantId,
-            legalEntityStatus: legalEntities.status,
-            legalEntityTenantId: legalEntities.tenantId,
-            principalStatus: principals.status,
-            principalTenantId: principals.tenantId,
-            tenantStatus: tenants.status,
-          })
-          .from(tenants)
-          .innerJoin(
-            principals,
-            and(
-              eq(principals.tenantId, tenants.tenantId),
-              eq(principals.principalId, principal.principalId),
-            ),
-          )
-          .leftJoin(
-            impersonators,
-            principal.impersonatedByPrincipalId === undefined
-              ? eq(impersonators.principalId, '00000000-0000-0000-0000-000000000000')
-              : and(
-                  eq(impersonators.tenantId, principal.tenantId),
-                  eq(impersonators.principalId, principal.impersonatedByPrincipalId),
-                ),
-          )
-          .leftJoin(
-            principalAuthBindings,
-            principal.authBindingId === undefined
-              ? eq(
-                  principalAuthBindings.principalAuthBindingId,
-                  '00000000-0000-0000-0000-000000000000',
-                )
-              : and(
-                  eq(principalAuthBindings.tenantId, principal.tenantId),
-                  eq(principalAuthBindings.principalAuthBindingId, principal.authBindingId),
-                ),
-          )
-          .leftJoin(
-            legalEntities,
-            principal.legalEntityId === undefined
-              ? eq(legalEntities.legalEntityId, '00000000-0000-0000-0000-000000000000')
-              : and(
-                  eq(legalEntities.tenantId, principal.tenantId),
-                  eq(legalEntities.legalEntityId, principal.legalEntityId),
-                ),
-          )
-          .where(eq(tenants.tenantId, principal.tenantId))
-          .limit(1);
-      },
+    Effect.suspend(() => {
+      const impersonators = alias(principals, 'impersonators');
+      return database.executor
+        .select({
+          bindingPrincipalId: principalAuthBindings.principalId,
+          bindingRevokedAt: principalAuthBindings.revokedAt,
+          bindingStatus: principalAuthBindings.status,
+          bindingTenantId: principalAuthBindings.tenantId,
+          impersonatorStatus: impersonators.status,
+          impersonatorTenantId: impersonators.tenantId,
+          legalEntityStatus: legalEntities.status,
+          legalEntityTenantId: legalEntities.tenantId,
+          principalStatus: principals.status,
+          principalTenantId: principals.tenantId,
+          tenantStatus: tenants.status,
+        })
+        .from(tenants)
+        .innerJoin(
+          principals,
+          and(
+            eq(principals.tenantId, tenants.tenantId),
+            eq(principals.principalId, principal.principalId),
+          ),
+        )
+        .leftJoin(
+          impersonators,
+          principal.impersonatedByPrincipalId === undefined
+            ? eq(impersonators.principalId, '00000000-0000-0000-0000-000000000000')
+            : and(
+                eq(impersonators.tenantId, principal.tenantId),
+                eq(impersonators.principalId, principal.impersonatedByPrincipalId),
+              ),
+        )
+        .leftJoin(
+          principalAuthBindings,
+          principal.authBindingId === undefined
+            ? eq(
+                principalAuthBindings.principalAuthBindingId,
+                '00000000-0000-0000-0000-000000000000',
+              )
+            : and(
+                eq(principalAuthBindings.tenantId, principal.tenantId),
+                eq(principalAuthBindings.principalAuthBindingId, principal.authBindingId),
+              ),
+        )
+        .leftJoin(
+          legalEntities,
+          principal.legalEntityId === undefined
+            ? eq(legalEntities.legalEntityId, '00000000-0000-0000-0000-000000000000')
+            : and(
+                eq(legalEntities.tenantId, principal.tenantId),
+                eq(legalEntities.legalEntityId, principal.legalEntityId),
+              ),
+        )
+        .where(eq(tenants.tenantId, principal.tenantId))
+        .limit(1);
     }).pipe(
+      Effect.mapError(operationContextUnavailable),
       Effect.map(
         ([record]) =>
           record ?? {
@@ -162,10 +156,6 @@ export const makeOperationalScopeRepository = (database: {
             tenantStatus: null,
           },
       ),
-      Effect.timeoutOrElse({
-        duration: OPERATION_SCOPE_LOAD_TIMEOUT,
-        orElse: () => Effect.fail(operationContextUnavailable()),
-      }),
     ),
 });
 
