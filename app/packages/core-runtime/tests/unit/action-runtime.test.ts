@@ -20,6 +20,9 @@ import type {
 import {
   computeActionRequestHash,
   computeCanonicalValueHash,
+  getActionInvocationPersistenceFailureCause,
+  getActionTransactionFailureCause,
+  makeActionRepository,
 } from '../../src/actions/repository.ts';
 import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
 import type { ActionRuntimeStage } from '../../src/actions/runtime.ts';
@@ -435,6 +438,107 @@ const makeHarness = (options: HarnessOptions = {}) => {
     tenantChecks,
   };
 };
+
+const makeRepositoryFailures = async () => {
+  const cause = new Error('private repository defect');
+  const executor = drizzle({ client: new Pool(), relations: coreRelations });
+  Object.defineProperty(executor, 'transaction', {
+    value: async () => await Promise.reject(cause),
+  });
+  const repository = makeActionRepository();
+  const input = {
+    actionInvocationId: 'invocation-1',
+    actionKey: 'shell.counter.denied',
+    auditProfile: 'sensitive',
+    principal,
+    transport: transport('denied'),
+  } as const;
+  const transactionFailure = await runEffectTestPromise(
+    Effect.flip(repository.rejectPermissionDenied(executor, input)),
+  );
+  const persistenceFailure = await runEffectTestPromise(
+    Effect.flip(
+      repository.finalizePolicyDenial(executor, {
+        ...input,
+        policy: { policyKey: 'global.counter-locked.v1', scope: 'global' },
+        reasonCode: 'counter_locked',
+      }),
+    ),
+  );
+  assert.ok(Schema.is(ActionTransactionError)(transactionFailure));
+  assert.ok(Schema.is(ActionInvocationPersistenceError)(persistenceFailure));
+  return { cause, persistenceFailure, transactionFailure };
+};
+
+test('repository constructors retain original causes across Effect Cause propagation', async () => {
+  const { cause, persistenceFailure, transactionFailure } = await makeRepositoryFailures();
+  const propagatedTransaction = await runEffectTestPromise(
+    Effect.flip(Effect.failCause(Cause.fail(transactionFailure))),
+  );
+  const propagatedPersistence = await runEffectTestPromise(
+    Effect.flip(Effect.failCause(Cause.fail(persistenceFailure))),
+  );
+  assert.equal(propagatedTransaction, transactionFailure);
+  assert.equal(propagatedPersistence, persistenceFailure);
+  assert.deepEqual(getActionTransactionFailureCause(propagatedTransaction), Cause.die(cause));
+  assert.deepEqual(
+    getActionInvocationPersistenceFailureCause(propagatedPersistence),
+    Cause.die(cause),
+  );
+});
+
+test('public error classes expose no retained-cause accessors', () => {
+  for (const errorClass of [ActionTransactionError, ActionInvocationPersistenceError]) {
+    assert.equal('withCause' in errorClass, false);
+    assert.equal('causeOf' in errorClass, false);
+  }
+});
+
+test('repository causes are absent from reflection, JSON, and Schema encoding', async () => {
+  const { persistenceFailure, transactionFailure } = await makeRepositoryFailures();
+  const publicTransaction = new ActionTransactionError({
+    code: transactionFailure.code,
+    reason: transactionFailure.reason,
+  });
+  const publicPersistence = new ActionInvocationPersistenceError({
+    code: persistenceFailure.code,
+    reason: persistenceFailure.reason,
+  });
+  assert.deepEqual(Object.keys(transactionFailure), Object.keys(publicTransaction));
+  assert.deepEqual(Object.keys(persistenceFailure), Object.keys(publicPersistence));
+  assert.deepEqual(Reflect.ownKeys(transactionFailure), Reflect.ownKeys(publicTransaction));
+  assert.deepEqual(Reflect.ownKeys(persistenceFailure), Reflect.ownKeys(publicPersistence));
+  assert.equal(JSON.stringify(transactionFailure), JSON.stringify(publicTransaction));
+  assert.equal(JSON.stringify(persistenceFailure), JSON.stringify(publicPersistence));
+  assert.deepEqual(Schema.encodeSync(ActionTransactionError)(transactionFailure), {
+    _tag: 'ActionTransactionError',
+    code: transactionFailure.code,
+    reason: transactionFailure.reason,
+  });
+  assert.deepEqual(Schema.encodeSync(ActionInvocationPersistenceError)(persistenceFailure), {
+    _tag: 'ActionInvocationPersistenceError',
+    code: persistenceFailure.code,
+    reason: persistenceFailure.reason,
+  });
+});
+
+test('repository cause readers reject foreign objects carrying the former cause property', () => {
+  const formerCauseProperty = ['ontos', 'Repository', 'Failure', 'Cause'].join('');
+  const cause = new Error('foreign defect');
+  const transactionFailure = Object.assign(
+    new ActionTransactionError({ code: 'action_transaction_failed', reason: 'foreign failure' }),
+    { [formerCauseProperty]: cause },
+  );
+  const persistenceFailure = Object.assign(
+    new ActionInvocationPersistenceError({
+      code: 'action_invocation_persistence_failed',
+      reason: 'foreign failure',
+    }),
+    { [formerCauseProperty]: cause },
+  );
+  assert.equal(getActionTransactionFailureCause(transactionFailure), undefined);
+  assert.equal(getActionInvocationPersistenceFailureCause(persistenceFailure), undefined);
+});
 
 const registration = () =>
   defineAction(

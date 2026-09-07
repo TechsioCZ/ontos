@@ -1,10 +1,12 @@
-import { Schema } from 'effect';
-import type { Cause } from 'effect';
+import { Cause, Schema } from 'effect';
+import type { ActionTransactionError } from './transaction-error.ts';
 import type {
   ModuleStateCheckUnavailableError,
   ModuleStateDeniedError,
 } from '../modules/module-state-gate-errors.ts';
 import type { OperationContextError } from '../operations/errors.ts';
+
+export { ActionTransactionError } from './transaction-error.ts';
 
 const safeReason = {
   reason: Schema.String,
@@ -171,7 +173,37 @@ const ActionInvocationPersistenceErrorValue =
 export type ActionInvocationPersistenceError = InstanceType<
   typeof ActionInvocationPersistenceErrorValue
 >;
-export { ActionInvocationPersistenceErrorValue as ActionInvocationPersistenceError };
+const ActionInvocationPersistenceErrorInternals = (() => {
+  let createWithCause: (
+    props: ConstructorParameters<typeof ActionInvocationPersistenceErrorValue>[0],
+    cause?: unknown,
+  ) => ActionInvocationPersistenceError;
+  let readCause: (failure: ActionInvocationPersistenceError) => Cause.Cause<never> | undefined;
+
+  class RetainedError extends ActionInvocationPersistenceErrorValue {
+    #cause: Cause.Cause<never> | undefined;
+
+    static {
+      createWithCause = (props, cause) => {
+        const failure = new RetainedError(props);
+        if (cause !== undefined) {
+          failure.#cause = Cause.die(cause);
+        }
+        return failure;
+      };
+      readCause = (failure) => (#cause in failure ? failure.#cause : undefined);
+    }
+  }
+  const ErrorClass: typeof ActionInvocationPersistenceErrorValue = RetainedError;
+  return { createWithCause, ErrorClass, readCause };
+})();
+const ActionInvocationPersistenceErrorClass = ActionInvocationPersistenceErrorInternals.ErrorClass;
+export { ActionInvocationPersistenceErrorClass as ActionInvocationPersistenceError };
+// Core-only accessors: deliberately excluded from the package root exports.
+export const createActionInvocationPersistenceErrorWithCause =
+  ActionInvocationPersistenceErrorInternals.createWithCause;
+export const getActionInvocationPersistenceErrorCause =
+  ActionInvocationPersistenceErrorInternals.readCause;
 
 const actionInvocationNotFoundFields = {
   code: Schema.Literal('action_invocation_not_found'),
@@ -273,22 +305,6 @@ const ActionPolicyEvaluationErrorValue = Schema.TaggedError<ActionPolicyEvaluati
 );
 export type ActionPolicyEvaluationError = InstanceType<typeof ActionPolicyEvaluationErrorValue>;
 export { ActionPolicyEvaluationErrorValue as ActionPolicyEvaluationError };
-
-const actionTransactionFields = {
-  code: Schema.Literal('action_transaction_failed'),
-  ...safeReason,
-};
-const ActionTransactionErrorContract = Schema.TaggedStruct(
-  'ActionTransactionError',
-  actionTransactionFields,
-);
-type ActionTransactionErrorSelf = typeof ActionTransactionErrorContract.Type & Cause.YieldableError;
-const ActionTransactionErrorValue = Schema.TaggedError<ActionTransactionErrorSelf>()(
-  'ActionTransactionError',
-  actionTransactionFields,
-);
-export type ActionTransactionError = InstanceType<typeof ActionTransactionErrorValue>;
-export { ActionTransactionErrorValue as ActionTransactionError };
 
 const actionCommitIndeterminateFields = {
   code: Schema.Literal('action_commit_indeterminate'),
