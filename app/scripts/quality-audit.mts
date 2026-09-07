@@ -475,8 +475,21 @@ const collectSourceFiles = Effect.fn('qualityAudit.collectSourceFiles')(
     const path = yield* Path.Path;
     const source = yield* fs.readFileString(path.join(root, 'quality-audit/scope.json'));
     const scope = yield* decodeReport(ScopeSchema, source, 'quality-audit/scope.json');
-    const consumerSnapshot = path.join(path.relative(root, output), 'knip-consumers.mts');
-    if (scope.patterns.some((pattern) => nodePath.matchesGlob(consumerSnapshot, pattern))) {
+    const [canonicalRoot, canonicalOutput] = yield* Effect.all([
+      fs.realPath(root),
+      fs.realPath(output),
+    ]);
+    const outputPaths = [
+      path.relative(root, output),
+      path.relative(canonicalRoot, canonicalOutput),
+    ];
+    if (
+      outputPaths.some((directory) =>
+        scope.patterns.some((pattern) =>
+          nodePath.matchesGlob(path.join(directory, 'knip-consumers.mts'), pattern),
+        ),
+      )
+    ) {
       return yield* failure(
         'Choose an output directory outside configured source roots, such as .codex/reports/quality-audit',
       );

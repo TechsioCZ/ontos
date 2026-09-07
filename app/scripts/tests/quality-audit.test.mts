@@ -500,6 +500,35 @@ await test('output inside a source root fails before creating analyzer snapshots
   }
 });
 
+await test('symlink output cannot place snapshots in source roots but permits report targets', async () => {
+  const root = await createFixture();
+  const output = path.join(root, 'reports-link');
+  const sourceOutput = path.join(root, 'scripts/reports');
+  const safeOutput = path.join(root, REPORT_DIRECTORY);
+  try {
+    mkdirSync(sourceOutput);
+    symlinkSync(sourceOutput, output, 'dir');
+    await assert.rejects(runFixture(root, output, 'all'), /analysis failed/u);
+    const rejected = await summary(output);
+    assert.equal(rejected.results[0]?.name, 'setup');
+    assert.match(
+      rejected.results[0]?.diagnostic ?? '',
+      /output directory outside configured source roots/u,
+    );
+    assert.deepEqual(readdirSync(rejected.runDirectory), []);
+    assert.deepEqual(readdirSync(path.join(root, '.codex')), [CALLER_OWNED_FILE]);
+
+    rmSync(output);
+    mkdirSync(safeOutput);
+    symlinkSync(safeOutput, output, 'dir');
+    await runFixture(root, output, 'jscpd');
+    const accepted = await summary(output);
+    assert.equal(accepted.status, 'reported');
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 await test('custom output does not mark clean source provenance as modified', async () => {
   const root = await createFixture();
   const output = path.join(root, REPORT_DIRECTORY);
