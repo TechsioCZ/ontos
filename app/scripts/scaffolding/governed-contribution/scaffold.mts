@@ -47,11 +47,11 @@ import {
 } from '../shared.mts';
 import { planActionBoundaryScaffold } from '../microvertical-action-boundary/scaffold.mts';
 import {
-  generatedApiGroup,
   hasGeneratedOperationGatewayContract,
   hasGeneratedGovernedServerContract,
   hasGeneratedGovernedClientContract,
   hasGeneratedModuleApiReadContract,
+  hasGeneratedModuleApiContract,
   hasNamedImportBinding,
   hasGeneratedProviderApiContract,
   hasGeneratedProviderReadContract,
@@ -1312,7 +1312,7 @@ const acceptsGovernedArtifact = (
   if (kind === MODULE_API_KIND) {
     return (current) =>
       current.startsWith(`${generatedHeader(kind)}\n`) &&
-      generatedApiGroup(current, `${toPascalCase(name)}Api`) === toCamelCase(name);
+      hasGeneratedModuleApiContract(current, `${toPascalCase(name)}Api`, toCamelCase(name), name);
   }
   if (!isProviderContribution(kind)) {
     return () => false;

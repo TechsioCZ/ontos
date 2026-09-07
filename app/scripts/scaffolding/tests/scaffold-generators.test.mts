@@ -1266,6 +1266,34 @@ test('governed contribution reruns cannot be spoofed by comments or corrupt owne
       fixtureName.resourceDetail,
     ] as const;
     await run(fixture, scaffoldCommand.moduleApi, scaffoldArguments);
+    const apiContract = await readFixtureFile(fixture.root, inventoryModuleApiContractFile);
+    const assertInvalidApiContractRerunRejected = async (
+      invalidApiContract: string,
+    ): Promise<void> => {
+      await writeFixtureFile(fixture.root, inventoryModuleApiContractFile, invalidApiContract);
+      const beforeInvalidContractRerun = await snapshotTree(fixture.root);
+      await assert.rejects(
+        run(fixture, scaffoldCommand.moduleApi, scaffoldArguments),
+        /refusing to overwrite existing business file/u,
+      );
+      assert.deepEqual(await snapshotTree(fixture.root), beforeInvalidContractRerun);
+    };
+    await assertInvalidApiContractRerunRejected(
+      apiContract.replace('/reads/resource-detail', '/reads/wrong'),
+    );
+    await assertInvalidApiContractRerunRejected(
+      apiContract.replace(
+        "HttpApiEndpoint.post('execute', '/reads/resource-detail', {",
+        "HttpApiEndpoint.post('wrong', '/reads/resource-detail', {",
+      ),
+    );
+    await assertInvalidApiContractRerunRejected(
+      apiContract.replace(
+        /\.add\(\n {2}HttpApiGroup\.make\('resourceDetail'\)\.add\([\s\S]*?\n {2}\),\n\);\n$/u,
+        ".add(HttpApiGroup.make('resourceDetail'));\n",
+      ),
+    );
+    await writeFixtureFile(fixture.root, inventoryModuleApiContractFile, apiContract);
     const manifest = await readFixtureFile(fixture.root, inventoryManifestFile);
     const ownerImport = "import { ResourceDetailApi } from './shared/apis/resource-detail.ts';";
     await writeFixtureFile(

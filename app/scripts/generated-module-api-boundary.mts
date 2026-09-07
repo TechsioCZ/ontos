@@ -334,6 +334,15 @@ const topLevelGeneratorFunctions = (
   return functions;
 };
 
+const generatedHandlerParameters = (trailingComma: boolean): readonly ExpectedToken[] => [
+  [SyntaxKind.OpenBraceToken],
+  [SyntaxKind.Identifier, 'payload'],
+  [SyntaxKind.CommaToken],
+  [SyntaxKind.Identifier, 'request'],
+  ...(trailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
+  [SyntaxKind.CloseBraceToken],
+];
+
 const generatedExecuteHandlerBody = (
   tokens: readonly GovernedClientToken[],
   start: number,
@@ -381,7 +390,23 @@ const generatedExecuteHandlerBody = (
     bodyOpen === undefined || tokens[bodyOpen]?.kind !== SyntaxKind.OpenBraceToken
       ? undefined
       : findClosingBrace(tokens, bodyOpen);
-  if (bodyOpen === undefined || bodyClose === undefined || bodyClose >= handlerClose) {
+  const parametersAreCanonical =
+    parametersOpen !== undefined &&
+    parametersClose !== undefined &&
+    (parametersOpen + 1 === parametersClose ||
+      [false, true].some((trailingComma) => {
+        const expected = generatedHandlerParameters(trailingComma);
+        return (
+          matchesSequence(tokens, parametersOpen + 1, expected) &&
+          parametersOpen + expected.length + 1 === parametersClose
+        );
+      }));
+  if (
+    bodyOpen === undefined ||
+    bodyClose === undefined ||
+    bodyClose >= handlerClose ||
+    !parametersAreCanonical
+  ) {
     return undefined;
   }
   const trailingKinds = new Set([SyntaxKind.CloseParenToken, SyntaxKind.CommaToken]);
@@ -598,6 +623,42 @@ export const hasUniqueExactNamedImport = (
     }
   }
   return matchCount === 1 && bindingCount === 1;
+};
+
+const hasExclusiveNamedImportFrom = (
+  source: string,
+  importedName: string,
+  moduleSpecifier: string,
+): boolean => {
+  const tokens = tokenizeGovernedClient(source);
+  let bindingCount = 0;
+  let exactBindingCount = 0;
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (
+      !matchesSequence(tokens, index, [[SyntaxKind.ImportKeyword], [SyntaxKind.OpenBraceToken]])
+    ) {
+      continue;
+    }
+    const closeBrace = findClosingBrace(tokens, index + 1);
+    if (closeBrace === undefined) {
+      return false;
+    }
+    const importBindingCount = tokens
+      .slice(index + 2, closeBrace)
+      .filter(({ kind, value }) => kind === SyntaxKind.Identifier && value === importedName).length;
+    bindingCount += importBindingCount;
+    if (
+      importBindingCount === 1 &&
+      matchesSequence(tokens, closeBrace + 1, [
+        [SyntaxKind.FromKeyword],
+        [SyntaxKind.StringLiteral, moduleSpecifier],
+        [SyntaxKind.SemicolonToken],
+      ])
+    ) {
+      exactBindingCount += 1;
+    }
+  }
+  return bindingCount === 1 && exactBindingCount === 1;
 };
 
 export const hasNamedImportBinding = (source: string, importedName: string): boolean => {
@@ -1599,7 +1660,7 @@ export const hasGeneratedProviderApiContract = (
   );
 };
 
-const hasGeneratedModuleApiContract = (
+export const hasGeneratedModuleApiContract = (
   source: string,
   ownerApiValue: string,
   groupName: string,
@@ -2216,6 +2277,67 @@ const hasOnlyAllowedGovernedHandlerStatements = (
     'runtime',
   ]);
   const declarations = new Set<string>();
+  let hasCorrelationGuard = false;
+  const correlationGuardPrefix = [
+    [SyntaxKind.IfKeyword],
+    [SyntaxKind.OpenParenToken],
+    [SyntaxKind.Identifier, 'correlationId'],
+    [SyntaxKind.EqualsEqualsEqualsToken],
+    [SyntaxKind.UndefinedKeyword, 'undefined'],
+    [SyntaxKind.BarBarToken],
+    [SyntaxKind.Identifier, 'correlationId'],
+    [SyntaxKind.DotToken],
+    [SyntaxKind.Identifier, 'trim'],
+    [SyntaxKind.OpenParenToken],
+    [SyntaxKind.CloseParenToken],
+    [SyntaxKind.DotToken],
+    [SyntaxKind.Identifier, 'length'],
+    [SyntaxKind.EqualsEqualsEqualsToken],
+    [SyntaxKind.NumericLiteral, '0'],
+    [SyntaxKind.CloseParenToken],
+    [SyntaxKind.OpenBraceToken],
+    [SyntaxKind.ReturnKeyword],
+    [SyntaxKind.YieldKeyword],
+    [SyntaxKind.AsteriskToken],
+    [SyntaxKind.Identifier, 'Effect'],
+    [SyntaxKind.DotToken],
+    [SyntaxKind.Identifier, 'fail'],
+    [SyntaxKind.OpenParenToken],
+  ] satisfies readonly ExpectedToken[];
+  const correlationGuardSuffix = [
+    [SyntaxKind.CloseParenToken],
+    [SyntaxKind.SemicolonToken],
+    [SyntaxKind.CloseBraceToken],
+  ] satisfies readonly ExpectedToken[];
+  const correlationGuardProblems = [
+    [
+      [SyntaxKind.Identifier, 'invalidProblem'],
+      [SyntaxKind.OpenParenToken],
+      [SyntaxKind.CloseParenToken],
+    ],
+    [
+      [SyntaxKind.Identifier, 'problem'],
+      [SyntaxKind.DotToken],
+      [SyntaxKind.Identifier, 'invalid'],
+      [SyntaxKind.OpenParenToken],
+      [SyntaxKind.CloseParenToken],
+    ],
+  ] satisfies readonly (readonly ExpectedToken[])[];
+  const correlationGuardLength = (index: number): number | undefined => {
+    if (!matchesSequence(tokens, index, correlationGuardPrefix)) {
+      return undefined;
+    }
+    for (const problem of correlationGuardProblems) {
+      const suffixStart = index + correlationGuardPrefix.length + problem.length;
+      if (
+        matchesSequence(tokens, index + correlationGuardPrefix.length, problem) &&
+        matchesSequence(tokens, suffixStart, correlationGuardSuffix)
+      ) {
+        return correlationGuardPrefix.length + problem.length + correlationGuardSuffix.length;
+      }
+    }
+    return undefined;
+  };
   const acceptsFrom = (index: number): boolean => {
     if (index === handlerBody[1]) {
       return true;
@@ -2242,14 +2364,12 @@ const hasOnlyAllowedGovernedHandlerStatements = (
       return acceptsFrom(end + 1);
     }
     if (tokens[index]?.kind === SyntaxKind.IfKeyword) {
-      const bodyOpen = findRootExpressionSequence(
-        tokens,
-        [[SyntaxKind.OpenBraceToken]],
-        index + 1,
-        handlerBody[1],
-      );
-      const bodyClose = bodyOpen === undefined ? undefined : findClosingBrace(tokens, bodyOpen);
-      return bodyClose !== undefined && bodyClose < handlerBody[1] && acceptsFrom(bodyClose + 1);
+      const guardLength = correlationGuardLength(index);
+      if (hasCorrelationGuard || guardLength === undefined) {
+        return false;
+      }
+      hasCorrelationGuard = true;
+      return acceptsFrom(index + guardLength);
     }
     if (tokens[index]?.kind === SyntaxKind.ReturnKeyword) {
       const end = findStatementSemicolon(tokens, index);
@@ -2473,6 +2593,31 @@ const directPropertyKeyOccurrences = (source: string, key: string): number => {
     count += sequenceOccurrencesAtBraceDepth(tokens, [[keyKind, key], [SyntaxKind.ColonToken]], 0);
   }
   return count;
+};
+
+const directSlotPropertyNames = (source: string | undefined): readonly string[] => {
+  if (source === undefined) {
+    return [];
+  }
+  const tokens = tokenizeGovernedClient(source);
+  const names: string[] = [];
+  let braceDepth = 0;
+  for (let index = 0; index < tokens.length - 1; index += 1) {
+    const token = tokens[index];
+    if (
+      braceDepth === 0 &&
+      (token?.kind === SyntaxKind.Identifier || token?.kind === SyntaxKind.StringLiteral) &&
+      tokens[index + 1]?.kind === SyntaxKind.ColonToken
+    ) {
+      names.push(token.value);
+    }
+    if (token?.kind === SyntaxKind.OpenBraceToken) {
+      braceDepth += 1;
+    } else if (token?.kind === SyntaxKind.CloseBraceToken) {
+      braceDepth -= 1;
+    }
+  }
+  return names;
 };
 
 const hasRelatedSequenceInObject = (
@@ -2774,31 +2919,8 @@ const slotProviderNames = (
   return names;
 };
 
-const registrationProviderNames = (source: string | undefined): readonly string[] => {
-  if (source === undefined) {
-    return [];
-  }
-  const tokens = tokenizeGovernedClient(source);
-  const names: string[] = [];
-  let braceDepth = 0;
-  for (let index = 0; index < tokens.length - 1; index += 1) {
-    const token = tokens[index];
-    if (
-      braceDepth === 0 &&
-      (token?.kind === SyntaxKind.Identifier || token?.kind === SyntaxKind.StringLiteral) &&
-      /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(token.value) &&
-      tokens[index + 1]?.kind === SyntaxKind.ColonToken
-    ) {
-      names.push(token.value);
-    }
-    if (token?.kind === SyntaxKind.OpenBraceToken) {
-      braceDepth += 1;
-    } else if (token?.kind === SyntaxKind.CloseBraceToken) {
-      braceDepth -= 1;
-    }
-  }
-  return names;
-};
+const registrationProviderNames = (source: string | undefined): readonly string[] =>
+  directSlotPropertyNames(source).filter((name) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(name));
 
 export const generatedProviderIdentities = (
   manifest: string,
@@ -2829,6 +2951,126 @@ export const generatedProviderIdentities = (
     }
   }
   return [...identities.values()];
+};
+
+const hasExactGeneratedGatewayFactory = (
+  tokens: readonly GovernedClientToken[],
+  start: number,
+  end: number,
+): boolean => {
+  const prefix = [
+    [SyntaxKind.ExportKeyword],
+    [SyntaxKind.ConstKeyword],
+    [SyntaxKind.Identifier, 'makeActionGateway'],
+    [SyntaxKind.EqualsToken],
+    [SyntaxKind.OpenParenToken],
+    [SyntaxKind.Identifier, 'acquire'],
+    [SyntaxKind.ColonToken],
+    [SyntaxKind.Identifier, 'ActionGatewayIssuer'],
+    [SyntaxKind.EqualsToken],
+    [SyntaxKind.Identifier, 'issueGatewayContext'],
+    [SyntaxKind.CloseParenToken],
+    [SyntaxKind.EqualsGreaterThanToken],
+    [SyntaxKind.OpenParenToken],
+    [SyntaxKind.OpenBraceToken],
+    [SyntaxKind.Identifier, 'invoke'],
+    [SyntaxKind.ColonToken],
+    [SyntaxKind.LessThanToken],
+    [SyntaxKind.Identifier, 'Success'],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.Identifier, 'Failure'],
+    [SyntaxKind.GreaterThanToken],
+    [SyntaxKind.OpenParenToken],
+    [SyntaxKind.Identifier, 'attempt'],
+    [SyntaxKind.ColonToken],
+    [SyntaxKind.Identifier, 'ActionGatewayAttempt'],
+    [SyntaxKind.LessThanToken],
+    [SyntaxKind.Identifier, 'Success'],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.Identifier, 'Failure'],
+    [SyntaxKind.GreaterThanToken],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.Identifier, 'options'],
+    [SyntaxKind.ColonToken],
+    [SyntaxKind.Identifier, 'GatewayContextClientOptions'],
+    [SyntaxKind.EqualsToken],
+    [SyntaxKind.OpenBraceToken],
+    [SyntaxKind.CloseBraceToken],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.CloseParenToken],
+    [SyntaxKind.EqualsGreaterThanToken],
+    [SyntaxKind.Identifier, 'acquire'],
+    [SyntaxKind.OpenParenToken],
+    [SyntaxKind.OpenBraceToken],
+    [SyntaxKind.Identifier, 'audience'],
+    [SyntaxKind.ColonToken],
+    [SyntaxKind.Identifier, 'ACTION_GATEWAY_AUDIENCE'],
+    [SyntaxKind.CloseBraceToken],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.Identifier, 'options'],
+    [SyntaxKind.CloseParenToken],
+    [SyntaxKind.DotToken],
+    [SyntaxKind.Identifier, 'pipe'],
+    [SyntaxKind.OpenParenToken],
+    [SyntaxKind.Identifier, 'Effect'],
+    [SyntaxKind.DotToken],
+    [SyntaxKind.Identifier, 'flatMap'],
+    [SyntaxKind.OpenParenToken],
+    [SyntaxKind.OpenParenToken],
+    [SyntaxKind.OpenBraceToken],
+    [SyntaxKind.Identifier, 'token'],
+    [SyntaxKind.CloseBraceToken],
+    [SyntaxKind.CloseParenToken],
+    [SyntaxKind.EqualsGreaterThanToken],
+  ] satisfies readonly ExpectedToken[];
+  const directBearer = [
+    [SyntaxKind.Identifier, 'attempt'],
+    [SyntaxKind.OpenParenToken],
+    [SyntaxKind.TemplateHead, 'Bearer '],
+    [SyntaxKind.Identifier, 'token'],
+    [SyntaxKind.TemplateTail, ''],
+    [SyntaxKind.CloseParenToken],
+  ] satisfies readonly ExpectedToken[];
+  const redactedBearer = [
+    [SyntaxKind.OpenBraceToken],
+    [SyntaxKind.ConstKeyword],
+    [SyntaxKind.Identifier, 'authorization'],
+    [SyntaxKind.EqualsToken],
+    [SyntaxKind.Identifier, 'Redacted'],
+    [SyntaxKind.DotToken],
+    [SyntaxKind.Identifier, 'make'],
+    [SyntaxKind.OpenParenToken],
+    [SyntaxKind.TemplateHead, 'Bearer '],
+    [SyntaxKind.Identifier, 'token'],
+    [SyntaxKind.TemplateTail, ''],
+    [SyntaxKind.CloseParenToken],
+    [SyntaxKind.SemicolonToken],
+    [SyntaxKind.ReturnKeyword],
+    [SyntaxKind.Identifier, 'attempt'],
+    [SyntaxKind.OpenParenToken],
+    [SyntaxKind.Identifier, 'Redacted'],
+    [SyntaxKind.DotToken],
+    [SyntaxKind.Identifier, 'value'],
+    [SyntaxKind.OpenParenToken],
+    [SyntaxKind.Identifier, 'authorization'],
+    [SyntaxKind.CloseParenToken],
+    [SyntaxKind.CloseParenToken],
+    [SyntaxKind.SemicolonToken],
+    [SyntaxKind.CloseBraceToken],
+  ] satisfies readonly ExpectedToken[];
+  const suffix = [
+    [SyntaxKind.CloseParenToken],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.CloseParenToken],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.CloseBraceToken],
+    [SyntaxKind.CloseParenToken],
+    [SyntaxKind.SemicolonToken],
+  ] satisfies readonly ExpectedToken[];
+  return [directBearer, redactedBearer].some((bearer) => {
+    const expected = [...prefix, ...bearer, ...suffix];
+    return start + expected.length === end + 1 && matchesSequence(tokens, start, expected);
+  });
 };
 
 export const hasGeneratedOperationGatewayContract = (
@@ -2870,41 +3112,9 @@ export const hasGeneratedOperationGatewayContract = (
   const invokesFreshIssuer =
     factory !== undefined &&
     factoryEnd !== undefined &&
-    findSequence(
-      tokens,
-      [
-        [SyntaxKind.Identifier, 'acquire'],
-        [SyntaxKind.OpenParenToken],
-        [SyntaxKind.OpenBraceToken],
-        [SyntaxKind.Identifier, 'audience'],
-        [SyntaxKind.ColonToken],
-        [SyntaxKind.Identifier, 'ACTION_GATEWAY_AUDIENCE'],
-        [SyntaxKind.CloseBraceToken],
-        [SyntaxKind.CommaToken],
-        [SyntaxKind.Identifier, 'options'],
-        [SyntaxKind.CloseParenToken],
-        [SyntaxKind.DotToken],
-        [SyntaxKind.Identifier, 'pipe'],
-        [SyntaxKind.OpenParenToken],
-        [SyntaxKind.Identifier, 'Effect'],
-        [SyntaxKind.DotToken],
-        [SyntaxKind.Identifier, 'flatMap'],
-      ],
-      factory,
-      factoryEnd,
-    ) !== undefined &&
-    findSequence(
-      tokens,
-      [[SyntaxKind.EqualsToken], [SyntaxKind.Identifier, 'issueGatewayContext']],
-      factory,
-      factoryEnd,
-    ) !== undefined &&
-    findSequence(
-      tokens,
-      [[SyntaxKind.Identifier, 'attempt'], [SyntaxKind.OpenParenToken]],
-      factory,
-      factoryEnd,
-    ) !== undefined;
+    hasExactGeneratedGatewayFactory(tokens, factory, factoryEnd) &&
+    hasExclusiveNamedImportFrom(source, 'issueGatewayContext', '@app/shared-contracts') &&
+    hasExclusiveNamedImportFrom(source, 'Effect', 'effect');
   return (
     audience !== undefined &&
     invokesFreshIssuer &&
@@ -2976,10 +3186,15 @@ export const hasCompleteGeneratedModuleApiSeam = (
   }
 
   const publishedContractStems = publishedModuleApiContractStems(manifest);
+  const registeredContractStems = directSlotPropertyNames(
+    generatedSlotSource(registration, REGISTRATION_API_SLOT),
+  );
   const contractStems = new Set(contracts.map((contract) => path.posix.basename(contract, '.ts')));
   if (
     publishedContractStems.size !== contractStems.size ||
-    [...publishedContractStems].some((stem) => !contractStems.has(stem))
+    [...publishedContractStems].some((stem) => !contractStems.has(stem)) ||
+    registeredContractStems.length !== contractStems.size ||
+    registeredContractStems.some((stem) => !contractStems.has(stem))
   ) {
     return false;
   }

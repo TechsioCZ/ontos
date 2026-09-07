@@ -24,6 +24,7 @@ import {
   hasCompleteGeneratedModuleApiSeam,
   hasGeneratedGovernedClientContract,
   hasGeneratedGovernedServerContract,
+  hasGeneratedOperationGatewayContract,
   hasMatchingGeneratedProviderAuthorization,
   hasGeneratedProviderApiContract,
   hasGeneratedProviderManifest,
@@ -654,6 +655,7 @@ const validateGeneratedProviderClient = (
     const serverSource = sourceMap.get(serverPath) ?? '';
     const manifest = sourceMap.get(`${vertical}/vertical.manifest.ts`) ?? '';
     const registration = sourceMap.get(`${vertical}/vertical.registration.ts`) ?? '';
+    const gateway = sourceMap.get(`${vertical}/src/api/action-gateway.ts`) ?? '';
     const moduleId =
       /@ontos-module-id (?<moduleId>[a-z0-9]+(?:\.[a-z0-9]+)*)/u.exec(manifest)?.groups?.moduleId ??
       '';
@@ -672,6 +674,7 @@ const validateGeneratedProviderClient = (
       hasGeneratedProviderReadContract(providerSource, moduleId, name, kind),
       hasMatchingGeneratedProviderAuthorization(providerSource, manifest, moduleId, name, kind),
       hasGeneratedGovernedServerContract(serverSource, `${camel}ReadApiLive`),
+      hasGeneratedOperationGatewayContract(gateway, deploymentAppId),
       hasGeneratedProviderManifest(manifest, moduleId, name, kind),
       hasGeneratedProviderRegistration(registration, name, kind),
       hasGeneratedGovernedClientContract(clientSource, {
