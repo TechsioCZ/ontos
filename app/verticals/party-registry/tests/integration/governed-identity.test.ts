@@ -1,49 +1,59 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import test from 'node:test';
+import {
+  makeEffectTestCallback as nativeTestCallback,
+  runEffectTestPromise,
+  runEffectTestSync as runNativeSync,
+} from '@app/core-runtime/testing/effect-runtime';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import {
   CoreSearchQueryRuntimeLive,
-  ReadRuntime,
   loadDatabaseConnectionPair,
-  runAction,
+  ReadRuntime,
   resolveActionCommit,
+  runAction,
 } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
-import { Effect, Exit, Layer, Redacted } from 'effect';
-import { drizzle } from 'drizzle-orm/node-postgres';
+
 import { and, eq } from 'drizzle-orm';
+import { Effect, Exit, Layer, Exit as NativeExit, Scope as NativeScope, Redacted } from 'effect';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import test, { after as afterNativeDatabase } from 'node:test';
 import { Pool } from 'pg';
-import { createPartyAction } from '../../src/actions/create-party.action.ts';
+import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import type { PartyCandidateSchema } from '../../shared/domain/identity-contracts.ts';
+import { committedCreateResult } from '../../shared/domain/matching-contracts.ts';
+import type { PartyRef } from '../../shared/resources/party.ts';
 import { archivePartyAction } from '../../src/actions/archive-party.action.ts';
-import { unarchivePartyAction } from '../../src/actions/unarchive-party.action.ts';
 import { counterpartyCreateAction } from '../../src/actions/counterparty-create.action.ts';
 import { counterpartyRoleAddAction } from '../../src/actions/counterparty-role-add.action.ts';
 import { counterpartyRoleEndAction } from '../../src/actions/counterparty-role-end.action.ts';
 import { createPartyRelationshipAction } from '../../src/actions/create-party-relationship.action.ts';
-import { updatePartyRelationshipAction } from '../../src/actions/update-party-relationship.action.ts';
+import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { endPartyRelationshipAction } from '../../src/actions/end-party-relationship.action.ts';
-import {
-  partiesRead,
-  PartySearchProjectionGatewayLive,
-} from '../../src/search/parties.provider.ts';
+import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
+import { unarchivePartyAction } from '../../src/actions/unarchive-party.action.ts';
+import { updatePartyRelationshipAction } from '../../src/actions/update-party-relationship.action.ts';
+import { counterpartyReadRead } from '../../src/api/counterparty-read.read.ts';
 import { partyDetailRead } from '../../src/api/party-detail.read.ts';
 import { partyMatchDecisionRead } from '../../src/api/party-match-decision.read.ts';
-import { counterpartyReadRead } from '../../src/api/counterparty-read.read.ts';
-import { committedCreateResult } from '../../shared/domain/matching-contracts.ts';
-import type { PartyRef } from '../../shared/resources/party.ts';
-import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
-import type { PartyCandidateSchema } from '../../shared/domain/identity-contracts.ts';
 import {
-  partyRelations,
+  duplicateCandidateCases,
   parties,
   partyFactAssertions,
   partyIdentifierClaims,
   partyMatchDecisions,
-  duplicateCandidateCases,
   partyOfficialIdentifiers,
+  partyRelations,
 } from '../../src/db/schema.ts';
+import {
+  partiesRead,
+  PartySearchProjectionGatewayLive,
+} from '../../src/search/parties.provider.ts';
+
+const nativeDatabaseScope = runNativeSync(NativeScope.make());
+afterNativeDatabase(
+  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
+);
 
 type EncodedPartyCandidate = typeof PartyCandidateSchema.Encoded;
 const candidate = (
@@ -128,7 +138,9 @@ test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims
           Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
           (pool) => promiseEffect(endPool.bind(undefined, pool)).pipe(Effect.orDie),
         );
-        const admin = drizzle({ client: adminPool, relations: partyRelations });
+        const admin = yield* makeTestDatabaseFromPool(adminPool, partyRelations).pipe(
+          NativeScope.provide(nativeDatabaseScope),
+        );
         const fixtureContext = yield* Layer.build(fixture.layer);
         const otherContext = yield* Layer.build(other.layer);
         const run = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof fixture.layer>>) =>
@@ -147,33 +159,23 @@ test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims
         const snapshot = Effect.fn('GovernedIdentityTest.snapshot')(function* snapshotEffect() {
           const [partyRows, assertions, claims, decisions, cases, core] = yield* Effect.all(
             [
-              promiseEffect(() =>
-                admin.select().from(parties).where(eq(parties.tenantId, fixture.tenantId)),
-              ),
-              promiseEffect(() =>
-                admin
-                  .select()
-                  .from(partyFactAssertions)
-                  .where(eq(partyFactAssertions.tenantId, fixture.tenantId)),
-              ),
-              promiseEffect(() =>
-                admin
-                  .select()
-                  .from(partyIdentifierClaims)
-                  .where(eq(partyIdentifierClaims.tenantId, fixture.tenantId)),
-              ),
-              promiseEffect(() =>
-                admin
-                  .select()
-                  .from(partyMatchDecisions)
-                  .where(eq(partyMatchDecisions.tenantId, fixture.tenantId)),
-              ),
-              promiseEffect(() =>
-                admin
-                  .select()
-                  .from(duplicateCandidateCases)
-                  .where(eq(duplicateCandidateCases.tenantId, fixture.tenantId)),
-              ),
+              admin.select().from(parties).where(eq(parties.tenantId, fixture.tenantId)),
+              admin
+                .select()
+                .from(partyFactAssertions)
+                .where(eq(partyFactAssertions.tenantId, fixture.tenantId)),
+              admin
+                .select()
+                .from(partyIdentifierClaims)
+                .where(eq(partyIdentifierClaims.tenantId, fixture.tenantId)),
+              admin
+                .select()
+                .from(partyMatchDecisions)
+                .where(eq(partyMatchDecisions.tenantId, fixture.tenantId)),
+              admin
+                .select()
+                .from(duplicateCandidateCases)
+                .where(eq(duplicateCandidateCases.tenantId, fixture.tenantId)),
               fixture.evidence(),
             ],
             { concurrency: 6 },
@@ -572,26 +574,22 @@ test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims
             transport: transport(),
           }),
         );
-        const [identifierTemplate] = yield* promiseEffect(() =>
-          admin
-            .select()
-            .from(partyOfficialIdentifiers)
-            .where(
-              and(
-                eq(partyOfficialIdentifiers.tenantId, fixture.tenantId),
-                eq(partyOfficialIdentifiers.partyId, partyRef.resourceId),
-              ),
-            )
-            .limit(1),
-        );
+        const [identifierTemplate] = yield* admin
+          .select()
+          .from(partyOfficialIdentifiers)
+          .where(
+            and(
+              eq(partyOfficialIdentifiers.tenantId, fixture.tenantId),
+              eq(partyOfficialIdentifiers.partyId, partyRef.resourceId),
+            ),
+          )
+          .limit(1);
         assert.ok(identifierTemplate);
-        yield* promiseEffect(() =>
-          admin.insert(partyOfficialIdentifiers).values({
-            ...identifierTemplate,
-            officialIdentifierId: randomUUID(),
-            partyId: legacy.partyRef.resourceId,
-          }),
-        );
+        yield* admin.insert(partyOfficialIdentifiers).values({
+          ...identifierTemplate,
+          officialIdentifierId: randomUUID(),
+          partyId: legacy.partyRef.resourceId,
+        });
         const collision = yield* run(
           runAction({
             registration: unarchivePartyAction,

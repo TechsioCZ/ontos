@@ -2,8 +2,8 @@ import { Duration, Effect } from 'effect';
 import { dataAccessEvents } from '../db/schema.ts';
 import type { CoreDbExecutor } from '../db/types.ts';
 import type { OperationalScope } from '../operations/context.ts';
-import { ReadEvidencePersistenceError } from './errors.ts';
 import type { ReadAccessKind, ReadEvidenceCaptureMode } from './definition.ts';
+import { ReadEvidencePersistenceError } from './errors.ts';
 
 export interface PersistReadEvidenceInput {
   readonly accessKind: ReadAccessKind;
@@ -41,37 +41,37 @@ export const persistReadEvidence = (
   executor: CoreDbExecutor,
   input: PersistReadEvidenceInput,
 ): Effect.Effect<void, ReadEvidencePersistenceError> =>
-  Effect.tryPromise({
-    catch: readEvidencePersistenceFailure,
-    try: () =>
-      executor.insert(dataAccessEvents).values({
-        accessKind: accessKind(input.accessKind),
-        authBindingId: input.scope.authBindingId,
-        authContextRef: input.scope.authContextRef,
-        authMethod: input.scope.authMethod,
-        evidenceCaptureMode: input.captureMode,
-        evidencePolicyKey: input.policyKey,
-        impersonatedByPrincipalId: input.scope.impersonatedByPrincipalId,
-        legalEntityId: input.scope.legalEntityId,
-        outcome: input.outcome,
-        outcomeCode: input.outcomeCode,
-        outcomeStage: input.outcomeStage,
-        principalId: input.scope.principalId,
-        queryHash: input.queryHash,
-        resultCount: input.resultCount,
-        resultFingerprintHash: input.resultFingerprintHash,
-        resultFingerprintSchema: input.resultFingerprintSchema,
-        servingModuleKey: input.servingModuleKey,
-        targetModuleKey: input.targetModuleKey,
-        targetResourceId: input.targetResourceId,
-        targetResourceType: input.targetResourceType,
-        tenantId: input.scope.tenantId,
+  executor
+    .insert(dataAccessEvents)
+    .values({
+      accessKind: accessKind(input.accessKind),
+      authBindingId: input.scope.authBindingId,
+      authContextRef: input.scope.authContextRef,
+      authMethod: input.scope.authMethod,
+      evidenceCaptureMode: input.captureMode,
+      evidencePolicyKey: input.policyKey,
+      impersonatedByPrincipalId: input.scope.impersonatedByPrincipalId,
+      legalEntityId: input.scope.legalEntityId,
+      outcome: input.outcome,
+      outcomeCode: input.outcomeCode,
+      outcomeStage: input.outcomeStage,
+      principalId: input.scope.principalId,
+      queryHash: input.queryHash,
+      resultCount: input.resultCount,
+      resultFingerprintHash: input.resultFingerprintHash,
+      resultFingerprintSchema: input.resultFingerprintSchema,
+      servingModuleKey: input.servingModuleKey,
+      targetModuleKey: input.targetModuleKey,
+      targetResourceId: input.targetResourceId,
+      targetResourceType: input.targetResourceType,
+      tenantId: input.scope.tenantId,
+    })
+    .pipe(
+      Effect.mapError(readEvidencePersistenceFailure),
+      Effect.timeoutOrElse({
+        duration: READ_EVIDENCE_PERSISTENCE_TIMEOUT,
+        orElse: () =>
+          Effect.fail(readEvidencePersistenceFailure('Read evidence persistence timed out')),
       }),
-  }).pipe(
-    Effect.timeoutOrElse({
-      duration: READ_EVIDENCE_PERSISTENCE_TIMEOUT,
-      orElse: () =>
-        Effect.fail(readEvidencePersistenceFailure('Read evidence persistence timed out')),
-    }),
-    Effect.asVoid,
-  );
+      Effect.asVoid,
+    );

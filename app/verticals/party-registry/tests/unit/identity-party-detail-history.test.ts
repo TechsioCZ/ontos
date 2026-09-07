@@ -1,9 +1,8 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import { mock, test } from 'node:test';
-import { drizzle } from 'drizzle-orm/node-postgres';
 import { Effect, Option, Schema } from 'effect';
-import { Client } from 'pg';
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { PartyFactAssertionSchema } from '../../shared/apis/party-detail.ts';
 import { PartySchema } from '../../shared/domain/identity-contracts.ts';
 import {
@@ -66,10 +65,8 @@ test('Party Detail history derives reviewer authority while current fact targets
 });
 
 test('Party Detail persistence reads safe current and immutable historical assertions through a tenant-scoped query', () => {
-  const client = new Client();
-  const database = drizzle({ client });
   const queries: string[] = [];
-  const values: unknown[][] = [];
+  const values: (readonly unknown[])[] = [];
   const rows = [
     [
       previousId,
@@ -98,11 +95,15 @@ test('Party Detail persistence reads safe current and immutable historical asser
       'Corrected name',
     ],
   ];
-  const query = mock.method(client, 'query', (config: { text: string }, parameters: unknown[]) => {
-    queries.push(config.text);
-    values.push(parameters);
-    return Promise.resolve({ rows });
-  });
+  const database = makeTestDatabase((text, parameters) =>
+    Effect.sync(() => {
+      queries.push(text);
+      values.push(parameters);
+      return rows.map((row) =>
+        Object.fromEntries(row.map((value, index) => [String(index), value])),
+      );
+    }),
+  );
   return runEffectTestPromise(
     Effect.gen(function* checkSafeHistory() {
       const result = yield* findPartyDetailAssertions(database, tenantId, partyId, true);
@@ -156,6 +157,6 @@ test('Party Detail persistence reads safe current and immutable historical asser
       const detailHistory = Option.getOrThrow(detail.factHistory);
       assert.equal(detailHistory[0]?.assertionId, previousId);
       assert.equal(detailHistory[0]?.value, 'Original name');
-    }).pipe(Effect.ensuring(Effect.sync(() => query.mock.restore()))),
+    }),
   );
 });

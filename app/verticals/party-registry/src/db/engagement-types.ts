@@ -1,7 +1,7 @@
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
 import type { contactsRelations } from './engagement-schema.ts';
 
-export type ContactsDatabaseExecutor = NodePgDatabase<typeof contactsRelations>;
+export type ContactsDatabaseExecutor = EffectPgDatabase<typeof contactsRelations>;
 
 type ContactsTransactionCallback = Parameters<ContactsDatabaseExecutor['transaction']>[0];
 

@@ -1,5 +1,6 @@
+import { configureDatabasePool } from '@app/core-runtime';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Context, Effect, Layer } from 'effect';
+import { Context, Effect, Layer, Redacted } from 'effect';
 import type { Scope } from 'effect';
 import { Pool } from 'pg';
 import type { PoolConfig } from 'pg';
@@ -47,22 +48,27 @@ export const acquirePoolResource = <Resource extends PoolResource>(
       catch: connectionFailure,
       try: acquire,
     }),
-    (pool) => Effect.promise(invokePromiseWithoutSignal(pool.end.bind(pool, undefined))),
+    (pool) => Effect.promise(invokePromiseWithoutSignal(pool.end.bind(pool))),
   );
 
 export type PoolFactory = (configuration: PoolConfig) => Pool;
 
 const defaultPoolFactory: PoolFactory = (configuration) => new Pool(configuration);
 
+const mapPoolConfigurationError = (error: { readonly reason: string }) =>
+  new AuthDatabaseConnectionError({
+    reason: `Unable to initialize the authentication PostgreSQL pool: ${error.reason}`,
+  });
+
 export const makeAuthDatabase = (
   configuration: AuthConfigValue,
   poolFactory: PoolFactory = defaultPoolFactory,
 ) =>
-  acquirePoolResource(() =>
-    poolFactory({
-      connectionString: configuration.connectionString,
-    }),
-  ).pipe(
+  configureDatabasePool(Redacted.make(configuration.connectionString)).pipe(
+    Effect.mapError(mapPoolConfigurationError),
+    Effect.flatMap((poolConfiguration) =>
+      acquirePoolResource(() => poolFactory(poolConfiguration)),
+    ),
     Effect.map((pool) => ({
       executor: drizzle({
         client: pool,

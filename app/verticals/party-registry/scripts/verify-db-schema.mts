@@ -3,8 +3,8 @@ import { DatabaseConfig, loadDatabaseConfig, loadDatabaseConnectionPair } from '
 import { sql } from 'drizzle-orm';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Effect, Layer, Schema } from 'effect';
-import { PartyDatabase, PartyDatabaseLive } from '../src/db/client.ts';
 import { comparePartyCatalog } from '../src/db/catalog.ts';
+import { PartyDatabase, PartyDatabaseLive } from '../src/db/client.ts';
 import { PARTY_SCHEMA_NAME, PARTY_TABLES } from '../src/db/schema.ts';
 
 class PartyDatabaseVerificationError extends Schema.TaggedError<PartyDatabaseVerificationError>()(
@@ -58,22 +58,23 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
   const database = yield* PartyDatabase;
 
   for (const table of PARTY_TABLES) {
-    yield* Effect.tryPromise({
-      catch: () =>
-        new PartyDatabaseVerificationError({
-          reason: `Typed verification failed for one ${PARTY_SCHEMA_NAME} table`,
-        }),
-      try: () => database.executor.select().from(table).limit(0),
-    });
+    yield* database.executor
+      .select()
+      .from(table)
+      .limit(0)
+      .pipe(
+        Effect.mapError(
+          () =>
+            new PartyDatabaseVerificationError({
+              reason: `Typed verification failed for one ${PARTY_SCHEMA_NAME} table`,
+            }),
+        ),
+      );
   }
 
-  const catalog = yield* Effect.tryPromise({
-    catch: () =>
-      new PartyDatabaseVerificationError({
-        reason: 'Unable to compare the PostgreSQL Party Registry catalog',
-      }),
-    try: () =>
-      database.executor.execute<TableCatalogRow>(sql`
+  const catalog = yield* database.executor
+    .execute<TableCatalogRow>(
+      sql`
         select relation.relname as table_name
         from pg_catalog.pg_class as relation
         inner join pg_catalog.pg_namespace as namespace
@@ -81,10 +82,19 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
         where namespace.nspname = ${PARTY_SCHEMA_NAME}
           and relation.relkind in (${'r'}, ${'p'})
         order by relation.relname
-      `),
-  });
+      `,
+      'objects',
+    )
+    .pipe(
+      Effect.mapError(
+        () =>
+          new PartyDatabaseVerificationError({
+            reason: 'Unable to compare the PostgreSQL Party Registry catalog',
+          }),
+      ),
+    );
   const difference = comparePartyCatalog(
-    catalog.rows.map((row) => `${PARTY_SCHEMA_NAME}.${row.table_name}`),
+    catalog.map((row) => `${PARTY_SCHEMA_NAME}.${row.table_name}`),
   );
   if (difference.missing.length > 0 || difference.unexpected.length > 0) {
     return yield* new PartyDatabaseVerificationError({
@@ -92,22 +102,25 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
     });
   }
 
-  const columns = yield* Effect.tryPromise({
-    catch: () =>
-      new PartyDatabaseVerificationError({
-        reason: 'Unable to compare the PostgreSQL Party Registry column catalog',
-      }),
-    try: () =>
-      database.executor.execute<ColumnCatalogRow>(sql`
+  const columns = yield* database.executor
+    .execute<ColumnCatalogRow>(
+      sql`
         select table_name, column_name
         from information_schema.columns
         where table_schema = ${PARTY_SCHEMA_NAME}
         order by table_name, column_name
-      `),
-  });
-  const actualColumns = columns.rows
-    .map((row) => `${row.table_name}.${row.column_name}`)
-    .toSorted();
+      `,
+      'objects',
+    )
+    .pipe(
+      Effect.mapError(
+        () =>
+          new PartyDatabaseVerificationError({
+            reason: 'Unable to compare the PostgreSQL Party Registry column catalog',
+          }),
+      ),
+    );
+  const actualColumns = columns.map((row) => `${row.table_name}.${row.column_name}`).toSorted();
   if (
     actualColumns.length !== expectedColumns.length ||
     actualColumns.some((column, index) => column !== expectedColumns[index])
@@ -117,13 +130,9 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
     });
   }
 
-  const tables = yield* Effect.tryPromise({
-    catch: () =>
-      new PartyDatabaseVerificationError({
-        reason: 'Unable to verify Party Registry table ownership, RLS, policies, or grants',
-      }),
-    try: () =>
-      database.executor.execute<TableInfrastructureRow>(sql`
+  const tables = yield* database.executor
+    .execute<TableInfrastructureRow>(
+      sql`
         select
           relation.relname as table_name,
           pg_catalog.pg_get_userbyid(relation.relowner) as table_owner,
@@ -141,11 +150,20 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
         where namespace.nspname = ${PARTY_SCHEMA_NAME}
           and relation.relkind in (${'r'}, ${'p'})
         order by relation.relname
-      `),
-  });
+      `,
+      'objects',
+    )
+    .pipe(
+      Effect.mapError(
+        () =>
+          new PartyDatabaseVerificationError({
+            reason: 'Unable to verify Party Registry table ownership, RLS, policies, or grants',
+          }),
+      ),
+    );
   if (
-    tables.rows.length !== PARTY_TABLES.length ||
-    tables.rows.some(
+    tables.length !== PARTY_TABLES.length ||
+    tables.some(
       (row) =>
         row.table_owner !== connections.admin.user ||
         !row.row_security ||
@@ -163,13 +181,9 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
     });
   }
 
-  const infrastructure = yield* Effect.tryPromise({
-    catch: () =>
-      new PartyDatabaseVerificationError({
-        reason: 'Unable to verify Party Registry migration and constraint infrastructure',
-      }),
-    try: () =>
-      database.executor.execute<OwnerInfrastructureRow>(sql`
+  const infrastructure = yield* database.executor
+    .execute<OwnerInfrastructureRow>(
+      sql`
         select
           has_schema_privilege(${'ontos_runtime'}, ${PARTY_SCHEMA_NAME}, ${'CREATE'}) as runtime_create,
           has_schema_privilege(${'ontos_runtime'}, ${PARTY_SCHEMA_NAME}, ${'USAGE'}) as runtime_usage,
@@ -228,9 +242,18 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
               and not trigger_record.tgisinternal) as correction_trigger_count
         from pg_catalog.pg_roles as runtime_role
         where runtime_role.rolname = ${'ontos_runtime'}
-      `),
-  });
-  const [owner] = infrastructure.rows;
+      `,
+      'objects',
+    )
+    .pipe(
+      Effect.mapError(
+        () =>
+          new PartyDatabaseVerificationError({
+            reason: 'Unable to verify Party Registry migration and constraint infrastructure',
+          }),
+      ),
+    );
+  const [owner] = infrastructure;
   if (
     owner === undefined ||
     owner.runtime_create ||

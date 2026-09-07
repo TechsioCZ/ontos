@@ -1,17 +1,17 @@
 import { eq, sql } from 'drizzle-orm';
-import {
-  DateTime,
-  Duration,
-  Effect,
-  Function as EffectFunction,
-  Layer,
-  Option,
-  Result,
-  Schema,
-} from 'effect';
+import { DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
+import { isSqlError } from 'effect/unstable/sql/SqlError';
 import { CoreDatabase } from '../db/client.ts';
 import { searchIndexEntries, searchProjectionRebuilds } from '../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
+import type {
+  CoreSearchProjectionDocument,
+  CoreSearchProjectionMutation,
+  CoreSearchProjectionReplacement,
+  CoreSearchProjectionStoreService,
+  CoreSearchQuery,
+  CoreSearchResourceRef,
+} from './projection.ts';
 import {
   CoreSearchAliasSchema,
   CoreSearchFacetSchema,
@@ -28,14 +28,6 @@ import {
   createCoreSearchQueryRuntime,
   decodeCoreSearchProjectionMutation,
   decodeCoreSearchProjectionReplacement,
-} from './projection.ts';
-import type {
-  CoreSearchProjectionDocument,
-  CoreSearchProjectionMutation,
-  CoreSearchProjectionReplacement,
-  CoreSearchProjectionStoreService,
-  CoreSearchQuery,
-  CoreSearchResourceRef,
 } from './projection.ts';
 
 const PersistedDocumentPayloadSchema = Schema.Struct({
@@ -165,17 +157,6 @@ const rowMatchesDocument = (
     Result.mapError((cause) => invalid('Core Search persisted payload is invalid', cause)),
   );
 
-const tryDatabasePromise = <Value, Failure>(
-  evaluate: () => PromiseLike<Value>,
-  mapFailure: (cause: CoreSearchPersistenceCause) => Failure,
-): Effect.Effect<Value, Failure> =>
-  Effect.tryPromise({ catch: mapFailure, try: () => evaluate() }).pipe(
-    Effect.timeoutOrElse({
-      duration: Duration.infinity,
-      orElse: () => Effect.fail(mapFailure('Database operation timed out')),
-    }),
-  );
-
 const makeTransactionOperations = () => {
   const installTenantScope = Effect.fn('CoreSearchPersistence.installTenantScope')(
     function* installTenantScopeEffect(
@@ -183,18 +164,19 @@ const makeTransactionOperations = () => {
       tenantId: string,
       legalEntityId?: string,
     ) {
-      const execute = transaction.execute.bind(
-        transaction,
-        sql`
+      const result = yield* transaction
+        .execute(
+          sql`
         select
           set_config('ontos.tenant_id', ${tenantId}, true) as tenant_id,
           set_config('ontos.legal_entity_id', ${legalEntityId ?? ''}, true) as legal_entity_id
       `,
-      );
-      const result = yield* tryDatabasePromise(execute, unavailable);
+          'objects',
+        )
+        .pipe(Effect.mapError(unavailable));
       const verified = Schema.decodeUnknownOption(
         Schema.Struct({ legal_entity_id: Schema.String, tenant_id: Schema.String }),
-      )(result.rows[0]);
+      )(result[0]);
       if (
         Option.isNone(verified) ||
         verified.value.tenant_id !== tenantId ||
@@ -213,15 +195,15 @@ const makeTransactionOperations = () => {
       moduleId: string,
       resourceType: string,
     ) {
-      const execute = transaction.execute.bind(
-        transaction,
-        sql`select pg_advisory_xact_lock(hashtextextended(${projectionUnitKey(
-          tenantId,
-          moduleId,
-          resourceType,
-        )}, 0))`,
-      );
-      yield* tryDatabasePromise(execute, unavailable);
+      yield* transaction
+        .execute(
+          sql`select pg_advisory_xact_lock(hashtextextended(${projectionUnitKey(
+            tenantId,
+            moduleId,
+            resourceType,
+          )}, 0))`,
+        )
+        .pipe(Effect.mapError(unavailable));
     },
   );
 
@@ -237,7 +219,7 @@ const makeTransactionOperations = () => {
         tenantId: ref.tenantId,
       },
     });
-    const row = yield* tryDatabasePromise(query.execute.bind(query), unavailable);
+    const row = yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
     return Option.fromNullishOr(row);
   });
 
@@ -253,7 +235,7 @@ const makeTransactionOperations = () => {
           tenantId: unit.tenantId,
         },
       });
-      const rebuild = yield* tryDatabasePromise(query.execute.bind(query), unavailable);
+      const rebuild = yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
       return Option.fromNullishOr(rebuild);
     },
   );
@@ -289,7 +271,7 @@ const makeTransactionOperations = () => {
             updatedAt,
           })
           .where(eq(searchIndexEntries.searchIndexEntryId, existing.searchIndexEntryId));
-        yield* tryDatabasePromise(query.execute.bind(query), unavailable);
+        yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
         return yield* Effect.void;
       }
       const query = transaction.insert(searchIndexEntries).values({
@@ -304,7 +286,7 @@ const makeTransactionOperations = () => {
         tenantId: document.ref.tenantId,
         title: document.title,
       });
-      yield* tryDatabasePromise(query.execute.bind(query), unavailable);
+      yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
       return yield* Effect.void;
     },
   );
@@ -338,7 +320,7 @@ const makeTransactionOperations = () => {
           tenantId: mutation.ref.tenantId,
           title: '',
         });
-        yield* tryDatabasePromise(query.execute.bind(query), unavailable);
+        yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
         return yield* Effect.void;
       }
       const query = transaction
@@ -353,7 +335,7 @@ const makeTransactionOperations = () => {
           updatedAt,
         })
         .where(eq(searchIndexEntries.searchIndexEntryId, current.value.searchIndexEntryId));
-      yield* tryDatabasePromise(query.execute.bind(query), unavailable);
+      yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
       return yield* Effect.void;
     },
   );
@@ -403,7 +385,7 @@ const makeTransactionOperations = () => {
             searchProjectionRebuilds.sourceResourceType,
           ],
         });
-      yield* tryDatabasePromise(query.execute.bind(query), unavailable);
+      yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
     },
   );
 
@@ -432,7 +414,7 @@ const makeTransactionOperations = () => {
           tenantId: replacement.tenantId,
         },
       });
-      const existing = yield* tryDatabasePromise(query.execute.bind(query), unavailable);
+      const existing = yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
       return Option.some({ existing, fingerprint });
     },
   );
@@ -589,7 +571,7 @@ const makeTransactionOperations = () => {
           tenantId: input.tenantId,
         },
       });
-      const rows = yield* tryDatabasePromise(query.execute.bind(query), unavailable);
+      const rows = yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
       if (rows.length > 10_000) {
         return yield* unavailable();
       }
@@ -629,13 +611,11 @@ export const makePostgresCoreSearchProjectionStore = (
     const updatedAt = DateTime.toDateUtc(yield* DateTime.now);
     const transactionBody = (transaction: CoreTransaction) =>
       transactionOperations.applyMutationTransaction(transaction, mutation, updatedAt);
-    const runTransactionBody = EffectFunction.flow(
-      transactionBody,
-      Effect.runPromiseWith(yield* Effect.context()),
-    );
-    const execute = database.executor.transaction.bind(database.executor, runTransactionBody);
-    yield* tryDatabasePromise(execute, (error) =>
-      Schema.is(CoreSearchProjectionInvalid)(error) ? error : unavailable(error),
+    yield* database.executor.transaction(transactionBody).pipe(
+      Effect.catchDefect((defect) =>
+        isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
+      ),
+      Effect.catchTag('SqlError', (failure) => Effect.fail(unavailable(failure))),
     );
   });
   const queryCandidates: CoreSearchProjectionStoreService['queryCandidates'] = Effect.fn(
@@ -643,12 +623,12 @@ export const makePostgresCoreSearchProjectionStore = (
   )(function* queryCoreSearchCandidates(input: CoreSearchQuery) {
     const transactionBody = (transaction: CoreTransaction) =>
       transactionOperations.queryCandidatesTransaction(transaction, input);
-    const runTransactionBody = EffectFunction.flow(
-      transactionBody,
-      Effect.runPromiseWith(yield* Effect.context()),
+    const documents = yield* database.executor.transaction(transactionBody).pipe(
+      Effect.catchDefect((defect) =>
+        isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
+      ),
+      Effect.catchTag('SqlError', (failure) => Effect.fail(unavailable(failure))),
     );
-    const execute = database.executor.transaction.bind(database.executor, runTransactionBody);
-    const documents = yield* tryDatabasePromise(execute, unavailable);
     return yield* Schema.decodeUnknownEffect(Schema.Array(CoreSearchProjectionDocumentSchema))(
       documents,
     ).pipe(Effect.mapError(unavailable));
@@ -660,13 +640,11 @@ export const makePostgresCoreSearchProjectionStore = (
     const updatedAt = DateTime.toDateUtc(yield* DateTime.now);
     const transactionBody = (transaction: CoreTransaction) =>
       transactionOperations.replaceProjectionTransaction(transaction, replacement, updatedAt);
-    const runTransactionBody = EffectFunction.flow(
-      transactionBody,
-      Effect.runPromiseWith(yield* Effect.context()),
-    );
-    const execute = database.executor.transaction.bind(database.executor, runTransactionBody);
-    yield* tryDatabasePromise(execute, (error) =>
-      Schema.is(CoreSearchProjectionInvalid)(error) ? error : unavailable(error),
+    yield* database.executor.transaction(transactionBody).pipe(
+      Effect.catchDefect((defect) =>
+        isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
+      ),
+      Effect.catchTag('SqlError', (failure) => Effect.fail(unavailable(failure))),
     );
   });
   return Object.freeze({ apply, queryCandidates, replace });
