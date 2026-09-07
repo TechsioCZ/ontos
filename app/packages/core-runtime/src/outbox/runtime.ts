@@ -17,10 +17,9 @@ import {
 import {
   OutboxHandlerExecutionError,
   OutboxPayloadDecodeError,
-  OutboxPersistenceError,
   OutboxWorkerDescriptorError,
 } from './errors.ts';
-import type { OutboxClaimLostError } from './errors.ts';
+import type { OutboxClaimLostError, OutboxPersistenceError } from './errors.ts';
 import { OutboxRepository } from './repository.ts';
 import type { OutboxClaim, OutboxRepositoryService as OutboxRepositoryPort } from './repository.ts';
 
@@ -101,7 +100,7 @@ const validateCycleInput = Effect.fn('OutboxRuntime.validateCycleInput')(
     }
     const registrations = yield* Effect.try({
       catch: (error) =>
-        error instanceof OutboxWorkerDescriptorError
+        Schema.is(OutboxWorkerDescriptorError)(error)
           ? error
           : descriptorFailure('The Outbox Worker descriptor set is invalid'),
       try: () => validateOutboxWorkerRegistrations(input.registrations),
@@ -302,9 +301,7 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
         reason: 'The Outbox Message payload does not match its published schema',
       });
       const status = yield* repository.fail(claim, decodeError.reason, execution.now).pipe(
-        Effect.tapError((error) =>
-          error instanceof OutboxPersistenceError ? logUnexpectedPersistence(claim) : Effect.void,
-        ),
+        Effect.tapErrorTag('OutboxPersistenceError', () => logUnexpectedPersistence(claim)),
         (effect) => withOutcomeSpan(effect, claim, 'payload_decode_failure'),
       );
       return {
@@ -342,9 +339,7 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
           : 'The Outbox Worker handler returned a declared failure',
       });
       const status = yield* repository.fail(claim, executionError.reason, execution.now).pipe(
-        Effect.tapError((error) =>
-          error instanceof OutboxPersistenceError ? logUnexpectedPersistence(claim) : Effect.void,
-        ),
+        Effect.tapErrorTag('OutboxPersistenceError', () => logUnexpectedPersistence(claim)),
         (effect) => withOutcomeSpan(effect, claim, 'handler_failure'),
       );
       return {
@@ -356,9 +351,7 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
     }
 
     yield* repository.complete(claim, execution.now).pipe(
-      Effect.tapError((error) =>
-        error instanceof OutboxPersistenceError ? logUnexpectedPersistence(claim) : Effect.void,
-      ),
+      Effect.tapErrorTag('OutboxPersistenceError', () => logUnexpectedPersistence(claim)),
       (effect) => withOutcomeSpan(effect, claim, 'success'),
     );
     return { ...claimedState, succeeded: claimedState.succeeded + 1 };

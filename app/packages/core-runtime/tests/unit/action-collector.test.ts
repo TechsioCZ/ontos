@@ -2,7 +2,7 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
 import { createActionCollector } from '../../src/actions/collector.ts';
 
 const event = (id: string) =>
@@ -85,8 +85,8 @@ void test('rejects orphan and foreign Domain Event references', async () => {
     Effect.flip(second.addOutboxMessageInput({}, message('counter.project'))),
   );
 
-  assert.equal(foreignError._tag, 'ActionCollectorError');
-  assert.equal(orphanError._tag, 'ActionCollectorError');
+  assert.ok(Predicate.isTagged(foreignError, 'ActionCollectorError'));
+  assert.ok(Predicate.isTagged(orphanError, 'ActionCollectorError'));
 });
 
 void test('does not expose externally mutable collector arrays or captured payloads', async () => {
@@ -148,10 +148,10 @@ void test('captures one immutable JSON audit-evidence object and rejects invalid
       }).recordAuditEvidence({ checkpoint: 'started' }),
     ),
   );
-  assert.equal(repeated._tag, 'ActionCollectorError');
-  assert.equal(invalid._tag, 'ActionCollectorError');
-  assert.equal(undeclared._tag, 'ActionCollectorError');
-  assert.equal(missingSchema._tag, 'ActionCollectorError');
+  assert.ok(Predicate.isTagged(repeated, 'ActionCollectorError'));
+  assert.ok(Predicate.isTagged(invalid, 'ActionCollectorError'));
+  assert.ok(Predicate.isTagged(undeclared, 'ActionCollectorError'));
+  assert.ok(Predicate.isTagged(missingSchema, 'ActionCollectorError'));
 });
 
 void test('applies descriptor evidence policy and rejects incompatible evidence', async () => {
@@ -171,7 +171,7 @@ void test('applies descriptor evidence policy and rejects incompatible evidence'
     ),
   );
 
-  assert.equal(error._tag, 'ActionCollectorError');
+  assert.ok(Predicate.isTagged(error, 'ActionCollectorError'));
 
   const metadataCollector = makeCollector();
   await runEffectTestPromise(
@@ -207,7 +207,7 @@ void test('rejects an Outbox producer that differs from its registered Domain Ev
     ),
   );
 
-  assert.equal(error._tag, 'ActionCollectorError');
+  assert.ok(Predicate.isTagged(error, 'ActionCollectorError'));
 });
 
 void test('enforces Action-declared event payloads and producer ownership', async () => {
@@ -245,9 +245,9 @@ void test('enforces Action-declared event payloads and producer ownership', asyn
     ),
   );
 
-  assert.equal(invalidPayload._tag, 'ActionCollectorError');
-  assert.equal(invalidProducer._tag, 'ActionCollectorError');
-  assert.equal(undeclared._tag, 'ActionCollectorError');
-  assert.equal(inheritedName._tag, 'ActionCollectorError');
+  assert.ok(Predicate.isTagged(invalidPayload, 'ActionCollectorError'));
+  assert.ok(Predicate.isTagged(invalidProducer, 'ActionCollectorError'));
+  assert.ok(Predicate.isTagged(undeclared, 'ActionCollectorError'));
+  assert.ok(Predicate.isTagged(inheritedName, 'ActionCollectorError'));
   assert.equal(collector.snapshot().domainEvents.length, 0);
 });

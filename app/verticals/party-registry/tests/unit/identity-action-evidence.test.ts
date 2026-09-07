@@ -1,7 +1,7 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
@@ -44,7 +44,7 @@ const assertInvariantEvidence = (snapshot: ActionEvidenceSnapshot) => {
   assert.equal(snapshot.outboxMessages.length, 1);
 };
 
-test('Update Party records metadata-only invariant evidence with its event and outbox', () =>
+void test('Update Party records metadata-only invariant evidence with its event and outbox', () =>
   runEffectTestPromise(
     Effect.gen(function* verifyUpdateEvidence() {
       const collector = createActionCollector(
@@ -72,7 +72,7 @@ test('Update Party records metadata-only invariant evidence with its event and o
     }),
   ));
 
-test('Archive Party records metadata-only invariant evidence with its event and outbox', () =>
+void test('Archive Party records metadata-only invariant evidence with its event and outbox', () =>
   runEffectTestPromise(
     Effect.gen(function* verifyArchiveEvidence() {
       const collector = createActionCollector(
@@ -93,7 +93,7 @@ test('Archive Party records metadata-only invariant evidence with its event and 
     }),
   ));
 
-test('Unarchive Party records metadata-only invariant evidence with its event and outbox', () =>
+void test('Unarchive Party records metadata-only invariant evidence with its event and outbox', () =>
   runEffectTestPromise(
     Effect.gen(function* verifyUnarchiveEvidence() {
       const collector = createActionCollector(
@@ -114,7 +114,7 @@ test('Unarchive Party records metadata-only invariant evidence with its event an
     }),
   ));
 
-test('Unarchive review outcome commits once and replays without an unarchive event or outbox', () =>
+void test('Unarchive review outcome commits once and replays without an unarchive event or outbox', () =>
   runEffectTestPromise(
     Effect.gen(function* verifyUnarchiveConflictEvidence() {
       let calls = 0;
@@ -155,7 +155,7 @@ test('Unarchive review outcome commits once and replays without an unarchive eve
       };
       assert.deepEqual(yield* harness.runtime.runAction(request), blocked);
       const replay = yield* harness.runtime.runAction(request).pipe(Effect.flip);
-      assert.equal(replay._tag, 'ActionAlreadyCommitted');
+      assert.ok(Predicate.isTagged(replay, 'ActionAlreadyCommitted'));
       assert.equal(calls, 1);
       const snapshot = harness.snapshot();
       assert.equal(snapshot.committed.length, 1);

@@ -213,7 +213,7 @@ const installedPageCatalog = (): InstalledModuleCatalog =>
     },
   ]);
 
-test('creates, resolves, persists, revokes, and signs out a Better Auth session', async () => {
+void test('creates, resolves, persists, revokes, and signs out a Better Auth session', async () => {
   const configuration = await runEffectTestPromise(loadAuthConfig());
   const corePool = new Pool({ connectionString: configuration.connectionString });
   const coreDatabase = await runEffectTestPromise(
@@ -370,7 +370,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     const invalid = await runEffectTestPromise(
       Effect.flip(authentication.signIn(email, 'wrong-password', requestHeaders)),
     );
-    assert.equal(invalid._tag, 'InvalidCredentialsError');
+    assert.ok(Predicate.isTagged(invalid, 'InvalidCredentialsError'));
 
     const anonymousRuntime = makeShellAuthenticationApiRuntime(
       authenticationLayer,
@@ -1013,7 +1013,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
           .pipe(Effect.provide(authenticationContextLayer)),
       ),
     );
-    assert.equal(revoked._tag, 'OntosIdentityForbiddenError');
+    assert.ok(Predicate.isTagged(revoked, 'OntosIdentityForbiddenError'));
     const forbiddenModulesResponse = await unavailableHandler.handler(
       new Request(`${configuration.baseUrl}/shell/composition`, {
         headers: authenticatedHeaders,
@@ -1066,7 +1066,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
   }
 });
 
-test('selects, lists, switches, revalidates, and upgrades a multi-tenant session', async () => {
+void test('selects, lists, switches, revalidates, and upgrades a multi-tenant session', async () => {
   const multiEmail = 'better-auth-multi-tenant@example.test';
   const firstTenantId = '31000000-0000-4000-8000-000000000001';
   const secondTenantId = '31000000-0000-4000-8000-000000000002';
@@ -1738,7 +1738,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
           .pipe(Effect.provide(multiAuthenticationContextLayer)),
       ),
     );
-    assert.equal(revokedSession._tag, 'OntosIdentityForbiddenError');
+    assert.ok(Predicate.isTagged(revokedSession, 'OntosIdentityForbiddenError'));
     await runEffectTestPromise(
       coreDatabase
         .update(principalAuthBindings)
@@ -1769,7 +1769,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
           .pipe(Effect.provide(multiAuthenticationContextLayer)),
       ),
     );
-    assert.equal(sessionWithRemovedBinding._tag, 'OntosIdentityForbiddenError');
+    assert.ok(Predicate.isTagged(sessionWithRemovedBinding, 'OntosIdentityForbiddenError'));
   } finally {
     await Promise.all(handlers.map(async ({ dispose }) => await dispose()));
     await cleanup();

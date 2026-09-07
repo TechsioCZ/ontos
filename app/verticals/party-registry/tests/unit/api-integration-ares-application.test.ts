@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { DateTime, Effect, ManagedRuntime, Match, Option, Result, Schema } from 'effect';
+import { DateTime, Effect, ManagedRuntime, Match, Option, Result, Schema, Predicate } from 'effect';
 import { TestClock } from 'effect/testing';
 import {
   AresAppliedEvidenceSchema,
@@ -210,7 +210,7 @@ const makeReads = (displayName: string | null = null): AresApplyReads => ({
     }),
 });
 
-test('runs only explicitly selected standard Actions and preserves every result', async () => {
+void test('runs only explicitly selected standard Actions and preserves every result', async () => {
   const calls: string[] = [];
   const outcome = await runAresEffectTestPromise(
     applyAresObservation(request, makeInvoker(calls), { gateway, reads: makeReads() }),
@@ -220,14 +220,14 @@ test('runs only explicitly selected standard Actions and preserves every result'
     'update-party|Bearer signed-gateway-token',
     'add-party-official-identifier|Bearer signed-gateway-token',
   ]);
-  assert.equal(outcome._tag, 'AresApplyCompleted');
+  assert.ok(Predicate.isTagged(outcome, 'AresApplyCompleted'));
   assert.deepEqual(
     outcome.completed.map(({ route }) => route),
     ['PARTY_UPDATE', 'IDENTIFIER_ADD'],
   );
 });
 
-test('propagates bounded evidence and independent command delivery keys', async () => {
+void test('propagates bounded evidence and independent command delivery keys', async () => {
   const calls: string[] = [];
   const recorded: {
     readonly evidenceRef: string | undefined;
@@ -272,7 +272,7 @@ test('propagates bounded evidence and independent command delivery keys', async 
   );
 });
 
-test('stops after the first failed Action and returns a typed partial outcome', async () => {
+void test('stops after the first failed Action and returns a typed partial outcome', async () => {
   const calls: string[] = [];
   const outcome = await runAresEffectTestPromise(
     applyAresObservation(
@@ -295,10 +295,10 @@ test('stops after the first failed Action and returns a typed partial outcome', 
     ['PARTY_UPDATE'],
   );
   assert.equal(partial.failed.route, 'IDENTIFIER_ADD');
-  assert.equal(partial.failed.error._tag, 'TestFailure');
+  assert.ok(Predicate.isTagged(partial.failed.error, 'TestFailure'));
 });
 
-test('resumes a replay after a prior selected fact is already satisfied', async () => {
+void test('resumes a replay after a prior selected fact is already satisfied', async () => {
   const calls: string[] = [];
   const outcome = await runAresEffectTestPromise(
     applyAresObservation(request, makeInvoker(calls), {
@@ -308,7 +308,7 @@ test('resumes a replay after a prior selected fact is already satisfied', async 
   );
 
   assert.deepEqual(calls, ['add-party-official-identifier|Bearer signed-gateway-token']);
-  assert.equal(outcome._tag, 'AresApplyCompleted');
+  assert.ok(Predicate.isTagged(outcome, 'AresApplyCompleted'));
   assert.deepEqual(outcome.skipped, [
     { fact: 'BUSINESS_NAME', reason: 'ALREADY_SATISFIED', route: 'PARTY_UPDATE' },
   ]);
@@ -318,7 +318,7 @@ test('resumes a replay after a prior selected fact is already satisfied', async 
   );
 });
 
-test('defers when canonical revision or refreshed evidence changed', async () => {
+void test('defers when canonical revision or refreshed evidence changed', async () => {
   const calls: string[] = [];
   const revisionRequest: AresApplyRequest = {
     ...request,
@@ -348,12 +348,12 @@ test('defers when canonical revision or refreshed evidence changed', async () =>
     ),
   ]);
 
-  assert.equal(revisionOutcome._tag, 'AresApplyDeferred');
-  assert.equal(changedOutcome._tag, 'AresApplyDeferred');
+  assert.ok(Predicate.isTagged(revisionOutcome, 'AresApplyDeferred'));
+  assert.ok(Predicate.isTagged(changedOutcome, 'AresApplyDeferred'));
   assert.deepEqual(calls, []);
 });
 
-test('rejects unconfirmed or observation-mismatched selections before invoking an Action', async () => {
+void test('rejects unconfirmed or observation-mismatched selections before invoking an Action', async () => {
   const calls: string[] = [];
   const invalidRequests: readonly AresApplyRequest[] = [
     {
@@ -396,13 +396,13 @@ test('rejects unconfirmed or observation-mismatched selections before invoking a
   for (const result of results) {
     assert.equal('failure' in result, true);
     if ('failure' in result) {
-      assert.equal(result.failure instanceof AresApplySelectionInvalid, true);
+      assert.equal(Schema.is(AresApplySelectionInvalid)(result.failure), true);
     }
   }
   assert.deepEqual(calls, []);
 });
 
-test('does not accept a different street number as the observed registered address', async () => {
+void test('does not accept a different street number as the observed registered address', async () => {
   const calls: string[] = [];
   const invalidRequest: AresApplyRequest = {
     correlationId: request.correlationId,
@@ -492,7 +492,7 @@ const correctionSelection: AresApplyRequest['selections'][number] = {
   route: 'PARTY_CORRECTION',
 };
 
-test('review-authorized assertion context returns explicit Correction handoff without a write', async () => {
+void test('review-authorized assertion context returns explicit Correction handoff without a write', async () => {
   const calls: string[] = [];
   const reads = makeReads('Wrong name');
   let reviewed = false;
@@ -542,7 +542,7 @@ test('review-authorized assertion context returns explicit Correction handoff wi
   assert.deepEqual(calls, []);
 });
 
-test('governed identifier history supports ICO correction suspicion without claiming the identifier', async () => {
+void test('governed identifier history supports ICO correction suspicion without claiming the identifier', async () => {
   const calls: string[] = [];
   const [, selection] = request.selections;
   assert.ok(selection);
@@ -588,7 +588,7 @@ test('governed identifier history supports ICO correction suspicion without clai
   assert.deepEqual(calls, []);
 });
 
-test('every governed read and selected Action receives fresh audience-scoped authorization', async () => {
+void test('every governed read and selected Action receives fresh audience-scoped authorization', async () => {
   const tokens: string[] = [];
   const calls: string[] = [];
   const delegate = makeReads();
@@ -632,7 +632,7 @@ test('every governed read and selected Action receives fresh audience-scoped aut
   ]);
 });
 
-test('read denial fails before writes and preserves its declared error', async () => {
+void test('read denial fails before writes and preserves its declared error', async () => {
   const calls: string[] = [];
   const denied = {
     _tag: 'PartyDetailForbiddenProblem' as const,
@@ -651,7 +651,7 @@ test('read denial fails before writes and preserves its declared error', async (
   assert.deepEqual(calls, []);
 });
 
-test('alias and archived targets never dispatch selected writes', async () => {
+void test('alias and archived targets never dispatch selected writes', async () => {
   await Promise.all(
     (['ALIAS', 'ARCHIVED'] as const).map(async (kind) => {
       const calls: string[] = [];
@@ -694,7 +694,7 @@ test('alias and archived targets never dispatch selected writes', async () => {
   );
 });
 
-test('provider revision change alone invalidates the earlier confirmation', async () => {
+void test('provider revision change alone invalidates the earlier confirmation', async () => {
   const calls: string[] = [];
   const reads = makeReads();
   const outcome = await runAresEffectTestPromise(
@@ -712,11 +712,11 @@ test('provider revision change alone invalidates the earlier confirmation', asyn
       },
     }),
   );
-  assert.equal(outcome._tag, 'AresApplyDeferred');
+  assert.ok(Predicate.isTagged(outcome, 'AresApplyDeferred'));
   assert.deepEqual(calls, []);
 });
 
-test('retry preserves exact command payload and reports required standard recovery', async () => {
+void test('retry preserves exact command payload and reports required standard recovery', async () => {
   const payloads: unknown[] = [];
   const calls: string[] = [];
   const delegate = makeInvoker(calls, 'update-party|Bearer signed-gateway-token');
@@ -746,7 +746,7 @@ test('retry preserves exact command payload and reports required standard recove
   ]);
 });
 
-test('failed second Action stops the following supported address and retains prior commit receipt', async () => {
+void test('failed second Action stops the following supported address and retains prior commit receipt', async () => {
   const calls: string[] = [];
   const address: AresApplyRequest['selections'][number] = {
     fact: 'REGISTERED_ADDRESS',
@@ -795,7 +795,7 @@ test('failed second Action stops the following supported address and retains pri
       { gateway, reads: makeReads() },
     ),
   );
-  assert.equal(outcome._tag, 'AresApplyPartiallyCompleted');
+  assert.ok(Predicate.isTagged(outcome, 'AresApplyPartiallyCompleted'));
   assert.equal(outcome.completed.length, 1);
   assert.deepEqual(calls, [
     'update-party|Bearer signed-gateway-token',
@@ -803,7 +803,7 @@ test('failed second Action stops the following supported address and retains pri
   ]);
 });
 
-test('stale refreshed evidence and missing canonical target cannot execute enrichment', async () => {
+void test('stale refreshed evidence and missing canonical target cannot execute enrichment', async () => {
   const calls: string[] = [];
   const stale = await runAresEffectTestPromise(
     applyAresObservation(request, makeInvoker(calls), {
@@ -819,7 +819,7 @@ test('stale refreshed evidence and missing canonical target cannot execute enric
       },
     }),
   );
-  assert.equal(stale._tag, 'AresApplyDeferred');
+  assert.ok(Predicate.isTagged(stale, 'AresApplyDeferred'));
   const absent = await runAresEffectTestPromise(
     applyAresObservation({ ...request, partyRef: null }, makeInvoker(calls), {
       gateway,
@@ -830,7 +830,7 @@ test('stale refreshed evidence and missing canonical target cannot execute enric
   assert.deepEqual(calls, []);
 });
 
-test('fresh identical refresh cannot revive an expired original confirmation', async () => {
+void test('fresh identical refresh cannot revive an expired original confirmation', async () => {
   const calls: string[] = [];
   const outcome = await runAresEffectTestPromise(
     applyAresObservation(
@@ -855,7 +855,7 @@ test('fresh identical refresh cannot revive an expired original confirmation', a
   assert.deepEqual(calls, []);
 });
 
-test('a correction route is never historical-error evidence by itself', async () => {
+void test('a correction route is never historical-error evidence by itself', async () => {
   const calls: string[] = [];
   const outcome = await runAresEffectTestPromise(
     applyAresObservation({ ...request, selections: [correctionSelection] }, makeInvoker(calls), {

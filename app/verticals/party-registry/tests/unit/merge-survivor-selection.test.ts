@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Match } from 'effect';
+import { Match, Predicate } from 'effect';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import type {
   MergeSurvivorCandidate,
@@ -51,7 +51,7 @@ const expectSelected = (result: CanonicalSurvivorSelection) =>
     Match.exhaustive,
   );
 
-test('blocks survivor selection when authoritative identity truth is unresolved', () => {
+void test('blocks survivor selection when authoritative identity truth is unresolved', () => {
   const result = selectCanonicalSurvivor(
     confirmedSelection([
       candidate('party-a'),
@@ -66,7 +66,7 @@ test('blocks survivor selection when authoritative identity truth is unresolved'
   });
 });
 
-test('uses the governed hierarchy before reference count, lifecycle, completeness, or age', () => {
+void test('uses the governed hierarchy before reference count, lifecycle, completeness, or age', () => {
   const result = selectCanonicalSurvivor(
     confirmedSelection([
       candidate('well-established', {
@@ -84,7 +84,7 @@ test('uses the governed hierarchy before reference count, lifecycle, completenes
     ]),
   );
 
-  assert.equal(result._tag, 'CanonicalSurvivorSelected');
+  assert.ok(Predicate.isTagged(result, 'CanonicalSurvivorSelected'));
   const selected = expectSelected(result);
   assert.deepEqual(selected.survivorPartyRef, party('authoritative'));
   assert.equal(selected.decidingCriterion, 'AUTHORITATIVE_EVIDENCE');
@@ -96,7 +96,7 @@ test('uses the governed hierarchy before reference count, lifecycle, completenes
   );
 });
 
-test('uses reference stability, lifecycle, completeness, age, then resource identity deterministically', () => {
+void test('uses reference stability, lifecycle, completeness, age, then resource identity deterministically', () => {
   const referenceWinner = selectCanonicalSurvivor(
     confirmedSelection([
       candidate('a', { referenceStabilityRank: 1 }),
@@ -113,7 +113,7 @@ test('uses reference stability, lifecycle, completeness, age, then resource iden
   assert.equal(selected.decidingCriterion, 'STABLE_RESOURCE_IDENTITY');
 });
 
-test('rejects a cross-tenant merge set before selection', () => {
+void test('rejects a cross-tenant merge set before selection', () => {
   const result = selectCanonicalSurvivor(
     confirmedSelection([
       candidate('party-a'),
@@ -133,35 +133,37 @@ test('rejects a cross-tenant merge set before selection', () => {
   });
 });
 
-test('rejects selection without an explicit confirmed duplicate decision and matching evidence set', () => {
+void test('rejects selection without an explicit confirmed duplicate decision and matching evidence set', () => {
   const candidates = [candidate('party-a'), candidate('party-b')];
   assert.deepEqual(selectCanonicalSurvivor({ candidates, confirmation: null }), {
     _tag: 'SurvivorSelectionBlocked',
     blocker: 'DUPLICATE_SET_NOT_CONFIRMED',
     conflictingPartyRefs: [party('party-a'), party('party-b')],
   });
-  assert.equal(
-    selectCanonicalSurvivor({
-      candidates,
-      confirmation: {
-        confirmedDuplicateDecisionId: ConfirmedDuplicateDecisionIdSchema.make('decision-1'),
-        confirmedPartyRefs: [party('party-a')],
-        decisionActorPrincipalId: DecisionActorPrincipalIdSchema.make('principal-1'),
-        evidenceRefs: ['evidence-1'],
-      },
-    })._tag,
-    'SurvivorSelectionBlocked',
+  assert.ok(
+    Predicate.isTagged(
+      selectCanonicalSurvivor({
+        candidates,
+        confirmation: {
+          confirmedDuplicateDecisionId: ConfirmedDuplicateDecisionIdSchema.make('decision-1'),
+          confirmedPartyRefs: [party('party-a')],
+          decisionActorPrincipalId: DecisionActorPrincipalIdSchema.make('principal-1'),
+          evidenceRefs: ['evidence-1'],
+        },
+      }),
+      'SurvivorSelectionBlocked',
+    ),
   );
 });
 
-test('retains immutable evaluated values and explains progressive elimination for three candidates', () => {
+void test('retains immutable evaluated values and explains progressive elimination for three candidates', () => {
   const candidates = [
     candidate('party-a', { authoritativeEvidenceRank: 3, referenceStabilityRank: 2 }),
     candidate('party-b', { authoritativeEvidenceRank: 3, referenceStabilityRank: 1 }),
     candidate('party-c', { authoritativeEvidenceRank: 1, referenceStabilityRank: 100 }),
   ];
   const result = selectCanonicalSurvivor(confirmedSelection(candidates));
-  assert.equal(result._tag, 'CanonicalSurvivorSelected');
+  assert.ok(Predicate.isTagged(result, 'CanonicalSurvivorSelected'));
   const selected = expectSelected(result);
   const authority = selected.evidenceChain.find(
     ({ criterion }) => criterion === 'AUTHORITATIVE_EVIDENCE',

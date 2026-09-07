@@ -2,7 +2,7 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
 import { defineAction } from '../../src/actions/definition.ts';
 import { ACTION_RUNTIME_STAGES } from '../../src/actions/runtime.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -65,7 +65,7 @@ const request = {
   transport: { correlationId: 'action-harness-test', idempotencyKey: 'increment-once' },
 } as const;
 
-test('runs the real Action lifecycle and preserves committed replay semantics', async () => {
+void test('runs the real Action lifecycle and preserves committed replay semantics', async () => {
   const harness = makeActionTestHarness({
     actionPermission: 'allowed',
     tenantPermission: 'allowed',
@@ -75,7 +75,7 @@ test('runs the real Action lifecycle and preserves committed replay semantics', 
   const replay = await runEffectTestPromise(harness.runtime.runAction(request).pipe(Effect.flip));
   const snapshot = harness.snapshot();
 
-  assert.equal(replay._tag, 'ActionAlreadyCommitted');
+  assert.ok(Predicate.isTagged(replay, 'ActionAlreadyCommitted'));
   assert.deepEqual(snapshot.stages.slice(0, ACTION_RUNTIME_STAGES.length), ACTION_RUNTIME_STAGES);
   assert.equal(snapshot.invocations.length, 1);
   assert.equal(snapshot.invocations[0]?.status, 'succeeded');
@@ -85,12 +85,12 @@ test('runs the real Action lifecycle and preserves committed replay semantics', 
   assert.equal(snapshot.committed[0]?.evidence.outboxMessages.length, 1);
 });
 
-test('defaults authorization closed and never starts a transaction for a denial', async () => {
+void test('defaults authorization closed and never starts a transaction for a denial', async () => {
   const harness = makeActionTestHarness();
   const denied = await runEffectTestPromise(harness.runtime.runAction(request).pipe(Effect.flip));
   const snapshot = harness.snapshot();
 
-  assert.equal(denied._tag, 'ActionPermissionDenied');
+  assert.ok(Predicate.isTagged(denied, 'ActionPermissionDenied'));
   assert.equal(snapshot.invocations.length, 1);
   assert.equal(snapshot.invocations[0]?.status, 'rejected');
   assert.equal(snapshot.permissionDenials.length, 1);
@@ -98,7 +98,7 @@ test('defaults authorization closed and never starts a transaction for a denial'
   assert.equal(snapshot.stages.includes('handler_executed'), false);
 });
 
-test('substitutes typed owner services without replacing the private handler', async () => {
+void test('substitutes typed owner services without replacing the private handler', async () => {
   interface CounterServices {
     readonly increment: (amount: number) => Effect.Effect<number>;
   }
@@ -156,7 +156,7 @@ test('substitutes typed owner services without replacing the private handler', a
   assert.equal(harness.snapshot().committed.length, 1);
 });
 
-test('rejects missing idempotency before creating an invocation', async () => {
+void test('rejects missing idempotency before creating an invocation', async () => {
   const harness = makeActionTestHarness({
     actionPermission: 'allowed',
     tenantPermission: 'allowed',
@@ -172,6 +172,6 @@ test('rejects missing idempotency before creating an invocation', async () => {
       .pipe(Effect.flip),
   );
 
-  assert.equal(failure._tag, 'ActionIdempotencyKeyRequired');
+  assert.ok(Predicate.isTagged(failure, 'ActionIdempotencyKeyRequired'));
   assert.equal(harness.snapshot().invocations.length, 0);
 });

@@ -3,7 +3,7 @@ import { ConnectionError, SqlError, UnknownError } from 'effect/unstable/sql/Sql
 import assert from 'node:assert/strict';
 // @effect-diagnostics asyncFunction:off globalDateInEffect:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { and, eq } from 'drizzle-orm';
-import { Cause, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Schema, Predicate } from 'effect';
 import { randomUUID } from 'node:crypto';
 import test, { after, before } from 'node:test';
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
@@ -71,8 +71,6 @@ const TestDomainRejected = Schema.TaggedError<TestDomainRejectedSelf>()('TestDom
 });
 
 const TestStateIdSchema = Schema.String.pipe(Schema.brand('TestStateId'));
-const FailureTagSchema = Schema.Struct({ _tag: Schema.String });
-const decodeFailureTag = Schema.decodeUnknownOption(FailureTagSchema);
 const ActionPolicyDeniedFailureSchema = Schema.TaggedStruct('ActionPolicyDenied', {
   policyReasonCode: Schema.String,
   reason: Schema.String,
@@ -456,17 +454,8 @@ const makeRegistration = ({
     (transaction) => Effect.succeed({ transaction }),
   );
 
-const failureTag = <Error>(exit: Exit.Exit<unknown, Error>): string | undefined => {
-  if (Exit.isSuccess(exit)) {
-    return undefined;
-  }
-  return Option.getOrUndefined(
-    Option.map(
-      Option.flatMap(Cause.findErrorOption(exit.cause), decodeFailureTag),
-      (failure) => failure._tag,
-    ),
-  );
-};
+const hasFailure = <Error>(exit: Exit.Exit<unknown, Error>, tag: string): boolean =>
+  Exit.isFailure(exit) && Option.exists(Cause.findErrorOption(exit.cause), Predicate.isTagged(tag));
 
 void test('rechecks business module state under the tenant lock and retries after Core recovery', async () => {
   await databasePromise(async (database) => {
@@ -559,7 +548,7 @@ void test('rechecks business module state under the tenant lock and retries afte
     );
     await runEffectTestPromise(Deferred.succeed(continuePolicy, null));
     const denied = await firstAttempt;
-    assert.equal(failureTag(denied), 'ModuleStateDeniedError');
+    assert.ok(hasFailure(denied, 'ModuleStateDeniedError'));
     assert.equal(handlerExecutions, 0);
 
     const [openInvocation] = await runEffectTestPromise(
@@ -854,7 +843,7 @@ void test('atomically rejects denied global and same-owner MicroVertical Policie
       const failure = Exit.isFailure(exit)
         ? Option.flatMap(Cause.findErrorOption(exit.cause), decodeActionPolicyDeniedFailure)
         : Option.none();
-      assert.equal(failureTag(exit), 'ActionPolicyDenied');
+      assert.ok(hasFailure(exit, 'ActionPolicyDenied'));
       if (Option.isSome(failure)) {
         assert.equal(failure.value.reason, scenario.reason);
         assert.equal(failure.value.policyReasonCode, scenario.reasonCode);
@@ -968,9 +957,8 @@ void test('rolls back every denied-Policy finalization persistence failure', asy
           .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId)),
       );
 
-      assert.equal(
-        failureTag(exit),
-        'ActionInvocationPersistenceError',
+      assert.ok(
+        hasFailure(exit, 'ActionInvocationPersistenceError'),
         Exit.isFailure(exit) ? Cause.pretty(exit.cause) : 'success',
       );
       assert.equal(handlerExecutions, 0);
@@ -1077,7 +1065,7 @@ void test('rolls back domain rejection, evidence persistence failure, and orphan
                 .where(eq(domainEvents.actionInvocationId, invocationId)),
             );
 
-      assert.equal(failureTag(exit), scenario.expectedTag);
+      assert.ok(hasFailure(exit, scenario.expectedTag));
       assert.equal(states.length, 0);
       assert.equal(invocations[0]?.status, 'running');
       assert.equal(invocations[0]?.completedAt, null);
@@ -1174,7 +1162,7 @@ void test('rolls back every individual success-evidence persistence failure', as
         ]),
       );
 
-      assert.equal(failureTag(exit), 'ActionTransactionError', stage);
+      assert.ok(hasFailure(exit, 'ActionTransactionError'), stage);
       assert.equal(states.length, 0, stage);
       assert.equal(invocation?.status, 'running', stage);
       assert.equal(invocation?.completedAt, null, stage);
@@ -1237,8 +1225,8 @@ void test('keeps Policy rejection terminal and deduplicates repeated and concurr
         .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId)),
     );
 
-    assert.equal(failureTag(first), 'ActionPolicyDenied');
-    assert.equal(failureTag(retry), 'ActionInvocationStateError');
+    assert.ok(hasFailure(first, 'ActionPolicyDenied'));
+    assert.ok(hasFailure(retry, 'ActionInvocationStateError'));
     assert.equal(evaluations, 1);
     assert.equal(handlerExecutions, 0);
     assert.equal(invocation.status, 'rejected');
@@ -1290,7 +1278,10 @@ void test('keeps Policy rejection terminal and deduplicates repeated and concurr
         .where(eq(auditEvents.actionInvocationId, concurrentInvocation.actionInvocationId)),
     );
 
-    assert.deepEqual(concurrent.map(failureTag), ['ActionPolicyDenied', 'ActionPolicyDenied']);
+    assert.equal(concurrent.length, 2);
+    for (const outcome of concurrent) {
+      assert.ok(hasFailure(outcome, 'ActionPolicyDenied'));
+    }
     assert.equal(concurrentEvaluations, 2);
     assert.equal(handlerExecutions, 0);
     assert.equal(concurrentInvocation.status, 'rejected');
@@ -1369,7 +1360,7 @@ void test('never lets a losing Policy denial replace a running or successful inv
     );
 
     assert.equal(successResult.value, 'same');
-    assert.equal(failureTag(rejectedExit), 'ActionInvocationPersistenceError');
+    assert.ok(hasFailure(rejectedExit, 'ActionInvocationPersistenceError'));
     assert.equal(invocation.status, 'succeeded');
     assert.equal(audits.filter((row) => row.eventType === 'action.rejected').length, 0);
   });
@@ -1433,9 +1424,11 @@ void test('serializes concurrent requests and enforces committed, open-retry, an
 
         assert.equal(executions, 1);
         assert.equal(concurrentResults.filter(Exit.isSuccess).length, 1);
-        assert.deepEqual(concurrentResults.filter(Exit.isFailure).map(failureTag), [
-          'ActionAlreadyCommitted',
-        ]);
+        const failedResults = concurrentResults.filter(Exit.isFailure);
+        assert.equal(failedResults.length, 1);
+        for (const outcome of failedResults) {
+          assert.ok(hasFailure(outcome, 'ActionAlreadyCommitted'));
+        }
 
         const committedRetry = yield* Effect.exit(
           runtime.runAction({
@@ -1447,7 +1440,7 @@ void test('serializes concurrent requests and enforces committed, open-retry, an
             },
           }),
         );
-        assert.equal(failureTag(committedRetry), 'ActionAlreadyCommitted');
+        assert.ok(hasFailure(committedRetry, 'ActionAlreadyCommitted'));
         assert.equal(executions, 1);
 
         const conflict = yield* Effect.exit(
@@ -1456,7 +1449,7 @@ void test('serializes concurrent requests and enforces committed, open-retry, an
             payload: { value: 'different' },
           }),
         );
-        assert.equal(failureTag(conflict), 'ActionRequestHashConflict');
+        assert.ok(hasFailure(conflict, 'ActionRequestHashConflict'));
 
         const openKey = 'open-retry';
         const openModule = `test.open-retry.${tenantId}`;
@@ -1472,7 +1465,7 @@ void test('serializes concurrent requests and enforces committed, open-retry, an
             transport: transport(openKey, openModule),
           }),
         );
-        assert.equal(failureTag(rejected), 'TestDomainRejected');
+        assert.ok(hasFailure(rejected, 'TestDomainRejected'));
 
         const retried = yield* runtime.runAction({
           payload: { value: 'retryable' },
@@ -1619,7 +1612,7 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
         }),
       ),
     );
-    assert.equal(failureTag(first), 'ActionCommitIndeterminate');
+    assert.ok(hasFailure(first, 'ActionCommitIndeterminate'));
 
     const resolvingRuntime = makeActionRuntime(
       database,
@@ -1696,10 +1689,10 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
         .where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
     );
 
-    assert.equal(failureTag(committedResolution), 'ActionAlreadyCommitted');
-    assert.equal(failureTag(unauthorizedResolution), 'ActionInvocationNotFound');
-    assert.equal(failureTag(unavailableResolution), 'ActionCommitIndeterminate');
-    assert.equal(failureTag(resolved), 'ActionAlreadyCommitted');
+    assert.ok(hasFailure(committedResolution, 'ActionAlreadyCommitted'));
+    assert.ok(hasFailure(unauthorizedResolution, 'ActionInvocationNotFound'));
+    assert.ok(hasFailure(unavailableResolution, 'ActionCommitIndeterminate'));
+    assert.ok(hasFailure(resolved, 'ActionAlreadyCommitted'));
     assert.equal(invocations[0]?.status, 'succeeded');
     assert.equal(states.length, 1);
 
@@ -1740,7 +1733,7 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
         }),
       ),
     );
-    assert.equal(failureTag(openFirst), 'ActionCommitIndeterminate');
+    assert.ok(hasFailure(openFirst, 'ActionCommitIndeterminate'));
 
     const openInvocations = await runEffectTestPromise(
       database.executor
@@ -1771,7 +1764,7 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
         .where(eq(tenantModuleStates.moduleKey, openModuleStateKey)),
     );
 
-    assert.equal(openResolution._tag, 'ActionCommitOpen');
+    assert.ok(Predicate.isTagged(openResolution, 'ActionCommitOpen'));
     assert.equal(openResolved.value, 'rolled-back-with-lost-ack');
     assert.equal(openStates.length, 1);
   });
@@ -1869,7 +1862,7 @@ void test('persists no invocation or evidence for every non-writable business mo
           }),
         ),
       );
-      assert.equal(failureTag(exit), 'ModuleStateDeniedError', state);
+      assert.ok(hasFailure(exit, 'ModuleStateDeniedError'), state);
       const invocations = await runEffectTestPromise(
         database.executor
           .select()
@@ -1901,7 +1894,7 @@ void test('persists no invocation or evidence for every non-writable business mo
         }),
       ),
     );
-    assert.equal(failureTag(missingExit), 'ModuleStateDeniedError');
+    assert.ok(hasFailure(missingExit, 'ModuleStateDeniedError'));
     assert.equal(handlerExecutions, 1);
   });
 });

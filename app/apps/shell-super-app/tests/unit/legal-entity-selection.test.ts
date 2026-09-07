@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from '@rstest/core';
 import { ContextAccess, LegalEntityContext } from '@app/core-runtime';
 import type { ContextAccessService, LegalEntityContextService } from '@app/core-runtime';
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Predicate } from 'effect';
 import {
   resolveAuthorizedLegalEntities,
   validateAuthorizedLegalEntity,
@@ -110,7 +110,7 @@ test('fails closed for authorization uncertainty and validates a switch independ
       ),
     ),
   );
-  assert.equal(unavailable._tag, 'LegalEntitySelectionUnavailableError');
+  assert.ok(Predicate.isTagged(unavailable, 'LegalEntitySelectionUnavailableError'));
   assert.deepEqual(
     await runEffectTestPromise(
       provideSelectionServices(

@@ -1,7 +1,7 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { and, eq } from 'drizzle-orm';
-import { Effect, Exit } from 'effect';
+import { Effect, Exit, Predicate } from 'effect';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -163,7 +163,7 @@ void test('batches tenant-isolated states once, rejects malformed/unavailable re
       const quarantined = await runEffectTestPromise(
         Effect.flip(gate.check(tenantTwoSnapshot, read)),
       );
-      assert.equal(quarantined._tag, 'ModuleStateDeniedError');
+      assert.ok(Predicate.isTagged(quarantined, 'ModuleStateDeniedError'));
 
       const missingDescriptor = defineTenantModuleEntrypoint({
         access: 'read',
@@ -178,7 +178,7 @@ void test('batches tenant-isolated states once, rejects malformed/unavailable re
       const missing = await runEffectTestPromise(
         Effect.flip(gate.check(missingSnapshot, missingDescriptor)),
       );
-      assert.equal(missing._tag, 'ModuleStateDeniedError');
+      assert.ok(Predicate.isTagged(missing, 'ModuleStateDeniedError'));
 
       await runEffectTestPromise(
         database.executor.transaction((transaction) =>
@@ -201,7 +201,7 @@ void test('batches tenant-isolated states once, rejects malformed/unavailable re
           Effect.flip(gate.recheckWrite(transaction, tenantOne, write)),
         ),
       );
-      assert.equal(lockedDenial._tag, 'ModuleStateDeniedError');
+      assert.ok(Predicate.isTagged(lockedDenial, 'ModuleStateDeniedError'));
 
       const unavailable = await runEffectTestPromise(
         Effect.flip(
@@ -211,7 +211,7 @@ void test('batches tenant-isolated states once, rejects malformed/unavailable re
           ),
         ),
       );
-      assert.equal(unavailable._tag, 'ModuleStateCheckUnavailableError');
+      assert.ok(Predicate.isTagged(unavailable, 'ModuleStateCheckUnavailableError'));
       assert.doesNotMatch(unavailable.reason, /secret|db failure/u);
 
       const malformed = await runEffectTestPromise(
@@ -222,7 +222,7 @@ void test('batches tenant-isolated states once, rejects malformed/unavailable re
           ),
         ),
       );
-      assert.equal(malformed._tag, 'ModuleStateCheckUnavailableError');
+      assert.ok(Predicate.isTagged(malformed, 'ModuleStateCheckUnavailableError'));
       assert.doesNotMatch(malformed.reason, /corrupt|storage/u);
     } finally {
       await runEffectTestPromise(

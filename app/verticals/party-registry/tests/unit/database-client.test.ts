@@ -2,10 +2,10 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import { acquirePoolResource, makePartyDatabase } from '../../src/db/client.ts';
 
-test('finalizes the Party Registry pool when its Effect scope closes', async () => {
+void test('finalizes the Party Registry pool when its Effect scope closes', async () => {
   let finalized = false;
   await runEffectTestPromise(
     Effect.scoped(
@@ -20,7 +20,7 @@ test('finalizes the Party Registry pool when its Effect scope closes', async () 
   assert.equal(finalized, true);
 });
 
-test('keeps Party Registry pool acquisition failure in the typed error channel', async () => {
+void test('keeps Party Registry pool acquisition failure in the typed error channel', async () => {
   const error = await runEffectTestPromise(
     Effect.flip(
       Effect.scoped(
@@ -39,6 +39,6 @@ test('keeps Party Registry pool acquisition failure in the typed error channel',
       ),
     ),
   );
-  assert.equal(error._tag, 'PartyDatabaseConnectionError');
+  assert.ok(Predicate.isTagged(error, 'PartyDatabaseConnectionError'));
   assert.equal(error.reason, 'Unable to initialize the Party Registry PostgreSQL connection pool');
 });

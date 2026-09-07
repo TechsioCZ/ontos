@@ -226,7 +226,7 @@ void test('deduplicates one batch, reuses an immutable snapshot, and fails undec
   const failure = await runEffectTestPromise(
     Effect.flip(checkModuleEntrypoint(snapshot, undeclared)),
   );
-  assert.equal(failure._tag, 'ModuleStateCheckUnavailableError');
+  assert.ok(Predicate.isTagged(failure, 'ModuleStateCheckUnavailableError'));
   const undeclaredSameModule = defineTenantModuleEntrypoint({
     access: 'write',
     authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
@@ -237,7 +237,7 @@ void test('deduplicates one batch, reuses an immutable snapshot, and fails undec
   const sameModuleFailure = await runEffectTestPromise(
     Effect.flip(checkModuleEntrypoint(snapshot, undeclaredSameModule)),
   );
-  assert.equal(sameModuleFailure._tag, 'ModuleStateCheckUnavailableError');
+  assert.ok(Predicate.isTagged(sameModuleFailure, 'ModuleStateCheckUnavailableError'));
   assert.equal(reads, 1);
 });
 
@@ -334,7 +334,7 @@ void test('the gateway rejects missing trusted principal context before state ac
   const failure = await runEffectTestPromise(
     Effect.flip(makeModuleEntrypointGateway(gate).prepareSnapshotInput({}, [descriptor])),
   );
-  assert.equal(failure._tag, 'ModuleStateCheckUnavailableError');
+  assert.ok(Predicate.isTagged(failure, 'ModuleStateCheckUnavailableError'));
   assert.equal(reads, 0);
 });
 
@@ -476,7 +476,7 @@ void test('gates every future entrypoint category before its fake implementation
     denied.map(async (entrypoint) => await runEffectTestPromise(Effect.flip(run(entrypoint)))),
   );
   for (const failure of deniedFailures) {
-    assert.equal(failure._tag, 'ModuleStateDeniedError');
+    assert.ok(Predicate.isTagged(failure, 'ModuleStateDeniedError'));
   }
   assert.equal(authorizationCalls, allowed.length);
   assert.equal(loadCalls, allowed.length);
@@ -522,7 +522,7 @@ void test('the gateway never evaluates authorization or lazy implementation on d
       }),
     ),
   );
-  assert.equal(failure._tag, 'ModuleStateDeniedError');
+  assert.ok(Predicate.isTagged(failure, 'ModuleStateDeniedError'));
   assert.equal(authorizationCalls, 0);
   assert.equal(loadFactoryCalls, 0);
   assert.equal(loadCalls, 0);
@@ -540,5 +540,5 @@ void test('a missing row is a definite denial rather than an unavailable read', 
   const failure = await runEffectTestPromise(
     Effect.flip(checkModuleEntrypoint(snapshot, descriptor)),
   );
-  assert.equal(failure._tag, 'ModuleStateDeniedError');
+  assert.ok(Predicate.isTagged(failure, 'ModuleStateDeniedError'));
 });

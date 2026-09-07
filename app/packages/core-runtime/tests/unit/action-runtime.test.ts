@@ -450,7 +450,7 @@ const makeRepositoryFailures = async () => {
   return { cause, persistenceFailure, transactionFailure };
 };
 
-test('repository constructors retain original causes across Effect Cause propagation', async () => {
+void test('repository constructors retain original causes across Effect Cause propagation', async () => {
   const { cause, persistenceFailure, transactionFailure } = await makeRepositoryFailures();
   const propagatedTransaction = await runEffectTestPromise(
     Effect.flip(Effect.failCause(Cause.fail(transactionFailure))),
@@ -467,14 +467,14 @@ test('repository constructors retain original causes across Effect Cause propaga
   );
 });
 
-test('public error classes expose no retained-cause accessors', () => {
+void test('public error classes expose no retained-cause accessors', () => {
   for (const errorClass of [ActionTransactionError, ActionInvocationPersistenceError]) {
     assert.equal('withCause' in errorClass, false);
     assert.equal('causeOf' in errorClass, false);
   }
 });
 
-test('repository causes are absent from reflection, JSON, and Schema encoding', async () => {
+void test('repository causes are absent from reflection, JSON, and Schema encoding', async () => {
   const { persistenceFailure, transactionFailure } = await makeRepositoryFailures();
   const publicTransaction = new ActionTransactionError({
     code: transactionFailure.code,
@@ -502,7 +502,7 @@ test('repository causes are absent from reflection, JSON, and Schema encoding', 
   });
 });
 
-test('repository cause readers reject foreign objects carrying the former cause property', () => {
+void test('repository cause readers reject foreign objects carrying the former cause property', () => {
   const formerCauseProperty = ['ontos', 'Repository', 'Failure', 'Cause'].join('');
   const cause = new Error('foreign defect');
   const transactionFailure = Object.assign(
@@ -574,7 +574,7 @@ const registration = () =>
       }),
   );
 
-test('executes the complete stage order with transaction ownership and success evidence', async () => {
+void test('executes the complete stage order with transaction ownership and success evidence', async () => {
   const harness = makeHarness();
   const result = await runEffectTestPromise(
     harness.runtime.runAction({
@@ -612,7 +612,7 @@ test('executes the complete stage order with transaction ownership and success e
   });
 });
 
-test('hashes the encoded representation of decoded DateTime and Option values', async () => {
+void test('hashes the encoded representation of decoded DateTime and Option values', async () => {
   const occurredAt = '2026-09-07T10:30:00.000Z';
   const payloadSchema = Schema.Struct({
     note: Schema.OptionFromNullOr(Schema.String),
@@ -679,7 +679,7 @@ test('hashes the encoded representation of decoded DateTime and Option values', 
   );
 });
 
-test('uses a resolver-branded recovery only for the exact support-stop Action and still checks permission', async () => {
+void test('uses a resolver-branded recovery only for the exact support-stop Action and still checks permission', async () => {
   const recoveryPrincipal = await runEffectTestPromise(
     supportRecoveryPrincipalContextResolverFromRepository({
       load: () =>
@@ -743,7 +743,7 @@ test('uses a resolver-branded recovery only for the exact support-stop Action an
         .pipe(providePrincipalManagementRepository),
     ),
   );
-  assert.equal(denied._tag, 'ActionPermissionDenied');
+  assert.ok(Predicate.isTagged(denied, 'ActionPermissionDenied'));
   assert.deepEqual(deniedHarness.permissionCounts(), {
     permissionCheckCount: 1,
     rejectionCount: 1,
@@ -766,7 +766,7 @@ test('uses a resolver-branded recovery only for the exact support-stop Action an
         .pipe(providePrincipalManagementRepository),
     ),
   );
-  assert.equal(wrongCheckpoint._tag, 'ActionTrustedContextValidationError');
+  assert.ok(Predicate.isTagged(wrongCheckpoint, 'ActionTrustedContextValidationError'));
 
   const wrongAction = await runEffectTestPromise(
     Effect.flip(
@@ -778,10 +778,10 @@ test('uses a resolver-branded recovery only for the exact support-stop Action an
       }),
     ),
   );
-  assert.equal(wrongAction._tag, 'ActionTrustedContextValidationError');
+  assert.ok(Predicate.isTagged(wrongAction, 'ActionTrustedContextValidationError'));
 });
 
-test('fails business Actions closed before invocation, permission, Policy, or handler access', async () => {
+void test('fails business Actions closed before invocation, permission, Policy, or handler access', async () => {
   await forEachSequential(
     (
       [
@@ -840,7 +840,7 @@ test('fails business Actions closed before invocation, permission, Policy, or ha
           }),
         ),
       );
-      assert.equal(failure._tag, 'ModuleStateDeniedError', state);
+      assert.ok(Predicate.isTagged(failure, 'ModuleStateDeniedError'), state);
       assert.equal(handlerCalls, 0);
       assert.equal(policyCalls, 0);
       assert.deepEqual(harness.counts(), {
@@ -862,7 +862,7 @@ test('fails business Actions closed before invocation, permission, Policy, or ha
   );
 });
 
-test('distinguishes unavailable early checks and rolls back a denied locked recheck', async () => {
+void test('distinguishes unavailable early checks and rolls back a denied locked recheck', async () => {
   const action = defineAction(
     {
       accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'stock.read.v1' },
@@ -899,7 +899,7 @@ test('distinguishes unavailable early checks and rolls back a denied locked rech
       }),
     ),
   );
-  assert.equal(unavailableFailure._tag, 'ModuleStateCheckUnavailableError');
+  assert.ok(Predicate.isTagged(unavailableFailure, 'ModuleStateCheckUnavailableError'));
   assert.equal(unavailable.counts().createCount, 0);
 
   const locked = makeHarness({ lockedModuleState: 'denied' });
@@ -913,7 +913,7 @@ test('distinguishes unavailable early checks and rolls back a denied locked rech
       }),
     ),
   );
-  assert.equal(lockedFailure._tag, 'ModuleStateDeniedError');
+  assert.ok(Predicate.isTagged(lockedFailure, 'ModuleStateDeniedError'));
   assert.deepEqual(locked.gateCounts(), {
     handlerResolutionCount: 0,
     moduleStateReadCount: 1,
@@ -927,7 +927,7 @@ test('distinguishes unavailable early checks and rolls back a denied locked rech
   });
 });
 
-test('allows an explicitly authorized Action before Policy evaluation', async () => {
+void test('allows an explicitly authorized Action before Policy evaluation', async () => {
   const harness = makeHarness({ permissionDecision: 'allowed' });
   const result = await runEffectTestPromise(
     harness.runtime.runAction({
@@ -946,7 +946,7 @@ test('allows an explicitly authorized Action before Policy evaluation', async ()
   assert.equal(harness.counts().transactionCount, 1);
 });
 
-test('requires a declared tenant role independently from the Action executor relation', async () => {
+void test('requires a declared tenant role independently from the Action executor relation', async () => {
   const tenantAuthorizedRegistration = defineAction(
     {
       accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'identity.read.v1' },
@@ -993,7 +993,7 @@ test('requires a declared tenant role independently from the Action executor rel
           }),
         ),
       );
-      assert.equal(failure._tag, expectedTag);
+      assert.ok(Predicate.isTagged(failure, expectedTag));
       assert.equal(harness.counts().transitionCount, 0);
     },
   );
@@ -1013,7 +1013,7 @@ test('requires a declared tenant role independently from the Action executor rel
   assert.equal(allowed.counts().transitionCount, 1);
 });
 
-test('accepts every Party write authority as an explicit tenant permission', async () => {
+void test('accepts every Party write authority as an explicit tenant permission', async () => {
   const partyPermissions = [
     'manage_party_identity',
     'manage_party_relationships',
@@ -1073,7 +1073,7 @@ test('accepts every Party write authority as an explicit tenant permission', asy
   );
 });
 
-test('canonicalizes every resolved tenant permission target for hash and evidence', async () => {
+void test('canonicalizes every resolved tenant permission target for hash and evidence', async () => {
   const action = defineAction(
     {
       accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'identity.read.v1' },
@@ -1136,7 +1136,7 @@ test('canonicalizes every resolved tenant permission target for hash and evidenc
   assert.deepEqual(second.flushed[0]?.transport, first.flushed[0]?.transport);
 });
 
-test('authorizes Counterparty creation against the trusted Legal Entity before Policy and transaction', async () => {
+void test('authorizes Counterparty creation against the trusted Legal Entity before Policy and transaction', async () => {
   let handlerCalls = 0;
   let policyCalls = 0;
   const action = defineAction(
@@ -1194,7 +1194,7 @@ test('authorizes Counterparty creation against the trusted Legal Entity before P
       }),
     ),
   );
-  assert.equal(failure._tag, 'ActionPermissionDenied');
+  assert.ok(Predicate.isTagged(failure, 'ActionPermissionDenied'));
   assert.equal(policyCalls, 0);
   assert.equal(handlerCalls, 0);
   assert.equal(denied.counts().transactionCount, 0);
@@ -1223,7 +1223,7 @@ test('authorizes Counterparty creation against the trusted Legal Entity before P
       }),
     ),
   );
-  assert.equal(unavailableFailure._tag, 'ActionPermissionCheckError');
+  assert.ok(Predicate.isTagged(unavailableFailure, 'ActionPermissionCheckError'));
   assert.equal(unavailable.rejections.length, 0);
   assert.equal(unavailable.counts().transactionCount, 0);
   assert.equal(unavailable.stages.includes('permission_checked'), false);
@@ -1251,7 +1251,7 @@ test('authorizes Counterparty creation against the trusted Legal Entity before P
   );
 });
 
-test('authorizes the resolved Resource target before Policy, transaction, and handler', async () => {
+void test('authorizes the resolved Resource target before Policy, transaction, and handler', async () => {
   let handlerCalls = 0;
   let policyCalls = 0;
   const action = defineAction(
@@ -1325,7 +1325,7 @@ test('authorizes the resolved Resource target before Policy, transaction, and ha
     ),
   );
 
-  assert.equal(failure._tag, 'ActionPermissionDenied');
+  assert.ok(Predicate.isTagged(failure, 'ActionPermissionDenied'));
   assert.equal(policyCalls, 0);
   assert.equal(handlerCalls, 0);
   assert.equal(denied.counts().transactionCount, 0);
@@ -1363,12 +1363,12 @@ test('authorizes the resolved Resource target before Policy, transaction, and ha
       }),
     ),
   );
-  assert.equal(unavailableFailure._tag, 'ActionPermissionCheckError');
+  assert.ok(Predicate.isTagged(unavailableFailure, 'ActionPermissionCheckError'));
   assert.equal(unavailable.rejections.length, 0);
   assert.equal(unavailable.counts().transactionCount, 0);
 });
 
-test('persists a definite permission denial before returning it and never evaluates Policies', async () => {
+void test('persists a definite permission denial before returning it and never evaluates Policies', async () => {
   let handlerCount = 0;
   let policyCount = 0;
   let serviceFactoryCount = 0;
@@ -1424,7 +1424,7 @@ test('persists a definite permission denial before returning it and never evalua
     ),
   );
 
-  assert.equal(failure._tag, 'ActionPermissionDenied');
+  assert.ok(Predicate.isTagged(failure, 'ActionPermissionDenied'));
   assert.equal(failure.code, 'action_permission_denied');
   assert.equal(handlerCount, 0);
   assert.equal(policyCount, 0);
@@ -1458,7 +1458,7 @@ test('persists a definite permission denial before returning it and never evalua
   ]);
 });
 
-test('fails closed before Policy evaluation when permission cannot be determined', async () => {
+void test('fails closed before Policy evaluation when permission cannot be determined', async () => {
   const harness = makeHarness({ permissionFailure: true });
   const failure = await runEffectTestPromise(
     Effect.flip(
@@ -1471,7 +1471,7 @@ test('fails closed before Policy evaluation when permission cannot be determined
     ),
   );
 
-  assert.equal(failure._tag, 'ActionPermissionCheckError');
+  assert.ok(Predicate.isTagged(failure, 'ActionPermissionCheckError'));
   assert.deepEqual(harness.permissionCounts(), {
     permissionCheckCount: 1,
     rejectionCount: 0,
@@ -1491,7 +1491,7 @@ test('fails closed before Policy evaluation when permission cannot be determined
   ]);
 });
 
-test('does not claim permission denial when terminal evidence persistence rolls back', async () => {
+void test('does not claim permission denial when terminal evidence persistence rolls back', async () => {
   const harness = makeHarness({ permissionDecision: 'denied', rejectionFailure: true });
   const failure = await runEffectTestPromise(
     Effect.flip(
@@ -1504,7 +1504,7 @@ test('does not claim permission denial when terminal evidence persistence rolls 
     ),
   );
 
-  assert.equal(failure._tag, 'ActionTransactionError');
+  assert.ok(Predicate.isTagged(failure, 'ActionTransactionError'));
   assert.deepEqual(harness.permissionCounts(), {
     permissionCheckCount: 1,
     rejectionCount: 1,
@@ -1513,7 +1513,7 @@ test('does not claim permission denial when terminal evidence persistence rolls 
   assert.equal(harness.counts().transactionCount, 0);
 });
 
-test('evaluates Policies in order before running and hands allowed checkpoints to success', async () => {
+void test('evaluates Policies in order before running and hands allowed checkpoints to success', async () => {
   const observed: string[] = [];
   const globalPolicy = defineGlobalPolicy<{ readonly amount: number }>({
     evaluate: () => {
@@ -1584,7 +1584,7 @@ test('evaluates Policies in order before running and hands allowed checkpoints t
   ]);
 });
 
-test('short-circuits the first Policy denial, finalizes it, and never starts execution', async () => {
+void test('short-circuits the first Policy denial, finalizes it, and never starts execution', async () => {
   const observed: string[] = [];
   let handlerExecutions = 0;
   const policies = [
@@ -1650,7 +1650,7 @@ test('short-circuits the first Policy denial, finalizes it, and never starts exe
     ),
   );
 
-  assert.equal(denial._tag, 'ActionPolicyDenied');
+  assert.ok(Predicate.isTagged(denial, 'ActionPolicyDenied'));
   assert.equal(denial.policyReasonCode, 'counter_locked');
   assert.equal(denial.reason, 'Counter changes are locked — try later');
   assert.deepEqual(observed, ['first', 'denied']);
@@ -1682,7 +1682,7 @@ test('short-circuits the first Policy denial, finalizes it, and never starts exe
   assert.equal(harness.flushed.length, 0);
 });
 
-test('sanitizes Policy defects and interrupts without finalizing', async () => {
+void test('sanitizes Policy defects and interrupts without finalizing', async () => {
   const evaluators = [() => Effect.die('secret evaluator defect'), () => Effect.interrupt] as const;
 
   await forEachSequential(
@@ -1732,7 +1732,7 @@ test('sanitizes Policy defects and interrupts without finalizing', async () => {
         ),
       );
 
-      assert.equal(error._tag, 'ActionPolicyEvaluationError');
+      assert.ok(Predicate.isTagged(error, 'ActionPolicyEvaluationError'));
       assert.equal(error.reason.includes('secret'), false);
       assert.equal(handlerExecutions, 0);
       assert.equal(harness.finalized.length, 0);
@@ -1746,7 +1746,7 @@ test('sanitizes Policy defects and interrupts without finalizing', async () => {
   );
 });
 
-test('returns persistence failure when denial evidence cannot be finalized', async () => {
+void test('returns persistence failure when denial evidence cannot be finalized', async () => {
   let handlerExecutions = 0;
   const policy = defineGlobalPolicy<unknown>({
     evaluate: () => Effect.fail(denyPolicy('blocked', 'This action is blocked')),
@@ -1792,13 +1792,13 @@ test('returns persistence failure when denial evidence cannot be finalized', asy
     ),
   );
 
-  assert.equal(error._tag, 'ActionInvocationPersistenceError');
+  assert.ok(Predicate.isTagged(error, 'ActionInvocationPersistenceError'));
   assert.equal(handlerExecutions, 0);
   assert.equal(harness.finalized.length, 0);
   assert.equal(harness.counts().transactionCount, 0);
 });
 
-test('creates fresh collectors for every execution', async () => {
+void test('creates fresh collectors for every execution', async () => {
   const harness = makeHarness();
   await forEachSequential(
     [
@@ -1825,7 +1825,7 @@ test('creates fresh collectors for every execution', async () => {
   assert.notEqual(harness.flushed[0]?.evidence, harness.flushed[1]?.evidence);
 });
 
-test('evaluates Policies afresh for separate invocations', async () => {
+void test('evaluates Policies afresh for separate invocations', async () => {
   let evaluations = 0;
   const policy = defineGlobalPolicy<{ readonly amount: number }>({
     evaluate: () => {
@@ -1880,7 +1880,7 @@ test('evaluates Policies afresh for separate invocations', async () => {
   assert.equal(evaluations, 2);
 });
 
-test('rejects structural payloads, trusted context, and missing idempotency before invocation', async () => {
+void test('rejects structural payloads, trusted context, and missing idempotency before invocation', async () => {
   const harness = makeHarness();
   const invalidPayload = await runEffectTestPromise(
     Effect.flip(
@@ -1928,14 +1928,14 @@ test('rejects structural payloads, trusted context, and missing idempotency befo
     ),
   );
 
-  assert.equal(invalidPayload._tag, 'ActionPayloadValidationError');
-  assert.equal(invalidPrincipal._tag, 'ActionTrustedContextValidationError');
-  assert.equal(missingKey._tag, 'ActionIdempotencyKeyRequired');
-  assert.equal(forgedSystemPrincipal._tag, 'ActionTrustedContextValidationError');
+  assert.ok(Predicate.isTagged(invalidPayload, 'ActionPayloadValidationError'));
+  assert.ok(Predicate.isTagged(invalidPrincipal, 'ActionTrustedContextValidationError'));
+  assert.ok(Predicate.isTagged(missingKey, 'ActionIdempotencyKeyRequired'));
+  assert.ok(Predicate.isTagged(forgedSystemPrincipal, 'ActionTrustedContextValidationError'));
   assert.equal(harness.counts().createCount, 0);
 });
 
-test('preserves declared domain rejections and rolls back collected evidence', async () => {
+void test('preserves declared domain rejections and rolls back collected evidence', async () => {
   const DomainRejectedContract = Schema.TaggedStruct('DomainRejected', {
     reason: Schema.String,
   });
@@ -2001,13 +2001,13 @@ test('preserves declared domain rejections and rolls back collected evidence', a
     ),
   );
 
-  assert.equal(error._tag, 'DomainRejected');
+  assert.ok(Predicate.isTagged(error, 'DomainRejected'));
   assert.equal(error.reason, 'counter_locked');
   assert.equal(policyEvaluations, 1);
   assert.equal(harness.flushed.length, 0);
 });
 
-test('sanitizes unexpected defects and rejects invalid typed results', async () => {
+void test('sanitizes unexpected defects and rejects invalid typed results', async () => {
   const defectHarness = makeHarness();
   const defective = defineAction(
     {
@@ -2084,14 +2084,14 @@ test('sanitizes unexpected defects and rejects invalid typed results', async () 
     ),
   );
 
-  assert.equal(defect._tag, 'ActionHandlerExecutionError');
+  assert.ok(Predicate.isTagged(defect, 'ActionHandlerExecutionError'));
   assert.equal(defect.reason.includes('secret'), false);
-  assert.equal(resultError._tag, 'ActionResultValidationError');
+  assert.ok(Predicate.isTagged(resultError, 'ActionResultValidationError'));
   assert.equal(defectHarness.flushed.length, 0);
   assert.equal(resultHarness.flushed.length, 0);
 });
 
-test('sanitizes undeclared handler failures instead of widening the domain error contract', async () => {
+void test('sanitizes undeclared handler failures instead of widening the domain error contract', async () => {
   const DeclaredDomainErrorContract = Schema.TaggedStruct('DeclaredDomainError', {
     reason: Schema.String,
   });
@@ -2141,12 +2141,12 @@ test('sanitizes undeclared handler failures instead of widening the domain error
     ),
   );
 
-  assert.equal(error._tag, 'ActionHandlerExecutionError');
+  assert.ok(Predicate.isTagged(error, 'ActionHandlerExecutionError'));
   assert.equal(error.reason.includes('secret'), false);
   assert.equal(harness.flushed.length, 0);
 });
 
-test('handles committed, conflict, definite rollback, and indeterminate commit branches', async () => {
+void test('handles committed, conflict, definite rollback, and indeterminate commit branches', async () => {
   const committed = makeHarness({
     createRecord: {
       actionInvocationId: 'committed',
@@ -2238,23 +2238,23 @@ test('handles committed, conflict, definite rollback, and indeterminate commit b
     }),
   );
 
-  assert.equal(committedError._tag, 'ActionAlreadyCommitted');
+  assert.ok(Predicate.isTagged(committedError, 'ActionAlreadyCommitted'));
   assert.equal(committed.counts().transactionCount, 0);
   assert.equal(committed.permissionCounts().permissionCheckCount, 0);
-  assert.equal(conflictError._tag, 'ActionRequestHashConflict');
+  assert.ok(Predicate.isTagged(conflictError, 'ActionRequestHashConflict'));
   assert.equal(conflict.counts().transactionCount, 0);
   assert.equal(conflict.permissionCounts().permissionCheckCount, 0);
-  assert.equal(definiteError._tag, 'ActionTransactionError');
-  assert.equal(definiteCommitError._tag, 'ActionTransactionError');
-  assert.equal(uncertainError._tag, 'ActionCommitIndeterminate');
+  assert.ok(Predicate.isTagged(definiteError, 'ActionTransactionError'));
+  assert.ok(Predicate.isTagged(definiteCommitError, 'ActionTransactionError'));
+  assert.ok(Predicate.isTagged(uncertainError, 'ActionCommitIndeterminate'));
   assert.equal(uncertain.flushed.length, 1);
-  assert.deepEqual(
-    acknowledgementErrors.map((error) => error._tag),
-    acknowledgementFailureCodes.map(() => 'ActionCommitIndeterminate'),
-  );
+  assert.equal(acknowledgementErrors.length, acknowledgementFailureCodes.length);
+  for (const error of acknowledgementErrors) {
+    assert.ok(Predicate.isTagged(error, 'ActionCommitIndeterminate'));
+  }
 });
 
-test('interruption during commit waits for native commit settlement', async () => {
+void test('interruption during commit waits for native commit settlement', async () => {
   const commitStarted = Deferred.makeUnsafe<null>();
   const commitSettlement = Deferred.makeUnsafe<readonly object[]>();
   const harness = makeHarness({
@@ -2287,7 +2287,7 @@ test('interruption during commit waits for native commit settlement', async () =
   assert.equal(harness.flushed.length, 1);
 });
 
-test('resolves commit state explicitly and keeps unavailable outcomes indeterminate', async () => {
+void test('resolves commit state explicitly and keeps unavailable outcomes indeterminate', async () => {
   const invocationId = '00000000-0000-4000-8000-000000000099';
   const open = makeHarness({
     createRecord: {
@@ -2330,12 +2330,12 @@ test('resolves commit state explicitly and keeps unavailable outcomes indetermin
     _tag: 'ActionCommitOpen',
     invocationId,
   });
-  assert.equal(committedResolution._tag, 'ActionAlreadyCommitted');
-  assert.equal(unavailableResolution._tag, 'ActionCommitIndeterminate');
+  assert.ok(Predicate.isTagged(committedResolution, 'ActionAlreadyCommitted'));
+  assert.ok(Predicate.isTagged(unavailableResolution, 'ActionCommitIndeterminate'));
   assert.equal(unavailableResolution.invocationId, invocationId);
 });
 
-test('rejects terminal invocation states before handler execution', async () => {
+void test('rejects terminal invocation states before handler execution', async () => {
   const terminal = makeHarness({
     createRecord: {
       actionInvocationId: 'terminal',
@@ -2355,12 +2355,12 @@ test('rejects terminal invocation states before handler execution', async () => 
     ),
   );
 
-  assert.equal(error._tag, 'ActionInvocationStateError');
+  assert.ok(Predicate.isTagged(error, 'ActionInvocationStateError'));
   assert.equal(terminal.counts().transitionCount, 0);
   assert.equal(terminal.counts().transactionCount, 0);
 });
 
-test('uses one runtime contract for Shell/Core and MicroVertical-shaped registrations', async () => {
+void test('uses one runtime contract for Shell/Core and MicroVertical-shaped registrations', async () => {
   const shell = makeHarness();
   const microvertical = makeHarness();
   const moduleRegistration = defineAction(
@@ -2412,6 +2412,6 @@ test('uses one runtime contract for Shell/Core and MicroVertical-shaped registra
   assert.deepEqual(moduleResult, { reserved: true });
 });
 
-test('the Core database service identity remains server-only', () => {
+void test('the Core database service identity remains server-only', () => {
   assert.equal(Predicate.isFunction(CoreDatabase), true);
 });

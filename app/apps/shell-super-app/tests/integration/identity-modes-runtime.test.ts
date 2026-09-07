@@ -463,7 +463,7 @@ void test('verifies provider keys and completes live support impersonation with 
     );
     await runEffectTestPromise(keys.setEnabled(verified.providerKeyId, false));
     const invalidKey = await runEffectTestPromise(Effect.flip(keys.verify(issued.secret)));
-    assert.equal(invalidKey._tag, 'ApiKeyCredentialInvalidError');
+    assert.ok(Predicate.isTagged(invalidKey, 'ApiKeyCredentialInvalidError'));
 
     const managedPrincipal = await runEffectTestPromise(
       providePrincipalManagementRepository(
@@ -580,7 +580,7 @@ void test('verifies provider keys and completes live support impersonation with 
     const incompleteImpersonation = await runEffectTestPromise(
       Effect.flip(provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders))),
     );
-    assert.equal(incompleteImpersonation._tag, 'OntosIdentityForbiddenError');
+    assert.ok(Predicate.isTagged(incompleteImpersonation, 'OntosIdentityForbiddenError'));
     await runEffectTestPromise(
       authDatabase
         .update(session)
@@ -596,7 +596,7 @@ void test('verifies provider keys and completes live support impersonation with 
     const mismatchedImpersonationReason = await runEffectTestPromise(
       Effect.flip(provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders))),
     );
-    assert.equal(mismatchedImpersonationReason._tag, 'OntosIdentityForbiddenError');
+    assert.ok(Predicate.isTagged(mismatchedImpersonationReason, 'OntosIdentityForbiddenError'));
     await runEffectTestPromise(
       authDatabase
         .update(session)
@@ -626,7 +626,7 @@ void test('verifies provider keys and completes live support impersonation with 
     const revokedImpersonation = await runEffectTestPromise(
       Effect.flip(provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders))),
     );
-    assert.equal(revokedImpersonation._tag, 'OntosIdentityForbiddenError');
+    assert.ok(Predicate.isTagged(revokedImpersonation, 'OntosIdentityForbiddenError'));
     const stopped = await runEffectTestPromise(
       provideContextAccess(
         providePrincipalManagementRepository(

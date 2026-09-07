@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Schema } from 'effect';
+import { Schema, Predicate } from 'effect';
 import {
   ACTION_CORE_ERROR_TAGS,
   ActionAlreadyCommitted,
@@ -109,10 +109,10 @@ void test('publishes the exhaustive stable Core Action error tags', () => {
     }),
   ];
 
-  assert.deepEqual(
-    errors.map((error) => error._tag),
-    ACTION_CORE_ERROR_TAGS,
-  );
+  assert.equal(errors.length, ACTION_CORE_ERROR_TAGS.length);
+  for (const [index, tag] of ACTION_CORE_ERROR_TAGS.entries()) {
+    assert.ok(Predicate.isTagged(errors[index], tag));
+  }
   for (const error of errors) {
     assert.equal(error.reason.includes('postgresql://'), false);
     assert.equal(error.reason.includes('ontos-local-development-key'), false);

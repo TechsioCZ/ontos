@@ -2,7 +2,7 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
 import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
 import type { InstalledModuleCatalog, OntosModuleDeploymentContract } from '../../src/index.ts';
 import {
@@ -101,7 +101,7 @@ void test('uses one canonical tenant module state schema', async () => {
   const failure = await runEffectTestPromise(
     Effect.flip(Schema.decodeUnknownEffect(TenantModuleStateSchema)('enabled')),
   );
-  assert.equal(failure._tag, 'SchemaError');
+  assert.ok(Predicate.isTagged(failure, 'SchemaError'));
 });
 
 void test('maps only trusted supported authentication methods to history sources', async () => {
@@ -118,7 +118,7 @@ void test('maps only trusted supported authentication methods to history sources
   const unsupported = await runEffectTestPromise(
     Effect.flip(resolveTenantModuleStateChangeSource('api_key')),
   );
-  assert.equal(unsupported._tag, 'TenantModuleStateUnsupportedChangeSourceError');
+  assert.ok(Predicate.isTagged(unsupported, 'TenantModuleStateUnsupportedChangeSourceError'));
   assert.equal(unsupported.code, 'tenant_module_state_change_source_unsupported');
 });
 
@@ -129,7 +129,7 @@ void test('rejects a no-op transition without changing first-state semantics', a
   const unchanged = await runEffectTestPromise(
     Effect.flip(rejectUnchangedTenantModuleState('active', 'active')),
   );
-  assert.equal(unchanged._tag, 'TenantModuleStateUnchangedError');
+  assert.ok(Predicate.isTagged(unchanged, 'TenantModuleStateUnchangedError'));
   assert.equal(unchanged.code, 'tenant_module_state_unchanged');
 });
 
@@ -187,11 +187,11 @@ void test('validates only installed membership and the target module supported s
   const unknown = await runEffectTestPromise(
     Effect.flip(validateTenantModuleStateTransition(installed, 'unknown.module', 'active')),
   );
-  assert.equal(unknown._tag, 'TenantModuleStateUnknownModuleError');
+  assert.ok(Predicate.isTagged(unknown, 'TenantModuleStateUnknownModuleError'));
   const unsupported = await runEffectTestPromise(
     Effect.flip(validateTenantModuleStateTransition(installed, 'property.registry', 'archived')),
   );
-  assert.equal(unsupported._tag, 'TenantModuleStateUnsupportedStateError');
+  assert.ok(Predicate.isTagged(unsupported, 'TenantModuleStateUnsupportedStateError'));
   await runEffectTestPromise(
     validateTenantModuleStateTransition(installed, 'property.registry', 'active'),
   );

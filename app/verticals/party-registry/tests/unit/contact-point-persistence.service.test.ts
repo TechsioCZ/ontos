@@ -1,8 +1,8 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This focused harness models only the Drizzle native Effect query surface exercised by Contact Point ending. expires: 2026-12-31. */
-import { SQL } from 'drizzle-orm';
+import { is, SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
@@ -225,7 +225,7 @@ const wholeEndCommand = (effectiveEnd: string, reason = 'Party retired this mail
   target: { type: 'WHOLE_CONTACT_POINT' as const },
 });
 
-test('stores future end provenance while keeping the contact current until the boundary', () =>
+void test('stores future end provenance while keeping the contact current until the boundary', () =>
   runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const effectiveEnd = '2099-01-01T00:00:00.000Z';
@@ -264,7 +264,7 @@ test('stores future end provenance while keeping the contact current until the b
     }),
   ));
 
-test('stores end provenance on both a last ADDRESS purpose and its owning address', () =>
+void test('stores end provenance on both a last ADDRESS purpose and its owning address', () =>
   runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const effectiveEnd = '2026-02-01T00:00:00.000Z';
@@ -332,7 +332,7 @@ test('stores end provenance on both a last ADDRESS purpose and its owning addres
     }),
   ));
 
-test('reuses only an exact end request and rejects changed evidence at the same boundary', () =>
+void test('reuses only an exact end request and rejects changed evidence at the same boundary', () =>
   runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const effectiveEnd = '2026-02-01T00:00:00.000Z';
@@ -366,12 +366,12 @@ test('reuses only an exact end request and rejects changed evidence at the same 
           wholeEndCommand(effectiveEnd, 'A different reason'),
         ),
       );
-      assert.equal(changed._tag, 'Failure');
+      assert.ok(Predicate.isTagged(changed, 'Failure'));
       assert.equal(changedHarness.updateSets.length, 0);
     }),
   ));
 
-test('stores correction end provenance on the preserved original Contact Point', () =>
+void test('stores correction end provenance on the preserved original Contact Point', () =>
   runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const original = contactRow();
@@ -443,7 +443,7 @@ const updateCommand = (change: Parameters<typeof updateContactPointRecord>[2]['c
   },
 });
 
-test('re-adds a scheduled-ended purpose as a new period without reopening its history', () =>
+void test('re-adds a scheduled-ended purpose as a new period without reopening its history', () =>
   runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const stalePurpose = purposeRow({
@@ -491,7 +491,7 @@ test('re-adds a scheduled-ended purpose as a new period without reopening its hi
     }),
   ));
 
-test('rejects a REGISTERED context collision as a typed domain conflict before mutation', () =>
+void test('rejects a REGISTERED context collision as a typed domain conflict before mutation', () =>
   runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const address = addressRow();
@@ -516,7 +516,7 @@ test('rejects a REGISTERED context collision as a typed domain conflict before m
           }),
         ),
       );
-      assert.equal(error._tag, 'PartyContactPointAlreadyExists');
+      assert.ok(Predicate.isTagged(error, 'PartyContactPointAlreadyExists'));
       assert.equal(harness.updateSets.length, 0);
       assert.equal(harness.insertValues.length, 0);
       const condition = harness.selectWheres.at(3);
@@ -560,13 +560,13 @@ test('rejects a REGISTERED context collision as a typed domain conflict before m
           verification: { state: 'UNVERIFIED' },
         }),
       );
-      assert.equal(addError._tag, 'PartyContactPointAlreadyExists');
+      assert.ok(Predicate.isTagged(addError, 'PartyContactPointAlreadyExists'));
       assert.equal(addHarness.insertValues.length, 0);
       assert.equal(addHarness.updateSets.length, 0);
     }),
   ));
 
-test('advances revisions on both the transferred purpose and its owning address', () =>
+void test('advances revisions on both the transferred purpose and its owning address', () =>
   runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const address = addressRow();
@@ -595,14 +595,14 @@ test('advances revisions on both the transferred purpose and its owning address'
       assert.equal(harness.updateSets[0]?.['revision'], 8);
       assert.equal(harness.updateSets[0]?.['preferred'], false);
       const revision = harness.updateSets[1]?.['revision'];
-      assert.ok(revision instanceof SQL);
+      assert.ok(is(revision, SQL));
       assert.match(new PgDialect().sqlToQuery(revision).sql, /revision.*\+ 1/u);
       assert.equal(harness.updateSets[2]?.['revision'], 2);
       assert.equal(harness.updateSets[3]?.['revision'], 2);
     }),
   ));
 
-test('preserves original provenance evidence and appends deduplicated enrichment', () =>
+void test('preserves original provenance evidence and appends deduplicated enrichment', () =>
   runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const row = contactRow({
@@ -641,7 +641,7 @@ test('preserves original provenance evidence and appends deduplicated enrichment
     }),
   ));
 
-test('rejects invalid E.164 and oversized extensions through the service typed-error path', () =>
+void test('rejects invalid E.164 and oversized extensions through the service typed-error path', () =>
   runEffectTestPromise(
     Effect.all(
       [
@@ -676,7 +676,7 @@ test('rejects invalid E.164 and oversized extensions through the service typed-e
               verification: { state: 'UNVERIFIED' },
             }),
           );
-          assert.equal(error._tag, 'PartyContactPointInvalid');
+          assert.ok(Predicate.isTagged(error, 'PartyContactPointInvalid'));
           assert.equal(harness.selectWheres.length, 0);
           assert.equal(harness.insertValues.length, 0);
         }),
@@ -684,7 +684,7 @@ test('rejects invalid E.164 and oversized extensions through the service typed-e
     ).pipe(Effect.asVoid),
   ));
 
-test('rejects an explicit alias Party add but keeps durable ContactPoint updates readable through the full chain', () =>
+void test('rejects an explicit alias Party add but keeps durable ContactPoint updates readable through the full chain', () =>
   runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const intermediatePartyId = '20000000-0000-4000-8000-000000000002';
@@ -804,7 +804,7 @@ test('rejects an explicit alias Party add but keeps durable ContactPoint updates
     }),
   ));
 
-test('advances the replaced channel preference revision as well as the selected contact', () =>
+void test('advances the replaced channel preference revision as well as the selected contact', () =>
   runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const row = contactRow({ preferred: false });
@@ -821,13 +821,13 @@ test('advances the replaced channel preference revision as well as the selected 
         updateCommand({ preferred: true, type: 'SET_CHANNEL_PREFERRED' }),
       );
       const revision = harness.updateSets[0]?.['revision'];
-      assert.ok(revision instanceof SQL);
+      assert.ok(is(revision, SQL));
       assert.match(new PgDialect().sqlToQuery(revision).sql, /revision.*\+ 1/u);
       assert.equal(harness.updateSets[1]?.['revision'], 2);
     }),
   ));
 
-test('persists bounded ARES provenance on the address and purpose without using observation time as effective time', () =>
+void test('persists bounded ARES provenance on the address and purpose without using observation time as effective time', () =>
   runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const externalEvidence = yield* Schema.decodeUnknownEffect(AresAppliedEvidenceSchema)({
@@ -906,7 +906,7 @@ test('persists bounded ARES provenance on the address and purpose without using 
     }),
   ));
 
-test('treats PHONE extensions as distinct endpoints while rejecting an exact duplicate extension', () =>
+void test('treats PHONE extensions as distinct endpoints while rejecting an exact duplicate extension', () =>
   runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const existing = contactRow({
@@ -950,12 +950,12 @@ test('treats PHONE extensions as distinct endpoints while rejecting an exact dup
       const duplicate = yield* Effect.flip(
         addContactPointRecord(duplicateHarness.transaction, scope, command('101')),
       );
-      assert.equal(duplicate._tag, 'PartyContactPointAlreadyExists');
+      assert.ok(Predicate.isTagged(duplicate, 'PartyContactPointAlreadyExists'));
       assert.equal(duplicateHarness.insertValues.length, 0);
     }),
   ));
 
-test('whole ADDRESS end preserves an earlier purpose end and its independent accepted evidence', () =>
+void test('whole ADDRESS end preserves an earlier purpose end and its independent accepted evidence', () =>
   runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
       const address = addressRow();

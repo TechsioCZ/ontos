@@ -3,7 +3,7 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
 import { getReadHandler } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import {
   AresLookupApi,
@@ -59,7 +59,7 @@ const scope = Object.freeze({
 });
 const request = Schema.decodeUnknownSync(AresLookupRequestSchema)({ ico: '48039101' });
 
-test('declares a tenant-authorized Party evidence Read with optional Legal Entity context', () => {
+void test('declares a tenant-authorized Party evidence Read with optional Legal Entity context', () => {
   assert.equal(aresLookupRead.descriptor.accessKind, 'detail');
   assert.equal(aresLookupRead.descriptor.legalEntityScope, 'optional');
   assert.equal(aresLookupRead.descriptor.permissionTarget, 'tenant');
@@ -68,7 +68,7 @@ test('declares a tenant-authorized Party evidence Read with optional Legal Entit
   assert.equal(aresLookupRead.descriptor.evidencePolicy.captureMode, 'metadata_only');
 });
 
-test('passes trusted correlation to the private adapter and returns exactly one evidence result', async () => {
+void test('passes trusted correlation to the private adapter and returns exactly one evidence result', async () => {
   const calls: unknown[] = [];
   const result = await runEffectTestPromise(
     getReadHandler(aresLookupRead)(request, {
@@ -91,7 +91,7 @@ test('passes trusted correlation to the private adapter and returns exactly one 
   assert.deepEqual(result, { evidence: { resultCount: 1 }, result: evidence });
 });
 
-test('maps provider failures to the closed governed Read error vocabulary without leaking details', async () => {
+void test('maps provider failures to the closed governed Read error vocabulary without leaking details', async () => {
   const failures = [
     [
       new AresSubjectNotFound({ code: 'ares_subject_not_found', reason: 'private 404 body' }),
@@ -141,12 +141,12 @@ test('maps provider failures to the closed governed Read error vocabulary withou
     ),
   );
   for (const { error, expectedTag } of errors) {
-    assert.equal(error._tag, expectedTag);
+    assert.ok(Predicate.isTagged(error, expectedTag));
     assert.equal(JSON.stringify(error).includes('private'), false);
   }
 });
 
-test('publishes safe status-matched Problem Details and no provider payload schema', () => {
+void test('publishes safe status-matched Problem Details and no provider payload schema', () => {
   interface ProblemFixture {
     readonly _tag: string;
     readonly detail: string;
@@ -190,7 +190,7 @@ test('publishes safe status-matched Problem Details and no provider payload sche
   assert.equal(AresLookupApi.identifier, 'AresLookupApi');
 });
 
-test('keeps the ARES integration read-only and exposes no ARES Action', async () => {
+void test('keeps the ARES integration read-only and exposes no ARES Action', async () => {
   const sourceFiles = [
     new URL('../../src/integrations/ares/ares-subject.service.ts', import.meta.url),
     new URL('../../src/api/ares-lookup.read.ts', import.meta.url),

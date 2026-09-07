@@ -256,7 +256,7 @@ void test('uses each denying Policy reference own declared HTTP status', async (
           }),
         ),
       );
-      assert.equal(error._tag, 'ReadPolicyDenied');
+      assert.ok(Predicate.isTagged(error, 'ReadPolicyDenied'));
       assert.equal(Schema.decodeUnknownSync(ReadPolicyDenied)(error).httpStatus, denialStatus);
     }),
   );
@@ -322,7 +322,7 @@ void test('rejects invalid input before opening a transaction or executing a han
       }),
     ),
   );
-  assert.equal(error._tag, 'ReadInputValidationError');
+  assert.ok(Predicate.isTagged(error, 'ReadInputValidationError'));
   assert.equal(harness.evidence(), 0);
 });
 
@@ -355,7 +355,7 @@ void test('preserves typed result-validation failure across transaction rollback
       }),
     ),
   );
-  assert.equal(error._tag, 'ReadResultValidationError');
+  assert.ok(Predicate.isTagged(error, 'ReadResultValidationError'));
   assert.equal(harness.evidence(), 0);
 });
 
@@ -371,7 +371,7 @@ void test('never releases an allowed result when required evidence persistence f
       }),
     ),
   );
-  assert.equal(error._tag, 'ReadEvidencePersistenceError');
+  assert.ok(Predicate.isTagged(error, 'ReadEvidencePersistenceError'));
   assert.equal(harness.evidence(), 0);
 });
 
@@ -403,7 +403,7 @@ void test('preserves scoped service-factory unavailability and never invokes the
       }),
     ),
   );
-  assert.equal(error._tag, 'OperationContextUnavailable');
+  assert.ok(Predicate.isTagged(error, 'OperationContextUnavailable'));
   assert.equal(handlerCalls, 0);
   assert.equal(harness.evidence(), 0);
 });
@@ -447,13 +447,13 @@ void test('persists sanitized permission denial and never invokes the private ha
       }),
     ),
   );
-  assert.equal(error._tag, 'ReadPermissionDenied');
+  assert.ok(Predicate.isTagged(error, 'ReadPermissionDenied'));
   assert.deepEqual(legalEntityPermissions, ['read_counterparty']);
   assert.equal(handlerCalls, 0);
   assert.equal(harness.evidence(), 1);
 });
 
-test('fails closed when explicit Counterparty read authority is unavailable', async () => {
+void test('fails closed when explicit Counterparty read authority is unavailable', async () => {
   const legalEntityId = '00000000-0000-4000-8000-000000000004';
   let handlerCalls = 0;
   const harness = makeHarness({
@@ -490,12 +490,12 @@ test('fails closed when explicit Counterparty read authority is unavailable', as
       }),
     ),
   );
-  assert.equal(error._tag, 'ReadPermissionUnavailable');
+  assert.ok(Predicate.isTagged(error, 'ReadPermissionUnavailable'));
   assert.equal(handlerCalls, 0);
   assert.equal(harness.evidence(), 0);
 });
 
-test('derives the authorized resource from decoded input and ignores conflicting transport hints', async () => {
+void test('derives the authorized resource from decoded input and ignores conflicting transport hints', async () => {
   const legalEntityId = '00000000-0000-4000-8000-000000000004';
   let authorizedTarget: { moduleId: string; resourceId: string; resourceType: string } | undefined;
   const harness = makeHarness({
@@ -545,7 +545,7 @@ test('derives the authorized resource from decoded input and ignores conflicting
   assert.deepEqual(authorizedTarget, target);
 });
 
-test('authorizes a canonical Resource through explicit tenant Party administration alternatives', async () => {
+void test('authorizes a canonical Resource through explicit tenant Party administration alternatives', async () => {
   const legalEntityId = '00000000-0000-4000-8000-000000000004';
   const target = {
     moduleId: 'party.registry',
@@ -653,7 +653,7 @@ test('authorizes a canonical Resource through explicit tenant Party administrati
       }),
     ),
   );
-  assert.equal(unavailable._tag, 'ReadPermissionUnavailable');
+  assert.ok(Predicate.isTagged(unavailable, 'ReadPermissionUnavailable'));
   assert.equal(indeterminate.evidence(), 0);
 
   const denied = makeHarness({
@@ -671,12 +671,12 @@ test('authorizes a canonical Resource through explicit tenant Party administrati
       }),
     ),
   );
-  assert.equal(denial._tag, 'ReadPermissionDenied');
+  assert.ok(Predicate.isTagged(denial, 'ReadPermissionDenied'));
   assert.equal(denied.evidence(), 1);
   assert.equal(handlerCalls, 2);
 });
 
-test('rejects generic tenant access as an alternative permission target', async () => {
+void test('rejects generic tenant access as an alternative permission target', async () => {
   const legalEntityId = '00000000-0000-4000-8000-000000000004';
   let handlerCalls = 0;
   const invalid = defineRead(
@@ -723,11 +723,11 @@ test('rejects generic tenant access as an alternative permission target', async 
       }),
     ),
   );
-  assert.equal(failure._tag, 'ReadHandlerExecutionError');
+  assert.ok(Predicate.isTagged(failure, 'ReadHandlerExecutionError'));
   assert.equal(handlerCalls, 0);
 });
 
-test('never treats missing Legal Entity scope as an allowed alternative', async () => {
+void test('never treats missing Legal Entity scope as an allowed alternative', async () => {
   let handlerCalls = 0;
   const composed = defineRead(
     {
@@ -757,11 +757,11 @@ test('never treats missing Legal Entity scope as an allowed alternative', async 
       }),
     ),
   );
-  assert.equal(failure._tag, 'ReadPermissionUnavailable');
+  assert.ok(Predicate.isTagged(failure, 'ReadPermissionUnavailable'));
   assert.equal(handlerCalls, 0);
 });
 
-test('rejects alternative targets whenever result authorization cannot preserve them', async () => {
+void test('rejects alternative targets whenever result authorization cannot preserve them', async () => {
   let handlerCalls = 0;
   const search = defineRead(
     {
@@ -792,11 +792,11 @@ test('rejects alternative targets whenever result authorization cannot preserve 
       }),
     ),
   );
-  assert.equal(failure._tag, 'ReadHandlerExecutionError');
+  assert.ok(Predicate.isTagged(failure, 'ReadHandlerExecutionError'));
   assert.equal(handlerCalls, 0);
 });
 
-test('rejects handler-controlled hashes in metadata-only evidence', async () => {
+void test('rejects handler-controlled hashes in metadata-only evidence', async () => {
   const harness = makeHarness();
   const unboundedEvidence = defineRead(
     registration().descriptor,
@@ -814,7 +814,7 @@ test('rejects handler-controlled hashes in metadata-only evidence', async () => 
       }),
     ),
   );
-  assert.equal(error._tag, 'ReadEvidenceValidationError');
+  assert.ok(Predicate.isTagged(error, 'ReadEvidenceValidationError'));
   assert.equal(harness.evidence(), 0);
 });
 
@@ -842,7 +842,7 @@ void test('persists late definite denial after rolling back the owner transactio
       }),
     ),
   );
-  assert.equal(error._tag, 'ReadPermissionDenied');
+  assert.ok(Predicate.isTagged(error, 'ReadPermissionDenied'));
   assert.equal(harness.evidence(), 1);
 });
 
@@ -885,11 +885,11 @@ void test('does not release generated search candidates denied by result-level a
       }),
     ),
   );
-  assert.equal(error._tag, 'ReadPermissionDenied');
+  assert.ok(Predicate.isTagged(error, 'ReadPermissionDenied'));
   assert.equal(harness.evidence(), 1);
 });
 
-test('authorizes tenant-scoped Party search results without fabricating a Legal Entity', async () => {
+void test('authorizes tenant-scoped Party search results without fabricating a Legal Entity', async () => {
   const candidate = Schema.decodeUnknownSync(ResourceTargetSchema)({
     moduleId: 'party.registry',
     resourceId: 'party-1',
@@ -933,7 +933,7 @@ test('authorizes tenant-scoped Party search results without fabricating a Legal 
   assert.equal(resourceChecks, 0);
 });
 
-test('fails closed when tenant-scoped Party result authorization becomes unavailable', async () => {
+void test('fails closed when tenant-scoped Party result authorization becomes unavailable', async () => {
   const candidate = Schema.decodeUnknownSync(ResourceTargetSchema)({
     moduleId: 'party.registry',
     resourceId: 'party-1',
@@ -966,10 +966,10 @@ test('fails closed when tenant-scoped Party result authorization becomes unavail
       }),
     ),
   );
-  assert.equal(failure._tag, 'ReadPermissionUnavailable');
+  assert.ok(Predicate.isTagged(failure, 'ReadPermissionUnavailable'));
 });
 
-test('preserves declared owner read availability and not-found failures but sanitizes defects', async () => {
+void test('preserves declared owner read availability and not-found failures but sanitizes defects', async () => {
   const failures = [
     new ReadHandlerUnavailable({
       code: 'read_handler_unavailable',
@@ -1005,7 +1005,9 @@ test('preserves declared owner read availability and not-found failures but sani
           }),
         ),
       );
-      assert.equal(error._tag, expectedTags[index]);
+      const expectedTag = expectedTags[index];
+      assert.ok(expectedTag !== undefined);
+      assert.ok(Predicate.isTagged(error, expectedTag));
       assert.doesNotMatch(error.reason, /secret/u);
       assert.equal(harness.evidence(), 0);
     }),
@@ -1075,7 +1077,7 @@ void test('prioritizes failed denial evidence while retaining permission denial 
   assert.ok(Exit.isFailure(exit));
   const failures = exit.cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error);
   assert.equal(failures.length, 2);
-  assert.equal(failures[0]?._tag, 'ReadEvidencePersistenceError');
+  assert.ok(Predicate.isTagged(failures[0], 'ReadEvidencePersistenceError'));
   assert.equal(failures[1], denied);
-  assert.equal(failures[1]._tag, 'ReadPermissionDenied');
+  assert.ok(Predicate.isTagged(failures[1], 'ReadPermissionDenied'));
 });

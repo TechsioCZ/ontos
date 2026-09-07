@@ -4,7 +4,7 @@ import {
 } from '@app/core-runtime/testing/effect-runtime';
 
 import { and, eq } from 'drizzle-orm';
-import { DateTime, Effect, Exit as NativeExit, Scope as NativeScope } from 'effect';
+import { DateTime, Effect, Exit as NativeExit, Scope as NativeScope, Predicate } from 'effect';
 import assert from 'node:assert/strict';
 import test, { after as afterNativeDatabase } from 'node:test';
 import { Pool } from 'pg';
@@ -118,7 +118,7 @@ effectTest(
       const foreignResolution = yield* Effect.flip(
         resolver.resolveBetterAuthUserForTenant('foreign-better-auth-subject', tenantOne),
       );
-      assert.equal(foreignResolution._tag, 'PrincipalBindingMissingError');
+      assert.ok(Predicate.isTagged(foreignResolution, 'PrincipalBindingMissingError'));
 
       yield* database
         .update(principalAuthBindings)
@@ -133,7 +133,7 @@ effectTest(
       const revokedResolution = yield* Effect.flip(
         resolver.resolveBetterAuthUserForTenant(subject, tenantOne),
       );
-      assert.equal(revokedResolution._tag, 'PrincipalBindingInactiveError');
+      assert.ok(Predicate.isTagged(revokedResolution, 'PrincipalBindingInactiveError'));
 
       yield* database
         .update(principalAuthBindings)
@@ -146,7 +146,7 @@ effectTest(
       const inactivePrincipal = yield* Effect.flip(
         resolver.resolveBetterAuthUserForTenant(subject, tenantOne),
       );
-      assert.equal(inactivePrincipal._tag, 'PrincipalInactiveError');
+      assert.ok(Predicate.isTagged(inactivePrincipal, 'PrincipalInactiveError'));
 
       yield* database
         .update(principals)
@@ -159,7 +159,7 @@ effectTest(
       const inactiveTenant = yield* Effect.flip(
         resolver.resolveBetterAuthUserForTenant(subject, tenantOne),
       );
-      assert.equal(inactiveTenant._tag, 'TenantInactiveError');
+      assert.ok(Predicate.isTagged(inactiveTenant, 'TenantInactiveError'));
     }).pipe(
       Effect.ensuring(cleanup.pipe(Effect.orDie)),
       Effect.ensuring(databaseEffect(pool.end.bind(pool)).pipe(Effect.orDie)),

@@ -2,7 +2,7 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import test from 'node:test';
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import { acquirePoolResource } from '../../src/db/client.ts';
 import {
   ROOT_ENV_PATH,
@@ -60,8 +60,8 @@ void test('keeps missing and malformed configuration in the typed error channel'
     ),
   );
 
-  assert.equal(missing._tag, 'DatabaseConfigError');
-  assert.equal(malformed._tag, 'DatabaseConfigError');
+  assert.ok(Predicate.isTagged(missing, 'DatabaseConfigError'));
+  assert.ok(Predicate.isTagged(malformed, 'DatabaseConfigError'));
 });
 
 void test('requires distinct administrative and least-privilege runtime identities', async () => {
@@ -113,10 +113,10 @@ void test('requires distinct administrative and least-privilege runtime identiti
   assert.equal(valid.runtime.user, 'ontos_runtime');
   assert.equal(queryParameterIdentities.admin.user, 'ontos_admin');
   assert.equal(queryParameterIdentities.runtime.user, 'ontos_runtime');
-  assert.equal(missing._tag, 'DatabaseConfigError');
-  assert.equal(identical._tag, 'DatabaseConfigError');
-  assert.equal(queryParameterCollision._tag, 'DatabaseConfigError');
-  assert.equal(superuserCompatible._tag, 'DatabaseConfigError');
+  assert.ok(Predicate.isTagged(missing, 'DatabaseConfigError'));
+  assert.ok(Predicate.isTagged(identical, 'DatabaseConfigError'));
+  assert.ok(Predicate.isTagged(queryParameterCollision, 'DatabaseConfigError'));
+  assert.ok(Predicate.isTagged(superuserCompatible, 'DatabaseConfigError'));
 });
 
 void test('finalizes the pool resource when its Effect scope closes', async () => {

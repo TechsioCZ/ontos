@@ -1,7 +1,7 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { v1 } from '@authzed/authzed-node';
 import { and, eq } from 'drizzle-orm';
-import { Effect, Exit, Schema, flow } from 'effect';
+import { Effect, Exit, Schema, flow, Predicate } from 'effect';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test, { after, before } from 'node:test';
@@ -578,7 +578,7 @@ effectTest(
           .where(eq(outboxMessages.tenantId, tenantId)),
       ]);
 
-      assert.equal(failure._tag, 'ActionPermissionDenied');
+      assert.ok(Predicate.isTagged(failure, 'ActionPermissionDenied'));
       assert.equal(failure.reason, 'The principal is not permitted to execute this Action');
       assert.equal(executions.value, 0);
       assert.equal(invocation.status, 'rejected');
@@ -637,7 +637,7 @@ effectTest(
             ),
           );
 
-          assert.equal(failure._tag, 'ActionPermissionDenied', kind);
+          assert.ok(Predicate.isTagged(failure, 'ActionPermissionDenied'), kind);
           assert.equal(executions.value, 0, kind);
         }),
       { concurrency: 1, discard: true },
@@ -678,10 +678,10 @@ effectTest(
         .from(auditEvents)
         .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
 
-      assert.deepEqual(
-        results.map((result) => result._tag),
-        ['ActionPermissionDenied', 'ActionPermissionDenied'],
-      );
+      assert.equal(results.length, 2);
+      for (const result of results) {
+        assert.ok(Predicate.isTagged(result, 'ActionPermissionDenied'));
+      }
       assert.equal(executions.value, 0);
       assert.equal(invocation.status, 'rejected');
       assert.equal(audits.length, 1);
@@ -773,7 +773,7 @@ effectTest(
             .from(auditEvents)
             .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
 
-          assert.equal(failure._tag, 'ActionTransactionError', stage);
+          assert.ok(Predicate.isTagged(failure, 'ActionTransactionError'), stage);
           assert.equal(executions.value, 0, stage);
           assert.equal(invocation.status, 'received', stage);
           assert.equal(invocation.completedAt, null, stage);
@@ -823,7 +823,7 @@ effectTest(
           ),
         );
 
-      assert.equal(failure._tag, 'ActionPermissionCheckError');
+      assert.ok(Predicate.isTagged(failure, 'ActionPermissionCheckError'));
       assert.equal(failure.reason.includes('invalid-integration-key'), false);
       assert.equal(executions.value, 0);
       assert.equal(invocation.status, 'received');

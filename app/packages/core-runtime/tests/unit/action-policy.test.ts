@@ -2,7 +2,7 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import test from 'node:test';
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import {
   defineGlobalPolicy,
   defineMicroverticalPolicy,
@@ -84,7 +84,7 @@ void test('evaluates typed allow and safe denial outcomes', async () => {
   const denial = await runEffectTestPromise(Effect.flip(denied.evaluate(input)));
 
   assert.deepEqual(observed, [input]);
-  assert.equal(denial._tag, 'PolicyDenied');
+  assert.ok(Predicate.isTagged(denial, 'PolicyDenied'));
   assert.equal(denial.reasonCode, 'stock_unavailable');
   assert.equal(denial.reason, 'Requested stock is unavailable — retry later');
   assert.equal(Object.isFrozen(denial), true);

@@ -20,6 +20,7 @@ import {
   Option,
   Redacted,
   Schema,
+  Predicate,
 } from 'effect';
 import { FetchHttpClient, HttpClient, HttpClientResponse } from 'effect/unstable/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
@@ -108,7 +109,7 @@ const lookupIco = Schema.decodeUnknownSync(AresSubjectLookupIcoSchema)('27074358
 const endPool = (pool: Pool) => pool.end();
 const promiseEffect = <Value>(operation: () => PromiseLike<Value>) => Effect.promise(operation);
 
-test('exported ARES coordinator uses real authorized HTTP commands, canonical persistence and reviewed correction', () =>
+void test('exported ARES coordinator uses real authorized HTTP commands, canonical persistence and reviewed correction', () =>
   runEffectTestPromise(
     Effect.scoped(
       Effect.gen(function* aresGovernedTestEffect() {
@@ -373,9 +374,9 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
             Effect.result,
           ),
         );
-        assert.equal(
-          'failure' in unconfirmed && unconfirmed.failure._tag,
-          'AresApplySelectionInvalid',
+        assert.ok(
+          'failure' in unconfirmed &&
+            Predicate.isTagged(unconfirmed.failure, 'AresApplySelectionInvalid'),
         );
         const afterUnconfirmed = yield* state();
         assert.equal(
@@ -386,7 +387,7 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
         const appliedMessage = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
           applied,
         );
-        assert.equal(applied._tag, 'AresApplyCompleted', appliedMessage);
+        assert.ok(Predicate.isTagged(applied, 'AresApplyCompleted'), appliedMessage);
         assert.equal(applied.completed.length, 3);
         const persisted = yield* state();
         assert.equal(persisted.claims.length, 1);
@@ -410,7 +411,7 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
         assert.equal(persisted.core.outbox.length, 4);
         assert.ok(persisted.core.invocations.every((item) => item.status === 'succeeded'));
         const replay = yield* runHttpEffect(applyAresObservation(request, { gateway, baseUrl }));
-        assert.equal(replay._tag, 'AresApplyCompleted');
+        assert.ok(Predicate.isTagged(replay, 'AresApplyCompleted'));
         assert.equal(replay.completed.length, 0);
         assert.equal(replay.skipped.length, 3);
         const afterReplay = yield* state();
@@ -423,7 +424,9 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
         const denied = yield* runHttpEffect(
           applyAresObservation(request, { gateway: deniedGateway, baseUrl }).pipe(Effect.result),
         );
-        assert.equal('failure' in denied && denied.failure._tag, 'AresLookupForbiddenProblem');
+        assert.ok(
+          'failure' in denied && Predicate.isTagged(denied.failure, 'AresLookupForbiddenProblem'),
+        );
         const afterDenied = yield* state();
         assert.equal(afterDenied.core.invocations.length, persisted.core.invocations.length);
 

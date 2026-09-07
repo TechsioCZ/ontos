@@ -1,7 +1,7 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 /* eslint-disable anti-slop/no-chained-type-assertions -- Focused harness implements only the mutation insert's Drizzle seam. expires: 2026-12-31. */
-import { DateTime, Effect } from 'effect';
+import { DateTime, Effect, Predicate } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { OrganizationEngagementProfileRecord } from '../../src/db/engagement-schema.ts';
@@ -45,7 +45,7 @@ const rejectingMutationTransaction = <Failure>(failure: Failure) =>
     }),
   }) as unknown as Parameters<typeof createOrganizationEngagementProfile>[0];
 
-test('reconstructs typed references from the owner-local persistence record', () => {
+void test('reconstructs typed references from the owner-local persistence record', () => {
   const result = organizationEngagementProfileFromRecord(row);
   assert.deepEqual(result.partyRef, refs.partyRef);
   assert.deepEqual(result.counterpartyRef, refs.counterpartyRef);
@@ -58,7 +58,7 @@ test('reconstructs typed references from the owner-local persistence record', ()
   );
 });
 
-test('fails closed when a caller-supplied ref crosses the trusted tenant', async () => {
+void test('fails closed when a caller-supplied ref crosses the trusted tenant', async () => {
   const failure = await runEffectTestPromise(
     Effect.flip(
       ensureReferencesBelongToTenant(tenantId, {
@@ -67,11 +67,11 @@ test('fails closed when a caller-supplied ref crosses the trusted tenant', async
       }),
     ),
   );
-  assert.equal(failure._tag, 'EngagementProfileConflict');
+  assert.ok(Predicate.isTagged(failure, 'EngagementProfileConflict'));
   assert.equal(failure.code, 'contacts_party_counterparty_mismatch');
 });
 
-test('maps a wrapped owner uniqueness constraint to the declared engagement conflict', async () => {
+void test('maps a wrapped owner uniqueness constraint to the declared engagement conflict', async () => {
   const failure = await runEffectTestPromise(
     Effect.flip(
       createOrganizationEngagementProfile(
@@ -88,7 +88,7 @@ test('maps a wrapped owner uniqueness constraint to the declared engagement conf
     ),
   );
 
-  assert.equal(failure._tag, 'EngagementProfileConflict');
+  assert.ok(Predicate.isTagged(failure, 'EngagementProfileConflict'));
   assert.equal(failure.code, 'contacts_engagement_profile_already_exists');
   assert.equal(
     failure.reason,
@@ -96,7 +96,7 @@ test('maps a wrapped owner uniqueness constraint to the declared engagement conf
   );
 });
 
-test('continues past an unrelated wrapper code to the owner uniqueness constraint', async () => {
+void test('continues past an unrelated wrapper code to the owner uniqueness constraint', async () => {
   const failure = await runEffectTestPromise(
     Effect.flip(
       createOrganizationEngagementProfile(
@@ -112,11 +112,11 @@ test('continues past an unrelated wrapper code to the owner uniqueness constrain
     ),
   );
 
-  assert.equal(failure._tag, 'EngagementProfileConflict');
+  assert.ok(Predicate.isTagged(failure, 'EngagementProfileConflict'));
   assert.equal(failure.code, 'contacts_engagement_profile_already_exists');
 });
 
-test('maps an unrelated uniqueness constraint to the existing persistence fallback', async () => {
+void test('maps an unrelated uniqueness constraint to the existing persistence fallback', async () => {
   const failure = await runEffectTestPromise(
     Effect.flip(
       createOrganizationEngagementProfile(
@@ -129,7 +129,7 @@ test('maps an unrelated uniqueness constraint to the existing persistence fallba
     ),
   );
 
-  assert.equal(failure._tag, 'EngagementProfilePersistenceUnavailable');
+  assert.ok(Predicate.isTagged(failure, 'EngagementProfilePersistenceUnavailable'));
   assert.equal(failure.code, 'contacts_engagement_profile_persistence_unavailable');
   assert.equal(
     failure.reason,

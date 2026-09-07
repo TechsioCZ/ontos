@@ -1,7 +1,7 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Option, flow } from 'effect';
+import { Effect, Option, flow, Predicate } from 'effect';
 import type {
   PrincipalManagementPersistence,
   PrincipalManagementRepositoryService,
@@ -92,8 +92,8 @@ effectTest(
       }).pipe(provideRepository(transaction)),
     );
 
-    assert.equal(principalError._tag, 'IdentityTargetInvalidError');
-    assert.equal(bindingError._tag, 'IdentityTargetInvalidError');
+    assert.ok(Predicate.isTagged(principalError, 'IdentityTargetInvalidError'));
+    assert.ok(Predicate.isTagged(bindingError, 'IdentityTargetInvalidError'));
   }),
 );
 
@@ -157,9 +157,9 @@ effectTest(
       ),
     );
 
-    assert.equal(conflictError._tag, 'IdentityLifecycleConflictError');
-    assert.equal(terminalError._tag, 'IdentityLifecycleConflictError');
-    assert.equal(reasonError._tag, 'IdentityTargetInvalidError');
+    assert.ok(Predicate.isTagged(conflictError, 'IdentityLifecycleConflictError'));
+    assert.ok(Predicate.isTagged(terminalError, 'IdentityLifecycleConflictError'));
+    assert.ok(Predicate.isTagged(reasonError, 'IdentityTargetInvalidError'));
   }),
 );
 
@@ -183,7 +183,7 @@ effectTest(
               tenantId,
             }).pipe(provideRepository(selectingBinding(record))),
           );
-          assert.equal(error._tag, 'IdentityTargetInvalidError');
+          assert.ok(Predicate.isTagged(error, 'IdentityTargetInvalidError'));
         }),
       ),
     );
@@ -234,7 +234,7 @@ effectTest(
       }).pipe(provideRepository(transaction)),
     );
 
-    assert.equal(error._tag, 'IdentityLifecycleConflictError');
+    assert.ok(Predicate.isTagged(error, 'IdentityLifecycleConflictError'));
   }),
 );
 
@@ -260,7 +260,7 @@ effectTest(
       ),
     );
 
-    assert.equal(error._tag, 'IdentityTargetInvalidError');
+    assert.ok(Predicate.isTagged(error, 'IdentityTargetInvalidError'));
 
     yield* validateSupportImpersonation({
       ...input,

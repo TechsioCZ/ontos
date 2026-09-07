@@ -14,7 +14,15 @@ import {
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 
 import { and, eq } from 'drizzle-orm';
-import { Effect, Exit, Layer, Exit as NativeExit, Scope as NativeScope, Redacted } from 'effect';
+import {
+  Effect,
+  Exit,
+  Layer,
+  Exit as NativeExit,
+  Scope as NativeScope,
+  Redacted,
+  Predicate,
+} from 'effect';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test, { after as afterNativeDatabase } from 'node:test';
@@ -82,13 +90,6 @@ const transport = (idempotencyKey = randomUUID()) => ({
   idempotencyKey,
   targetModuleKey: 'party.registry',
 });
-const tag = <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(
-    Effect.match({
-      onSuccess: () => 'SUCCESS',
-      onFailure: (error) => error._tag,
-    }),
-  );
 const readPartyDetail = (partyRef: PartyRef, principal: TrustedPrincipalContext) =>
   ReadRuntime.pipe(
     Effect.flatMap((runtime) =>
@@ -103,7 +104,7 @@ const readPartyDetail = (partyRef: PartyRef, principal: TrustedPrincipalContext)
 const endPool = (pool: Pool) => pool.end();
 const promiseEffect = <Value>(operation: () => PromiseLike<Value>) => Effect.promise(operation);
 
-test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims, recovery and temporal authorization', () =>
+void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims, recovery and temporal authorization', () =>
   runEffectTestPromise(
     Effect.scoped(
       Effect.gen(function* governedIdentityTestEffect() {
@@ -250,18 +251,25 @@ test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims
             function* verifyCommitRecoveryEffect(value) {
               const key = randomUUID();
               fixture.faultNextTransaction('lost-ack');
-              assert.equal(yield* run(create(value, key).pipe(tag)), 'ActionCommitIndeterminate');
+              assert.ok(
+                Predicate.isTagged(
+                  yield* run(create(value, key).pipe(Effect.flip)),
+                  'ActionCommitIndeterminate',
+                ),
+              );
               const before = yield* snapshot();
               const invocation = before.core.invocations.find((row) => row.idempotencyKey === key);
               assert.ok(invocation);
-              assert.equal(
-                yield* run(
-                  resolveActionCommit({
-                    invocationId: invocation.actionInvocationId,
-                    principal: fixture.manager,
-                  }).pipe(tag),
+              assert.ok(
+                Predicate.isTagged(
+                  yield* run(
+                    resolveActionCommit({
+                      invocationId: invocation.actionInvocationId,
+                      principal: fixture.manager,
+                    }).pipe(Effect.flip),
+                  ),
+                  'ActionAlreadyCommitted',
                 ),
-                'ActionAlreadyCommitted',
               );
               const recovered = yield* run(
                 ReadRuntime.pipe(
@@ -285,31 +293,40 @@ test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims
               assert.equal(recoveredResult.decisionRef.resourceId, original.matchDecisionId);
               assert.equal(recovered.partyRef?.resourceId ?? null, original.partyId);
               assert.equal(recovered.caseRef?.resourceId ?? null, original.candidateCaseId);
-              assert.equal(yield* run(create(value, key).pipe(tag)), 'ActionAlreadyCommitted');
+              assert.ok(
+                Predicate.isTagged(
+                  yield* run(create(value, key).pipe(Effect.flip)),
+                  'ActionAlreadyCommitted',
+                ),
+              );
               const after = yield* snapshot();
               assert.deepEqual(after.partyRows, before.partyRows);
               assert.deepEqual(after.decisions, before.decisions);
               assert.deepEqual(after.core.events, before.core.events);
               assert.deepEqual(after.core.outbox, before.core.outbox);
-              assert.equal(
-                yield* run(readPartyDetail(partyRef, fixture.denied).pipe(tag)),
-                'ReadPermissionDenied',
+              assert.ok(
+                Predicate.isTagged(
+                  yield* run(readPartyDetail(partyRef, fixture.denied).pipe(Effect.flip)),
+                  'ReadPermissionDenied',
+                ),
               );
             },
           ),
           { concurrency: 1, discard: true },
         );
         const beforeDenied = yield* snapshot();
-        assert.equal(
-          yield* run(create(candidate('00006947', { subjectEvidence: [] })).pipe(tag)),
-          'PartyEvidenceInsufficient',
+        assert.ok(
+          Predicate.isTagged(
+            yield* run(create(candidate('00006947', { subjectEvidence: [] })).pipe(Effect.flip)),
+            'PartyEvidenceInsufficient',
+          ),
         );
         const afterDenied = yield* snapshot();
         assert.deepEqual(afterDenied.partyRows, beforeDenied.partyRows);
         assert.deepEqual(afterDenied.decisions, beforeDenied.decisions);
         assert.deepEqual(afterDenied.cases, beforeDenied.cases);
         fixture.faultNextTransaction('rollback');
-        assert.notEqual(yield* run(create(candidate('00006947')).pipe(tag)), 'SUCCESS');
+        yield* run(create(candidate('00006947')).pipe(Effect.flip));
         const rolledBack = yield* snapshot();
         assert.deepEqual(rolledBack.partyRows, beforeDenied.partyRows);
         assert.deepEqual(rolledBack.assertions, beforeDenied.assertions);
@@ -325,19 +342,27 @@ test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims
         );
         assert.ok(independent.outcome === 'CREATED');
         assert.notEqual(independent.partyRef.resourceId, partyRef.resourceId);
-        assert.equal(
-          yield* run(readPartyDetail(independent.partyRef, fixture.manager).pipe(tag)),
-          'ReadHandlerNotFound',
-        );
-        assert.equal(
-          yield* run(
-            create(candidate('00006947'), randomUUID(), fixture.legalEntityOnly).pipe(tag),
+        assert.ok(
+          Predicate.isTagged(
+            yield* run(readPartyDetail(independent.partyRef, fixture.manager).pipe(Effect.flip)),
+            'ReadHandlerNotFound',
           ),
-          'ActionPermissionDenied',
         );
-        assert.equal(
-          yield* run(readPartyDetail(partyRef, fixture.legalEntityOnly).pipe(tag)),
-          'ReadPermissionDenied',
+        assert.ok(
+          Predicate.isTagged(
+            yield* run(
+              create(candidate('00006947'), randomUUID(), fixture.legalEntityOnly).pipe(
+                Effect.flip,
+              ),
+            ),
+            'ActionPermissionDenied',
+          ),
+        );
+        assert.ok(
+          Predicate.isTagged(
+            yield* run(readPartyDetail(partyRef, fixture.legalEntityOnly).pipe(Effect.flip)),
+            'ReadPermissionDenied',
+          ),
         );
         const searchLayer = PartySearchProjectionGatewayLive.pipe(
           Layer.provide(CoreSearchQueryRuntimeLive),
@@ -356,22 +381,26 @@ test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims
           ),
           Effect.provideContext(searchContext),
         );
-        assert.equal(yield* run(deniedSearch.pipe(tag)), 'ReadPermissionDenied');
-        assert.equal(
-          yield* run(
-            ReadRuntime.pipe(
-              Effect.flatMap((runtime) =>
-                runtime.runRead({
-                  registration: partyMatchDecisionRead,
-                  input: { decisionRef: independent.decisionRef },
-                  principal: fixture.manager,
-                  transport: { correlationId: randomUUID() },
-                }),
+        assert.ok(
+          Predicate.isTagged(yield* run(deniedSearch.pipe(Effect.flip)), 'ReadPermissionDenied'),
+        );
+        assert.ok(
+          Predicate.isTagged(
+            yield* run(
+              ReadRuntime.pipe(
+                Effect.flatMap((runtime) =>
+                  runtime.runRead({
+                    registration: partyMatchDecisionRead,
+                    input: { decisionRef: independent.decisionRef },
+                    principal: fixture.manager,
+                    transport: { correlationId: randomUUID() },
+                  }),
+                ),
+                Effect.flip,
               ),
-              tag,
             ),
+            'ReadHandlerNotFound',
           ),
-          'ReadHandlerNotFound',
         );
 
         const provenance = {
@@ -419,16 +448,13 @@ test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims
           'partyType',
           'storedPartyRef',
         ]);
-        assert.notEqual(
-          yield* run(
-            runAction({
-              registration: counterpartyCreateAction,
-              payload: { partyRef, provenance },
-              principal: fixture.manager,
-              transport: transport(),
-            }).pipe(tag),
-          ),
-          'SUCCESS',
+        yield* run(
+          runAction({
+            registration: counterpartyCreateAction,
+            payload: { partyRef, provenance },
+            principal: fixture.manager,
+            transport: transport(),
+          }).pipe(Effect.flip),
         );
         yield* fixture.grantResourceAccess(
           counterpartyRef,
@@ -519,13 +545,19 @@ test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims
           }),
         );
         // Domain relationships never provision access to Party records.
-        assert.equal(
-          yield* run(readPartyDetail(reviewedPerson.partyRef, fixture.legalEntityOnly).pipe(tag)),
-          'ReadPermissionDenied',
+        assert.ok(
+          Predicate.isTagged(
+            yield* run(
+              readPartyDetail(reviewedPerson.partyRef, fixture.legalEntityOnly).pipe(Effect.flip),
+            ),
+            'ReadPermissionDenied',
+          ),
         );
-        assert.equal(
-          yield* run(readPartyDetail(partyRef, fixture.legalEntityOnly).pipe(tag)),
-          'ReadPermissionDenied',
+        assert.ok(
+          Predicate.isTagged(
+            yield* run(readPartyDetail(partyRef, fixture.legalEntityOnly).pipe(Effect.flip)),
+            'ReadPermissionDenied',
+          ),
         );
         const updatedRelationship = yield* run(
           runAction({
@@ -623,7 +655,7 @@ test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims
         assert.ok(archivedParty.party.archivedAt);
         const archivedCounterparty = yield* readCounterparty();
         assert.equal(archivedCounterparty.party.archived, true);
-        assert.notEqual(yield* run(counterparty().pipe(tag)), 'SUCCESS');
+        yield* run(counterparty().pipe(Effect.flip));
         const unarchive = yield* run(
           runAction({
             registration: unarchivePartyAction,

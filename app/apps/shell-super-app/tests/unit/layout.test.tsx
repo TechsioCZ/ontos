@@ -305,10 +305,8 @@ test('renders the account Menu last and dispatches only the logout command by ke
   const header = document.querySelector('header[aria-label="Dashboard header"]');
   const trigger = screen.getByRole('button', { name: 'Ada Lovelace' });
   expect(header?.lastElementChild?.contains(trigger)).toBe(true);
-  const accountMenu = header?.lastElementChild;
-  expect(accountMenu instanceof HTMLElement ? accountMenu.dataset['position'] : undefined).toBe(
-    'end',
-  );
+  const accountMenu = header?.querySelector<HTMLElement>(':scope > :last-child');
+  expect(accountMenu?.dataset['position']).toBe('end');
 
   trigger.focus();
   await user.keyboard('{Enter}');

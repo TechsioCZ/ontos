@@ -1,7 +1,7 @@
 import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
 import { PartyDetailResponseSchema } from '../../shared/apis/party-detail.ts';
 import { PartySchema } from '../../shared/domain/identity-contracts.ts';
 import type { Party } from '../../shared/domain/identity-contracts.ts';
@@ -63,7 +63,7 @@ const makeServices = (
   };
 };
 
-test('Party Detail reads the final canonical Party after the complete historical alias chain', () => {
+void test('Party Detail reads the final canonical Party after the complete historical alias chain', () => {
   const { lookups, services } = makeServices([
     alias('party-b', 'party-a'),
     alias('party-a', 'party-c'),
@@ -90,7 +90,7 @@ test('Party Detail reads the final canonical Party after the complete historical
   assert.deepEqual(encoded.party, canonicalPartyWire);
 });
 
-test('Party Detail preserves archived lifecycle independently of direct resolution metadata', () => {
+void test('Party Detail preserves archived lifecycle independently of direct resolution metadata', () => {
   const archivedAt = '2026-09-02T10:00:00.000Z';
   const archivedParty = Schema.decodeUnknownSync(PartySchema)({
     ...canonicalPartyWire,
@@ -110,7 +110,7 @@ test('Party Detail preserves archived lifecycle independently of direct resoluti
   });
 });
 
-test('Party Detail fails closed for cycles and broken historical chains without reading an alias Party', () => {
+void test('Party Detail fails closed for cycles and broken historical chains without reading an alias Party', () => {
   for (const aliases of [
     [alias('party-a', 'party-b'), alias('party-b', 'party-a')],
     [alias('party-a', 'missing')],
@@ -119,12 +119,12 @@ test('Party Detail fails closed for cycles and broken historical chains without 
     const error = runEffectTestSync(
       Effect.flip(readPartyDetailFromServices(partyRef('party-a'), tenantId, services)),
     );
-    assert.equal(error._tag, 'ReadHandlerUnavailable');
+    assert.ok(Predicate.isTagged(error, 'ReadHandlerUnavailable'));
     assert.deepEqual(lookups, []);
   }
 });
 
-test('Party Detail hides a missing direct Party and a cross-tenant requested reference', () => {
+void test('Party Detail hides a missing direct Party and a cross-tenant requested reference', () => {
   const { lookups, services } = makeServices([]);
   for (const requested of [
     partyRef('missing'),
@@ -133,7 +133,7 @@ test('Party Detail hides a missing direct Party and a cross-tenant requested ref
     const error = runEffectTestSync(
       Effect.flip(readPartyDetailFromServices(requested, tenantId, services)),
     );
-    assert.equal(error._tag, 'ReadHandlerNotFound');
+    assert.ok(Predicate.isTagged(error, 'ReadHandlerNotFound'));
   }
   assert.deepEqual(lookups, []);
 });

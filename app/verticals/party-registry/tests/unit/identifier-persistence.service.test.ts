@@ -1,5 +1,5 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { DateTime, Effect, Match, Schema } from 'effect';
+import { DateTime, Effect, Match, Schema, Predicate } from 'effect';
 // @effect-diagnostics asyncFunction:off globalDate:off -- Existing compatibility boundary; expires: 2026-12-31.
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- Focused harness implements only the owner service's Drizzle seam. expires: 2026-12-31. */
 import type { SQL } from 'drizzle-orm';
@@ -148,7 +148,7 @@ const harness = (
   return { deleted: () => deletes, inserts, lockedTables, transaction, updates };
 };
 
-test('Add reuses a current same-Party identifier instead of duplicating an assertion', async () => {
+void test('Add reuses a current same-Party identifier instead of duplicating an assertion', async () => {
   const db = harness();
   const result = await runEffectTestPromise(
     addOfficialIdentifierRecord(db.transaction, tenantId, partyId, identifier, {
@@ -165,7 +165,7 @@ test('Add reuses a current same-Party identifier instead of duplicating an asser
   assert.equal(db.inserts.length, 0);
 });
 
-test('Add retains ARES evidence separately from the accepting actor and only claims eligible Party types', async () => {
+void test('Add retains ARES evidence separately from the accepting actor and only claims eligible Party types', async () => {
   const externalEvidenceWire = {
     authorityPolicyKey: 'party_registry.ares_enrichment',
     authorityPolicyVersion: '1',
@@ -214,7 +214,7 @@ test('Add retains ARES evidence separately from the accepting actor and only cla
   );
 });
 
-test('ending an identifier preserves its fact and releases its current claim', async () => {
+void test('ending an identifier preserves its fact and releases its current claim', async () => {
   const db = harness({
     claimOwner: partyId,
     current: row({ verificationState: 'VERIFIED', verifiedAt: date('2026-01-01T00:00:00.000Z') }),
@@ -227,14 +227,14 @@ test('ending an identifier preserves its fact and releases its current claim', a
       '2026-02-01T00:00:00.000Z',
     ),
   );
-  assert.equal(result._tag, 'found');
+  assert.ok(Predicate.isTagged(result, 'found'));
   assert.equal(db.updates[0]?.['state'], 'ENDED');
   assert.equal(db.updates[0]?.['isCurrent'], false);
   assert.equal(db.deleted(), 1);
   assert.deepEqual(db.lockedTables, [parties, partyOfficialIdentifiers]);
 });
 
-test('a future end does not release a presently valid claim', async () => {
+void test('a future end does not release a presently valid claim', async () => {
   const db = harness();
   const result = await runEffectTestPromise(
     endOfficialIdentifierRecord(
@@ -244,7 +244,7 @@ test('a future end does not release a presently valid claim', async () => {
       '2099-01-01T00:00:00.000Z',
     ),
   );
-  assert.equal(result._tag, 'conflict');
+  assert.ok(Predicate.isTagged(result, 'conflict'));
   assert.equal(db.updates.length, 0);
   assert.equal(db.deleted(), 0);
 });
@@ -256,7 +256,7 @@ const verificationCommand = {
   verification: 'VERIFIED',
 } as const;
 
-test('verification collision changes neither metadata nor claim ownership', async () => {
+void test('verification collision changes neither metadata nor claim ownership', async () => {
   const db = harness({ claimOwner: 'another-party' });
   const result = await runEffectTestPromise(
     updateOfficialIdentifierVerificationRecord(
@@ -266,12 +266,12 @@ test('verification collision changes neither metadata nor claim ownership', asyn
       verificationCommand,
     ),
   );
-  assert.equal(result._tag, 'claim_conflict');
+  assert.ok(Predicate.isTagged(result, 'claim_conflict'));
   assert.equal(db.updates.length, 0);
   assert.equal(db.inserts.length, 0);
 });
 
-test('verification preserves before-state and immutable identity/provenance while acquiring an eligible claim', async () => {
+void test('verification preserves before-state and immutable identity/provenance while acquiring an eligible claim', async () => {
   const db = harness();
   const result = await runEffectTestPromise(
     updateOfficialIdentifierVerificationRecord(
@@ -281,7 +281,7 @@ test('verification preserves before-state and immutable identity/provenance whil
       verificationCommand,
     ),
   );
-  assert.equal(result._tag, 'found');
+  assert.ok(Predicate.isTagged(result, 'found'));
   const found = Match.value(result).pipe(
     Match.tag('found', (value) => value),
     Match.orElse(() => assert.fail('Expected the identifier verification update to succeed')),
@@ -297,7 +297,7 @@ test('verification preserves before-state and immutable identity/provenance whil
   assert.equal(db.inserts[0]?.table, partyIdentifierClaims);
 });
 
-test('PERSON verification cannot acquire an implicit strong identifier claim', async () => {
+void test('PERSON verification cannot acquire an implicit strong identifier claim', async () => {
   const db = harness({ partyType: 'PERSON' });
   const result = await runEffectTestPromise(
     updateOfficialIdentifierVerificationRecord(
@@ -307,11 +307,11 @@ test('PERSON verification cannot acquire an implicit strong identifier claim', a
       verificationCommand,
     ),
   );
-  assert.equal(result._tag, 'found');
+  assert.ok(Predicate.isTagged(result, 'found'));
   assert.equal(db.inserts.length, 0);
 });
 
-test('verification downgrade releases its claim without erasing the previous verification evidence', async () => {
+void test('verification downgrade releases its claim without erasing the previous verification evidence', async () => {
   const verifiedAt = date('2026-01-01T00:00:00.000Z');
   const db = harness({
     claimOwner: partyId,
@@ -324,7 +324,7 @@ test('verification downgrade releases its claim without erasing the previous ver
       verification: 'REJECTED',
     }),
   );
-  assert.equal(result._tag, 'found');
+  assert.ok(Predicate.isTagged(result, 'found'));
   const found = Match.value(result).pipe(
     Match.tag('found', (value) => value),
     Match.orElse(() => assert.fail('Expected the identifier verification downgrade to succeed')),
@@ -335,7 +335,7 @@ test('verification downgrade releases its claim without erasing the previous ver
   assert.equal(db.deleted(), 1);
 });
 
-test('archived Party and stale verification updates are rejected before mutation', async () => {
+void test('archived Party and stale verification updates are rejected before mutation', async () => {
   await Promise.all(
     [harness({ archived: true }), harness({ current: row({ verificationState: 'REJECTED' }) })].map(
       async (db) => {
@@ -347,7 +347,7 @@ test('archived Party and stale verification updates are rejected before mutation
             verificationCommand,
           ),
         );
-        assert.equal(result._tag, 'conflict');
+        assert.ok(Predicate.isTagged(result, 'conflict'));
         assert.equal(db.updates.length, 0);
       },
     ),

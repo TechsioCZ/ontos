@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { ConfigProvider, Context, Effect, Layer, Schema } from 'effect';
+import { ConfigProvider, Context, Effect, Layer, Schema, Predicate } from 'effect';
 import {
   ReadRuntime,
   ReadHandlerNotFound,
@@ -273,7 +273,7 @@ const commandRequest = (
   });
 };
 
-test('every registered command is mounted and rejects missing structural input or authentication before the lifecycle', async () => {
+void test('every registered command is mounted and rejects missing structural input or authentication before the lifecycle', async () => {
   const assertion = await makeAssertion();
   const harness = makeActionTestHarness();
   const app = mounted(harness, assertion.environment);
@@ -310,10 +310,13 @@ test('every registered command is mounted and rejects missing structural input o
         assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
         const body = await response.json();
         assert.equal(
-          body._tag,
-          response.status === 400
-            ? 'PartyCommandInvalidRequestProblem'
-            : 'PartyCommandAuthenticationProblem',
+          Predicate.isTagged(
+            body,
+            response.status === 400
+              ? 'PartyCommandInvalidRequestProblem'
+              : 'PartyCommandAuthenticationProblem',
+          ),
+          true,
         );
         assert.equal(body.status, response.status);
       },
@@ -332,14 +335,14 @@ test('every registered command is mounted and rejects missing structural input o
     assert.equal(malformed.status, 400);
     assert.match(malformed.headers.get('content-type') ?? '', /application\/problem\+json/u);
     const malformedBody = await malformed.json();
-    assert.equal(malformedBody._tag, 'PartyCommandInvalidRequestProblem');
+    assert.equal(Predicate.isTagged(malformedBody, 'PartyCommandInvalidRequestProblem'), true);
     assert.equal(harness.snapshot().invocations.length, 0);
   } finally {
     await app.dispose();
   }
 });
 
-test('missing, malformed, and wrong-audience assertions are challenged without creating invocations', async () => {
+void test('missing, malformed, and wrong-audience assertions are challenged without creating invocations', async () => {
   await forEachSequential(['party-registry', 'contacts'], async (audience) => {
     const assertion = await makeAssertion(audience);
     const harness = makeActionTestHarness();
@@ -357,7 +360,7 @@ test('missing, malformed, and wrong-audience assertions are challenged without c
         assert.equal(response.headers.get('www-authenticate'), 'Bearer');
         assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
         const body = await response.json();
-        assert.equal(body._tag, 'PartyCommandAuthenticationProblem');
+        assert.equal(Predicate.isTagged(body, 'PartyCommandAuthenticationProblem'), true);
         assert.equal(body.status, 401);
         assert.equal(JSON.stringify(body).includes(assertion.token), false);
       });
@@ -368,7 +371,7 @@ test('missing, malformed, and wrong-audience assertions are challenged without c
   });
 });
 
-test('verification configuration unavailability is retryable and never reaches the lifecycle', async () => {
+void test('verification configuration unavailability is retryable and never reaches the lifecycle', async () => {
   const assertion = await makeAssertion();
   const harness = makeActionTestHarness();
   const app = mounted(harness, {});
@@ -382,7 +385,7 @@ test('verification configuration unavailability is retryable and never reaches t
     assert.equal(response.status, 503);
     assert.equal(response.headers.get('www-authenticate'), null);
     const body = await response.json();
-    assert.equal(body._tag, 'PartyCommandUnavailableProblem');
+    assert.equal(Predicate.isTagged(body, 'PartyCommandUnavailableProblem'), true);
     assert.equal(body.retryable, true);
     assert.equal(harness.snapshot().invocations.length, 0);
   } finally {
@@ -390,7 +393,7 @@ test('verification configuration unavailability is retryable and never reaches t
   }
 });
 
-test('correlation and idempotency are mandatory before the Core Action lifecycle', async () => {
+void test('correlation and idempotency are mandatory before the Core Action lifecycle', async () => {
   const assertion = await makeAssertion();
   const harness = makeActionTestHarness();
   const app = mounted(harness, assertion.environment);
@@ -401,7 +404,10 @@ test('correlation and idempotency are mandatory before the Core Action lifecycle
     );
     assert.equal(missingKey.status, 428);
     const missingKeyBody = await missingKey.json();
-    assert.equal(missingKeyBody._tag, 'PartyCommandPreconditionRequiredProblem');
+    assert.equal(
+      Predicate.isTagged(missingKeyBody, 'PartyCommandPreconditionRequiredProblem'),
+      true,
+    );
     const missingCorrelation = await handle(
       app,
       commandRequest('request-search-rebuild', {}, assertion.token, {
@@ -411,14 +417,17 @@ test('correlation and idempotency are mandatory before the Core Action lifecycle
     );
     assert.equal(missingCorrelation.status, 400);
     const missingCorrelationBody = await missingCorrelation.json();
-    assert.equal(missingCorrelationBody._tag, 'PartyCommandInvalidRequestProblem');
+    assert.equal(
+      Predicate.isTagged(missingCorrelationBody, 'PartyCommandInvalidRequestProblem'),
+      true,
+    );
     assert.equal(harness.snapshot().invocations.length, 0);
   } finally {
     await app.dispose();
   }
 });
 
-test('real Core permission denial is a durable 403 and does not execute the command', async () => {
+void test('real Core permission denial is a durable 403 and does not execute the command', async () => {
   const assertion = await makeAssertion();
   const harness = makeActionTestHarness({
     actionPermission: 'denied',
@@ -434,7 +443,7 @@ test('real Core permission denial is a durable 403 and does not execute the comm
     );
     assert.equal(response.status, 403);
     const body = await response.json();
-    assert.equal(body._tag, 'PartyCommandForbiddenProblem');
+    assert.equal(Predicate.isTagged(body, 'PartyCommandForbiddenProblem'), true);
     assert.equal(harness.snapshot().invocations.length, 1);
     assert.equal(harness.snapshot().permissionDenials.length, 1);
   } finally {
@@ -442,7 +451,7 @@ test('real Core permission denial is a durable 403 and does not execute the comm
   }
 });
 
-test('the real handler translates domain conflicts and rolls back without successful evidence', async () => {
+void test('the real handler translates domain conflicts and rolls back without successful evidence', async () => {
   const assertion = await makeAssertion();
   const harness = makeActionTestHarness({
     actionPermission: 'allowed',
@@ -463,7 +472,7 @@ test('the real handler translates domain conflicts and rolls back without succes
     );
     assert.equal(response.status, 409);
     const body = await response.json();
-    assert.equal(body._tag, 'PartyCommandConflictProblem');
+    assert.equal(Predicate.isTagged(body, 'PartyCommandConflictProblem'), true);
     assert.equal(body.code, 'party_lifecycle_conflict');
     assert.equal(harness.snapshot().invocations.length, 1);
     assert.equal(harness.snapshot().committed.length, 0);
@@ -472,7 +481,7 @@ test('the real handler translates domain conflicts and rolls back without succes
   }
 });
 
-test('alias conflicts preserve only safe canonical recovery metadata', async () => {
+void test('alias conflicts preserve only safe canonical recovery metadata', async () => {
   const assertion = await makeAssertion();
   const canonicalPartyRef = { ...partyRef, resourceId: 'a4000000-0000-4000-8000-000000000002' };
   const harness = makeActionTestHarness({
@@ -502,7 +511,7 @@ test('alias conflicts preserve only safe canonical recovery metadata', async () 
     );
     assert.equal(response.status, 409);
     const body = await response.json();
-    assert.equal(body._tag, 'PartyCommandAliasWriteRejectedProblem');
+    assert.equal(Predicate.isTagged(body, 'PartyCommandAliasWriteRejectedProblem'), true);
     assert.deepEqual(body.aliasPartyRef, partyRef);
     assert.deepEqual(body.canonicalPartyRef, canonicalPartyRef);
     assert.equal(JSON.stringify(body).includes('Private diagnostic'), false);
@@ -512,7 +521,7 @@ test('alias conflicts preserve only safe canonical recovery metadata', async () 
   }
 });
 
-test('committed request replay stays a terminal 409 and does not execute or emit twice', async () => {
+void test('committed request replay stays a terminal 409 and does not execute or emit twice', async () => {
   const assertion = await makeAssertion();
   const harness = makeActionTestHarness({
     actionPermission: 'allowed',
@@ -539,7 +548,7 @@ test('committed request replay stays a terminal 409 and does not execute or emit
     );
     assert.equal(replay.status, 409);
     const body = await replay.json();
-    assert.equal(body._tag, 'PartyCommandAlreadyCommittedProblem');
+    assert.equal(Predicate.isTagged(body, 'PartyCommandAlreadyCommittedProblem'), true);
     assert.equal(body.code, 'action_already_committed');
     assert.equal(body.invocationId, harness.snapshot().invocations[0]?.actionInvocationId);
     assert.equal(body.retryCommand, false);
@@ -551,7 +560,7 @@ test('committed request replay stays a terminal 409 and does not execute or emit
   }
 });
 
-test('declared not-found, capability-unavailable and unexpected defects retain safe distinct HTTP statuses', async () => {
+void test('declared not-found, capability-unavailable and unexpected defects retain safe distinct HTTP statuses', async () => {
   const assertion = await makeAssertion();
   const cases = [
     {
@@ -599,7 +608,7 @@ test('declared not-found, capability-unavailable and unexpected defects retain s
       assert.equal(response.status, item.status);
       assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
       const body = await response.json();
-      assert.equal(body._tag, item.tag);
+      assert.equal(Predicate.isTagged(body, item.tag), true);
       assert.equal(body.status, item.status);
       assert.equal(JSON.stringify(body).includes('private'), false);
       if (item.status === 503) {
@@ -612,7 +621,7 @@ test('declared not-found, capability-unavailable and unexpected defects retain s
   });
 });
 
-test('semantically insufficient Party evidence is a declared 422, not a server defect', async () => {
+void test('semantically insufficient Party evidence is a declared 422, not a server defect', async () => {
   const assertion = await makeAssertion();
   const harness = makeActionTestHarness({
     actionPermission: 'allowed',
@@ -648,7 +657,7 @@ test('semantically insufficient Party evidence is a declared 422, not a server d
   }
 });
 
-test('the Core request hash rejects reuse of an idempotency key for a different command payload', async () => {
+void test('the Core request hash rejects reuse of an idempotency key for a different command payload', async () => {
   const assertion = await makeAssertion();
   let executions = 0;
   const harness = makeActionTestHarness({
@@ -699,7 +708,7 @@ test('the Core request hash rejects reuse of an idempotency key for a different 
   }
 });
 
-test('commit resolution requires authentication and a valid invocation without creating an Action', async () => {
+void test('commit resolution requires authentication and a valid invocation without creating an Action', async () => {
   const assertion = await makeAssertion();
   const harness = makeActionTestHarness();
   const app = mounted(harness, assertion.environment);
@@ -710,7 +719,7 @@ test('commit resolution requires authentication and a valid invocation without c
     const malformed = await handle(app, recoveryRequest('not-an-id', assertion.token));
     assert.equal(malformed.status, 400);
     const malformedBody = await malformed.json();
-    assert.equal(malformedBody._tag, 'PartyCommandInvalidRequestProblem');
+    assert.equal(Predicate.isTagged(malformedBody, 'PartyCommandInvalidRequestProblem'), true);
     const absent = await handle(app, recoveryRequest(randomUUID(), assertion.token));
     assert.equal(absent.status, 404);
     assert.equal(harness.snapshot().invocations.length, 0);
@@ -719,7 +728,7 @@ test('commit resolution requires authentication and a valid invocation without c
   }
 });
 
-test('an open invocation resolves explicitly without authorizing automatic command retry', async () => {
+void test('an open invocation resolves explicitly without authorizing automatic command retry', async () => {
   const assertion = await makeAssertion();
   const harness = makeActionTestHarness({
     actionPermission: 'allowed',
@@ -756,7 +765,7 @@ test('an open invocation resolves explicitly without authorizing automatic comma
   }
 });
 
-test('actual Core commit acknowledgement loss resolves and the mounted governed Read returns the original decision without rerunning the Action', async () => {
+void test('actual Core commit acknowledgement loss resolves and the mounted governed Read returns the original decision without rerunning the Action', async () => {
   const assertion = await makeAssertion();
   const decisions = new Map<string, typeof PartyMatchDecisionRecordSchema.Type>();
   let executions = 0;
@@ -859,7 +868,7 @@ test('actual Core commit acknowledgement loss resolves and the mounted governed 
     );
     assert.equal(uncertain.status, 503);
     const body = await uncertain.json();
-    assert.equal(body._tag, 'PartyCommandCommitIndeterminateProblem');
+    assert.equal(Predicate.isTagged(body, 'PartyCommandCommitIndeterminateProblem'), true);
     assert.equal(body.resolution, 'RESOLVE_COMMIT');
     assert.equal(body.retryCommand, false);
     const invocationId = harness.snapshot().invocations[0]?.actionInvocationId;
@@ -892,7 +901,7 @@ test('actual Core commit acknowledgement loss resolves and the mounted governed 
     );
     assert.equal(replay.status, 409);
     const replayBody = await replay.json();
-    assert.equal(replayBody._tag, 'PartyCommandAlreadyCommittedProblem');
+    assert.equal(Predicate.isTagged(replayBody, 'PartyCommandAlreadyCommittedProblem'), true);
     assert.equal(replayBody.invocationId, invocationId);
     assert.equal(replayBody.retryCommand, false);
     assert.equal(executions, 1);

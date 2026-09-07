@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Match } from 'effect';
+import { Match, Predicate } from 'effect';
 import {
   normalizeCounterpartySearchHits,
   normalizePartySearchHits,
@@ -40,7 +40,7 @@ const expectSearchResults = <Result>(
     Match.exhaustive,
   );
 
-test('Party Search hides archived hits by default and explicitly labels included archived hits', () => {
+void test('Party Search hides archived hits by default and explicitly labels included archived hits', () => {
   const hits: readonly PartySearchProjectionHit[] = [
     { archived: false, canonicalPartyRef: partyRef('active'), title: 'Active' },
     { archived: true, canonicalPartyRef: partyRef('archived'), title: 'Archived' },
@@ -51,14 +51,14 @@ test('Party Search hides archived hits by default and explicitly labels included
     items: [{ archived: false, matchedViaAlias: false, ref: partyRef('active'), title: 'Active' }],
   });
   const included = normalizePartySearchHits({ includeArchived: true, tenantId }, hits);
-  assert.equal(included._tag, 'SearchResults');
+  assert.ok(Predicate.isTagged(included, 'SearchResults'));
   assert.deepEqual(
     expectSearchResults(included).items.map(({ archived }) => archived),
     [false, true],
   );
 });
 
-test('Party aliases collapse to one survivor while shared contact queries may retain multiple Parties', () => {
+void test('Party aliases collapse to one survivor while shared contact queries may retain multiple Parties', () => {
   const survivor = partyRef('survivor');
   const result = normalizePartySearchHits({ includeArchived: false, tenantId }, [
     { archived: false, canonicalPartyRef: survivor, title: 'ACME' },
@@ -71,7 +71,7 @@ test('Party aliases collapse to one survivor while shared contact queries may re
     { archived: false, canonicalPartyRef: partyRef('shared-2'), title: 'Other person' },
   ]);
 
-  assert.equal(result._tag, 'SearchResults');
+  assert.ok(Predicate.isTagged(result, 'SearchResults'));
   const { items } = expectSearchResults(result);
   assert.deepEqual(
     items.map(({ ref }) => ref.resourceId),
@@ -80,23 +80,27 @@ test('Party aliases collapse to one survivor while shared contact queries may re
   assert.equal(items[0]?.matchedViaAlias, true);
 });
 
-test('Party Search fails closed when Core returns a cross-tenant or inconsistent projection', () => {
+void test('Party Search fails closed when Core returns a cross-tenant or inconsistent projection', () => {
   const wrongTenant = {
     ...partyRef('wrong'),
     tenantId: '90000000-0000-4000-8000-000000000009',
   };
-  assert.equal(
-    normalizePartySearchHits({ includeArchived: true, tenantId }, [
-      { archived: false, canonicalPartyRef: wrongTenant, title: 'Wrong' },
-    ])._tag,
-    'SearchProjectionViolation',
+  assert.ok(
+    Predicate.isTagged(
+      normalizePartySearchHits({ includeArchived: true, tenantId }, [
+        { archived: false, canonicalPartyRef: wrongTenant, title: 'Wrong' },
+      ]),
+      'SearchProjectionViolation',
+    ),
   );
-  assert.equal(
-    normalizePartySearchHits({ includeArchived: true, tenantId }, [
-      { archived: false, canonicalPartyRef: partyRef('same'), title: 'One' },
-      { archived: true, canonicalPartyRef: partyRef('same'), title: 'Two' },
-    ])._tag,
-    'SearchProjectionViolation',
+  assert.ok(
+    Predicate.isTagged(
+      normalizePartySearchHits({ includeArchived: true, tenantId }, [
+        { archived: false, canonicalPartyRef: partyRef('same'), title: 'One' },
+        { archived: true, canonicalPartyRef: partyRef('same'), title: 'Two' },
+      ]),
+      'SearchProjectionViolation',
+    ),
   );
 });
 
@@ -113,7 +117,7 @@ const baseCounterpartyHit = (
   rolePeriods,
 });
 
-test('Counterparty Search evaluates only current role periods at the exclusive time boundary', () => {
+void test('Counterparty Search evaluates only current role periods at the exclusive time boundary', () => {
   const effectiveAt = '2026-09-03T12:00:00.000Z';
   const hits: readonly CounterpartySearchProjectionHit[] = [
     baseCounterpartyHit('ended', 'p1', [
@@ -139,7 +143,7 @@ test('Counterparty Search evaluates only current role periods at the exclusive t
     hits,
   );
 
-  assert.equal(result._tag, 'SearchResults');
+  assert.ok(Predicate.isTagged(result, 'SearchResults'));
   const { items } = expectSearchResults(result);
   assert.deepEqual(
     items.map(({ ref }) => ref.resourceId),
@@ -148,7 +152,7 @@ test('Counterparty Search evaluates only current role periods at the exclusive t
   assert.deepEqual(items[1]?.currentRoles, ['CUSTOMER', 'SUPPLIER']);
 });
 
-test('Counterparty Search without a role retains durable Counterparties with no current role', () => {
+void test('Counterparty Search without a role retains durable Counterparties with no current role', () => {
   const result = normalizeCounterpartySearchHits(
     {
       effectiveAt: '2026-09-03T12:00:00.000Z',
@@ -159,11 +163,11 @@ test('Counterparty Search without a role retains durable Counterparties with no 
     [baseCounterpartyHit('no-role', 'p1')],
   );
 
-  assert.equal(result._tag, 'SearchResults');
+  assert.ok(Predicate.isTagged(result, 'SearchResults'));
   assert.deepEqual(expectSearchResults(result).items[0]?.currentRoles, []);
 });
 
-test('Counterparty identity dedupes independently and survivor collisions are surfaced', () => {
+void test('Counterparty identity dedupes independently and survivor collisions are surfaced', () => {
   const hits = [
     baseCounterpartyHit('cp-1', 'survivor'),
     baseCounterpartyHit('cp-1', 'survivor'),
@@ -179,7 +183,7 @@ test('Counterparty identity dedupes independently and survivor collisions are su
     hits,
   );
 
-  assert.equal(result._tag, 'SearchResults');
+  assert.ok(Predicate.isTagged(result, 'SearchResults'));
   const { items } = expectSearchResults(result);
   assert.deepEqual(
     items.map(({ ref }) => ref.resourceId),
@@ -194,7 +198,7 @@ test('Counterparty identity dedupes independently and survivor collisions are su
   );
 });
 
-test('Counterparty Search fails closed on the wrong Legal Entity instead of broadening scope', () => {
+void test('Counterparty Search fails closed on the wrong Legal Entity instead of broadening scope', () => {
   const result = normalizeCounterpartySearchHits(
     {
       effectiveAt: '2026-09-03T12:00:00.000Z',
@@ -213,5 +217,5 @@ test('Counterparty Search fails closed on the wrong Legal Entity instead of broa
     ],
   );
 
-  assert.equal(result._tag, 'SearchProjectionViolation');
+  assert.ok(Predicate.isTagged(result, 'SearchProjectionViolation'));
 });

@@ -2,7 +2,7 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DateTime, Effect, Fiber, Layer, Logger, Option } from 'effect';
+import { DateTime, Effect, Fiber, Layer, Logger, Option, Predicate } from 'effect';
 import { TestClock } from 'effect/testing';
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http';
 import type { HttpClientRequest } from 'effect/unstable/http';
@@ -70,7 +70,7 @@ const capturedLoggerLayer = (entries: string[]) =>
     }),
   ]);
 
-test('maps a bounded ARES observation and sends an exact credential-free JSON request', async () => {
+void test('maps a bounded ARES observation and sends an exact credential-free JSON request', async () => {
   const requests: { readonly request: HttpClientRequest.HttpClientRequest; readonly url: URL }[] =
     [];
   const client = clientFrom((request, url) => {
@@ -111,7 +111,7 @@ test('maps a bounded ARES observation and sends an exact credential-free JSON re
   assert.equal(requests[0]?.request.headers['cookie'], undefined);
 });
 
-test('rejects malformed IČOs before provider I/O', async () => {
+void test('rejects malformed IČOs before provider I/O', async () => {
   let requests = 0;
   const client = clientFrom((request) => {
     requests += 1;
@@ -121,13 +121,13 @@ test('rejects malformed IČOs before provider I/O', async () => {
   await Promise.all(
     ['1234567', '123456789', '1234 5678', 'abcdefgh', '../48039101'].map(async (ico) => {
       const error = await runEffectTestPromise(Effect.flip(lookup(client, ico)));
-      assert.equal(error._tag, 'AresSubjectInvalidIco');
+      assert.ok(Predicate.isTagged(error, 'AresSubjectInvalidIco'));
     }),
   );
   assert.equal(requests, 0);
 });
 
-test('represents absent optional provider facts explicitly without inventing Party facts', async () => {
+void test('represents absent optional provider facts explicitly without inventing Party facts', async () => {
   const client = clientFrom((request) =>
     Effect.succeed(
       jsonResponse(request, 200, {
@@ -152,7 +152,7 @@ test('represents absent optional provider facts explicitly without inventing Par
   assert.ok(Option.isNone(result.providerRecordRef));
 });
 
-test('keeps not-found, denial, throttling, timeout, and unavailable failures distinct and safe', async () => {
+void test('keeps not-found, denial, throttling, timeout, and unavailable failures distinct and safe', async () => {
   const statusCases = [
     [400, 'AresSubjectResponseInvalid', 1],
     [401, 'AresSubjectDenied', 1],
@@ -183,7 +183,7 @@ test('keeps not-found, denial, throttling, timeout, and unavailable failures dis
         return yield* Fiber.join(fiber);
       }).pipe(Effect.provide(TestClock.layer()));
       const error = await runEffectTestPromise(expectedAttempts === 3 ? fiberProgram : program);
-      assert.equal(error._tag, tag);
+      assert.ok(Predicate.isTagged(error, tag));
       assert.equal(attempts, expectedAttempts);
       assert.equal(JSON.stringify(error).includes('PRIVATE_PROVIDER_CODE'), false);
       assert.equal(JSON.stringify(error).includes('private provider detail'), false);
@@ -191,7 +191,7 @@ test('keeps not-found, denial, throttling, timeout, and unavailable failures dis
   );
 });
 
-test('retries transport faults with bounded backoff without exposing diagnostics', async () => {
+void test('retries transport faults with bounded backoff without exposing diagnostics', async () => {
   const logs: string[] = [];
   let attempts = 0;
   const client = clientFrom((request) => {
@@ -216,14 +216,14 @@ test('retries transport faults with bounded backoff without exposing diagnostics
   }).pipe(Effect.provide(Layer.mergeAll(TestClock.layer(), capturedLoggerLayer(logs))));
   const error = await runEffectTestPromise(program);
 
-  assert.equal(error._tag, 'AresSubjectUnavailable');
+  assert.ok(Predicate.isTagged(error, 'AresSubjectUnavailable'));
   assert.equal(attempts, 3);
   assert.equal(JSON.stringify(error).includes('private socket diagnostic'), false);
   assert.match(logs.join('\n'), /private socket diagnostic/u);
   assert.match(logs.join('\n'), /corr private/u);
 });
 
-test('times out and aborts each of the three bounded attempts', async () => {
+void test('times out and aborts each of the three bounded attempts', async () => {
   const signals: AbortSignal[] = [];
   const client = clientFrom((_request, _url, signal) => {
     signals.push(signal);
@@ -237,7 +237,7 @@ test('times out and aborts each of the three bounded attempts', async () => {
   }).pipe(Effect.provide(TestClock.layer()));
   const error = await runEffectTestPromise(program);
 
-  assert.equal(error._tag, 'AresSubjectTimeout');
+  assert.ok(Predicate.isTagged(error, 'AresSubjectTimeout'));
   assert.equal(signals.length, 3);
   assert.equal(
     signals.every((signal) => signal.aborted),
@@ -245,7 +245,7 @@ test('times out and aborts each of the three bounded attempts', async () => {
   );
 });
 
-test('bounds stalled response bodies with the same three-attempt timeout policy', async () => {
+void test('bounds stalled response bodies with the same three-attempt timeout policy', async () => {
   let attempts = 0;
   const client = clientFrom((request) => {
     attempts += 1;
@@ -268,11 +268,11 @@ test('bounds stalled response bodies with the same three-attempt timeout policy'
     return yield* Fiber.join(fiber);
   }).pipe(Effect.provide(TestClock.layer()));
   const error = await runEffectTestPromise(program);
-  assert.equal(error._tag, 'AresSubjectTimeout');
+  assert.ok(Predicate.isTagged(error, 'AresSubjectTimeout'));
   assert.equal(attempts, 3);
 });
 
-test('rejects malformed JSON, schema drift, mismatched IČO, and oversized text without partial evidence', async () => {
+void test('rejects malformed JSON, schema drift, mismatched IČO, and oversized text without partial evidence', async () => {
   const responses: readonly ((
     request: HttpClientRequest.HttpClientRequest,
   ) => HttpClientResponse.HttpClientResponse)[] = [
@@ -290,13 +290,13 @@ test('rejects malformed JSON, schema drift, mismatched IČO, and oversized text 
         return Effect.succeed(response(request));
       });
       const error = await runEffectTestPromise(Effect.flip(lookup(client)));
-      assert.equal(error._tag, 'AresSubjectResponseInvalid');
+      assert.ok(Predicate.isTagged(error, 'AresSubjectResponseInvalid'));
       assert.equal(requests, 1);
     }),
   );
 });
 
-test('coalesces identical requests and exposes cache age without changing observedAt', async () => {
+void test('coalesces identical requests and exposes cache age without changing observedAt', async () => {
   let requests = 0;
   const client = clientFrom((request) => {
     requests += 1;
@@ -334,7 +334,7 @@ test('coalesces identical requests and exposes cache age without changing observ
   assert.notEqual(result.cached.servedAt, result.cached.observedAt);
 });
 
-test('bounds distinct upstream lookups to four concurrent requests', async () => {
+void test('bounds distinct upstream lookups to four concurrent requests', async () => {
   let active = 0;
   let maximumActive = 0;
   let requests = 0;

@@ -1,7 +1,7 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { requestSearchRebuildAction } from '../../src/actions/request-search-rebuild.action.ts';
@@ -28,7 +28,7 @@ const request = {
   transport: { correlationId: 'search-rebuild-test', idempotencyKey: 'rebuild-1' },
 };
 
-test('tenant rebuild requests require Party administration and canonical idempotency', () => {
+void test('tenant rebuild requests require Party administration and canonical idempotency', () => {
   const { descriptor } = requestSearchRebuildAction;
   assert.equal(descriptor.actionKey, 'party.registry.request-search-rebuild');
   assert.equal(descriptor.tenantPermission?.({}), 'manage_party_identity');
@@ -41,7 +41,7 @@ test('tenant rebuild requests require Party administration and canonical idempot
   ]);
 });
 
-test('authorized rebuild commits one linked request without reading identity or running the projector', () => {
+void test('authorized rebuild commits one linked request without reading identity or running the projector', () => {
   const harness = makeActionTestHarness({
     actionPermission: 'allowed',
     tenantPermission: 'allowed',
@@ -79,7 +79,7 @@ test('authorized rebuild commits one linked request without reading identity or 
   );
 });
 
-test('denied Party administration cannot queue a rebuild even with Action execution permission', () => {
+void test('denied Party administration cannot queue a rebuild even with Action execution permission', () => {
   const harness = makeActionTestHarness({
     actionPermission: 'allowed',
     tenantPermission: 'denied',
@@ -87,7 +87,7 @@ test('denied Party administration cannot queue a rebuild even with Action execut
   return runEffectTestPromise(
     Effect.gen(function* deniedRebuildRequest() {
       const error = yield* harness.runtime.runAction(request).pipe(Effect.flip);
-      assert.equal(error._tag, 'ActionPermissionDenied');
+      assert.ok(Predicate.isTagged(error, 'ActionPermissionDenied'));
       const snapshot = harness.snapshot();
       assert.deepEqual(snapshot.committed, []);
       assert.equal(snapshot.permissionDenials.length, 1);
@@ -96,7 +96,7 @@ test('denied Party administration cannot queue a rebuild even with Action execut
   );
 });
 
-test('replaying the same authorized rebuild request queues only once', () => {
+void test('replaying the same authorized rebuild request queues only once', () => {
   const harness = makeActionTestHarness({
     actionPermission: 'allowed',
     tenantPermission: 'allowed',
@@ -105,7 +105,7 @@ test('replaying the same authorized rebuild request queues only once', () => {
     Effect.gen(function* replayRebuildRequest() {
       yield* harness.runtime.runAction(request);
       const replay = yield* harness.runtime.runAction(request).pipe(Effect.flip);
-      assert.equal(replay._tag, 'ActionAlreadyCommitted');
+      assert.ok(Predicate.isTagged(replay, 'ActionAlreadyCommitted'));
       const snapshot = harness.snapshot();
       assert.equal(snapshot.committed.length, 1);
       assert.equal(snapshot.committed[0]?.evidence.domainEvents.length, 1);
@@ -128,7 +128,7 @@ const workerContext: OutboxWorkerHandlerContext = {
   workerKey: 'party.registry.rebuild-search',
 };
 
-test('rebuild worker uses its trusted committed context, and failures remain retryable', () => {
+void test('rebuild worker uses its trusted committed context, and failures remain retryable', () => {
   const unavailable = new PartySearchProjectionUnavailable({
     code: 'party_search_projection_unavailable',
     reason: 'Party search projection is temporarily unavailable',

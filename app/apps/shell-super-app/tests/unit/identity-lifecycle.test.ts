@@ -6,7 +6,7 @@ import {
   IdentityTargetInvalidError,
   PrincipalBindingMissingError,
 } from '@app/core-runtime';
-import { Effect, Redacted } from 'effect';
+import { Effect, Redacted, Predicate } from 'effect';
 import {
   ApiKeyProviderUnavailableError,
   ApiKeyStateInconsistentError,
@@ -89,7 +89,7 @@ test('compensates a failed Core bind and never exposes the provider key identifi
     ),
   );
   expect(failure).toBe(bindFailure);
-  expect(failure._tag).toBe('IdentityTargetInvalidError');
+  expect(Predicate.isTagged(failure, 'IdentityTargetInvalidError')).toBe(true);
   expect(disabled).toEqual(['private-provider-key-id']);
 });
 
@@ -117,7 +117,7 @@ test('preserves resolver lifecycle failures instead of rewriting them as an outa
   );
 
   expect(failure).toBe(resolverFailure);
-  expect(failure._tag).toBe('PrincipalBindingMissingError');
+  expect(Predicate.isTagged(failure, 'PrincipalBindingMissingError')).toBe(true);
 });
 
 test('preserves a typed Core status-transition failure before touching provider state', async () => {
@@ -151,7 +151,7 @@ test('preserves a typed Core status-transition failure before touching provider 
   );
 
   expect(failure).toBe(actionFailure);
-  expect(failure._tag).toBe('IdentityTargetInvalidError');
+  expect(Predicate.isTagged(failure, 'IdentityTargetInvalidError')).toBe(true);
   expect(providerCalls).toBe(0);
 });
 
@@ -456,7 +456,7 @@ test('cleans one bounded pending batch and requires a retry before issuing anoth
     ),
   );
 
-  expect(failure._tag).toBe('IdentityLifecycleOperationError');
+  expect(Predicate.isTagged(failure, 'IdentityLifecycleOperationError')).toBe(true);
   expect(disabled).toEqual(['bounded-orphan']);
   expect(issueCalls).toBe(0);
 });

@@ -3,7 +3,7 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
 import { defineAction } from '../../src/actions/definition.ts';
 import { ActionAlreadyCommitted } from '../../src/actions/errors.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -17,7 +17,7 @@ const principal = {
   tenantId: '30000000-0000-4000-8000-000000000001',
 } as const;
 
-test('committed retry and explicit recovery return the same invocation without rerunning or replaying the result', async () => {
+void test('committed retry and explicit recovery return the same invocation without rerunning or replaying the result', async () => {
   let executions = 0;
   const registration = defineAction(
     {
@@ -64,7 +64,7 @@ test('committed retry and explicit recovery return the same invocation without r
   );
 
   for (const outcome of [replay, recovered]) {
-    assert.equal(outcome._tag, 'ActionAlreadyCommitted');
+    assert.ok(Predicate.isTagged(outcome, 'ActionAlreadyCommitted'));
     assert.equal('invocationId' in outcome ? outcome.invocationId : undefined, invocationId);
     assert.equal('total' in outcome, false);
     assert.equal('result' in outcome, false);
@@ -74,7 +74,7 @@ test('committed retry and explicit recovery return the same invocation without r
   assert.equal(harness.snapshot().transactionCount, 1);
 });
 
-test('committed error schema requires and preserves the recovery invocation identifier', async () => {
+void test('committed error schema requires and preserves the recovery invocation identifier', async () => {
   const encoded = {
     _tag: 'ActionAlreadyCommitted',
     code: 'action_already_committed',
@@ -100,7 +100,7 @@ test('committed error schema requires and preserves the recovery invocation iden
   assert.equal('status' in decoded, false);
 });
 
-test('lost commit acknowledgement recovers the committed invocation and faults only once', async () => {
+void test('lost commit acknowledgement recovers the committed invocation and faults only once', async () => {
   let executions = 0;
   const registration = defineAction(
     {
@@ -144,7 +144,7 @@ test('lost commit acknowledgement recovers the committed invocation and faults o
   const uncertain = await runEffectTestPromise(
     harness.runtime.runAction(request).pipe(Effect.flip),
   );
-  assert.equal(uncertain._tag, 'ActionCommitIndeterminate');
+  assert.ok(Predicate.isTagged(uncertain, 'ActionCommitIndeterminate'));
   assert.ok('invocationId' in uncertain);
   assert.equal(uncertain.invocationId, harness.snapshot().invocations[0]?.actionInvocationId);
   assert.equal(harness.snapshot().invocations[0]?.status, 'succeeded');
@@ -156,7 +156,7 @@ test('lost commit acknowledgement recovers the committed invocation and faults o
   );
   const replay = await runEffectTestPromise(harness.runtime.runAction(request).pipe(Effect.flip));
   for (const outcome of [recovered, replay]) {
-    assert.equal(outcome._tag, 'ActionAlreadyCommitted');
+    assert.ok(Predicate.isTagged(outcome, 'ActionAlreadyCommitted'));
     assert.ok('invocationId' in outcome);
     assert.equal(outcome.invocationId, uncertain.invocationId);
   }

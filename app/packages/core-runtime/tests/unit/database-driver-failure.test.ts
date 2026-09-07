@@ -1,5 +1,5 @@
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
-import { Cause, Option, Schema } from 'effect';
+import { Cause, Option, Schema, Predicate } from 'effect';
 import { SqlError, UniqueViolation } from 'effect/unstable/sql/SqlError';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -145,17 +145,17 @@ void test('distinguishes commit ambiguity from definite transaction failures', (
   const administrativeShutdown = decodeDatabaseDriverFailure({ code: '57P01' });
   const serializationFailure = decodeDatabaseDriverFailure({ code: '40001' });
 
-  assert.equal(
-    Option.isSome(connectionFailure) && connectionFailure.value._tag,
-    'DatabaseCommitAcknowledgementAmbiguous',
+  assert.ok(
+    Option.isSome(connectionFailure) &&
+      Predicate.isTagged(connectionFailure.value, 'DatabaseCommitAcknowledgementAmbiguous'),
   );
-  assert.equal(
-    Option.isSome(administrativeShutdown) && administrativeShutdown.value._tag,
-    'DatabaseCommitAcknowledgementAmbiguous',
+  assert.ok(
+    Option.isSome(administrativeShutdown) &&
+      Predicate.isTagged(administrativeShutdown.value, 'DatabaseCommitAcknowledgementAmbiguous'),
   );
-  assert.equal(
-    Option.isSome(serializationFailure) && serializationFailure.value._tag,
-    'DatabaseTransactionFailure',
+  assert.ok(
+    Option.isSome(serializationFailure) &&
+      Predicate.isTagged(serializationFailure.value, 'DatabaseTransactionFailure'),
   );
   assert.equal(isDatabaseCommitAcknowledgementAmbiguous({ code: '40001' }), false);
   assert.equal(isDatabaseCommitAcknowledgementAmbiguous({ code: '57014' }), false);

@@ -1,9 +1,8 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { DateTime, Effect, flow } from 'effect';
+import { DateTime, Effect, flow, Predicate } from 'effect';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { PrincipalResolutionError } from '../../src/auth/principal-resolver-errors.ts';
 import type { PrincipalResolutionRecord } from '../../src/auth/principal-resolver.ts';
 import {
   classifyApiKeyPrincipal,
@@ -34,14 +33,6 @@ const activeRecord: PrincipalResolutionRecord = {
   tenantName: 'Zeta tenant',
   tenantStatus: 'active',
 };
-
-const failureTag = <Value>(effect: Effect.Effect<Value, PrincipalResolutionError>) =>
-  effect.pipe(
-    Effect.match({
-      onFailure: (error) => error._tag,
-      onSuccess: () => assert.fail('Expected principal resolution to fail'),
-    }),
-  );
 
 effectTest(
   'lists safe eligible tenants by name and tenant ID',
@@ -162,9 +153,11 @@ effectTest(
       principalKind: 'human',
       tenantId: 'tenant-2',
     });
-    assert.equal(
-      yield* failureTag(classifySelectedPrincipal([activeRecord, selected], 'foreign-tenant')),
-      'PrincipalBindingMissingError',
+    assert.ok(
+      Predicate.isTagged(
+        yield* Effect.flip(classifySelectedPrincipal([activeRecord, selected], 'foreign-tenant')),
+        'PrincipalBindingMissingError',
+      ),
     );
   }),
 );
@@ -175,17 +168,23 @@ effectTest(
     (['service', 'integration', 'agent', 'system'] as const).map((principalKind) =>
       Effect.gen(function* rejectsNonHumanPrincipal() {
         const record = { ...activeRecord, principalKind };
-        assert.equal(
-          yield* failureTag(classifyDefaultPrincipal([record])),
-          'PrincipalInactiveError',
+        assert.ok(
+          Predicate.isTagged(
+            yield* Effect.flip(classifyDefaultPrincipal([record])),
+            'PrincipalInactiveError',
+          ),
         );
-        assert.equal(
-          yield* failureTag(classifySelectedPrincipal([record], record.tenantId)),
-          'PrincipalInactiveError',
+        assert.ok(
+          Predicate.isTagged(
+            yield* Effect.flip(classifySelectedPrincipal([record], record.tenantId)),
+            'PrincipalInactiveError',
+          ),
         );
-        assert.equal(
-          yield* failureTag(classifyAvailableTenants([record])),
-          'PrincipalInactiveError',
+        assert.ok(
+          Predicate.isTagged(
+            yield* Effect.flip(classifyAvailableTenants([record])),
+            'PrincipalInactiveError',
+          ),
         );
       }),
     ),
@@ -204,11 +203,13 @@ effectTest(
         }),
       ),
     );
-    assert.equal(
-      yield* failureTag(
-        classifyApiKeyPrincipal([activeRecord, { ...activeRecord, tenantId: 't-2' }]),
+    assert.ok(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          classifyApiKeyPrincipal([activeRecord, { ...activeRecord, tenantId: 't-2' }]),
+        ),
+        'PrincipalBindingAmbiguousError',
       ),
-      'PrincipalBindingAmbiguousError',
     );
   }),
 );
@@ -216,40 +217,59 @@ effectTest(
 effectTest(
   'fails closed for empty, inactive, and duplicate eligible resolver states',
   Effect.gen(function* rejectsInvalidResolverStates() {
-    assert.equal(yield* failureTag(classifyAvailableTenants([])), 'PrincipalBindingMissingError');
-    assert.equal(
-      yield* failureTag(classifyAvailableTenants([{ ...activeRecord, bindingStatus: 'revoked' }])),
-      'PrincipalBindingInactiveError',
-    );
-    assert.equal(
-      yield* failureTag(
-        classifyAvailableTenants([
-          {
-            ...activeRecord,
-            bindingRevokedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-03-01T00:00:00.000Z')),
-          },
-        ]),
+    assert.ok(
+      Predicate.isTagged(
+        yield* Effect.flip(classifyAvailableTenants([])),
+        'PrincipalBindingMissingError',
       ),
-      'PrincipalBindingInactiveError',
     );
-    assert.equal(
-      yield* failureTag(
-        classifyAvailableTenants([{ ...activeRecord, principalStatus: 'disabled' }]),
+    assert.ok(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          classifyAvailableTenants([{ ...activeRecord, bindingStatus: 'revoked' }]),
+        ),
+        'PrincipalBindingInactiveError',
       ),
-      'PrincipalInactiveError',
     );
-    assert.equal(
-      yield* failureTag(classifyAvailableTenants([{ ...activeRecord, tenantStatus: 'suspended' }])),
-      'TenantInactiveError',
-    );
-    assert.equal(
-      yield* failureTag(
-        classifyAvailableTenants([
-          activeRecord,
-          { ...activeRecord, principalId: 'duplicate-principal' },
-        ]),
+    assert.ok(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          classifyAvailableTenants([
+            {
+              ...activeRecord,
+              bindingRevokedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-03-01T00:00:00.000Z')),
+            },
+          ]),
+        ),
+        'PrincipalBindingInactiveError',
       ),
-      'PrincipalBindingAmbiguousError',
+    );
+    assert.ok(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          classifyAvailableTenants([{ ...activeRecord, principalStatus: 'disabled' }]),
+        ),
+        'PrincipalInactiveError',
+      ),
+    );
+    assert.ok(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          classifyAvailableTenants([{ ...activeRecord, tenantStatus: 'suspended' }]),
+        ),
+        'TenantInactiveError',
+      ),
+    );
+    assert.ok(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          classifyAvailableTenants([
+            activeRecord,
+            { ...activeRecord, principalId: 'duplicate-principal' },
+          ]),
+        ),
+        'PrincipalBindingAmbiguousError',
+      ),
     );
   }),
 );
@@ -268,7 +288,7 @@ effectTest(
         ),
       }).listAvailableTenants('subject'),
     );
-    assert.equal(error._tag, 'PrincipalResolverUnavailableError');
+    assert.ok(Predicate.isTagged(error, 'PrincipalResolverUnavailableError'));
     assert.doesNotMatch(error.reason, /secret database error/u);
   }),
 );

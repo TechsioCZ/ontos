@@ -1,7 +1,7 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off globalDate:off -- Existing compatibility boundary; expires: 2026-12-31.
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This harness implements the correction service's Drizzle boundary. expires: 2026-12-31. */
-import { Effect, Match, Option, Schema } from 'effect';
+import { Effect, Match, Option, Schema, Predicate } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
@@ -55,7 +55,7 @@ const relationshipCommand = decode(SupersedeRelationshipCorrectionCommandSchema)
   relationshipCommandEncoded,
 );
 
-test('correction is closed to Party type, display name, and official identifier assertions', () => {
+void test('correction is closed to Party type, display name, and official identifier assertions', () => {
   for (const factKind of ['PARTY_TYPE', 'DISPLAY_NAME', 'OFFICIAL_IDENTIFIER']) {
     assert.doesNotThrow(() =>
       decode(PartyCorrectionCommandSchema)({
@@ -80,7 +80,7 @@ test('correction is closed to Party type, display name, and official identifier 
   );
 });
 
-test('correction follow-up is typed and duplicate confirmation remains readiness-only', () => {
+void test('correction follow-up is typed and duplicate confirmation remains readiness-only', () => {
   assert.equal(classifyCorrectionRoute('PARTY_TYPE'), 'LIFECYCLE_REVIEW');
   assert.equal(classifyCorrectionRoute('DISPLAY_NAME'), 'ENRICHMENT_REVIEW');
   assert.equal(classifyCorrectionRoute('OFFICIAL_IDENTIFIER'), 'CLAIM_REASSIGNMENT_REVIEW');
@@ -124,7 +124,7 @@ test('correction follow-up is typed and duplicate confirmation remains readiness
   );
 });
 
-test('relationship correction is closed, revisioned, interval checked, and has no caller authority hints', () => {
+void test('relationship correction is closed, revisioned, interval checked, and has no caller authority hints', () => {
   const strictDecode = Schema.decodeUnknownSync(PartyCorrectionCommandSchema, {
     onExcessProperty: 'error',
   });
@@ -227,7 +227,7 @@ const transactionHarness = (
   return { insertValues, transaction, updateSets };
 };
 
-test('relationship supersession preserves endpoint/type identity and stores trusted actor plus old/new links', async () => {
+void test('relationship supersession preserves endpoint/type identity and stores trusted actor plus old/new links', async () => {
   const original = relationshipRow();
   const replacement = relationshipRow({ relationshipId: replacementId });
   const h = transactionHarness(
@@ -255,7 +255,7 @@ test('relationship supersession preserves endpoint/type identity and stores trus
   assert.equal(Option.getOrThrow(result.replacementRelationshipRef).resourceId, replacementId);
 });
 
-test('relationship retraction retains original effective validity and creates no replacement', async () => {
+void test('relationship retraction retains original effective validity and creates no replacement', async () => {
   const command = decode(PartyCorrectionCommandSchema)({
     ...evidence,
     correctionMode: 'RETRACT',
@@ -277,7 +277,7 @@ test('relationship retraction retains original effective validity and creates no
   assert.ok(Option.isNone(result.replacementAssertionId));
 });
 
-test('stale revision and foreign-tenant relationship correction fail before business writes', async () => {
+void test('stale revision and foreign-tenant relationship correction fail before business writes', async () => {
   await Promise.all(
     [
       decode(SupersedeRelationshipCorrectionCommandSchema)({
@@ -298,14 +298,14 @@ test('stale revision and foreign-tenant relationship correction fail before busi
           }),
         ),
       );
-      assert.equal(error._tag, 'PartyCorrectionConflict');
+      assert.ok(Predicate.isTagged(error, 'PartyCorrectionConflict'));
       assert.equal(h.updateSets.length, 0);
       assert.equal(h.insertValues.length, 0);
     }),
   );
 });
 
-test('UNRESOLVED Party Type enrichment is rejected before mutation by correction', async () => {
+void test('UNRESOLVED Party Type enrichment is rejected before mutation by correction', async () => {
   const h = transactionHarness([
     [],
     [{ partyId }],
@@ -344,12 +344,12 @@ test('UNRESOLVED Party Type enrichment is rejected before mutation by correction
       correctPartyFactRecord(h.transaction, tenantId, command, { actionInvocationId, principalId }),
     ),
   );
-  assert.equal(error._tag, 'PartyCorrectionConflict');
+  assert.ok(Predicate.isTagged(error, 'PartyCorrectionConflict'));
   assert.match(error.reason, /enrichment/u);
   assert.equal(h.updateSets.length, 0);
 });
 
-test('detail exposes immutable original/result semantics, governance, and source distinct from actor', async () => {
+void test('detail exposes immutable original/result semantics, governance, and source distinct from actor', async () => {
   const h = transactionHarness([
     [
       {
@@ -417,7 +417,7 @@ test('detail exposes immutable original/result semantics, governance, and source
   assert.equal(detail.governance.policyVersion, detail.policyVersion);
 });
 
-test('relationship overlap is a typed conflict and no correction journal is written after failed replacement', async () => {
+void test('relationship overlap is a typed conflict and no correction journal is written after failed replacement', async () => {
   const original = relationshipRow();
   const h = transactionHarness(
     [[], [original], [], [{ partyId }], [], [{ partyId: organizationId }]],
@@ -433,14 +433,14 @@ test('relationship overlap is a typed conflict and no correction journal is writ
       }),
     ),
   );
-  assert.equal(error._tag, 'PartyCorrectionConflict');
+  assert.ok(Predicate.isTagged(error, 'PartyCorrectionConflict'));
   assert.match(error.reason, /overlaps/u);
   assert.equal(h.insertValues.length, 1);
   // The failed Effect leaves the enclosing Core transaction to roll back the original transition.
   assert.equal(h.insertValues[0]?.['supersedesRelationshipId'], assertionId);
 });
 
-test('correction of a durable relationship preserves stored alias endpoints', async () => {
+void test('correction of a durable relationship preserves stored alias endpoints', async () => {
   const canonicalId = '90000000-0000-4000-8000-000000000001';
   const original = relationshipRow();
   const h = transactionHarness(
@@ -466,13 +466,13 @@ test('correction of a durable relationship preserves stored alias endpoints', as
   assert.notEqual(h.insertValues[0]?.['fromPartyId'], canonicalId);
 });
 
-test('correction history requires reviewer authority; ordinary identity read permission is insufficient', () => {
+void test('correction history requires reviewer authority; ordinary identity read permission is insufficient', () => {
   const target = partyCorrectionPermissionTarget();
   assert.deepEqual(target, { kind: 'tenant', permission: 'review_party_identity' });
   assert.notDeepEqual(target, { kind: 'tenant', permission: 'read_party_identity' });
 });
 
-test('Party Type correction reconciles newly eligible claims before superseding the original fact', async () => {
+void test('Party Type correction reconciles newly eligible claims before superseding the original fact', async () => {
   const h = transactionHarness([
     [],
     [{ partyId }],
@@ -523,13 +523,13 @@ test('Party Type correction reconciles newly eligible claims before superseding 
       correctPartyFactRecord(h.transaction, tenantId, command, { actionInvocationId, principalId }),
     ),
   );
-  assert.equal(error._tag, 'PartyCorrectionConflict');
+  assert.ok(Predicate.isTagged(error, 'PartyCorrectionConflict'));
   assert.match(error.reason, /exclusive identifier claims/u);
   assert.equal(h.updateSets.length, 0);
   assert.equal(h.insertValues.length, 0);
 });
 
-test('type Correction cannot treat a reviewer decision or source label as subject evidence', async () => {
+void test('type Correction cannot treat a reviewer decision or source label as subject evidence', async () => {
   const h = transactionHarness([
     [],
     [{ partyId }],
@@ -558,7 +558,7 @@ test('type Correction cannot treat a reviewer decision or source label as subjec
       correctPartyFactRecord(h.transaction, tenantId, command, { actionInvocationId, principalId }),
     ),
   );
-  assert.equal(error._tag, 'PartyCorrectionConflict');
+  assert.ok(Predicate.isTagged(error, 'PartyCorrectionConflict'));
   assert.equal(error.reason, 'subject_evidence_required');
   assert.equal(h.insertValues.length, 0);
   assert.equal(h.updateSets.length, 0);

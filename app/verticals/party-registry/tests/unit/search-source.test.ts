@@ -7,7 +7,7 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import type { AnyColumn, Query, SQL, Table } from 'drizzle-orm';
 import { getTableName } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
-import { DateTime, Effect, Result } from 'effect';
+import { DateTime, Effect, Result, Predicate } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { makePartySearchProjectionSource } from '../../src/services/party-search-projection-source.service.ts';
@@ -80,7 +80,7 @@ const harness = (
   return { columns, filters, scopes, source: makePartySearchProjectionSource(snapshot) };
 };
 
-test('canonical snapshot preserves alias identity and legal-entity Counterparty context', () =>
+void test('canonical snapshot preserves alias identity and legal-entity Counterparty context', () =>
   runEffectTestPromise(
     Effect.gen(function* canonicalAliasSnapshot() {
       const { source } = harness({
@@ -144,7 +144,7 @@ test('canonical snapshot preserves alias identity and legal-entity Counterparty 
     }),
   ));
 
-test('source exposes only current public email and phone search evidence, never ADDRESS or raw contact fields', () =>
+void test('source exposes only current public email and phone search evidence, never ADDRESS or raw contact fields', () =>
   runEffectTestPromise(
     Effect.gen(function* privateSearchEvidence() {
       const contact = {
@@ -220,7 +220,7 @@ test('source exposes only current public email and phone search evidence, never 
     }),
   ));
 
-test('missing Party and Counterparty targets produce explicit versioned tombstone refs', () =>
+void test('missing Party and Counterparty targets produce explicit versioned tombstone refs', () =>
   runEffectTestPromise(
     Effect.gen(function* missingTargetTombstones() {
       const { source } = harness({});
@@ -239,7 +239,7 @@ test('missing Party and Counterparty targets produce explicit versioned tombston
     }),
   ));
 
-test('full rebuild reads each Core-enumerated legal entity in the same snapshot and keeps distinct Counterparties', () =>
+void test('full rebuild reads each Core-enumerated legal entity in the same snapshot and keeps distinct Counterparties', () =>
   runEffectTestPromise(
     Effect.gen(function* rebuildSnapshot() {
       const secondLegalEntityId = '30000000-0000-4000-8000-000000000002';
@@ -270,7 +270,7 @@ test('full rebuild reads each Core-enumerated legal entity in the same snapshot 
     }),
   ));
 
-test('Counterparty-only refresh emits only its canonical family and selected Counterparty', () =>
+void test('Counterparty-only refresh emits only its canonical family and selected Counterparty', () =>
   runEffectTestPromise(
     Effect.gen(function* targetedCounterpartySnapshot() {
       const otherId = '20000000-0000-4000-8000-000000000009';
@@ -301,7 +301,7 @@ test('Counterparty-only refresh emits only its canonical family and selected Cou
     }),
   ));
 
-test('alias cycles and cross-tenant source rows fail closed with sanitized typed failures', () =>
+void test('alias cycles and cross-tenant source rows fail closed with sanitized typed failures', () =>
   runEffectTestPromise(
     Effect.gen(function* rejectedSourceSnapshot() {
       for (const rows of [
@@ -319,7 +319,7 @@ test('alias cycles and cross-tenant source rows fail closed with sanitized typed
         const outcome = yield* source.load(context, { rebuild: true }).pipe(Effect.result);
         assert.ok(Result.isFailure(outcome));
         if (Result.isFailure(outcome)) {
-          assert.equal(outcome.failure._tag, 'PartySearchProjectionUnavailable');
+          assert.ok(Predicate.isTagged(outcome.failure, 'PartySearchProjectionUnavailable'));
           assert.doesNotMatch(outcome.failure.reason, /Secret name|foreign-tenant/u);
         }
       }

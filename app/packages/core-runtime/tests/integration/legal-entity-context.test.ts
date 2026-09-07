@@ -4,7 +4,7 @@ import {
 } from '@app/core-runtime/testing/effect-runtime';
 
 import { eq } from 'drizzle-orm';
-import { Effect, Exit as NativeExit, Scope as NativeScope } from 'effect';
+import { Effect, Exit as NativeExit, Scope as NativeScope, Predicate } from 'effect';
 import assert from 'node:assert/strict';
 import test, { after as afterNativeDatabase } from 'node:test';
 import { Pool } from 'pg';
@@ -110,9 +110,9 @@ effectTest(
         legalName: 'Zeta entity',
       });
       const inactiveError = yield* Effect.flip(context.validateSelection(tenantOne, suspended));
-      assert.equal(inactiveError._tag, 'LegalEntityContextInactiveError');
+      assert.ok(Predicate.isTagged(inactiveError, 'LegalEntityContextInactiveError'));
       const missingError = yield* Effect.flip(context.validateSelection(tenantOne, foreign));
-      assert.equal(missingError._tag, 'LegalEntityContextMissingError');
+      assert.ok(Predicate.isTagged(missingError, 'LegalEntityContextMissingError'));
     }).pipe(
       Effect.ensuring(cleanup.pipe(Effect.orDie)),
       Effect.ensuring(databaseEffect(pool.end.bind(pool)).pipe(Effect.orDie)),

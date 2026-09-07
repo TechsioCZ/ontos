@@ -1,7 +1,7 @@
 import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
 import {
   makeCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
@@ -87,7 +87,7 @@ effectTest(
       );
       yield* store.replace(rebuild);
       const divergent = yield* Effect.flip(store.replace({ ...rebuild, documents: [party()] }));
-      assert.equal(divergent._tag, 'CoreSearchProjectionInvalid');
+      assert.ok(Predicate.isTagged(divergent, 'CoreSearchProjectionInvalid'));
       yield* store.apply({ document: party({ projectionVersion: '3' }), kind: 'upsert' });
       yield* store.replace(rebuild);
       const searchResults = yield* runtime.search({
@@ -192,7 +192,7 @@ effectTest(
       Effect.tap((failures) =>
         Effect.sync(() => {
           for (const failure of failures) {
-            assert.equal(failure._tag, 'CoreSearchProjectionInvalid');
+            assert.ok(Predicate.isTagged(failure, 'CoreSearchProjectionInvalid'));
           }
         }),
       ),
@@ -435,7 +435,7 @@ effectTest(
           tenantId,
         }),
       );
-      assert.equal(failure._tag, 'CoreSearchProjectionInvalid');
+      assert.ok(Predicate.isTagged(failure, 'CoreSearchProjectionInvalid'));
       const result = yield* runtime.search({
         includeArchived: false,
         moduleId: 'party.registry',

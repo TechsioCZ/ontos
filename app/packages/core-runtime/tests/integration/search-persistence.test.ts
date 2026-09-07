@@ -3,7 +3,14 @@ import {
   makeEffectTestCallback,
 } from '@app/core-runtime/testing/effect-runtime';
 
-import { Effect, Function as Fn, Exit as NativeExit, Scope as NativeScope, Schema } from 'effect';
+import {
+  Effect,
+  Function as Fn,
+  Exit as NativeExit,
+  Scope as NativeScope,
+  Schema,
+  Predicate,
+} from 'effect';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test, { after as afterNativeDatabase } from 'node:test';
@@ -245,7 +252,7 @@ effectTest(
       const divergence = yield* Effect.flip(
         restarted.replace({ ...emptyRebuild, documents: [staleDocument] }),
       );
-      assert.equal(divergence._tag, 'CoreSearchProjectionInvalid');
+      assert.ok(Predicate.isTagged(divergence, 'CoreSearchProjectionInvalid'));
       yield* restarted.apply({
         document: { ...staleDocument, projectionVersion: '3' },
         kind: 'upsert',

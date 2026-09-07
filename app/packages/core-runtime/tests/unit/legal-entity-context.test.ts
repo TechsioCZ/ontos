@@ -1,12 +1,9 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { Effect, flow } from 'effect';
+import { Effect, flow, Predicate } from 'effect';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type {
-  LegalEntityContextError,
-  LegalEntityContextRecord,
-} from '../../src/auth/legal-entity-context.ts';
+import type { LegalEntityContextRecord } from '../../src/auth/legal-entity-context.ts';
 import {
   classifyActiveLegalEntities,
   classifySelectedLegalEntity,
@@ -27,14 +24,6 @@ const activeRecord: LegalEntityContextRecord = {
   status: 'active',
   tenantId,
 };
-
-const failureTag = <Value>(effect: Effect.Effect<Value, LegalEntityContextError>) =>
-  effect.pipe(
-    Effect.match({
-      onFailure: (error) => error._tag,
-      onSuccess: () => assert.fail('Expected legal-entity context classification to fail'),
-    }),
-  );
 
 effectTest(
   'lists zero, one, and many active legal entities in deterministic safe order',
@@ -94,25 +83,29 @@ effectTest(
       yield* classifySelectedLegalEntity([activeRecord], tenantId, activeRecord.legalEntityId),
       { legalEntityId: activeRecord.legalEntityId, legalName: activeRecord.legalName },
     );
-    assert.equal(
-      yield* failureTag(
-        classifySelectedLegalEntity(
-          [activeRecord],
-          tenantId,
-          '20000000-0000-4000-8000-000000000099',
+    assert.ok(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          classifySelectedLegalEntity(
+            [activeRecord],
+            tenantId,
+            '20000000-0000-4000-8000-000000000099',
+          ),
         ),
+        'LegalEntityContextMissingError',
       ),
-      'LegalEntityContextMissingError',
     );
-    assert.equal(
-      yield* failureTag(
-        classifySelectedLegalEntity(
-          [{ ...activeRecord, status: 'suspended' }],
-          tenantId,
-          activeRecord.legalEntityId,
+    assert.ok(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          classifySelectedLegalEntity(
+            [{ ...activeRecord, status: 'suspended' }],
+            tenantId,
+            activeRecord.legalEntityId,
+          ),
         ),
+        'LegalEntityContextInactiveError',
       ),
-      'LegalEntityContextInactiveError',
     );
   }),
 );
@@ -120,24 +113,32 @@ effectTest(
 effectTest(
   'rejects cross-tenant, malformed, and duplicate records',
   Effect.gen(function* rejectsInvalidLegalEntityRecords() {
-    assert.equal(
-      yield* failureTag(
-        classifyActiveLegalEntities(
-          [{ ...activeRecord, tenantId: '10000000-0000-4000-8000-000000000002' }],
-          tenantId,
+    assert.ok(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          classifyActiveLegalEntities(
+            [{ ...activeRecord, tenantId: '10000000-0000-4000-8000-000000000002' }],
+            tenantId,
+          ),
         ),
+        'LegalEntityContextInvalidError',
       ),
-      'LegalEntityContextInvalidError',
     );
-    assert.equal(
-      yield* failureTag(
-        classifyActiveLegalEntities([{ ...activeRecord, legalName: '' }], tenantId),
+    assert.ok(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          classifyActiveLegalEntities([{ ...activeRecord, legalName: '' }], tenantId),
+        ),
+        'LegalEntityContextInvalidError',
       ),
-      'LegalEntityContextInvalidError',
     );
-    assert.equal(
-      yield* failureTag(classifyActiveLegalEntities([activeRecord, { ...activeRecord }], tenantId)),
-      'LegalEntityContextAmbiguousError',
+    assert.ok(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          classifyActiveLegalEntities([activeRecord, { ...activeRecord }], tenantId),
+        ),
+        'LegalEntityContextAmbiguousError',
+      ),
     );
   }),
 );
@@ -155,7 +156,7 @@ effectTest(
       ),
     });
     const error = yield* Effect.flip(context.listActiveForTenant(tenantId));
-    assert.equal(error._tag, 'LegalEntityContextUnavailableError');
+    assert.ok(Predicate.isTagged(error, 'LegalEntityContextUnavailableError'));
     assert.doesNotMatch(error.reason, /secret database diagnostic/u);
   }),
 );

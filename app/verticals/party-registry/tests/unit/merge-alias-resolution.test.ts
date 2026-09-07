@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DateTime } from 'effect';
+import { DateTime, Predicate } from 'effect';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import {
   assertCanonicalWriteTarget,
@@ -26,7 +26,7 @@ const alias = (aliasPartyId: string, survivorPartyId: string, tenant = tenantId)
   survivorPartyRef: party(survivorPartyId, tenant),
 });
 
-test('resolves an historical alias chain to one final canonical Party', () => {
+void test('resolves an historical alias chain to one final canonical Party', () => {
   const result = resolveCanonicalPartyRef(party('party-b'), [
     alias('party-b', 'party-a'),
     alias('party-a', 'party-c'),
@@ -40,30 +40,36 @@ test('resolves an historical alias chain to one final canonical Party', () => {
   });
 });
 
-test('rejects alias cycles, self aliases, and cross-tenant targets', () => {
-  assert.equal(
-    resolveCanonicalPartyRef(party('party-a'), [
-      alias('party-a', 'party-b'),
-      alias('party-b', 'party-a'),
-    ])._tag,
-    'PartyAliasCycleRejected',
+void test('rejects alias cycles, self aliases, and cross-tenant targets', () => {
+  assert.ok(
+    Predicate.isTagged(
+      resolveCanonicalPartyRef(party('party-a'), [
+        alias('party-a', 'party-b'),
+        alias('party-b', 'party-a'),
+      ]),
+      'PartyAliasCycleRejected',
+    ),
   );
-  assert.equal(
-    resolveCanonicalPartyRef(party('party-a'), [alias('party-a', 'party-a')])._tag,
-    'PartyAliasSelfReferenceRejected',
+  assert.ok(
+    Predicate.isTagged(
+      resolveCanonicalPartyRef(party('party-a'), [alias('party-a', 'party-a')]),
+      'PartyAliasSelfReferenceRejected',
+    ),
   );
-  assert.equal(
-    resolveCanonicalPartyRef(party('party-a'), [
-      {
-        ...alias('party-a', 'party-b'),
-        survivorPartyRef: party('party-b', '22222222-2222-4222-8222-222222222222'),
-      },
-    ])._tag,
-    'PartyAliasCrossTenantRejected',
+  assert.ok(
+    Predicate.isTagged(
+      resolveCanonicalPartyRef(party('party-a'), [
+        {
+          ...alias('party-a', 'party-b'),
+          survivorPartyRef: party('party-b', '22222222-2222-4222-8222-222222222222'),
+        },
+      ]),
+      'PartyAliasCrossTenantRejected',
+    ),
   );
 });
 
-test('rejects new writes addressed to an absorbed alias instead of forwarding them', () => {
+void test('rejects new writes addressed to an absorbed alias instead of forwarding them', () => {
   assert.deepEqual(assertCanonicalWriteTarget(party('party-b'), [alias('party-b', 'party-a')]), {
     _tag: 'AliasWriteRejected',
     aliasPartyRef: party('party-b'),

@@ -467,7 +467,7 @@ effectTest(
           }),
         ),
       );
-      assert.equal(systemDenied._tag, 'ActionPermissionDenied');
+      assert.ok(Predicate.isTagged(systemDenied, 'ActionPermissionDenied'));
       const systemTenantMember = relationship(
         'tenant',
         tenantId,

@@ -2,7 +2,7 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Option } from 'effect';
+import { Effect, Option, Predicate } from 'effect';
 import {
   OperationalScopeTransaction,
   installOperationalScopeFromTransactionService,
@@ -72,7 +72,7 @@ void test('fails closed when transaction settings do not match', async () => {
       }).pipe(Effect.provideService(OperationalScopeTransaction, transaction)),
     ),
   );
-  assert.equal(error._tag, 'OperationContextUnavailable');
+  assert.ok(Predicate.isTagged(error, 'OperationContextUnavailable'));
 });
 
 void test('creates complete CRUD RLS policies with update using and with-check predicates', () => {

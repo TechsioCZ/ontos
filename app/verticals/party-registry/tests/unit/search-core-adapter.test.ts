@@ -1,7 +1,7 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
 import { CoreSearchProjectionHitSchema } from '@app/core-runtime';
 import type { CoreSearchQueryRuntimeService } from '@app/core-runtime';
 import { makePartySearchProjectionGateway } from '../../src/search/parties.provider.ts';
@@ -59,7 +59,7 @@ const wrongResourceHit = Schema.decodeUnknownSync(CoreSearchProjectionHitSchema)
   title: 'Wrong',
 });
 
-test('Party adapter queries only the Core-owned Party projection and maps alias context', () =>
+void test('Party adapter queries only the Core-owned Party projection and maps alias context', () =>
   runEffectTestPromise(
     Effect.gen(function* partyAdapterQuery() {
       const calls: unknown[] = [];
@@ -93,7 +93,7 @@ test('Party adapter queries only the Core-owned Party projection and maps alias 
     }),
   ));
 
-test('Counterparty adapter uses trusted Legal Entity, effective time, role facet and safe periods', () =>
+void test('Counterparty adapter uses trusted Legal Entity, effective time, role facet and safe periods', () =>
   runEffectTestPromise(
     Effect.gen(function* counterpartyAdapterQuery() {
       const calls: unknown[] = [];
@@ -146,7 +146,7 @@ test('Counterparty adapter uses trusted Legal Entity, effective time, role facet
     }),
   ));
 
-test('Party adapter fails closed when a generic projection returns the wrong resource contract', () =>
+void test('Party adapter fails closed when a generic projection returns the wrong resource contract', () =>
   runEffectTestPromise(
     Effect.gen(function* invalidProjectionContract() {
       const core: CoreSearchQueryRuntimeService = {
@@ -160,6 +160,6 @@ test('Party adapter fails closed when a generic projection returns the wrong res
           tenantId,
         }),
       );
-      assert.equal(failure._tag, 'Failure');
+      assert.ok(Predicate.isTagged(failure, 'Failure'));
     }),
   ));

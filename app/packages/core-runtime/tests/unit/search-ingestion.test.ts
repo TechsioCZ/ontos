@@ -1,7 +1,7 @@
 import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import {
   CORE_SEARCH_INGESTION_REGISTRATIONS,
   CORE_SEARCH_PARTY_LIFECYCLE_TOPICS,
@@ -104,7 +104,7 @@ effectTest('identifier updates accept only their generated self-consumer worker'
         workerKey: 'party.registry.project-official-identifier-added-to-search',
       }),
     );
-    assert.equal(denied._tag, 'CoreSearchProjectionInvalid');
+    assert.ok(Predicate.isTagged(denied, 'CoreSearchProjectionInvalid'));
   });
 });
 
@@ -138,7 +138,7 @@ effectTest('rejects undeclared topics and sequence/document identity mismatches'
     Effect.tap((failures) =>
       Effect.sync(() => {
         for (const failure of failures) {
-          assert.equal(failure._tag, 'CoreSearchProjectionInvalid');
+          assert.ok(Predicate.isTagged(failure, 'CoreSearchProjectionInvalid'));
         }
       }),
     ),

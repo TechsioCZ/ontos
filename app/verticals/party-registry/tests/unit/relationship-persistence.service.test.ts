@@ -1,7 +1,7 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off globalDate:off -- Existing compatibility boundary; expires: 2026-12-31.
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This focused harness models only the Drizzle system boundary used by the Relationship service. expires: 2026-12-31. */
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
@@ -132,7 +132,7 @@ const transactionHarness = (
   return { insertValues, transaction, updateSets };
 };
 
-test('create persists an active assertion with unknown start and derives current state', async () => {
+void test('create persists an active assertion with unknown start and derives current state', async () => {
   const created = relationshipRow();
   const harness = transactionHarness(
     [
@@ -171,7 +171,7 @@ test('create persists an active assertion with unknown start and derives current
   assert.equal('isCurrent' in (harness.insertValues[0] ?? {}), false);
 });
 
-test('update refines an unknown historical validFrom through the persistence service', async () => {
+void test('update refines an unknown historical validFrom through the persistence service', async () => {
   const refinedAt = '2025-01-01T00:00:00.000Z';
   const validTo = new Date('2026-01-01T00:00:00.000Z');
   const current = relationshipRow({ validTo });
@@ -201,7 +201,7 @@ test('update refines an unknown historical validFrom through the persistence ser
   assert.equal(harness.updateSets[0]?.['revision'], 2);
 });
 
-test('end keeps a future-ended relationship current and exposes bounded end history', async () => {
+void test('end keeps a future-ended relationship current and exposes bounded end history', async () => {
   const effectiveAt = '2099-01-01T00:00:00.000Z';
   const survivorId = '70000000-0000-4000-8000-000000000001';
   const current = relationshipRow({ validFrom: new Date('2025-01-01T00:00:00.000Z') });
@@ -257,7 +257,7 @@ test('end keeps a future-ended relationship current and exposes bounded end hist
   assert.equal('isCurrent' in (harness.updateSets[0] ?? {}), false);
 });
 
-test('detail derives scheduled state and resolves stored endpoint aliases independently', async () => {
+void test('detail derives scheduled state and resolves stored endpoint aliases independently', async () => {
   const canonicalFrom = '70000000-0000-4000-8000-000000000001';
   const middleAlias = '80000000-0000-4000-8000-000000000001';
   const scheduled = relationshipRow({ validFrom: new Date('2099-01-01T00:00:00.000Z') });
@@ -283,7 +283,7 @@ test('detail derives scheduled state and resolves stored endpoint aliases indepe
   assert.ok(Option.isNone(detail.to.requestedAlias));
 });
 
-test('non-active assertions never read as current even with an open effective interval', async () => {
+void test('non-active assertions never read as current even with an open effective interval', async () => {
   await Promise.all(
     ['RETRACTED', 'SUPERSEDED', 'DISPUTED'].map(async (assertionState) => {
       const harness = transactionHarness([
@@ -300,7 +300,7 @@ test('non-active assertions never read as current even with an open effective in
   );
 });
 
-test('durable relationship update resolves alias-backed stored endpoints without rewriting them', async () => {
+void test('durable relationship update resolves alias-backed stored endpoints without rewriting them', async () => {
   const survivorId = '70000000-0000-4000-8000-000000000001';
   const updated = relationshipRow({
     revision: 2,
@@ -341,7 +341,7 @@ test('durable relationship update resolves alias-backed stored endpoints without
   assert.equal('fromPartyId' in (harness.updateSets[0] ?? {}), false);
 });
 
-test('create rejects an explicit alias endpoint with canonical survivor guidance', async () => {
+void test('create rejects an explicit alias endpoint with canonical survivor guidance', async () => {
   const survivorId = '70000000-0000-4000-8000-000000000001';
   const harness = transactionHarness([
     [
@@ -373,14 +373,14 @@ test('create rejects an explicit alias endpoint with canonical survivor guidance
     ).pipe(Effect.flip),
   );
 
-  assert.equal(rejection._tag, 'PartyAliasWriteRejected');
+  assert.ok(Predicate.isTagged(rejection, 'PartyAliasWriteRejected'));
   if (Schema.is(PartyAliasWriteRejected)(rejection)) {
     assert.equal(rejection.canonicalPartyRef.resourceId, survivorId);
   }
   assert.equal(harness.insertValues.length, 0);
 });
 
-test('a known historical start cannot be rewritten by ordinary update', async () => {
+void test('a known historical start cannot be rewritten by ordinary update', async () => {
   const harness = transactionHarness([
     [relationshipRow({ validFrom: new Date('2025-01-01T00:00:00.000Z') })],
     ...canonicalEndpointReads,
@@ -401,14 +401,14 @@ test('a known historical start cannot be rewritten by ordinary update', async ()
     ).pipe(Effect.flip),
   );
 
-  assert.equal(rejection._tag, 'PartyRelationshipCorrectionRequired');
+  assert.ok(Predicate.isTagged(rejection, 'PartyRelationshipCorrectionRequired'));
   if (Schema.is(PartyRelationshipCorrectionRequired)(rejection)) {
     assert.equal(rejection.fact, 'validFrom');
   }
   assert.equal(harness.updateSets.length, 0);
 });
 
-test('removing a future planned end clears its current evidence and retains prior audit detail', async () => {
+void test('removing a future planned end clears its current evidence and retains prior audit detail', async () => {
   const current = relationshipRow({
     endProvenanceMethod: 'MANUAL_CONFIRMATION',
     endProvenanceSource: 'ENGAGEMENT_REVIEW',
@@ -448,7 +448,7 @@ test('removing a future planned end clears its current evidence and retains prio
   }
 });
 
-test('update can shorten a future planned end to a valid retrospective end with new evidence', async () => {
+void test('update can shorten a future planned end to a valid retrospective end with new evidence', async () => {
   const validFrom = new Date('2025-01-01T00:00:00.000Z');
   const effectiveAt = '2026-02-01T00:00:00.000Z';
   const current = relationshipRow({ validFrom, validTo: new Date('2099-01-01T00:00:00.000Z') });
@@ -489,7 +489,7 @@ test('update can shorten a future planned end to a valid retrospective end with 
   assert.equal(harness.updateSets[0]?.['endedByActionInvocationId'], actionInvocationId);
 });
 
-test('an evidence-backed end without a generic reason stays visible and retries exactly', async () => {
+void test('an evidence-backed end without a generic reason stays visible and retries exactly', async () => {
   const effectiveAt = '2026-02-01T00:00:00.000Z';
   const ended = relationshipRow({
     endProvenanceMethod: 'DOCUMENT_REVIEW',

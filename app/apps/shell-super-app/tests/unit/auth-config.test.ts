@@ -1,6 +1,6 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { expect, test } from '@rstest/core';
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import { parseAuthConfig } from '../../api/auth/config.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 
@@ -39,8 +39,8 @@ test('requires a strong secret and PostgreSQL URL in the typed error channel', a
       ),
     ),
   ]).then(([secretError, databaseError]) => {
-    expect(secretError._tag).toBe('AuthConfigError');
-    expect(databaseError._tag).toBe('AuthConfigError');
+    expect(Predicate.isTagged(secretError, 'AuthConfigError')).toBe(true);
+    expect(Predicate.isTagged(databaseError, 'AuthConfigError')).toBe(true);
   }));
 
 test('keeps gateway signing configuration independent from Better Auth configuration', async () => {
@@ -48,5 +48,5 @@ test('keeps gateway signing configuration independent from Better Auth configura
   const gatewayError = await runEffectTestPromise(Effect.flip(parseGatewayIssuerConfig({})));
 
   expect(authentication.baseUrl).toBe('http://localhost:3020');
-  expect(gatewayError._tag).toBe('GatewayIssuerConfigError');
+  expect(Predicate.isTagged(gatewayError, 'GatewayIssuerConfigError')).toBe(true);
 });

@@ -56,7 +56,7 @@ void test('defines an immutable typed descriptor and decodes typed payloads and 
   assert.equal(Object.isFrozen(registration.descriptor.policies), true);
 });
 
-test('keeps the Resource permission resolver private behind an immutable declaration', () => {
+void test('keeps the Resource permission resolver private behind an immutable declaration', () => {
   const permission = defineActionResourcePermission<{ readonly counterpartyId: string }>(
     ({ counterpartyId }) => ({
       permission: 'write',
@@ -74,7 +74,7 @@ test('keeps the Resource permission resolver private behind an immutable declara
   assert.equal('resolver' in permission, false);
 });
 
-test('requires trusted Legal Entity scope for a Counterparty permission declaration', () => {
+void test('requires trusted Legal Entity scope for a Counterparty permission declaration', () => {
   const entrypoint = defineTenantModuleEntrypoint({
     access: 'write',
     authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
@@ -102,7 +102,7 @@ test('requires trusted Legal Entity scope for a Counterparty permission declarat
   );
 });
 
-test('uses Schema.Void for a no-payload Action', async () => {
+void test('uses Schema.Void for a no-payload Action', async () => {
   const registration = defineAction(
     {
       accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'cache.read.v1' },
@@ -137,7 +137,7 @@ test('uses Schema.Void for a no-payload Action', async () => {
   );
 
   assert.equal(payload, undefined);
-  assert.equal(invalid._tag, 'ActionPayloadValidationError');
+  assert.ok(Predicate.isTagged(invalid, 'ActionPayloadValidationError'));
 });
 
 void test('keeps the private handler outside the public Action registration', () => {
@@ -175,7 +175,7 @@ void test('rejects invalid declared results through a typed error', async () => 
     Effect.flip(decodeActionResult(Schema.Struct({ id: Schema.String }), { id: 1 })),
   );
 
-  assert.equal(error._tag, 'ActionResultValidationError');
+  assert.ok(Predicate.isTagged(error, 'ActionResultValidationError'));
   assert.equal(error.code, 'action_result_invalid');
 });
 

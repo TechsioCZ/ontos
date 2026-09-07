@@ -106,7 +106,7 @@ const normalizeForHash = <Value>(value: Value, seen: WeakSet<object>): Canonical
   if (Predicate.isBigInt(value)) {
     return ['bigint', value.toString(10)];
   }
-  if (value instanceof Date) {
+  if (Predicate.isDate(value)) {
     return ['date', value.toISOString()];
   }
   if (Array.isArray(value)) {

@@ -1,6 +1,6 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Schema, Predicate } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -80,9 +80,9 @@ void test('rejects forged registrations, unsafe refs, wrong kinds, and inactive 
     ),
   );
 
-  assert.equal(invalid._tag, 'SystemPrincipalContextInvalidError');
-  assert.equal(wrongKind._tag, 'SystemPrincipalContextDeniedError');
-  assert.equal(inactive._tag, 'SystemPrincipalContextDeniedError');
+  assert.ok(Predicate.isTagged(invalid, 'SystemPrincipalContextInvalidError'));
+  assert.ok(Predicate.isTagged(wrongKind, 'SystemPrincipalContextDeniedError'));
+  assert.ok(Predicate.isTagged(inactive, 'SystemPrincipalContextDeniedError'));
   assert.throws(() => registerSystemWorkload({ jobKey: 'unsafe:key' }), TypeError);
 });
 
@@ -106,7 +106,7 @@ void test('permits service principals only when the trusted registration opts in
     }),
   );
 
-  assert.equal(denied._tag, 'SystemPrincipalContextDeniedError');
+  assert.ok(Predicate.isTagged(denied, 'SystemPrincipalContextDeniedError'));
   assert.equal(allowed.authMethod, 'system');
 });
 

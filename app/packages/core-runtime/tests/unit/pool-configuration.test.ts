@@ -1,7 +1,7 @@
 import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Redacted } from 'effect';
+import { Effect, Redacted, Predicate } from 'effect';
 import {
   DEFAULT_DATABASE_POOL_DEADLINES,
   configureDatabasePool,
@@ -9,7 +9,7 @@ import {
 
 const runtimeUrl = 'postgresql://runtime:secret@localhost:5432/ontos';
 
-test(
+void test(
   'uses acquisition and statement deadlines without opting into a lock deadline',
   makeEffectTestCallback(
     Effect.gen(function* verifyDefaults() {
@@ -30,7 +30,7 @@ test(
   ),
 );
 
-test(
+void test(
   'includes an explicitly opted-in lock deadline',
   makeEffectTestCallback(
     Effect.gen(function* verifyLockDeadline() {
@@ -44,7 +44,7 @@ test(
   ),
 );
 
-test(
+void test(
   'rejects URL deadline overrides with a typed configuration failure',
   makeEffectTestCallback(
     Effect.forEach(
@@ -60,7 +60,7 @@ test(
         Effect.gen(function* verifyParameter() {
           const connectionString = Redacted.make(`${runtimeUrl}?${parameter}`);
           const error = yield* Effect.flip(configureDatabasePool(connectionString));
-          assert.equal(error._tag, 'DatabaseConnectionError');
+          assert.ok(Predicate.isTagged(error, 'DatabaseConnectionError'));
           assert.equal(
             error.reason,
             'Database URL deadline parameters and startup options are unsupported; use poolDeadlines',
@@ -71,7 +71,7 @@ test(
   ),
 );
 
-test(
+void test(
   'rejects invalid deadline values with a typed configuration failure',
   makeEffectTestCallback(
     Effect.gen(function* verifyInvalidDeadline() {
@@ -80,7 +80,7 @@ test(
         configureDatabasePool(connectionString, { statement_timeout: 0 }),
       );
 
-      assert.equal(error._tag, 'DatabaseConnectionError');
+      assert.ok(Predicate.isTagged(error, 'DatabaseConnectionError'));
       assert.equal(
         error.reason,
         'Database pool deadlines must be positive 32-bit millisecond integers',

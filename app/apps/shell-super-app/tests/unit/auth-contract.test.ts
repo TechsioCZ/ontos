@@ -1,6 +1,6 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { expect, test } from '@rstest/core';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema, Predicate } from 'effect';
 import {
   CurrentSessionSchema,
   AvailableLegalEntitiesResponseSchema,
@@ -233,7 +233,7 @@ test('validates tenant UUIDs and strips all non-contract fields', async () => {
   const invalidPayload = await runEffectTestPromise(
     Effect.flip(Schema.decodeUnknownEffect(SwitchTenantPayloadSchema)({ tenantId: 'not-a-uuid' })),
   );
-  expect(invalidPayload._tag).toBe('SchemaError');
+  expect(Predicate.isTagged(invalidPayload, 'SchemaError')).toBe(true);
 });
 
 test('rejects malformed credentials through Effect Schema', async () => {
@@ -245,7 +245,7 @@ test('rejects malformed credentials through Effect Schema', async () => {
       }),
     ),
   );
-  expect(error._tag).toBe('SchemaError');
+  expect(Predicate.isTagged(error, 'SchemaError')).toBe(true);
 });
 
 test('requires lifecycle reasons and strips provider-private API key identifiers', async () => {
@@ -270,8 +270,8 @@ test('requires lifecycle reasons and strips provider-private API key identifiers
       }),
     ),
   );
-  expect(missingPrincipalReason._tag).toBe('SchemaError');
-  expect(missingRevocationReason._tag).toBe('SchemaError');
+  expect(Predicate.isTagged(missingPrincipalReason, 'SchemaError')).toBe(true);
+  expect(Predicate.isTagged(missingRevocationReason, 'SchemaError')).toBe(true);
 
   const lifecycle = await runEffectTestPromise(
     Schema.decodeUnknownEffect(ApiKeyLifecycleResponseSchema)({
