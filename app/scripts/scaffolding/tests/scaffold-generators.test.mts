@@ -104,8 +104,8 @@ interface GeneratedPrincipalModule {
   ) => Effect.Effect<TrustedPrincipalContext, { readonly _tag: GeneratedPrincipalErrorTag }>;
 }
 
-interface GeneratedActionGatewayModule {
-  readonly makeActionGateway: (
+interface GeneratedOperationGatewayModule {
+  readonly makeOperationGateway: (
     acquire: (payload: { readonly audience: string }) => Effect.Effect<{ readonly token: string }>,
   ) => {
     readonly invoke: <Success>(
@@ -120,9 +120,9 @@ const GeneratedPrincipalModuleSchema = Schema.Struct({
       Predicate.isFunction(value),
   ),
 });
-const GeneratedActionGatewayModuleSchema = Schema.Struct({
-  makeActionGateway: Schema.declare<GeneratedActionGatewayModule['makeActionGateway']>(
-    (value): value is GeneratedActionGatewayModule['makeActionGateway'] =>
+const GeneratedOperationGatewayModuleSchema = Schema.Struct({
+  makeOperationGateway: Schema.declare<GeneratedOperationGatewayModule['makeOperationGateway']>(
+    (value): value is GeneratedOperationGatewayModule['makeOperationGateway'] =>
       Predicate.isFunction(value),
   ),
 });
@@ -1863,7 +1863,18 @@ test('generates one immutable Action identity boundary and exact direct dependen
       server,
       /createLocalJWKSet|decodeProtectedHeader|jwtVerify|PublicVerificationKeySchema/u,
     );
-    assert.match(client, /acquire\(\{ audience: ACTION_GATEWAY_AUDIENCE \}/u);
+    assert.match(client, /makeOperationGateway as makeSharedOperationGateway/u);
+    assert.match(client, /makeSharedOperationGateway\(ACTION_GATEWAY_AUDIENCE, acquire\)/u);
+    assert.match(client, /export const operationGateway = makeOperationGateway\(\)/u);
+    assert.doesNotMatch(
+      client,
+      /ActionGatewayIssuer|ActionGatewayAttempt|makeActionGateway|\bactionGateway\b/u,
+    );
+    assert.doesNotMatch(client, /Effect\.flatMap|Bearer \$\{|acquire\(\{ audience/u);
+    assert.doesNotMatch(
+      client,
+      /api\/auth\/action-principal|gateway-assertion-redemption|GatewayContextProtectedHeader|verticals\//u,
+    );
     assert.doesNotMatch(client, /localStorage|sessionStorage/u);
     assert.match(server, /verifyAndRedeem/u);
     assert.match(redemption, /GatewayAssertionRedemptionUnavailableError/u);
@@ -2049,7 +2060,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
           .href
       ),
     );
-    const generatedClientModule = Schema.decodeUnknownSync(GeneratedActionGatewayModuleSchema)(
+    const generatedClientModule = Schema.decodeUnknownSync(GeneratedOperationGatewayModuleSchema)(
       await import(pathToFileURL(path.join(fixture.root, inventoryActionGatewayFile)).href),
     );
     const current = await makeGatewayKey('current');
@@ -2287,7 +2298,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
     let acquisitions = 0;
     const authorizations: string[] = [];
     const idempotencyKey = 'caller-owned-idempotency-key';
-    const actionGateway = generatedClientModule.makeActionGateway(({ audience }) => {
+    const operationGateway = generatedClientModule.makeOperationGateway(({ audience }) => {
       acquisitions += 1;
       assert.equal(audience, inventorySlug);
       return Effect.succeed({ token: `attempt-${acquisitions}` });
@@ -2296,8 +2307,8 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
       authorizations.push(authorization);
       return Effect.succeed(idempotencyKey);
     };
-    assert.equal(await runEffectTestPromise(actionGateway.invoke(attempt)), idempotencyKey);
-    assert.equal(await runEffectTestPromise(actionGateway.invoke(attempt)), idempotencyKey);
+    assert.equal(await runEffectTestPromise(operationGateway.invoke(attempt)), idempotencyKey);
+    assert.equal(await runEffectTestPromise(operationGateway.invoke(attempt)), idempotencyKey);
     assert.deepEqual(authorizations, ['Bearer attempt-1', 'Bearer attempt-2']);
 
     const actionApi = HttpApi.make('generatedActionIdentityFixture').add(
