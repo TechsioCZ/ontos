@@ -107,10 +107,7 @@ export const makePartyRegistryApiRuntime = (
     partyRegistryFoundationLive,
     partyRegistryCommandsLive.pipe(Layer.provide(actionRuntime)),
     partyRegistryCommandRecoveryLive.pipe(Layer.provide(actionRuntime)),
-    engagementProfileApiHandlersLive.pipe(
-      Layer.provide(actionRuntime),
-      Layer.provide(readRuntime),
-    ),
+    engagementProfileApiHandlersLive.pipe(Layer.provide(actionRuntime), Layer.provide(readRuntime)),
     partyDetailReadApiLive.pipe(Layer.provide(readRuntime)),
     partyMatchReadApiLive.pipe(Layer.provide(readRuntime)),
     partyMatchDecisionReadApiLive.pipe(Layer.provide(readRuntime)),
@@ -124,14 +121,8 @@ export const makePartyRegistryApiRuntime = (
     counterpartyRoleHistoryReadApiLive.pipe(Layer.provide(readRuntime)),
     partyCorrectionReadApiLive.pipe(Layer.provide(readRuntime)),
     partyMergeReadinessReadApiLive.pipe(Layer.provide(readRuntime)),
-    aresLookupReadApiLive.pipe(
-      Layer.provide(readRuntime),
-      Layer.provide(aresSubjectService),
-    ),
-    partiesReadApiLive.pipe(
-      Layer.provide(readRuntime),
-      Layer.provide(searchProjectionGateway),
-    ),
+    aresLookupReadApiLive.pipe(Layer.provide(readRuntime), Layer.provide(aresSubjectService)),
+    partiesReadApiLive.pipe(Layer.provide(readRuntime), Layer.provide(searchProjectionGateway)),
     counterpartiesReadApiLive.pipe(
       Layer.provide(readRuntime),
       Layer.provide(searchProjectionGateway),

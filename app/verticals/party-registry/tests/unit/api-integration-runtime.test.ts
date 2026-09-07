@@ -7,10 +7,7 @@ import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/plugin-bff/effect-edge';
 import { Context, Effect, Layer, Schema } from 'effect';
 
-import {
-  makePartyRegistryApiRuntime,
-  partyRegistryFoundationLive,
-} from '../../api/index.ts';
+import { makePartyRegistryApiRuntime, partyRegistryFoundationLive } from '../../api/index.ts';
 import { partyRegistryApi, partyRegistryReadinessSchema } from '../../shared/api.ts';
 import { PartySearchProjectionGateway } from '../../shared/domain/search-projection-gateway.ts';
 import type { PartySearchProjectionGatewayService } from '../../shared/domain/search-projection-gateway.ts';
