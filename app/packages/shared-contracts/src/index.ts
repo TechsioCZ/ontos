@@ -7,6 +7,7 @@ export {
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_TTL_SECONDS,
   GATEWAY_ASSERTION_VERSION,
+  GatewayAudienceSchema,
   GatewayAudienceInvalidProblemSchema,
   GatewayAuthenticationRequiredProblemSchema,
   GatewayContextApi,
