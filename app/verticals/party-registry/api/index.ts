@@ -4,12 +4,8 @@ import type {
   ReadRuntime,
   GatewayAssertionRedemptionService,
 } from '@app/core-runtime';
-import {
-  defineEffectBff,
-  HttpApiBuilder,
-  HttpRouter,
-  Layer,
-} from '@modern-js/plugin-bff/effect-edge';
+import { HttpRouter, Layer } from '@modern-js/plugin-bff/effect-edge';
+import { assembleEffectBffRuntime } from '@app/shared-contracts/server/effect-bff-runtime';
 import type {
   EffectBffDefinition,
   EffectBffRuntime,
@@ -129,6 +125,9 @@ export const makePartyRegistryApiRuntime = (
     actionRuntime,
     gatewayAssertionRedemption,
   ] = args;
+  const actionPrincipalVerifierLive = ActionPrincipalVerifierLive.pipe(
+    Layer.provide(actionRuntime),
+  );
   const apiHandlersLive = Layer.mergeAll(
     partyRegistryFoundationLive,
     partyRegistryCommandsLive.pipe(Layer.provide(actionRuntime)),
@@ -169,21 +168,23 @@ export const makePartyRegistryApiRuntime = (
       Layer.provide(searchProjectionGateway),
     ),
     // </generated-governed-http-handler-layers>
-  ).pipe(Layer.provide(Layer.mergeAll(ActionPrincipalVerifierLive, gatewayAssertionRedemption)));
-  const layer = HttpApiBuilder.layer(partyRegistryApi).pipe(
-    Layer.provide(apiHandlersLive),
+  ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
+  const resolvedApiHandlersLive = apiHandlersLive.pipe(
     Layer.provide(runtimeObservabilityLive),
-    Layer.merge(
-      HttpRouter.cors({
-        allowedHeaders: [...partyRegistryCorsAllowedHeaders],
-        allowedMethods: [...partyRegistryCorsAllowedMethods],
-        allowedOrigins: [...partyRegistryCorsAllowedOrigins(shellOrigin)],
-        maxAge: 600,
-      }),
-    ),
     Layer.orDie,
-  ) satisfies EffectRuntimeLayer;
-  return defineEffectBff({ api: partyRegistryApi, layer });
+  );
+  const transportLive = HttpRouter.cors({
+    allowedHeaders: [...partyRegistryCorsAllowedHeaders],
+    allowedMethods: [...partyRegistryCorsAllowedMethods],
+    allowedOrigins: [...partyRegistryCorsAllowedOrigins(shellOrigin)],
+    maxAge: 600,
+  });
+
+  return assembleEffectBffRuntime({
+    api: partyRegistryApi,
+    handlers: resolvedApiHandlersLive,
+    transport: transportLive,
+  });
 };
 
 const apiRuntime = makePartyRegistryApiRuntime(
