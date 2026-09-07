@@ -108,6 +108,10 @@ void test('publishes only the narrow server Action surface', () => {
   assert.equal('Pool' in publicSurface, false);
 });
 
+void test('publishes the sanitized PostgreSQL classifier on the server surface', () => {
+  assert.equal('findPostgresFailure' in publicSurface, true);
+});
+
 test('publishes the typed governed Read alternative-target composition', () => {
   const target = {
     kind: 'any_of',

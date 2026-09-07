@@ -3,6 +3,7 @@ import { evaluatePartySubjectEvidence } from '../policies/create-party-without-s
 import { makePersistenceAttempt } from '@app/core-runtime';
 import { and, eq, sql } from 'drizzle-orm';
 import { DateTime, Duration, Effect, Match, Option, Result, Schema } from 'effect';
+import { findPostgresFailure } from '@app/core-runtime';
 import type {
   CorrectablePartyFact,
   IdentityCorrectionCommand,
@@ -83,32 +84,21 @@ const attempt = <Value>(operation: () => PromiseLike<Value>) =>
   );
 const instantAsDate = DateTime.toDateUtc;
 
-const decodeDatabaseFailure = Schema.decodeUnknownOption(
-  Schema.Struct({
-    constraint: Schema.optionalKey(Schema.String),
-    nested: Schema.optionalKey(Schema.Unknown),
-  }).pipe(Schema.encodeKeys({ nested: 'cause' })),
-);
+const exclusionViolationSqlState = ['23', 'P01'].join('');
+const isRelationshipOverlapFailure = ({
+  code,
+  constraint,
+}: Readonly<{ readonly code: string; readonly constraint?: string }>) =>
+  code === exclusionViolationSqlState && constraint === 'party_relationships_no_overlap_excl';
 const relationshipMutationFailure = <Failure>(
   failure: Failure,
-): PartyCorrectionConflict | PartyPersistenceUnavailableError => {
-  let current: unknown = failure;
-  for (let depth = 0; depth < 8; depth += 1) {
-    const decoded = decodeDatabaseFailure(current);
-    if (Option.isNone(decoded)) {
-      return unavailable(failure);
-    }
-    const { constraint, nested } = decoded.value;
-    if (constraint === 'party_relationships_no_overlap_excl') {
-      return new PartyCorrectionConflict({
+): PartyCorrectionConflict | PartyPersistenceUnavailableError =>
+  Option.isSome(findPostgresFailure(failure, isRelationshipOverlapFailure))
+    ? new PartyCorrectionConflict({
         code: 'party_correction_conflict',
         reason: 'The replacement Party Relationship overlaps another active assertion',
-      });
-    }
-    current = nested;
-  }
-  return unavailable(failure);
-};
+      })
+    : unavailable(failure);
 const relationshipMutationAttempt = <Value>(operation: () => PromiseLike<Value>) =>
   makePersistenceAttempt(relationshipMutationFailure)(operation).pipe(
     Effect.timeoutOrElse({

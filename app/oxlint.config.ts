@@ -39,7 +39,10 @@ const effectNativeRules = {
   'effect-native/no-dependency-parameters': 'error',
   'effect-native/no-direct-node-io-in-scripts': 'error',
   'effect-native/no-dotenv-loading': 'error',
-  'effect-native/no-driver-failure-inspection': 'error',
+  'effect-native/no-driver-failure-inspection': [
+    'error',
+    { decoderPaths: ['packages/core-runtime/src/database/postgres-failure.ts'] },
+  ],
   'effect-native/no-duplicate-literal-vocabulary': 'error',
   'effect-native/no-effect-provide-in-library': 'error',
   'effect-native/no-effect-run-in-scripts': 'error',
