@@ -29,7 +29,7 @@ const antiSlopEffectRules = {
 
 // Effect-native architecture rules derived from docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md.
 // Each rule cites the audit finding it enforces; see tools/oxlint/effect-native/README.md.
-const effectNativeRules = {
+const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']> = {
   'effect-native/no-ad-hoc-argv-in-scripts': 'error',
   'effect-native/no-ambient-date': 'error',
   'effect-native/no-ambient-process-env': 'error',
@@ -39,9 +39,27 @@ const effectNativeRules = {
   'effect-native/no-dependency-parameters': 'error',
   'effect-native/no-direct-node-io-in-scripts': 'error',
   'effect-native/no-dotenv-loading': 'error',
-  'effect-native/no-driver-failure-inspection': 'error',
+  'effect-native/no-driver-failure-inspection': [
+    'error',
+    { decoderPaths: ['packages/core-runtime/src/database/postgres-failure.ts'] },
+  ],
   'effect-native/no-duplicate-literal-vocabulary': 'error',
-  'effect-native/no-effect-provide-in-library': 'error',
+  // These factories compose a scoped pool, its native SQL client, and Drizzle once.
+  'effect-native/no-effect-provide-in-library': [
+    'error',
+    {
+      rootFiles: [
+        'apps/*/api/index.ts',
+        'verticals/*/api/index.ts',
+        'packages/core-runtime/src/outbox/process.ts',
+        'packages/core-runtime/src/db/client.ts',
+        'verticals/party-registry/src/db/client.ts',
+        'packages/core-runtime/src/testing/actions.ts',
+        // This CLI composes administrative Auth/Core database Layers for local initialization.
+        'scripts/initialize-local-development.mts',
+      ],
+    },
+  ],
   'effect-native/no-effect-run-in-scripts': 'error',
   'effect-native/no-effect-run-in-tests': 'error',
   'effect-native/no-environment-record-type': 'error',
@@ -57,7 +75,23 @@ const effectNativeRules = {
   'effect-native/no-layer-or-die-outside-root': 'error',
   'effect-native/no-layer-provide-in-library': 'error',
   'effect-native/no-literal-union-type-alias': 'error',
-  'effect-native/no-local-defect-seam': 'error',
+  // Native SQL transaction commit/rollback failures use the defect channel. These owners
+  // narrow only SqlError to their public failure; every other defect remains unchanged.
+  'effect-native/no-local-defect-seam': [
+    'error',
+    {
+      seamPaths: [
+        '**/http-error-seam.ts',
+        '**/http-error-seam.tsx',
+        'packages/core-runtime/src/actions/repository.ts',
+        'packages/core-runtime/src/reads/runtime.ts',
+        'packages/core-runtime/src/outbox/repository.ts',
+        'packages/core-runtime/src/search/persistence.ts',
+        'packages/core-runtime/src/search/worker-snapshot.ts',
+        'packages/core-runtime/src/install/stage-context-bootstrap.ts',
+      ],
+    },
+  ],
   'effect-native/no-manual-config-in-scaffold-templates': 'error',
   'effect-native/no-manual-cookie-serialization': 'error',
   'effect-native/no-manual-error-handling-in-scaffold-templates': 'error',
@@ -794,7 +828,7 @@ export default defineConfig({
     'sonarjs/no-nested-conditional': 'off',
     'sonarjs/no-redundant-jump': 'off',
     'sonarjs/no-unused-vars': 'off',
-    'typescript/no-require-imports': ['error', { allow: ['/package\\.json$'] }],
+    'typescript/no-require-imports': ['error', { allow: [String.raw`/package\.json$`] }],
     // Terse void callbacks are idiomatic for framework and test APIs; confusing assignments remain errors.
     'typescript/no-confusing-void-expression': ['error', { ignoreArrowShorthand: true }],
     // Single-use generics preserve inferred return predicates and object value types throughout Effect APIs.
@@ -803,9 +837,9 @@ export default defineConfig({
     'typescript/use-unknown-in-catch-callback-variable': 'off',
     // Schema.TaggedError is a class factory invoked before `extends`; the Unicorn rule
     // mistakes that canonical Effect syntax for throwing an Error constructor without `new`.
-    'unicorn/throw-new-error': 'off',
     'unicorn/prefer-string-raw': 'error',
     'unicorn/prefer-top-level-await': 'error',
+    'unicorn/throw-new-error': 'off',
     ...antiSlopRules,
     ...antiSlopEffectRules,
     ...effectNativeRules,

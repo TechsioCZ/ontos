@@ -30,6 +30,4 @@ export default defineConfig({
   },
   out: './drizzle-contacts',
   schema: './src/db/engagement-schema.ts',
-  strict: true,
-  verbose: true,
 });
