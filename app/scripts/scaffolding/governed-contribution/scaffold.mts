@@ -48,6 +48,7 @@ import {
 import { planActionBoundaryScaffold } from '../microvertical-action-boundary/scaffold.mts';
 import {
   generatedApiGroup,
+  hasGeneratedOperationGatewayContract,
   hasGeneratedGovernedServerContract,
   hasGeneratedGovernedClientContract,
   hasGeneratedModuleApiReadContract,
@@ -264,6 +265,13 @@ const renderReadAuthorization = (
   }
   return `{ kind: '${config.authorization}' }`;
 };
+
+const readAuthorizationExpectation = (
+  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
+) =>
+  config.permission === undefined
+    ? { kind: config.authorization }
+    : { kind: config.authorization, permission: config.permission };
 
 const renderModuleApiRead = (
   vertical: OntosVerticalMetadata,
@@ -1258,8 +1266,7 @@ const hasExistingOperationBoundary = (
         'verifyOperationPrincipal',
         'verifyActionPrincipal',
       ) &&
-      gateway.startsWith(header) &&
-      hasTopLevelExportedConstBinding(gateway, 'operationGateway', 'actionGateway')
+      hasGeneratedOperationGatewayContract(gateway, vertical.appId)
     );
   });
 
@@ -1300,6 +1307,7 @@ const acceptsGovernedArtifact = (
   kind: typeof MODULE_API_KIND | ProviderContributionKind,
   vertical: OntosVerticalMetadata,
   name: string,
+  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
 ): ((current: string) => boolean) => {
   if (kind === MODULE_API_KIND) {
     return (current) =>
@@ -1316,6 +1324,7 @@ const acceptsGovernedArtifact = (
       vertical.moduleId,
       name,
       kind === REPORT_KIND ? 'report' : 'search',
+      readAuthorizationExpectation(config),
     );
 };
 
@@ -1366,7 +1375,7 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
       : yield* createOrAcceptGeneratedMutationEffect(
           artifactPath,
           artifact,
-          acceptsGovernedArtifact(kind, vertical, name),
+          acceptsGovernedArtifact(kind, vertical, name, config),
         );
     const mutations: Mutation[] = EffectArray.getSomes([artifactMutation]);
     if (isApi) {
@@ -1381,7 +1390,12 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
         readSource,
         (current) =>
           current.startsWith(`${generatedHeader(MODULE_API_KIND)}\n`) &&
-          hasGeneratedModuleApiReadContract(current, vertical.moduleId, name),
+          hasGeneratedModuleApiReadContract(
+            current,
+            vertical.moduleId,
+            name,
+            readAuthorizationExpectation(config),
+          ),
       );
       mutations.push(...EffectArray.getSomes([readMutation]));
     }
