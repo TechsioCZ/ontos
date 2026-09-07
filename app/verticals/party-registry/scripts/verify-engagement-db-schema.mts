@@ -76,29 +76,41 @@ const verification = Effect.gen(function* verifyContactsDatabase() {
   const database = yield* PartyDatabase;
 
   for (const table of CONTACTS_TABLES) {
-    yield* Effect.tryPromise({
-      catch: () =>
-        new ContactsDatabaseVerificationError({
-          reason: 'Typed Contacts table verification failed',
-        }),
-      try: () => database.executor.select().from(table).limit(0),
-    });
+    yield* database.executor
+      .select()
+      .from(table)
+      .limit(0)
+      .pipe(
+        Effect.mapError(
+          () =>
+            new ContactsDatabaseVerificationError({
+              reason: 'Typed Contacts table verification failed',
+            }),
+        ),
+      );
   }
 
-  const catalog = yield* Effect.tryPromise({
-    catch: () =>
-      new ContactsDatabaseVerificationError({ reason: 'Unable to compare the Contacts catalog' }),
-    try: () =>
-      database.executor.execute<TableCatalogRow>(sql`
+  const catalog = yield* database.executor
+    .execute<TableCatalogRow>(
+      sql`
       select relation.relname as table_name
       from pg_catalog.pg_class as relation
       inner join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
       where namespace.nspname = ${CONTACTS_SCHEMA_NAME} and relation.relkind in (${'r'}, ${'p'})
       order by relation.relname
-    `),
-  });
+    `,
+      'objects',
+    )
+    .pipe(
+      Effect.mapError(
+        () =>
+          new ContactsDatabaseVerificationError({
+            reason: 'Unable to compare the Contacts catalog',
+          }),
+      ),
+    );
   const difference = compareContactsCatalog(
-    catalog.rows.map((row) => `${CONTACTS_SCHEMA_NAME}.${row.table_name}`),
+    catalog.map((row) => `${CONTACTS_SCHEMA_NAME}.${row.table_name}`),
   );
   if (difference.missing.length > 0 || difference.unexpected.length > 0) {
     return yield* new ContactsDatabaseVerificationError({
@@ -106,19 +118,24 @@ const verification = Effect.gen(function* verifyContactsDatabase() {
     });
   }
 
-  const columns = yield* Effect.tryPromise({
-    catch: () =>
-      new ContactsDatabaseVerificationError({ reason: 'Unable to compare Contacts columns' }),
-    try: () =>
-      database.executor.execute<ColumnCatalogRow>(sql`
+  const columns = yield* database.executor
+    .execute<ColumnCatalogRow>(
+      sql`
       select table_name, column_name
       from information_schema.columns
       where table_schema = ${CONTACTS_SCHEMA_NAME}
         and table_name in (${'organization_engagement_profiles'}, ${'person_engagement_profiles'})
       order by table_name, column_name
-    `),
-  });
-  const actualColumns = columns.rows.map((row) => `${row.table_name}.${row.column_name}`);
+    `,
+      'objects',
+    )
+    .pipe(
+      Effect.mapError(
+        () =>
+          new ContactsDatabaseVerificationError({ reason: 'Unable to compare Contacts columns' }),
+      ),
+    );
+  const actualColumns = columns.map((row) => `${row.table_name}.${row.column_name}`);
   if (
     actualColumns.length !== expectedColumns.length ||
     !actualColumns.every((column, index) => column === expectedColumns[index])
@@ -128,11 +145,9 @@ const verification = Effect.gen(function* verifyContactsDatabase() {
     });
   }
 
-  const infrastructure = yield* Effect.tryPromise({
-    catch: () =>
-      new ContactsDatabaseVerificationError({ reason: 'Unable to verify Contacts infrastructure' }),
-    try: () =>
-      database.executor.execute<InfrastructureCatalogRow>(sql`
+  const infrastructure = yield* database.executor
+    .execute<InfrastructureCatalogRow>(
+      sql`
       select
         pg_catalog.pg_get_userbyid(organization_profile.relowner) as organization_owner,
         pg_catalog.pg_get_userbyid(person_profile.relowner) as person_owner,
@@ -158,9 +173,18 @@ const verification = Effect.gen(function* verifyContactsDatabase() {
         and person_namespace.nspname = ${CONTACTS_SCHEMA_NAME}
         and person_profile.relname = ${'person_engagement_profiles'}
         and runtime_role.rolname = ${'ontos_runtime'}
-    `),
-  });
-  const [verified] = infrastructure.rows;
+    `,
+      'objects',
+    )
+    .pipe(
+      Effect.mapError(
+        () =>
+          new ContactsDatabaseVerificationError({
+            reason: 'Unable to verify Contacts infrastructure',
+          }),
+      ),
+    );
+  const [verified] = infrastructure;
   if (verified === undefined || !infrastructureMatches(verified, connections.admin.user)) {
     return yield* new ContactsDatabaseVerificationError({
       reason: 'Contacts infrastructure does not match the engagement profile contract',

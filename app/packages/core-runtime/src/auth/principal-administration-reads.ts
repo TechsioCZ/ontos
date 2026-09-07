@@ -67,137 +67,137 @@ const services = (
   principalId: string,
 ): IdentityReadServices => ({
   listManaged: ({ limit, offset }) =>
-    Effect.tryPromise({
-      catch: (cause) => readUnavailable('Managed identities are temporarily unavailable', cause),
-      try: () =>
-        transaction
-          .select({
-            authBindingId: principalAuthBindings.principalAuthBindingId,
-            bindingCreatedAt: principalAuthBindings.createdAt,
-            bindingRevokedAt: principalAuthBindings.revokedAt,
-            bindingStatus: principalAuthBindings.status,
-            displayName: principals.displayName,
-            kind: principals.kind,
-            principalId: principals.principalId,
-            principalStatus: principals.status,
-          })
-          .from(principals)
-          .leftJoin(
-            principalAuthBindings,
-            and(
-              eq(principalAuthBindings.tenantId, principals.tenantId),
-              eq(principalAuthBindings.principalId, principals.principalId),
-              eq(principalAuthBindings.subjectType, 'api_key'),
+    transaction
+      .select({
+        authBindingId: principalAuthBindings.principalAuthBindingId,
+        bindingCreatedAt: principalAuthBindings.createdAt,
+        bindingRevokedAt: principalAuthBindings.revokedAt,
+        bindingStatus: principalAuthBindings.status,
+        displayName: principals.displayName,
+        kind: principals.kind,
+        principalId: principals.principalId,
+        principalStatus: principals.status,
+      })
+      .from(principals)
+      .leftJoin(
+        principalAuthBindings,
+        and(
+          eq(principalAuthBindings.tenantId, principals.tenantId),
+          eq(principalAuthBindings.principalId, principals.principalId),
+          eq(principalAuthBindings.subjectType, 'api_key'),
+        ),
+      )
+      .where(
+        and(
+          eq(principals.tenantId, tenantId),
+          or(eq(principals.kind, 'service'), eq(principals.kind, 'integration')),
+        ),
+      )
+      .orderBy(
+        asc(principals.displayName),
+        asc(principals.principalId),
+        asc(principalAuthBindings.createdAt),
+      )
+      .limit(limit + 1)
+      .offset(offset)
+      .pipe(
+        Effect.mapError((cause) =>
+          readUnavailable('Managed identities are temporarily unavailable', cause),
+        ),
+        Effect.timeoutOrElse({
+          duration: databaseReadTimeout,
+          orElse: () =>
+            Effect.fail(
+              readUnavailable(
+                'Managed identities are temporarily unavailable',
+                new Cause.TimeoutError('Database read timed out'),
+              ),
             ),
-          )
-          .where(
-            and(
-              eq(principals.tenantId, tenantId),
-              or(eq(principals.kind, 'service'), eq(principals.kind, 'integration')),
-            ),
-          )
-          .orderBy(
-            asc(principals.displayName),
-            asc(principals.principalId),
-            asc(principalAuthBindings.createdAt),
-          )
-          .limit(limit + 1)
-          .offset(offset),
-    }).pipe(
-      Effect.timeoutOrElse({
-        duration: databaseReadTimeout,
-        orElse: () =>
-          Effect.fail(
-            readUnavailable(
-              'Managed identities are temporarily unavailable',
-              new Cause.TimeoutError('Database read timed out'),
+        }),
+        Effect.map((rows) => {
+          const eligible = rows.filter(
+            (row): row is typeof row & { readonly kind: 'integration' | 'service' } =>
+              row.kind === 'service' || row.kind === 'integration',
+          );
+          return {
+            items: eligible.slice(0, limit).map((row) => ({
+              ...row,
+              bindingCreatedAt:
+                row.bindingCreatedAt === null
+                  ? null
+                  : DateTime.formatIso(DateTime.fromDateUnsafe(row.bindingCreatedAt)),
+              bindingRevokedAt:
+                row.bindingRevokedAt === null
+                  ? null
+                  : DateTime.formatIso(DateTime.fromDateUnsafe(row.bindingRevokedAt)),
+              kind: row.kind,
+            })),
+            nextOffset: rows.length > limit ? offset + limit : null,
+          };
+        }),
+        Effect.flatMap((result) =>
+          Schema.decodeUnknownEffect(ManagedResultJson)(result).pipe(
+            Effect.mapError((cause) =>
+              readUnavailable('Managed identities are temporarily unavailable', cause),
             ),
           ),
-      }),
-      Effect.map((rows) => {
-        const eligible = rows.filter(
-          (row): row is typeof row & { readonly kind: 'integration' | 'service' } =>
-            row.kind === 'service' || row.kind === 'integration',
-        );
-        return {
-          items: eligible.slice(0, limit).map((row) => ({
+        ),
+      ),
+  listSelf: ({ limit, offset }) =>
+    transaction
+      .select({
+        authBindingId: principalAuthBindings.principalAuthBindingId,
+        createdAt: principalAuthBindings.createdAt,
+        revokedAt: principalAuthBindings.revokedAt,
+        status: principalAuthBindings.status,
+      })
+      .from(principalAuthBindings)
+      .where(
+        and(
+          eq(principalAuthBindings.tenantId, tenantId),
+          eq(principalAuthBindings.principalId, principalId),
+          eq(principalAuthBindings.subjectType, 'api_key'),
+        ),
+      )
+      .orderBy(
+        asc(principalAuthBindings.createdAt),
+        asc(principalAuthBindings.principalAuthBindingId),
+      )
+      .limit(limit + 1)
+      .offset(offset)
+      .pipe(
+        Effect.mapError((cause) =>
+          readUnavailable('Identity bindings are temporarily unavailable', cause),
+        ),
+        Effect.timeoutOrElse({
+          duration: databaseReadTimeout,
+          orElse: () =>
+            Effect.fail(
+              readUnavailable(
+                'Identity bindings are temporarily unavailable',
+                new Cause.TimeoutError('Database read timed out'),
+              ),
+            ),
+        }),
+        Effect.map((rows) => ({
+          items: rows.slice(0, limit).map((row) => ({
             ...row,
-            bindingCreatedAt:
-              row.bindingCreatedAt === null
+            createdAt: DateTime.formatIso(DateTime.fromDateUnsafe(row.createdAt)),
+            revokedAt:
+              row.revokedAt === null
                 ? null
-                : DateTime.formatIso(DateTime.fromDateUnsafe(row.bindingCreatedAt)),
-            bindingRevokedAt:
-              row.bindingRevokedAt === null
-                ? null
-                : DateTime.formatIso(DateTime.fromDateUnsafe(row.bindingRevokedAt)),
-            kind: row.kind,
+                : DateTime.formatIso(DateTime.fromDateUnsafe(row.revokedAt)),
           })),
           nextOffset: rows.length > limit ? offset + limit : null,
-        };
-      }),
-      Effect.flatMap((result) =>
-        Schema.decodeUnknownEffect(ManagedResultJson)(result).pipe(
-          Effect.mapError((cause) =>
-            readUnavailable('Managed identities are temporarily unavailable', cause),
-          ),
-        ),
-      ),
-    ),
-  listSelf: ({ limit, offset }) =>
-    Effect.tryPromise({
-      catch: (cause) => readUnavailable('Identity bindings are temporarily unavailable', cause),
-      try: () =>
-        transaction
-          .select({
-            authBindingId: principalAuthBindings.principalAuthBindingId,
-            createdAt: principalAuthBindings.createdAt,
-            revokedAt: principalAuthBindings.revokedAt,
-            status: principalAuthBindings.status,
-          })
-          .from(principalAuthBindings)
-          .where(
-            and(
-              eq(principalAuthBindings.tenantId, tenantId),
-              eq(principalAuthBindings.principalId, principalId),
-              eq(principalAuthBindings.subjectType, 'api_key'),
-            ),
-          )
-          .orderBy(
-            asc(principalAuthBindings.createdAt),
-            asc(principalAuthBindings.principalAuthBindingId),
-          )
-          .limit(limit + 1)
-          .offset(offset),
-    }).pipe(
-      Effect.timeoutOrElse({
-        duration: databaseReadTimeout,
-        orElse: () =>
-          Effect.fail(
-            readUnavailable(
-              'Identity bindings are temporarily unavailable',
-              new Cause.TimeoutError('Database read timed out'),
-            ),
-          ),
-      }),
-      Effect.map((rows) => ({
-        items: rows.slice(0, limit).map((row) => ({
-          ...row,
-          createdAt: DateTime.formatIso(DateTime.fromDateUnsafe(row.createdAt)),
-          revokedAt:
-            row.revokedAt === null
-              ? null
-              : DateTime.formatIso(DateTime.fromDateUnsafe(row.revokedAt)),
         })),
-        nextOffset: rows.length > limit ? offset + limit : null,
-      })),
-      Effect.flatMap((result) =>
-        Schema.decodeUnknownEffect(SelfResultJson)(result).pipe(
-          Effect.mapError((cause) =>
-            readUnavailable('Identity bindings are temporarily unavailable', cause),
+        Effect.flatMap((result) =>
+          Schema.decodeUnknownEffect(SelfResultJson)(result).pipe(
+            Effect.mapError((cause) =>
+              readUnavailable('Identity bindings are temporarily unavailable', cause),
+            ),
           ),
         ),
       ),
-    ),
 });
 
 export const selfApiKeyBindingsRead = defineRead<

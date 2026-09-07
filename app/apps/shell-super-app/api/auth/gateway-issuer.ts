@@ -4,7 +4,22 @@ import {
   GatewayTrustedPrincipalContextSchema,
 } from '@app/shared-contracts';
 import type { GatewayContextResponse, GatewayTrustedPrincipalContext } from '@app/shared-contracts';
-import { Clock, Context, Crypto, Effect, Layer, PlatformError, Predicate, Schema } from 'effect';
+import { createHash } from 'node:crypto';
+import {
+  Cache,
+  Clock,
+  Context,
+  Crypto,
+  Duration,
+  Effect,
+  Exit,
+  Layer,
+  PlatformError,
+  Predicate,
+  Ref,
+  Schema,
+  Semaphore,
+} from 'effect';
 import { SignJWT, importJWK } from 'jose';
 import { installedVerticalIds } from '../verticals/installed-verticals.ts';
 import type { InstalledVerticalTopologyError } from '../verticals/installed-verticals.ts';
@@ -13,6 +28,8 @@ import type {
   GatewayIssuerConfigError,
   GatewayIssuerConfigValue,
 } from './gateway-issuer-config.ts';
+
+const SIGNING_CONFIGURATION_REFRESH = Duration.seconds(30);
 
 const GatewayIssuerFailureCauseSchema = Schema.Defect();
 type GatewayIssuerFailureCause = Schema.Schema.Type<typeof GatewayIssuerFailureCauseSchema>;
@@ -134,29 +151,51 @@ const gatewayIssuerLiveOptions: GatewayIssuerLayerOptions = {
 const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssuerService(
   options: GatewayIssuerLayerOptions,
 ) {
-  const signingMaterial = yield* Effect.cached(
-    options.loadConfig.pipe(
-      Effect.mapError((failureCause) => unavailable('configuration', failureCause)),
-      Effect.flatMap((configuration) =>
-        fromPromise(
-          importJWK.bind(undefined, configuration.privateJwk, 'EdDSA', undefined),
+  const configurationCache = yield* Cache.makeWith(
+    (_key: 'configuration') =>
+      options.loadConfig.pipe(
+        Effect.mapError((failureCause) => unavailable('configuration', failureCause)),
+      ),
+    {
+      capacity: 1,
+      timeToLive: (exit, _key) =>
+        Exit.isSuccess(exit) ? SIGNING_CONFIGURATION_REFRESH : '0 seconds',
+    },
+  );
+  const slot = yield* Ref.make<{ readonly fingerprint: string; readonly key: CryptoKey } | null>(
+    null,
+  );
+  const gate = yield* Semaphore.make(1);
+
+  const loadSigningKey = (
+    privateJwk: GatewayIssuerConfigValue['privateJwk'],
+  ): Effect.Effect<CryptoKey, GatewayIssuerError> => {
+    // Fingerprint all key material without retaining the private scalar separately.
+    const fingerprint = createHash('sha256')
+      .update(`${privateJwk.kid}\n${privateJwk.x}\n${privateJwk.d}`)
+      .digest('base64url');
+    return Semaphore.withPermits(
+      gate,
+      1,
+    )(
+      Effect.gen(function* loadSigningKeySlot() {
+        const cached = yield* Ref.get(slot);
+        if (cached?.fingerprint === fingerprint) {
+          return cached.key;
+        }
+        const key = yield* fromPromise(
+          importJWK.bind(undefined, privateJwk, 'EdDSA'),
           (failureCause) => unavailable('signing', failureCause),
           () => unavailable('signing', 'Private key import timed out'),
-        ).pipe(
-          Effect.flatMap((key) =>
-            Predicate.isUint8Array(key)
-              ? Effect.fail(unavailable('signing', 'Private key import returned a symmetric key'))
-              : Effect.succeed(key),
-          ),
-          Effect.map((key): GatewaySigningMaterial => ({
-            issuer: configuration.issuer,
-            key,
-            kid: configuration.privateJwk.kid,
-          })),
-        ),
-      ),
-    ),
-  );
+        );
+        if (Predicate.isUint8Array(key)) {
+          return yield* unavailable('signing', 'Private key import returned a symmetric key');
+        }
+        yield* Ref.set(slot, { fingerprint, key });
+        return key;
+      }),
+    );
+  };
 
   const issue = Effect.fn('GatewayIssuer.issue')(function* issueGatewayAssertion<Principal>(
     input: IssueGatewayAssertionInput<Principal>,
@@ -177,13 +216,18 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
       });
     }
 
-    const preparedSigningMaterial = yield* signingMaterial;
+    const configuration = yield* Cache.get(configurationCache, 'configuration');
     const issuedAt = yield* options.currentTimeSeconds;
     if (!Number.isSafeInteger(issuedAt) || issuedAt < 0) {
       return yield* unavailable('clock');
     }
     const expiresAt = issuedAt + GATEWAY_ASSERTION_TTL_SECONDS;
     const jti = yield* options.generateJti;
+    const preparedSigningMaterial: GatewaySigningMaterial = {
+      issuer: configuration.issuer,
+      key: yield* loadSigningKey(configuration.privateJwk),
+      kid: configuration.privateJwk.kid,
+    };
     const signer = new SignJWT({
       principal,
       ver: GATEWAY_ASSERTION_VERSION,
@@ -209,7 +253,9 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
     return { expiresAt, token };
   });
 
-  return { issue } satisfies GatewayIssuerService;
+  return {
+    issue,
+  } satisfies GatewayIssuerService;
 });
 
 export const makeGatewayIssuerLayer = (options: GatewayIssuerLayerOptions) =>

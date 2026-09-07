@@ -30,14 +30,15 @@
   "dependencies": {
     "@authzed/authzed-node": "1.6.1",
     "@effect/platform-node": "4.0.0-beta.107",
-    "drizzle-orm": "1.0.0-rc.4",
+    "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "dotenv": "17.4.2",
     "effect": "4.0.0-beta.107",
-    "pg": "8.22.0"
+    "pg": "8.22.0",
+    "@effect/sql-pg": "4.0.0-beta.107"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
     "@types/pg": "8.20.0",
-    "drizzle-kit": "1.0.0-rc.4"
+    "drizzle-kit": "1.0.0-rc.5-ab785fc"
   }
 }

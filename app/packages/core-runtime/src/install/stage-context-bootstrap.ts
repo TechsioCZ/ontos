@@ -1,32 +1,25 @@
 import { v1 } from '@authzed/authzed-node';
 import { and, eq, or } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import type { NodePgDatabase, NodePgTransaction } from 'drizzle-orm/node-postgres';
-import {
-  Config,
-  Duration,
-  Effect,
-  Function as EffectFunction,
-  Option,
-  Redacted,
-  Schema,
-} from 'effect';
-import { Pool } from 'pg';
+import { Config, Effect, Option, Redacted, Schema } from 'effect';
+import { isSqlError } from 'effect/unstable/sql/SqlError';
+// This installer composes the privileged database used only for stage initialization.
+// eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Native scoped database composition at the installer boundary.
+import { makeCoreDatabase } from '../db/client.ts';
 import { parseDatabaseConfig } from '../db/config.ts';
 import {
-  coreRelations,
   legalEntities,
   principalAuthBindings,
   principals,
   tenantModuleStates,
   tenants,
 } from '../db/schema.ts';
+import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
+import { spiceDbClientSecurity } from '../permissions/client.ts';
+import { parseSpiceDbConfig } from '../permissions/config.ts';
 import {
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
 } from '../permissions/context-access.ts';
-import { spiceDbClientSecurity } from '../permissions/client.ts';
-import { parseSpiceDbConfig } from '../permissions/config.ts';
 
 type Comparable = boolean | null | number | string;
 type ExactRecord = Readonly<Record<string, Comparable>>;
@@ -129,10 +122,10 @@ const bootstrapFailureFromCause = (cause: unknown): StageContextBootstrapError =
 const tryBootstrapPromise = <Value>(
   evaluate: () => PromiseLike<Value>,
 ): Effect.Effect<Value, StageContextBootstrapError> =>
-  Effect.tryPromise({ catch: bootstrapFailureFromCause, try: () => evaluate() }).pipe(
+  Effect.tryPromise({ catch: bootstrapFailureFromCause, try: evaluate }).pipe(
     Effect.timeoutOrElse({
-      duration: Duration.infinity,
-      orElse: () => Effect.fail(failure('The fixed stage Core context could not be reconciled')),
+      duration: '30 seconds',
+      orElse: () => Effect.fail(failure('Stage authorization reconciliation timed out')),
     }),
   );
 
@@ -213,23 +206,22 @@ const classifyExactRecord = <Expected extends ExactRecord>(
 const reconcilePostgresTransaction = Effect.fn(
   'StageContextBootstrap.reconcilePostgresTransaction',
 )(function* reconcileStagePostgresTransaction(
-  transaction: NodePgTransaction<typeof coreRelations>,
+  transaction: CoreTransaction,
   context: StageContext,
   authUserId: string,
 ): Effect.fn.Return<void, StageContextBootstrapError> {
-  const tenantCandidates = yield* tryBootstrapPromise(() =>
-    transaction
-      .select({
-        defaultLocale: tenants.defaultLocale,
-        name: tenants.name,
-        slug: tenants.slug,
-        status: tenants.status,
-        tenantId: tenants.tenantId,
-      })
-      .from(tenants)
-      .where(or(eq(tenants.tenantId, context.tenantId), eq(tenants.slug, context.tenantSlug)))
-      .limit(2),
-  );
+  const tenantCandidates = yield* transaction
+    .select({
+      defaultLocale: tenants.defaultLocale,
+      name: tenants.name,
+      slug: tenants.slug,
+      status: tenants.status,
+      tenantId: tenants.tenantId,
+    })
+    .from(tenants)
+    .where(or(eq(tenants.tenantId, context.tenantId), eq(tenants.slug, context.tenantSlug)))
+    .limit(2)
+    .pipe(Effect.mapError(bootstrapFailureFromCause));
   if (tenantCandidates.length > 1) {
     return yield* failure('The stage tenant identity conflicts');
   }
@@ -241,32 +233,34 @@ const reconcilePostgresTransaction = Effect.fn(
     tenantId: context.tenantId,
   } as const;
   if ((yield* classifyExactRecord('tenant', tenantCandidates[0], expectedTenant)) === 'create') {
-    yield* tryBootstrapPromise(() => transaction.insert(tenants).values(expectedTenant));
+    yield* transaction
+      .insert(tenants)
+      .values(expectedTenant)
+      .pipe(Effect.mapError(bootstrapFailureFromCause));
   }
 
-  const legalEntityCandidates = yield* tryBootstrapPromise(() =>
-    transaction
-      .select({
-        legalEntityId: legalEntities.legalEntityId,
-        legalName: legalEntities.legalName,
-        registrationCountry: legalEntities.registrationCountry,
-        registrationNumber: legalEntities.registrationNumber,
-        status: legalEntities.status,
-        tenantId: legalEntities.tenantId,
-      })
-      .from(legalEntities)
-      .where(
-        or(
-          eq(legalEntities.legalEntityId, context.legalEntityId),
-          and(
-            eq(legalEntities.tenantId, context.tenantId),
-            eq(legalEntities.registrationCountry, context.registrationCountry),
-            eq(legalEntities.registrationNumber, context.registrationNumber),
-          ),
+  const legalEntityCandidates = yield* transaction
+    .select({
+      legalEntityId: legalEntities.legalEntityId,
+      legalName: legalEntities.legalName,
+      registrationCountry: legalEntities.registrationCountry,
+      registrationNumber: legalEntities.registrationNumber,
+      status: legalEntities.status,
+      tenantId: legalEntities.tenantId,
+    })
+    .from(legalEntities)
+    .where(
+      or(
+        eq(legalEntities.legalEntityId, context.legalEntityId),
+        and(
+          eq(legalEntities.tenantId, context.tenantId),
+          eq(legalEntities.registrationCountry, context.registrationCountry),
+          eq(legalEntities.registrationNumber, context.registrationNumber),
         ),
-      )
-      .limit(2),
-  );
+      ),
+    )
+    .limit(2)
+    .pipe(Effect.mapError(bootstrapFailureFromCause));
   if (legalEntityCandidates.length > 1) {
     return yield* failure('The stage legal-entity identity conflicts');
   }
@@ -282,7 +276,10 @@ const reconcilePostgresTransaction = Effect.fn(
     (yield* classifyExactRecord('legal entity', legalEntityCandidates[0], expectedLegalEntity)) ===
     'create'
   ) {
-    yield* tryBootstrapPromise(() => transaction.insert(legalEntities).values(expectedLegalEntity));
+    yield* transaction
+      .insert(legalEntities)
+      .values(expectedLegalEntity)
+      .pipe(Effect.mapError(bootstrapFailureFromCause));
   }
 
   const expectedPrincipal = {
@@ -292,51 +289,52 @@ const reconcilePostgresTransaction = Effect.fn(
     status: 'active',
     tenantId: context.tenantId,
   } as const;
-  const principalCandidates = yield* tryBootstrapPromise(() =>
-    transaction
-      .select({
-        displayName: principals.displayName,
-        kind: principals.kind,
-        principalId: principals.principalId,
-        status: principals.status,
-        tenantId: principals.tenantId,
-      })
-      .from(principals)
-      .where(eq(principals.principalId, context.principalId))
-      .limit(1),
-  );
+  const principalCandidates = yield* transaction
+    .select({
+      displayName: principals.displayName,
+      kind: principals.kind,
+      principalId: principals.principalId,
+      status: principals.status,
+      tenantId: principals.tenantId,
+    })
+    .from(principals)
+    .where(eq(principals.principalId, context.principalId))
+    .limit(1)
+    .pipe(Effect.mapError(bootstrapFailureFromCause));
   if (
     (yield* classifyExactRecord('principal', principalCandidates[0], expectedPrincipal)) ===
     'create'
   ) {
-    yield* tryBootstrapPromise(() => transaction.insert(principals).values(expectedPrincipal));
+    yield* transaction
+      .insert(principals)
+      .values(expectedPrincipal)
+      .pipe(Effect.mapError(bootstrapFailureFromCause));
   }
 
-  const bindingCandidates = yield* tryBootstrapPromise(() =>
-    transaction
-      .select({
-        principalAuthBindingId: principalAuthBindings.principalAuthBindingId,
-        principalId: principalAuthBindings.principalId,
-        provider: principalAuthBindings.provider,
-        providerSubjectId: principalAuthBindings.providerSubjectId,
-        status: principalAuthBindings.status,
-        subjectType: principalAuthBindings.subjectType,
-        tenantId: principalAuthBindings.tenantId,
-      })
-      .from(principalAuthBindings)
-      .where(
-        or(
-          eq(principalAuthBindings.principalAuthBindingId, context.authBindingId),
-          and(
-            eq(principalAuthBindings.tenantId, context.tenantId),
-            eq(principalAuthBindings.provider, 'better_auth'),
-            eq(principalAuthBindings.subjectType, 'user'),
-            eq(principalAuthBindings.providerSubjectId, authUserId),
-          ),
+  const bindingCandidates = yield* transaction
+    .select({
+      principalAuthBindingId: principalAuthBindings.principalAuthBindingId,
+      principalId: principalAuthBindings.principalId,
+      provider: principalAuthBindings.provider,
+      providerSubjectId: principalAuthBindings.providerSubjectId,
+      status: principalAuthBindings.status,
+      subjectType: principalAuthBindings.subjectType,
+      tenantId: principalAuthBindings.tenantId,
+    })
+    .from(principalAuthBindings)
+    .where(
+      or(
+        eq(principalAuthBindings.principalAuthBindingId, context.authBindingId),
+        and(
+          eq(principalAuthBindings.tenantId, context.tenantId),
+          eq(principalAuthBindings.provider, 'better_auth'),
+          eq(principalAuthBindings.subjectType, 'user'),
+          eq(principalAuthBindings.providerSubjectId, authUserId),
         ),
-      )
-      .limit(2),
-  );
+      ),
+    )
+    .limit(2)
+    .pipe(Effect.mapError(bootstrapFailureFromCause));
   if (bindingCandidates.length > 1) {
     return yield* failure('The stage authentication binding conflicts');
   }
@@ -356,31 +354,31 @@ const reconcilePostgresTransaction = Effect.fn(
       expectedBinding,
     )) === 'create'
   ) {
-    yield* tryBootstrapPromise(() =>
-      transaction.insert(principalAuthBindings).values(expectedBinding),
-    );
+    yield* transaction
+      .insert(principalAuthBindings)
+      .values(expectedBinding)
+      .pipe(Effect.mapError(bootstrapFailureFromCause));
   }
 
-  const moduleStateCandidates = yield* tryBootstrapPromise(() =>
-    transaction
-      .select({
-        moduleKey: tenantModuleStates.moduleKey,
-        state: tenantModuleStates.state,
-        tenantId: tenantModuleStates.tenantId,
-        tenantModuleStateId: tenantModuleStates.tenantModuleStateId,
-      })
-      .from(tenantModuleStates)
-      .where(
-        or(
-          eq(tenantModuleStates.tenantModuleStateId, context.moduleStateId),
-          and(
-            eq(tenantModuleStates.tenantId, context.tenantId),
-            eq(tenantModuleStates.moduleKey, context.moduleId),
-          ),
+  const moduleStateCandidates = yield* transaction
+    .select({
+      moduleKey: tenantModuleStates.moduleKey,
+      state: tenantModuleStates.state,
+      tenantId: tenantModuleStates.tenantId,
+      tenantModuleStateId: tenantModuleStates.tenantModuleStateId,
+    })
+    .from(tenantModuleStates)
+    .where(
+      or(
+        eq(tenantModuleStates.tenantModuleStateId, context.moduleStateId),
+        and(
+          eq(tenantModuleStates.tenantId, context.tenantId),
+          eq(tenantModuleStates.moduleKey, context.moduleId),
         ),
-      )
-      .limit(2),
-  );
+      ),
+    )
+    .limit(2)
+    .pipe(Effect.mapError(bootstrapFailureFromCause));
   if (moduleStateCandidates.length > 1) {
     return yield* failure('The stage module-state identity conflicts');
   }
@@ -394,26 +392,30 @@ const reconcilePostgresTransaction = Effect.fn(
     (yield* classifyExactRecord('module state', moduleStateCandidates[0], expectedModuleState)) ===
     'create'
   ) {
-    yield* tryBootstrapPromise(() =>
-      transaction.insert(tenantModuleStates).values(expectedModuleState),
-    );
+    yield* transaction
+      .insert(tenantModuleStates)
+      .values(expectedModuleState)
+      .pipe(Effect.mapError(bootstrapFailureFromCause));
   }
   return yield* Effect.void;
 });
 
 const reconcilePostgresContext = Effect.fn('StageContextBootstrap.reconcilePostgresContext')(
   function* reconcileStagePostgresContext(
-    database: NodePgDatabase<typeof coreRelations>,
+    database: CoreDatabaseExecutor,
     context: StageContext,
     authUserId: string,
   ): Effect.fn.Return<void, StageContextBootstrapError> {
-    const effectContext = yield* Effect.context();
-    const runTransaction = EffectFunction.flow(
-      (transaction: NodePgTransaction<typeof coreRelations>) =>
-        reconcilePostgresTransaction(transaction, context, authUserId),
-      Effect.runPromiseWith(effectContext),
+    const transactionBody = (transaction: CoreTransaction) =>
+      reconcilePostgresTransaction(transaction, context, authUserId);
+    yield* database.transaction(transactionBody).pipe(
+      Effect.catchDefect((defect) =>
+        isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
+      ),
+      Effect.catchTag('SqlError', (sqlFailure) =>
+        Effect.fail(bootstrapFailureFromCause(sqlFailure)),
+      ),
     );
-    yield* tryBootstrapPromise(database.transaction.bind(database, runTransaction));
   },
 );
 
@@ -539,33 +541,23 @@ export const reconcileStageContextBootstraps = Effect.fn(
     { context: STAGE_CONTEXTS.siampark, providerUserId: siamparkProviderUserId },
   ] as const;
   const configuration = yield* loadConfiguration();
-  yield* Effect.acquireUseRelease(
-    Effect.try({
-      catch: bootstrapFailureFromCause,
-      try: () =>
-        new Pool({
-          connectionString: Redacted.value(configuration.databaseAdminUrl),
-        }),
-    }),
-    (pool) =>
-      Effect.try({
-        catch: bootstrapFailureFromCause,
-        try: () => drizzle({ client: pool, relations: coreRelations }),
-      }).pipe(
-        Effect.flatMap((database) =>
-          Effect.forEach(
-            contexts,
-            ({ context, providerUserId }) =>
-              reconcilePostgresContext(database, context, providerUserId).pipe(
-                Effect.andThen(touchRelationships(configuration, context)),
-              ),
-            // The fixed installation set is intentionally reconciled in order to avoid racing
-            // cross-store bootstrap writes and to make a retry's stopping point deterministic.
-            { concurrency: 1, discard: true },
+  yield* Effect.scoped(
+    Effect.gen(function* reconcileStageDatabase() {
+      const databaseConfiguration = yield* parseDatabaseConfig({
+        DATABASE_URL: Redacted.value(configuration.databaseAdminUrl),
+      }).pipe(Effect.mapError(bootstrapFailureFromCause));
+      const { executor } = yield* makeCoreDatabase(databaseConfiguration).pipe(
+        Effect.mapError(bootstrapFailureFromCause),
+      );
+      yield* Effect.forEach(
+        contexts,
+        ({ context, providerUserId }) =>
+          reconcilePostgresContext(executor, context, providerUserId).pipe(
+            Effect.andThen(touchRelationships(configuration, context)),
           ),
-        ),
-      ),
-    (pool) => tryBootstrapPromise(pool.end.bind(pool)),
+        { concurrency: 1, discard: true },
+      );
+    }),
   );
   return [
     {

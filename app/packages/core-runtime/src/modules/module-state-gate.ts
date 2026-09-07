@@ -1,27 +1,27 @@
 import { and, eq } from 'drizzle-orm';
-import { Clock, Context, Duration, Effect, Layer, Schema } from 'effect';
-import type { CoreTransaction } from '../db/types.ts';
+import { Clock, Context, Effect, Layer, Schema } from 'effect';
 import { tenantModuleStates, tenants } from '../db/schema.ts';
+import type { CoreTransaction } from '../db/types.ts';
 import type {
   ModuleEntrypointAccess,
   ModuleEntrypointDescriptor,
   TenantModuleEntrypoint,
 } from './module-entrypoint.ts';
-import { ModuleStateSnapshotValue } from './module-state-snapshot.ts';
-import type { ModuleStateSnapshot } from './module-state-snapshot.ts';
+import type { ModuleStateGateError } from './module-state-gate-errors.ts';
 import {
   ModuleStateCheckUnavailableError,
   ModuleStateDeniedError,
 } from './module-state-gate-errors.ts';
-import type { ModuleStateGateError } from './module-state-gate-errors.ts';
+import type { ModuleStateSnapshot } from './module-state-snapshot.ts';
+import { ModuleStateSnapshotValue } from './module-state-snapshot.ts';
+import type {
+  TenantModuleState,
+  TenantModuleStateServiceContract,
+} from './tenant-module-state-service.ts';
 import {
   TENANT_MODULE_STATES,
   TenantModuleStateSchema,
   TenantModuleStateService,
-} from './tenant-module-state-service.ts';
-import type {
-  TenantModuleState,
-  TenantModuleStateServiceContract,
 } from './tenant-module-state-service.ts';
 
 export type { ModuleStateSnapshot } from './module-state-snapshot.ts';
@@ -271,16 +271,6 @@ export interface ModuleStateGateService {
   ) => Effect.Effect<void, ModuleStateGateError>;
 }
 
-const MODULE_STATE_RECHECK_TIMEOUT = Duration.seconds(30);
-
-const attemptModuleStateRecheck = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: unavailable, try: operation }).pipe(
-    Effect.timeoutOrElse({
-      duration: MODULE_STATE_RECHECK_TIMEOUT,
-      orElse: () => Effect.fail(unavailable('Module state write recheck timed out')),
-    }),
-  );
-
 const isModuleStateDenied = Schema.is(ModuleStateDeniedError);
 
 export const makeModuleStateGate = (
@@ -291,27 +281,25 @@ export const makeModuleStateGate = (
     prepareModuleStateSnapshot(stateService, tenantId, entrypoints),
   recheckWrite: (transaction, tenantId, entrypoint) => {
     const recheck = Effect.gen(function* recheckWriteEffect() {
-      const tenantRows = yield* attemptModuleStateRecheck(() =>
-        transaction
-          .select({ tenantId: tenants.tenantId })
-          .from(tenants)
-          .where(eq(tenants.tenantId, tenantId))
-          .for('update'),
-      );
+      const tenantRows = yield* transaction
+        .select({ tenantId: tenants.tenantId })
+        .from(tenants)
+        .where(eq(tenants.tenantId, tenantId))
+        .for('update')
+        .pipe(Effect.mapError(unavailable));
       if (tenantRows[0] === undefined) {
         return yield* unavailable();
       }
-      const rows = yield* attemptModuleStateRecheck(() =>
-        transaction
-          .select({ state: tenantModuleStates.state })
-          .from(tenantModuleStates)
-          .where(
-            and(
-              eq(tenantModuleStates.tenantId, tenantId),
-              eq(tenantModuleStates.moduleKey, entrypoint.moduleKey),
-            ),
+      const rows = yield* transaction
+        .select({ state: tenantModuleStates.state })
+        .from(tenantModuleStates)
+        .where(
+          and(
+            eq(tenantModuleStates.tenantId, tenantId),
+            eq(tenantModuleStates.moduleKey, entrypoint.moduleKey),
           ),
-      );
+        )
+        .pipe(Effect.mapError(unavailable));
       const state =
         rows[0] === undefined
           ? null
