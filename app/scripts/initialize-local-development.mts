@@ -734,10 +734,11 @@ export const reconcileCoreContext = (
       Effect.catchDefect((defect) =>
         isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
       ),
-      Effect.mapError((cause) =>
-        cause instanceof LocalDevelopmentInitializationError
-          ? cause
-          : failure('local_persistence_failed', 'The local Core context could not be reconciled'),
+      Effect.catchTag('EffectDrizzleQueryError', () =>
+        failure('local_persistence_failed', 'The local Core context could not be reconciled'),
+      ),
+      Effect.catchTag('SqlError', () =>
+        failure('local_persistence_failed', 'The local Core context could not be reconciled'),
       ),
     );
 
@@ -852,13 +853,11 @@ export const initializeLocalDevelopment = (
           ),
         ),
       ),
-      Effect.mapError((cause) =>
-        cause instanceof LocalDevelopmentInitializationError
-          ? cause
-          : failure(
-              'local_persistence_failed',
-              'The local authentication database could not be opened',
-            ),
+      Effect.catchTag('AuthDatabaseConnectionError', () =>
+        failure(
+          'local_persistence_failed',
+          'The local authentication database could not be opened',
+        ),
       ),
     );
     const databaseConfiguration = yield* parseDatabaseConfig({
@@ -875,10 +874,8 @@ export const initializeLocalDevelopment = (
       Effect.provide(
         CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, databaseConfiguration))),
       ),
-      Effect.mapError((cause) =>
-        cause instanceof LocalDevelopmentInitializationError
-          ? cause
-          : failure('local_persistence_failed', 'The local Core database could not be opened'),
+      Effect.catchTag('DatabaseConnectionError', () =>
+        failure('local_persistence_failed', 'The local Core database could not be opened'),
       ),
     );
     yield* touchRelationships(configuration, relationships);
