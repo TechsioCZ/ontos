@@ -13,14 +13,15 @@ import {
   outboxTopic,
 } from '@app/party-registry/outbox/party-registry-search-rebuild-requested-v1';
 
-export const handleRebuildSearch = (
-  _payload: typeof OutboxPayloadSchema.Type,
-  context: OutboxWorkerHandlerContext,
-) =>
-  Effect.gen(function* rebuildCommittedSearch() {
+export const handleRebuildSearch = Effect.fn('RebuildSearchWorker.handleRebuildSearch')(
+  function* rebuildCommittedSearch(
+    _payload: typeof OutboxPayloadSchema.Type,
+    context: OutboxWorkerHandlerContext,
+  ) {
     const projector = yield* PartySearchProjector;
     yield* projector.project(context, { rebuild: true });
-  });
+  },
+);
 
 export const rebuildSearchWorker = defineOutboxWorker(
   {

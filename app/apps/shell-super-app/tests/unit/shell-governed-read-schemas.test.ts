@@ -6,7 +6,7 @@ import {
 } from '../../api/modules/shell-governed-read-schemas.ts';
 
 describe('Shell governed module-target schemas', () => {
-  test('decode the production Contacts target entirely with the server Effect runtime', () => {
+  test('decode the production Contacts target and preserve its wire format', () => {
     const input = {
       entrypointKey: 'contacts.core.page.contacts',
       moduleId: 'contacts.core',
@@ -19,9 +19,14 @@ describe('Shell governed module-target schemas', () => {
       writable: true,
     };
 
-    expect(Schema.decodeUnknownSync(GovernedResolveModuleTargetPayloadSchema)(input)).toEqual(
+    const decodedInput = Schema.decodeUnknownSync(GovernedResolveModuleTargetPayloadSchema)(input);
+    const decodedResult = Schema.decodeUnknownSync(GovernedResolvedModuleTargetSchema)(result);
+
+    expect(decodedInput).toEqual(input);
+    expect(decodedResult).toEqual(result);
+    expect(Schema.encodeSync(GovernedResolveModuleTargetPayloadSchema)(decodedInput)).toEqual(
       input,
     );
-    expect(Schema.decodeUnknownSync(GovernedResolvedModuleTargetSchema)(result)).toEqual(result);
+    expect(Schema.encodeSync(GovernedResolvedModuleTargetSchema)(decodedResult)).toEqual(result);
   });
 });

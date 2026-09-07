@@ -28,6 +28,6 @@ export const CounterpartyRoleAddResultSchema = Schema.Struct({
   rolePeriodRef: CounterpartyRolePeriodRefSchema,
   roleType: CounterpartyRoleTypeSchema,
   validFrom: CounterpartyIsoTimestampSchema,
-  validTo: Schema.NullOr(CounterpartyIsoTimestampSchema),
+  validTo: Schema.toEncoded(Schema.OptionFromNullOr(CounterpartyIsoTimestampSchema)),
 });
 export type CounterpartyRoleAddResult = typeof CounterpartyRoleAddResultSchema.Type;

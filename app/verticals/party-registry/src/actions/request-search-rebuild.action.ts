@@ -12,6 +12,7 @@ import {
   RequestSearchRebuildResultSchema,
 } from '../../shared/actions/request-search-rebuild.ts';
 import type { RequestSearchRebuildPayload } from '../../shared/actions/request-search-rebuild.ts';
+import { ActionInvocationIdSchema } from '../../shared/domain/correction-contracts.ts';
 
 export {
   RequestSearchRebuildPayloadSchema,
@@ -27,26 +28,28 @@ const domainEvents = {
 } as const;
 
 /** Queues committed intent only; projection I/O belongs to the post-commit Worker. */
-export const handleRequestSearchRebuild = (
+export const handleRequestSearchRebuild = Effect.fn(
+  'RequestSearchRebuildAction.handleRequestSearchRebuild',
+)(function* requestSearchRebuild(
   _payload: RequestSearchRebuildPayload,
   context: ActionHandlerContext<typeof domainEvents, Readonly<Record<string, never>>>,
-) =>
-  Effect.gen(function* requestSearchRebuild() {
-    const payload = { requestId: context.actionInvocationId };
-    const event = yield* context.addDomainEvent({
-      eventType: 'party.registry.search-rebuild-requested.v1',
-      payloadJson: payload,
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'core.identity',
-      subjectResourceId: context.scope.tenantId,
-      subjectResourceType: 'tenant',
-    });
-    yield* context.addOutboxMessage(
-      event,
-      createRequestSearchRebuildPartyRegistrySearchRebuildRequestedV1OutboxMessage(payload),
-    );
-    return { requestId: context.actionInvocationId, status: 'QUEUED' as const };
+) {
+  const requestId = ActionInvocationIdSchema.make(context.actionInvocationId);
+  const payload = { requestId };
+  const event = yield* context.addDomainEvent({
+    eventType: 'party.registry.search-rebuild-requested.v1',
+    payloadJson: payload,
+    producerModuleKey: 'party.registry',
+    subjectModuleKey: 'core.identity',
+    subjectResourceId: context.scope.tenantId,
+    subjectResourceType: 'tenant',
   });
+  yield* context.addOutboxMessage(
+    event,
+    createRequestSearchRebuildPartyRegistrySearchRebuildRequestedV1OutboxMessage(payload),
+  );
+  return { requestId, status: 'QUEUED' as const };
+});
 
 export const requestSearchRebuildAction = defineAction(
   {

@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { Match } from 'effect';
 import {
   normalizeCounterpartySearchHits,
   normalizePartySearchHits,
+} from '../../shared/domain/search-semantics.ts';
+import type {
+  SearchNormalizationResult,
+  SearchResults,
 } from '../../shared/domain/search-semantics.ts';
 import type {
   CounterpartySearchProjectionHit,
@@ -24,6 +29,17 @@ const counterpartyRef = (resourceId: string) => ({
   tenantId,
 });
 
+const expectSearchResults = <Result>(
+  result: SearchNormalizationResult<Result>,
+): SearchResults<Result> =>
+  Match.value(result).pipe(
+    Match.tag('SearchResults', (results) => results),
+    Match.tag('SearchProjectionViolation', ({ reason }) =>
+      assert.fail(`Expected normalized search results, but the projection was invalid: ${reason}`),
+    ),
+    Match.exhaustive,
+  );
+
 test('Party Search hides archived hits by default and explicitly labels included archived hits', () => {
   const hits: readonly PartySearchProjectionHit[] = [
     { archived: false, canonicalPartyRef: partyRef('active'), title: 'Active' },
@@ -37,7 +53,7 @@ test('Party Search hides archived hits by default and explicitly labels included
   const included = normalizePartySearchHits({ includeArchived: true, tenantId }, hits);
   assert.equal(included._tag, 'SearchResults');
   assert.deepEqual(
-    included._tag === 'SearchResults' ? included.items.map(({ archived }) => archived) : [],
+    expectSearchResults(included).items.map(({ archived }) => archived),
     [false, true],
   );
 });
@@ -56,13 +72,12 @@ test('Party aliases collapse to one survivor while shared contact queries may re
   ]);
 
   assert.equal(result._tag, 'SearchResults');
-  if (result._tag === 'SearchResults') {
-    assert.deepEqual(
-      result.items.map(({ ref }) => ref.resourceId),
-      ['survivor', 'shared-2'],
-    );
-    assert.equal(result.items[0]?.matchedViaAlias, true);
-  }
+  const { items } = expectSearchResults(result);
+  assert.deepEqual(
+    items.map(({ ref }) => ref.resourceId),
+    ['survivor', 'shared-2'],
+  );
+  assert.equal(items[0]?.matchedViaAlias, true);
 });
 
 test('Party Search fails closed when Core returns a cross-tenant or inconsistent projection', () => {
@@ -125,13 +140,12 @@ test('Counterparty Search evaluates only current role periods at the exclusive t
   );
 
   assert.equal(result._tag, 'SearchResults');
-  if (result._tag === 'SearchResults') {
-    assert.deepEqual(
-      result.items.map(({ ref }) => ref.resourceId),
-      ['future-ended', 'dual'],
-    );
-    assert.deepEqual(result.items[1]?.currentRoles, ['CUSTOMER', 'SUPPLIER']);
-  }
+  const { items } = expectSearchResults(result);
+  assert.deepEqual(
+    items.map(({ ref }) => ref.resourceId),
+    ['future-ended', 'dual'],
+  );
+  assert.deepEqual(items[1]?.currentRoles, ['CUSTOMER', 'SUPPLIER']);
 });
 
 test('Counterparty Search without a role retains durable Counterparties with no current role', () => {
@@ -146,9 +160,7 @@ test('Counterparty Search without a role retains durable Counterparties with no 
   );
 
   assert.equal(result._tag, 'SearchResults');
-  if (result._tag === 'SearchResults') {
-    assert.deepEqual(result.items[0]?.currentRoles, []);
-  }
+  assert.deepEqual(expectSearchResults(result).items[0]?.currentRoles, []);
 });
 
 test('Counterparty identity dedupes independently and survivor collisions are surfaced', () => {
@@ -168,21 +180,18 @@ test('Counterparty identity dedupes independently and survivor collisions are su
   );
 
   assert.equal(result._tag, 'SearchResults');
-  if (result._tag === 'SearchResults') {
-    assert.deepEqual(
-      result.items.map(({ ref }) => ref.resourceId),
+  const { items } = expectSearchResults(result);
+  assert.deepEqual(
+    items.map(({ ref }) => ref.resourceId),
+    ['cp-1', 'cp-2'],
+  );
+  assert.deepEqual(
+    items.map(({ collision }) => collision?.counterpartyRefs.map(({ resourceId }) => resourceId)),
+    [
       ['cp-1', 'cp-2'],
-    );
-    assert.deepEqual(
-      result.items.map(({ collision }) =>
-        collision?.counterpartyRefs.map(({ resourceId }) => resourceId),
-      ),
-      [
-        ['cp-1', 'cp-2'],
-        ['cp-1', 'cp-2'],
-      ],
-    );
-  }
+      ['cp-1', 'cp-2'],
+    ],
+  );
 });
 
 test('Counterparty Search fails closed on the wrong Legal Entity instead of broadening scope', () => {

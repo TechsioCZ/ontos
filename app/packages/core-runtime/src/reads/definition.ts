@@ -1,5 +1,5 @@
-import { Predicate } from 'effect';
-import type { Effect, Schema } from 'effect';
+import { Predicate, Schema } from 'effect';
+import type { Effect } from 'effect';
 import type { ActionPolicy } from '../actions/policy.ts';
 import { isActionPolicy } from '../actions/policy.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
@@ -18,15 +18,29 @@ import type {
 import type { ReadHandlerContext, ReadHandlerResult } from './context.ts';
 
 const registrationMarker: unique symbol = Symbol('@app/core-runtime/reads/registration');
-const registrationHandler: unique symbol = Symbol('@app/core-runtime/reads/registration/handler');
-const registrationFactory: unique symbol = Symbol('@app/core-runtime/reads/registration/factory');
-const registrationPermissionTargetResolver: unique symbol = Symbol(
-  '@app/core-runtime/reads/registration/permission-target-resolver',
-);
-const registrationResultPermissionTargetResolver: unique symbol = Symbol(
-  '@app/core-runtime/reads/registration/result-permission-target-resolver',
-);
-const registrationPolicies: unique symbol = Symbol('@app/core-runtime/reads/registration/policies');
+
+class ReadPrivateStorage<Value> {
+  declare readonly [registrationMarker]?: true;
+  declare readonly descriptor?: unknown;
+  readonly #value: Value;
+
+  constructor(value: Value) {
+    this.#value = value;
+  }
+
+  static create<Value, PublicFields extends object>(
+    value: Value,
+    publicFields: PublicFields,
+  ): ReadPrivateStorage<Value> & Readonly<PublicFields> {
+    const storage = Object.assign(new ReadPrivateStorage(value), publicFields);
+    Object.freeze(storage);
+    return storage;
+  }
+
+  static getValue<Value>(storage: ReadPrivateStorage<Value>): Value {
+    return storage.#value;
+  }
+}
 
 export const READ_ACCESS_KINDS = [
   'detail',
@@ -134,6 +148,14 @@ export interface ReadDescriptorValidationInput {
   readonly owningModuleKey: string;
 }
 
+const ReadDefinitionInvariantError = Schema.TaggedError<Error>()('ReadDefinitionInvariantError', {
+  message: Schema.String,
+});
+
+const failReadDefinition = (message: string): never => {
+  throw new ReadDefinitionInvariantError({ message });
+};
+
 export const validateReadDescriptorInput = (descriptor: ReadDescriptorValidationInput): void => {
   if (
     descriptor.entrypoint.moduleKey !== descriptor.owningModuleKey ||
@@ -142,42 +164,46 @@ export const validateReadDescriptorInput = (descriptor: ReadDescriptorValidation
     !['read', 'historical_read'].includes(descriptor.entrypoint.access) ||
     !Object.isFrozen(descriptor.entrypoint)
   ) {
-    throw new TypeError('Read entrypoint must be immutable, read-only, and owner-scoped');
+    return failReadDefinition('Read entrypoint must be immutable, read-only, and owner-scoped');
   }
   if (!LEGAL_ENTITY_SCOPES.some((scope) => scope === descriptor.legalEntityScope)) {
-    throw new TypeError('Read legal-entity scope must be required, optional, or forbidden');
+    return failReadDefinition('Read legal-entity scope must be required, optional, or forbidden');
   }
 };
 
-export interface ReadRegistration<
+type ReadRegistrationPrivateValue<
   InputSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
   Error,
   Requirements = never,
-> {
+> = Readonly<{
+  readonly handler: ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>;
+  readonly permissionTargetResolver: ReadPermissionTargetResolver<InputSchema['Type']>;
+  readonly policies: readonly ActionPolicy<InputSchema['Type'], Owner>[];
+  readonly resultPermissionTargetResolver?: ReadResultPermissionTargetResolver<
+    ResultSchema['Type']
+  >;
+  readonly serviceFactory: ReadServiceFactory<Services, Requirements>;
+}>;
+
+export type ReadRegistration<
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  Owner extends string,
+  Services,
+  Error,
+  Requirements = never,
+> = ReadPrivateStorage<
+  ReadRegistrationPrivateValue<InputSchema, ResultSchema, Owner, Services, Error, Requirements>
+> & {
   readonly _error?: Error;
   readonly _requirements?: Requirements;
   readonly _services?: Services;
   readonly descriptor: Readonly<ReadDescriptor<InputSchema, ResultSchema, Owner>>;
-  readonly [registrationFactory]: ReadServiceFactory<Services, Requirements>;
-  readonly [registrationHandler]: ReadHandler<
-    InputSchema,
-    ResultSchema,
-    Services,
-    Error,
-    Requirements
-  >;
   readonly [registrationMarker]: true;
-  readonly [registrationPermissionTargetResolver]: ReadPermissionTargetResolver<
-    InputSchema['Type']
-  >;
-  readonly [registrationPolicies]: readonly ActionPolicy<InputSchema['Type'], Owner>[];
-  readonly [registrationResultPermissionTargetResolver]?: ReadResultPermissionTargetResolver<
-    ResultSchema['Type']
-  >;
-}
+};
 
 export const defineRead = <
   InputSchema extends Schema.ConstraintDecoder<unknown>,
@@ -188,12 +214,21 @@ export const defineRead = <
   Requirements,
 >(
   descriptor: ReadDescriptor<InputSchema, ResultSchema, Owner>,
-  handler: ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>,
-  serviceFactory: ReadServiceFactory<Services, Requirements>,
-  permissionTargetResolver: ReadPermissionTargetResolver<InputSchema['Type']>,
-  resultPermissionTargetResolver?: ReadResultPermissionTargetResolver<ResultSchema['Type']>,
-  executablePolicies: readonly ActionPolicy<InputSchema['Type'], NoInfer<Owner>>[] = [],
+  ...definition: readonly [
+    handler: ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>,
+    serviceFactory: ReadServiceFactory<Services, Requirements>,
+    permissionTargetResolver: ReadPermissionTargetResolver<InputSchema['Type']>,
+    resultPermissionTargetResolver?: ReadResultPermissionTargetResolver<ResultSchema['Type']>,
+    executablePolicies?: readonly ActionPolicy<InputSchema['Type'], NoInfer<Owner>>[],
+  ]
 ): ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements> => {
+  const [
+    handler,
+    serviceFactory,
+    permissionTargetResolver,
+    resultPermissionTargetResolver,
+    executablePolicies = [],
+  ] = definition;
   validateReadDescriptorInput(descriptor);
   if (
     !READ_ACCESS_KINDS.includes(descriptor.accessKind) ||
@@ -205,7 +240,7 @@ export const defineRead = <
     descriptor.readKey.length === 0 ||
     descriptor.schemaVersion.length === 0
   ) {
-    throw new TypeError('Read metadata must use the closed governed-read vocabulary');
+    return failReadDefinition('Read metadata must use the closed governed-read vocabulary');
   }
   if (
     !Array.isArray(descriptor.policies) ||
@@ -220,30 +255,33 @@ export const defineRead = <
         !isOwnerCompatiblePolicy(policy, descriptor.owningModuleKey),
     )
   ) {
-    throw new TypeError('Read policies must be an explicit array of Policy references');
+    return failReadDefinition('Read policies must be an explicit array of Policy references');
   }
-  const registration = {
-    descriptor: Object.freeze({
-      ...descriptor,
-      entrypoint: descriptor.entrypoint,
-      evidencePolicy: Object.freeze({ ...descriptor.evidencePolicy }),
-      policies: Object.freeze(
-        descriptor.policies.map((reference) => Object.freeze({ ...reference })),
-      ),
-    }),
-    [registrationFactory]: serviceFactory,
-    [registrationHandler]: handler,
+  const frozenDescriptor = Object.freeze({
+    ...descriptor,
+    entrypoint: descriptor.entrypoint,
+    evidencePolicy: Object.freeze({ ...descriptor.evidencePolicy }),
+    policies: Object.freeze(
+      descriptor.policies.map((reference) => Object.freeze({ ...reference })),
+    ),
+  });
+  const privateValue = {
+    handler,
+    permissionTargetResolver,
+    policies: Object.freeze([...executablePolicies]),
+    serviceFactory,
+  };
+  const publicFields = {
+    descriptor: frozenDescriptor,
     [registrationMarker]: true as const,
-    [registrationPermissionTargetResolver]: permissionTargetResolver,
-    [registrationPolicies]: Object.freeze([...executablePolicies]),
   };
   if (resultPermissionTargetResolver === undefined) {
-    return Object.freeze(registration);
+    return ReadPrivateStorage.create(Object.freeze(privateValue), publicFields);
   }
-  return Object.freeze({
-    ...registration,
-    [registrationResultPermissionTargetResolver]: resultPermissionTargetResolver,
-  });
+  return ReadPrivateStorage.create(
+    Object.freeze({ ...privateValue, resultPermissionTargetResolver }),
+    publicFields,
+  );
 };
 
 export const getReadPolicyImplementations = <
@@ -255,7 +293,8 @@ export const getReadPolicyImplementations = <
   Requirements,
 >(
   registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements>,
-): readonly ActionPolicy<InputSchema['Type'], Owner>[] => registration[registrationPolicies];
+): readonly ActionPolicy<InputSchema['Type'], Owner>[] =>
+  ReadPrivateStorage.getValue(registration).policies;
 
 export const getReadResultPermissionTargetResolver = <
   InputSchema extends Schema.ConstraintDecoder<unknown>,
@@ -267,7 +306,7 @@ export const getReadResultPermissionTargetResolver = <
 >(
   registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements>,
 ): ReadResultPermissionTargetResolver<ResultSchema['Type']> | undefined =>
-  registration[registrationResultPermissionTargetResolver];
+  ReadPrivateStorage.getValue(registration).resultPermissionTargetResolver;
 
 export const getReadPermissionTargetResolver = <
   InputSchema extends Schema.ConstraintDecoder<unknown>,
@@ -279,7 +318,7 @@ export const getReadPermissionTargetResolver = <
 >(
   registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements>,
 ): ReadPermissionTargetResolver<InputSchema['Type']> =>
-  registration[registrationPermissionTargetResolver];
+  ReadPrivateStorage.getValue(registration).permissionTargetResolver;
 
 export const getReadHandler = <
   InputSchema extends Schema.ConstraintDecoder<unknown>,
@@ -291,7 +330,7 @@ export const getReadHandler = <
 >(
   registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements>,
 ): ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements> =>
-  registration[registrationHandler];
+  ReadPrivateStorage.getValue(registration).handler;
 
 export const getReadServiceFactory = <
   InputSchema extends Schema.ConstraintDecoder<unknown>,
@@ -302,4 +341,5 @@ export const getReadServiceFactory = <
   Requirements,
 >(
   registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements>,
-): ReadServiceFactory<Services, Requirements> => registration[registrationFactory];
+): ReadServiceFactory<Services, Requirements> =>
+  ReadPrivateStorage.getValue(registration).serviceFactory;

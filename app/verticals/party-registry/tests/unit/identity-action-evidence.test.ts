@@ -1,6 +1,7 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
@@ -44,7 +45,7 @@ const assertInvariantEvidence = (snapshot: ActionEvidenceSnapshot) => {
 };
 
 test('Update Party records metadata-only invariant evidence with its event and outbox', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* verifyUpdateEvidence() {
       const collector = createActionCollector(
         updatePartyAction.descriptor.domainEvents,
@@ -58,7 +59,7 @@ test('Update Party records metadata-only invariant evidence with its event and o
           partyRef: party.partyRef,
           provenanceMethod: 'MANUAL',
           provenanceSource: 'test',
-          validFrom: '2026-01-01T00:00:00.000Z',
+          validFrom: DateTime.makeUnsafe('2026-01-01T00:00:00.000Z'),
         },
         {
           ...collector,
@@ -72,7 +73,7 @@ test('Update Party records metadata-only invariant evidence with its event and o
   ));
 
 test('Archive Party records metadata-only invariant evidence with its event and outbox', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* verifyArchiveEvidence() {
       const collector = createActionCollector(
         archivePartyAction.descriptor.domainEvents,
@@ -93,7 +94,7 @@ test('Archive Party records metadata-only invariant evidence with its event and 
   ));
 
 test('Unarchive Party records metadata-only invariant evidence with its event and outbox', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* verifyUnarchiveEvidence() {
       const collector = createActionCollector(
         unarchivePartyAction.descriptor.domainEvents,
@@ -114,14 +115,17 @@ test('Unarchive Party records metadata-only invariant evidence with its event an
   ));
 
 test('Unarchive review outcome commits once and replays without an unarchive event or outbox', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* verifyUnarchiveConflictEvidence() {
       let calls = 0;
       const blocked = {
         caseRef: makeDuplicateCandidateCaseRef(tenantId, partyId),
         decisionRef: makePartyMatchDecisionRef(tenantId, actionInvocationId),
         outcome: 'BLOCKED' as const,
-        party: { ...party, archivedAt: '2026-01-01T00:00:00.000Z' },
+        party: {
+          ...party,
+          archivedAt: Option.some(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
+        },
         reasonCode: 'EXACT_CLAIM_CONFLICT' as const,
       };
       const harness = makeActionTestHarness({

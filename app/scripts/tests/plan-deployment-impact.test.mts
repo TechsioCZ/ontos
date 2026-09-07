@@ -1,15 +1,22 @@
+/// <reference types="node" />
+
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { test as registerNodeTest } from 'node:test';
+import { NodeServices } from '@effect/platform-node';
+import { ManagedRuntime } from 'effect';
 import { hashAuthorizationEvidence } from '../check-authorization-readiness.mts';
 import {
-  planDeploymentImpact,
+  planDeploymentImpact as planDeploymentImpactEffect,
   validateAuthorizationPromotionGate,
 } from '../plan-deployment-impact.mts';
-import type { AuthorizationPromotionGateInput } from '../plan-deployment-impact.mts';
+import type {
+  AuthorizationPromotionGateInput,
+  PlanDeploymentImpactOptions,
+} from '../plan-deployment-impact.mts';
 
 interface FixtureOptions {
   readonly includeContactOwner?: boolean;
@@ -18,7 +25,75 @@ interface FixtureOptions {
   readonly verticalId?: string;
 }
 
-const writeJson = async (root: string, relativePath: string, value: object): Promise<void> => {
+interface FixtureOwner {
+  readonly id: string;
+  readonly package: string;
+  readonly path: string;
+}
+
+interface FixtureOwnership {
+  readonly owners: readonly FixtureOwner[];
+  readonly schemaVersion?: number;
+}
+
+interface FixtureTopology {
+  readonly schemaVersion: number;
+  readonly sharedPackages: readonly FixtureOwner[];
+  readonly shell: {
+    readonly id: string;
+    readonly package: string;
+    readonly verticalRefs: readonly string[];
+  };
+  readonly verticals: readonly {
+    readonly id: string;
+    readonly moduleFederation: {
+      readonly remotes: readonly string[];
+      readonly verticalRefs: readonly string[];
+    };
+    readonly package: string;
+    readonly path: string;
+  }[];
+}
+
+type FixtureDocument = FixtureOwnership | FixtureTopology;
+
+const CORE_RUNTIME_OWNER = {
+  id: 'core-runtime',
+  package: '@app/core-runtime',
+  path: 'packages/core-runtime',
+} as const satisfies FixtureOwner;
+const SHARED_CONTRACTS_OWNER = {
+  id: 'shared-contracts',
+  package: '@app/shared-contracts',
+  path: 'packages/shared-contracts',
+} as const satisfies FixtureOwner;
+const SHELL_ID = 'shell-super-app';
+const SHELL_PACKAGE = '@app/shell-super-app';
+const SHELL_OWNER = {
+  id: SHELL_ID,
+  package: SHELL_PACKAGE,
+  path: 'apps/shell-super-app',
+} as const satisfies FixtureOwner;
+const OWNERSHIP_PATH = 'topology/ownership.json';
+const DOCUMENTATION_PATH = 'docs/README.md';
+
+const test = (name: string, run: () => void | Promise<void>): void => {
+  void registerNodeTest(name, run);
+};
+
+const deploymentImpactRuntime = ManagedRuntime.make(NodeServices.layer);
+const planDeploymentImpact = async (options: PlanDeploymentImpactOptions) =>
+  await deploymentImpactRuntime.runPromise(planDeploymentImpactEffect(options));
+
+registerNodeTest.after(async () => {
+  await deploymentImpactRuntime.dispose();
+});
+
+const writeJson = async (
+  root: string,
+  relativePath: string,
+  value: FixtureDocument,
+): Promise<void> => {
   const target = path.join(root, relativePath);
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, `${JSON.stringify(value, undefined, 2)}\n`, 'utf-8');
@@ -31,21 +106,10 @@ const makeFixture = async (options: FixtureOptions = {}): Promise<string> => {
   const verticalPath = `verticals/${verticalId}`;
   await writeJson(root, 'topology/reference-topology.json', {
     schemaVersion: 1,
-    sharedPackages: [
-      {
-        id: 'core-runtime',
-        package: '@app/core-runtime',
-        path: 'packages/core-runtime',
-      },
-      {
-        id: 'shared-contracts',
-        package: '@app/shared-contracts',
-        path: 'packages/shared-contracts',
-      },
-    ],
+    sharedPackages: [CORE_RUNTIME_OWNER, SHARED_CONTRACTS_OWNER],
     shell: {
-      id: 'shell-super-app',
-      package: '@app/shell-super-app',
+      id: SHELL_ID,
+      package: SHELL_PACKAGE,
       verticalRefs: [verticalId],
     },
     verticals: [
@@ -57,22 +121,18 @@ const makeFixture = async (options: FixtureOptions = {}): Promise<string> => {
       },
     ],
   });
-  await writeJson(root, 'topology/ownership.json', {
+  await writeJson(root, OWNERSHIP_PATH, {
     owners: [
-      { id: 'core-runtime', package: '@app/core-runtime', path: 'packages/core-runtime' },
-      {
-        id: 'shared-contracts',
-        package: '@app/shared-contracts',
-        path: 'packages/shared-contracts',
-      },
-      { id: 'shell-super-app', package: '@app/shell-super-app', path: 'apps/shell-super-app' },
+      CORE_RUNTIME_OWNER,
+      SHARED_CONTRACTS_OWNER,
+      SHELL_OWNER,
       ...(options.includeContactOwner === false
         ? []
         : [{ id: verticalId, package: verticalPackage, path: verticalPath }]),
     ],
     schemaVersion: 1,
   });
-  if (options.includeWorker) {
+  if (options.includeWorker === true) {
     const workerRoot = path.join(root, verticalPath);
     await mkdir(path.join(workerRoot, 'src/worker-host'), { recursive: true });
     await writeFile(
@@ -88,14 +148,11 @@ const makeFixture = async (options: FixtureOptions = {}): Promise<string> => {
     'migrator',
     'spicedb',
     verticalId,
-    ...(options.includeWorker ? [`${verticalId}-worker`] : []),
+    ...(options.includeWorker === true ? [`${verticalId}-worker`] : []),
     'shellsuperapp',
   ];
-  await writeFile(
-    path.join(root, 'zerops.yaml'),
-    `zerops:\n${setups.map((setup) => `  - setup: '${setup}'`).join('\n')}\n`,
-    'utf-8',
-  );
+  const setupLines = setups.map((setup) => `  - setup: '${setup}'`).join('\n');
+  await writeFile(path.join(root, 'zerops.yaml'), `zerops:\n${setupLines}\n`, 'utf-8');
   return root;
 };
 
@@ -113,8 +170,8 @@ const withFixture = async (
 
 test('deploys a generated owner worker immediately after its provider', async () => {
   await withFixture(
-    (root) => {
-      const plan = planDeploymentImpact({
+    async (root) => {
+      const plan = await planDeploymentImpact({
         changedPaths: ['verticals/contacts/src/workers/project-contact.worker.ts'],
         rootDirectory: root,
       });
@@ -130,21 +187,18 @@ test('deploys a generated owner worker immediately after its provider', async ()
 });
 
 const runGit = (root: string, argumentsList: readonly string[]): string =>
-  execFileSync('git', argumentsList, {
-    cwd: root,
-    encoding: 'utf-8',
-    env: {
-      ...process.env,
-      GIT_AUTHOR_EMAIL: 'ontos-ci@example.invalid',
-      GIT_AUTHOR_NAME: 'OntOS CI',
-      GIT_COMMITTER_EMAIL: 'ontos-ci@example.invalid',
-      GIT_COMMITTER_NAME: 'OntOS CI',
+  execFileSync(
+    '/usr/bin/git',
+    ['-c', 'user.email=ontos-ci@example.invalid', '-c', 'user.name=OntOS CI', ...argumentsList],
+    {
+      cwd: root,
+      encoding: 'utf-8',
     },
-  }).trim();
+  ).trim();
 
 test('plans current Contacts owner-local changes without a hard-coded owner registry', async () => {
-  await withFixture((root) => {
-    const plan = planDeploymentImpact({
+  await withFixture(async (root) => {
+    const plan = await planDeploymentImpact({
       changedPaths: ['app/verticals/contacts/src/features/customers/customer-form.tsx'],
       rootDirectory: root,
     });
@@ -162,35 +216,35 @@ test('plans current Contacts owner-local changes without a hard-coded owner regi
 });
 
 test('orders authorization schema and replay migration before every affected consumer', async () => {
-  await withFixture((root) => {
-    const plan = planDeploymentImpact({
+  await withFixture(async (root) => {
+    const plan = await planDeploymentImpact({
       changedPaths: ['app/scripts/authorization/rollout-contract.mts'],
       rootDirectory: root,
     });
     assert.deepEqual(
       plan.phases.map(({ id }) => id),
-      ['migrator', 'spicedb', 'contacts', 'shell-super-app'],
+      ['migrator', 'spicedb', 'contacts', SHELL_ID],
     );
   });
 });
 
 test('plans Shell-only changes for the topology-derived Shell owner', async () => {
-  await withFixture((root) => {
-    const plan = planDeploymentImpact({
+  await withFixture(async (root) => {
+    const plan = await planDeploymentImpact({
       changedPaths: ['apps/shell-super-app/src/routes/shell-frame.tsx'],
       rootDirectory: root,
     });
     assert.deepEqual(
       plan.phases.map((phase) => phase.id),
-      ['shell-super-app'],
+      [SHELL_ID],
     );
     assert.equal(plan.units.shell, true);
   });
 });
 
 test('adds the migrator before an owner whose schema or migration contract changed', async () => {
-  await withFixture((root) => {
-    const plan = planDeploymentImpact({
+  await withFixture(async (root) => {
+    const plan = await planDeploymentImpact({
       changedPaths: ['verticals/contacts/drizzle/0003_add_customer.sql'],
       rootDirectory: root,
     });
@@ -207,8 +261,8 @@ for (const changedPath of [
   'scripts/postgres/bootstrap-runtime-role.mts',
 ]) {
   test(`includes the migrator for root migration contract ${changedPath}`, async () => {
-    await withFixture((root) => {
-      const plan = planDeploymentImpact({ changedPaths: [changedPath], rootDirectory: root });
+    await withFixture(async (root) => {
+      const plan = await planDeploymentImpact({ changedPaths: [changedPath], rootDirectory: root });
       assert.deepEqual(
         plan.phases.map((phase) => phase.id),
         ['migrator'],
@@ -222,51 +276,51 @@ for (const changedPath of [
   'packages/core-runtime/src/install/spicedb-database-config.ts',
 ]) {
   test(`includes the migrator, SpiceDB, and every consumer for SpiceDB database bootstrap change ${changedPath}`, async () => {
-    await withFixture((root) => {
-      const plan = planDeploymentImpact({ changedPaths: [changedPath], rootDirectory: root });
+    await withFixture(async (root) => {
+      const plan = await planDeploymentImpact({ changedPaths: [changedPath], rootDirectory: root });
       assert.deepEqual(
         plan.phases.map((phase) => phase.id),
-        ['migrator', 'spicedb', 'contacts', 'shell-super-app'],
+        ['migrator', 'spicedb', 'contacts', SHELL_ID],
       );
     });
   });
 }
 
 test('expands shared-package changes to every consumer in dependency order', async () => {
-  await withFixture((root) => {
-    const plan = planDeploymentImpact({
+  await withFixture(async (root) => {
+    const plan = await planDeploymentImpact({
       changedPaths: ['packages/shared-contracts/src/gateway-context.ts'],
       rootDirectory: root,
     });
     assert.deepEqual(
       plan.phases.map((phase) => phase.id),
-      ['contacts', 'shell-super-app'],
+      ['contacts', SHELL_ID],
     );
   });
 });
 
 test('expands a provider public-contract change to the dependent Shell', async () => {
-  await withFixture((root) => {
-    const plan = planDeploymentImpact({
+  await withFixture(async (root) => {
+    const plan = await planDeploymentImpact({
       changedPaths: ['verticals/contacts/shared/api.ts'],
       rootDirectory: root,
     });
     assert.deepEqual(
       plan.phases.map((phase) => phase.id),
-      ['contacts', 'shell-super-app'],
+      ['contacts', SHELL_ID],
     );
   });
 });
 
 test('orders SpiceDB before all consumers for authorization runtime changes', async () => {
-  await withFixture((root) => {
-    const plan = planDeploymentImpact({
+  await withFixture(async (root) => {
+    const plan = await planDeploymentImpact({
       changedPaths: ['packages/core-runtime/spicedb/bootstrap.yaml'],
       rootDirectory: root,
     });
     assert.deepEqual(
       plan.phases.map((phase) => phase.id),
-      ['spicedb', 'contacts', 'shell-super-app'],
+      ['spicedb', 'contacts', SHELL_ID],
     );
   });
 });
@@ -284,19 +338,19 @@ for (const changedPath of [
   'topology/reference-topology.json',
 ]) {
   test(`conservatively deploys every phase for ${changedPath}`, async () => {
-    await withFixture((root) => {
-      const plan = planDeploymentImpact({ changedPaths: [changedPath], rootDirectory: root });
+    await withFixture(async (root) => {
+      const plan = await planDeploymentImpact({ changedPaths: [changedPath], rootDirectory: root });
       assert.deepEqual(
         plan.phases.map((phase) => phase.id),
-        ['migrator', 'spicedb', 'contacts', 'shell-super-app'],
+        ['migrator', 'spicedb', 'contacts', SHELL_ID],
       );
     });
   });
 }
 
 test('produces a reviewed no-op for documentation-only changes', async () => {
-  await withFixture((root) => {
-    const plan = planDeploymentImpact({
+  await withFixture(async (root) => {
+    const plan = await planDeploymentImpact({
       changedPaths: ['docs/architecture/DEPLOYMENT.md'],
       rootDirectory: root,
     });
@@ -306,13 +360,12 @@ test('produces a reviewed no-op for documentation-only changes', async () => {
 });
 
 test('fails closed for the unknown destination of a renamed application directory', async () => {
-  await withFixture((root) => {
-    assert.throws(
-      () =>
-        planDeploymentImpact({
-          changedPaths: ['verticals/contacts/src/index.ts', 'verticals/relationships/src/index.ts'],
-          rootDirectory: root,
-        }),
+  await withFixture(async (root) => {
+    await assert.rejects(
+      planDeploymentImpact({
+        changedPaths: ['verticals/contacts/src/index.ts', 'verticals/relationships/src/index.ts'],
+        rootDirectory: root,
+      }),
       /unknown changed path "verticals\/relationships\/src\/index\.ts" in application area "verticals"/u,
     );
   });
@@ -320,9 +373,9 @@ test('fails closed for the unknown destination of a renamed application director
 
 test('fails closed when a topology delivery unit has no ownership entry', async () => {
   await withFixture(
-    (root) => {
-      assert.throws(
-        () => planDeploymentImpact({ changedPaths: ['docs/README.md'], rootDirectory: root }),
+    async (root) => {
+      await assert.rejects(
+        planDeploymentImpact({ changedPaths: [DOCUMENTATION_PATH], rootDirectory: root }),
         /topology delivery unit "contacts" is missing from topology\/ownership\.json/u,
       );
     },
@@ -332,22 +385,16 @@ test('fails closed when a topology delivery unit has no ownership entry', async 
 
 test('fails closed when topology and ownership identities disagree', async () => {
   await withFixture(async (root) => {
-    const ownershipPath = path.join(root, 'topology/ownership.json');
-    await writeJson(root, 'topology/ownership.json', {
+    await writeJson(root, OWNERSHIP_PATH, {
       owners: [
-        { id: 'core-runtime', package: '@app/core-runtime', path: 'packages/core-runtime' },
-        {
-          id: 'shared-contracts',
-          package: '@app/shared-contracts',
-          path: 'packages/shared-contracts',
-        },
-        { id: 'shell-super-app', package: '@app/shell-super-app', path: 'apps/shell-super-app' },
+        CORE_RUNTIME_OWNER,
+        SHARED_CONTRACTS_OWNER,
+        SHELL_OWNER,
         { id: 'contacts', package: '@app/contacts-old', path: 'verticals/contacts-old' },
       ],
     });
-    assert.equal(typeof ownershipPath, 'string');
-    assert.throws(
-      () => planDeploymentImpact({ changedPaths: ['docs/README.md'], rootDirectory: root }),
+    await assert.rejects(
+      planDeploymentImpact({ changedPaths: [DOCUMENTATION_PATH], rootDirectory: root }),
       /topology and ownership disagree for "contacts"/u,
     );
   });
@@ -355,20 +402,16 @@ test('fails closed when topology and ownership identities disagree', async () =>
 
 test('fails closed when shared-package topology and ownership identities disagree', async () => {
   await withFixture(async (root) => {
-    await writeJson(root, 'topology/ownership.json', {
+    await writeJson(root, OWNERSHIP_PATH, {
       owners: [
-        { id: 'core-runtime', package: '@app/core-runtime', path: 'packages/core-runtime-old' },
-        {
-          id: 'shared-contracts',
-          package: '@app/shared-contracts',
-          path: 'packages/shared-contracts',
-        },
-        { id: 'shell-super-app', package: '@app/shell-super-app', path: 'apps/shell-super-app' },
+        { ...CORE_RUNTIME_OWNER, path: 'packages/core-runtime-old' },
+        SHARED_CONTRACTS_OWNER,
+        SHELL_OWNER,
         { id: 'contacts', package: '@app/contacts', path: 'verticals/contacts' },
       ],
     });
-    assert.throws(
-      () => planDeploymentImpact({ changedPaths: ['docs/README.md'], rootDirectory: root }),
+    await assert.rejects(
+      planDeploymentImpact({ changedPaths: [DOCUMENTATION_PATH], rootDirectory: root }),
       /topology and ownership disagree for shared package "core-runtime"/u,
     );
   });
@@ -376,9 +419,9 @@ test('fails closed when shared-package topology and ownership identities disagre
 
 test('fails closed when a topology unit has no supported stage setup', async () => {
   await withFixture(
-    (root) => {
-      assert.throws(
-        () => planDeploymentImpact({ changedPaths: ['docs/README.md'], rootDirectory: root }),
+    async (root) => {
+      await assert.rejects(
+        planDeploymentImpact({ changedPaths: [DOCUMENTATION_PATH], rootDirectory: root }),
         /topology delivery unit "contacts" has unsupported stage setup "contacts"/u,
       );
     },
@@ -387,8 +430,8 @@ test('fails closed when a topology unit has no supported stage setup', async () 
 });
 
 test('uses a safe full deployment for an all-zero comparison base', async () => {
-  await withFixture((root) => {
-    const plan = planDeploymentImpact({
+  await withFixture(async (root) => {
+    const plan = await planDeploymentImpact({
       baseRevision: '0000000000000000000000000000000000000000',
       headRevision: 'HEAD',
       rootDirectory: root,
@@ -397,14 +440,14 @@ test('uses a safe full deployment for an all-zero comparison base', async () => 
     assert.match(plan.comparison.reason ?? '', /all-zero/u);
     assert.deepEqual(
       plan.phases.map((phase) => phase.id),
-      ['migrator', 'spicedb', 'contacts', 'shell-super-app'],
+      ['migrator', 'spicedb', 'contacts', SHELL_ID],
     );
   });
 });
 
 test('uses a safe full deployment for an unavailable comparison base', async () => {
-  await withFixture((root) => {
-    const plan = planDeploymentImpact({
+  await withFixture(async (root) => {
+    const plan = await planDeploymentImpact({
       baseRevision: 'missing-base-revision',
       headRevision: 'HEAD',
       rootDirectory: root,
@@ -432,7 +475,7 @@ test('uses a safe full deployment when the comparison base is not an ancestor', 
     runGit(root, ['add', 'rewritten-marker.txt']);
     runGit(root, ['commit', '-m', 'rewritten change']);
 
-    const plan = planDeploymentImpact({
+    const plan = await planDeploymentImpact({
       baseRevision: rewrittenBase,
       headRevision: 'HEAD',
       rootDirectory: root,
@@ -444,8 +487,8 @@ test('uses a safe full deployment when the comparison base is not an ancestor', 
 
 test('changing a topology identity changes the plan without editing planner source', async () => {
   await withFixture(
-    (root) => {
-      const plan = planDeploymentImpact({
+    async (root) => {
+      const plan = await planDeploymentImpact({
         changedPaths: ['verticals/relationships/src/index.ts'],
         rootDirectory: root,
       });
@@ -529,6 +572,30 @@ const promotionFixture = (): AuthorizationPromotionGateInput => {
   };
 };
 
+const withoutImpactEvidence = (
+  input: AuthorizationPromotionGateInput,
+): AuthorizationPromotionGateInput => {
+  const { impact, ...remaining } = input;
+  assert.ok(impact);
+  return remaining;
+};
+
+const withoutNegativeSmokeEvidence = (
+  input: AuthorizationPromotionGateInput,
+): AuthorizationPromotionGateInput => {
+  const { negativeSmoke, ...remaining } = input;
+  assert.ok(negativeSmoke);
+  return remaining;
+};
+
+const withoutReadinessEvidence = (
+  input: AuthorizationPromotionGateInput,
+): AuthorizationPromotionGateInput => {
+  const { readiness, ...remaining } = input;
+  assert.ok(readiness);
+  return remaining;
+};
+
 test('requires exact impact, readiness, and negative-smoke evidence for enforced promotion', () => {
   assert.deepEqual(validateAuthorizationPromotionGate(promotionFixture()), {
     environment: 'stage',
@@ -536,21 +603,20 @@ test('requires exact impact, readiness, and negative-smoke evidence for enforced
     status: 'ready',
   });
   for (const changed of [
-    { impact: undefined },
-    { negativeSmoke: undefined },
-    { readiness: undefined },
+    withoutImpactEvidence(promotionFixture()),
+    withoutNegativeSmokeEvidence(promotionFixture()),
+    withoutReadinessEvidence(promotionFixture()),
   ]) {
-    assert.throws(
-      () => validateAuthorizationPromotionGate({ ...promotionFixture(), ...changed }),
-      /requires impact/u,
-    );
+    assert.throws(() => validateAuthorizationPromotionGate(changed), /requires impact/u);
   }
   const stale = promotionFixture();
+  const staleReadiness = stale.readiness;
+  assert.ok(staleReadiness);
   assert.throws(
     () =>
       validateAuthorizationPromotionGate({
         ...stale,
-        readiness: { ...stale.readiness!, inventoryHash: 'f'.repeat(64) },
+        readiness: { ...staleReadiness, inventoryHash: 'f'.repeat(64) },
       }),
     /stale, mismatched/u,
   );
@@ -558,12 +624,12 @@ test('requires exact impact, readiness, and negative-smoke evidence for enforced
 
 test('report-only promotion is bounded, explicit-baseline-only, and never allowed in production', () => {
   const enforced = promotionFixture();
+  const withoutRequiredEvidence = withoutReadinessEvidence(
+    withoutNegativeSmokeEvidence(withoutImpactEvidence(enforced)),
+  );
   const reportOnly = {
-    ...enforced,
-    impact: undefined,
-    negativeSmoke: undefined,
+    ...withoutRequiredEvidence,
     nowEpochMs: Date.parse('2026-09-10T00:00:00.000Z'),
-    readiness: undefined,
     rollout: { ...enforced.rollout, mode: 'report_only' as const },
   };
   assert.equal(validateAuthorizationPromotionGate(reportOnly).status, 'observing');

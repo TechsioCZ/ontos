@@ -1,5 +1,4 @@
-/* eslint-disable max-classes-per-file -- Matching exposes one closed typed domain-failure vocabulary. */
-import { Schema } from 'effect';
+import { DateTime, Option, Schema, SchemaGetter } from 'effect';
 import { DuplicateCandidateCaseRefSchema } from '../resources/duplicate-candidate-case.ts';
 import { PartyMatchDecisionRefSchema } from '../resources/party-match-decision.ts';
 import { PartyRefSchema } from '../resources/party.ts';
@@ -7,8 +6,36 @@ import { PartyOfficialIdentifierRefSchema } from '../resources/party-official-id
 import type { PartyCreateOutcomeSchema } from './identity-contracts.ts';
 import { PartyCandidateSchema, PartyEvidenceEvaluationSchema } from './identity-contracts.ts';
 
+export { ClaimOwnedByDifferentParty } from './claim-owned-by-different-party.ts';
+export { DuplicateCandidateConflict } from './duplicate-candidate-conflict.ts';
+export { PartyCreateRecoveryUnavailable } from './party-create-recovery-unavailable.ts';
+
 export const MatchOutcomeSchema = Schema.Literals(['MATCHED', 'NO_MATCH', 'AMBIGUOUS']);
 export type MatchOutcome = typeof MatchOutcomeSchema.Type;
+
+export const RuleKeySchema = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(100),
+).pipe(Schema.brand('RuleKey'));
+export type RuleKey = typeof RuleKeySchema.Type;
+
+// Matching contracts predate Option/DateTime models and are consumed directly as JSON-shaped DTOs.
+// Validate through Effect's temporal and absence codecs while retaining those decoded DTO shapes.
+const UtcTimestampStringSchema = Schema.String.check(
+  Schema.makeFilter((value) => {
+    const parsed = DateTime.make(value);
+    const canonicalInput =
+      value.length === 20 && value.endsWith('Z') ? `${value.slice(0, -1)}.000Z` : value;
+    return Option.isSome(parsed) && DateTime.formatIso(parsed.value) === canonicalInput
+      ? undefined
+      : 'timestamp must be a canonical UTC ISO instant';
+  }),
+).pipe(
+  Schema.decode({
+    decode: SchemaGetter.dateTimeUtcFromInput<string>().map(DateTime.formatIso),
+    encode: SchemaGetter.dateTimeUtcFromInput<string>().map(DateTime.formatIso),
+  }),
+);
 
 export const sortClaimKeys = (keys: readonly string[]): readonly string[] =>
   [...new Set(keys)].toSorted((left, right) => left.localeCompare(right, 'en'));
@@ -44,7 +71,7 @@ export const MatchEvidenceExplanationSchema = Schema.Struct({
   officialIdentifierRef: Schema.optionalKey(PartyOfficialIdentifierRefSchema),
   outcome: Schema.optionalKey(MatchOutcomeSchema),
   reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
-  ruleKey: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
+  ruleKey: RuleKeySchema,
   verification: Schema.optionalKey(Schema.Literals(['REJECTED', 'UNVERIFIED', 'VERIFIED'])),
 });
 export const MatchPreviewEvidenceSchema = Schema.Struct({
@@ -59,7 +86,7 @@ export const PartyMatchPreviewResponseSchema = Schema.Struct({
 });
 export const PartyMatchResponseSchema = Schema.Struct({
   candidateParties: Schema.Array(PartyRefSchema),
-  caseRef: Schema.NullOr(DuplicateCandidateCaseRefSchema),
+  caseRef: Schema.toEncoded(Schema.OptionFromNullOr(DuplicateCandidateCaseRefSchema)),
   decisionRef: PartyMatchDecisionRefSchema,
   evidenceExplanation: Schema.Array(MatchEvidenceExplanationSchema),
   matchRuleVersion: Schema.String,
@@ -74,7 +101,7 @@ export const DuplicateCaseResolutionPayloadSchema = Schema.Struct({
 
 export const DuplicateCaseResolutionResultSchema = Schema.Struct({
   caseRef: DuplicateCandidateCaseRefSchema,
-  decisionRef: Schema.NullOr(PartyMatchDecisionRefSchema),
+  decisionRef: Schema.toEncoded(Schema.OptionFromNullOr(PartyMatchDecisionRefSchema)),
   lifecycleState: Schema.Literals(['NEEDS_EVIDENCE', 'RESOLVED', 'DISMISSED']),
   outcome: Schema.Literals([
     'MATCH_EXISTING',
@@ -83,24 +110,9 @@ export const DuplicateCaseResolutionResultSchema = Schema.Struct({
     'DISMISSED_AS_NON_SUBJECT',
     'CONFIRMED_DUPLICATE_PARTIES',
   ]),
-  partyRef: Schema.NullOr(PartyRefSchema),
+  partyRef: Schema.toEncoded(Schema.OptionFromNullOr(PartyRefSchema)),
 });
 export type DuplicateCaseResolutionResult = typeof DuplicateCaseResolutionResultSchema.Type;
-
-export class DuplicateCandidateConflict extends Schema.TaggedError<DuplicateCandidateConflict>()(
-  'DuplicateCandidateConflict',
-  {
-    code: Schema.Literal('duplicate_candidate_conflict'),
-    reason: Schema.String,
-  },
-) {}
-export class ClaimOwnedByDifferentParty extends Schema.TaggedError<ClaimOwnedByDifferentParty>()(
-  'ClaimOwnedByDifferentParty',
-  {
-    code: Schema.Literal('claim_owned_by_different_party'),
-    reason: Schema.String,
-  },
-) {}
 
 export const PartyDecisionOperationSchema = Schema.Literals([
   'CREATE',
@@ -117,16 +129,20 @@ export const CommittedCreateOutcomeSchema = Schema.Literals([
 ]);
 
 export const PartyMatchDecisionRecordSchema = Schema.Struct({
-  caseRef: Schema.NullOr(DuplicateCandidateCaseRefSchema),
-  committedCreateOutcome: Schema.optionalKey(Schema.NullOr(CommittedCreateOutcomeSchema)),
-  decidedAt: Schema.String,
+  caseRef: Schema.toEncoded(Schema.OptionFromNullOr(DuplicateCandidateCaseRefSchema)),
+  committedCreateOutcome: Schema.toEncoded(
+    Schema.OptionFromOptionalNullOr(CommittedCreateOutcomeSchema, { onNoneEncoding: null }),
+  ),
+  decidedAt: UtcTimestampStringSchema,
   decisionRef: PartyMatchDecisionRefSchema,
-  evidenceEvaluation: Schema.optionalKey(Schema.NullOr(PartyEvidenceEvaluationSchema)),
+  evidenceEvaluation: Schema.toEncoded(
+    Schema.OptionFromOptionalNullOr(PartyEvidenceEvaluationSchema, { onNoneEncoding: null }),
+  ),
   evidenceExplanation: Schema.Array(MatchEvidenceExplanationSchema),
   matchRuleVersion: Schema.String,
   operation: Schema.optionalKey(PartyDecisionOperationSchema),
   outcome: Schema.Literals(['CREATED', 'MATCHED', 'NO_MATCH', 'AMBIGUOUS']),
-  partyRef: Schema.NullOr(PartyRefSchema),
+  partyRef: Schema.toEncoded(Schema.OptionFromNullOr(PartyRefSchema)),
 }).check(
   Schema.makeFilter((record) => {
     const isCreate = record.operation === 'CREATE' || record.operation === 'REVIEW_CREATE';
@@ -163,10 +179,10 @@ export const DuplicateCandidateDetailSchema = Schema.Struct({
   evaluatedEvidence: Schema.Array(MatchEvidenceExplanationSchema),
   lifecycleState: Schema.Literals(['OPEN', 'NEEDS_EVIDENCE', 'RESOLVED', 'DISMISSED']),
   matchRuleVersion: Schema.String,
-  priorCaseRef: Schema.NullOr(DuplicateCandidateCaseRefSchema),
-  resolutionOutcome: Schema.NullOr(Schema.String),
-  resolutionReason: Schema.NullOr(Schema.String),
-  resolvedAt: Schema.NullOr(Schema.String),
+  priorCaseRef: Schema.toEncoded(Schema.OptionFromNullOr(DuplicateCandidateCaseRefSchema)),
+  resolutionOutcome: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
+  resolutionReason: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
+  resolvedAt: Schema.toEncoded(Schema.OptionFromNullOr(UtcTimestampStringSchema)),
   revision: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0)),
 });
 
@@ -199,9 +215,3 @@ export const committedCreateResult = (
   }
   return null;
 };
-export class PartyCreateRecoveryUnavailable extends Schema.TaggedError<PartyCreateRecoveryUnavailable>()(
-  'PartyCreateRecoveryUnavailable',
-  {
-    reason: Schema.String,
-  },
-) {}

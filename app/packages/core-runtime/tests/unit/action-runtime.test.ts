@@ -1,11 +1,13 @@
-/* oxlint-disable sonarjs/use-type-alias */
-// @effect-diagnostics asyncFunction:off globalDate:off globalDateInEffect:off missingEffectError:off unsafeEffectTypeAssertion:off
-/* eslint-disable max-classes-per-file, no-await-in-loop, no-throw-literal -- Test-local typed errors, sequential lifecycle assertions, and the controlled Drizzle transaction fake are deliberate. */
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+/* oxlint-disable sonarjs/use-type-alias -- Existing compatibility boundary; expires: 2026-12-31. */
+// @effect-diagnostics asyncFunction:off globalDate:off globalDateInEffect:off missingEffectError:off unsafeEffectTypeAssertion:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect, Schema, Predicate } from 'effect';
+import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
 import { Pool } from 'pg';
+import type { PrincipalManagementRepositoryService } from '../../src/auth/principal-management.ts';
+import { PrincipalManagementRepository } from '../../src/auth/principal-management.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
 import type {
   ActionInvocationRecord,
@@ -13,6 +15,10 @@ import type {
   FinalizeActionPolicyDenialInput,
   FlushActionSuccessInput,
   RejectPermissionDeniedInput,
+} from '../../src/actions/repository.ts';
+import {
+  computeActionRequestHash,
+  computeCanonicalValueHash,
 } from '../../src/actions/repository.ts';
 import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
 import type { ActionRuntimeStage } from '../../src/actions/runtime.ts';
@@ -73,6 +79,39 @@ const transport = (idempotencyKey = 'intent-1') => ({
 });
 
 const QueryConfigSchema = Schema.Struct({ text: Schema.String });
+const CounterpartyIdSchema = Schema.String.pipe(Schema.brand('CounterpartyId'));
+type CounterpartyId = typeof CounterpartyIdSchema.Type;
+const completionTime = () => DateTime.toDateUtc(DateTime.makeUnsafe(0));
+
+const forEachSequential = async <Item>(
+  items: readonly Item[],
+  run: (item: Item) => Promise<void>,
+): Promise<void> => {
+  const iterator = items.values();
+  const visitNext = async (): Promise<void> => {
+    const next = iterator.next();
+    if (next.done === true) {
+      return;
+    }
+    await run(next.value);
+    await visitNext();
+  };
+  await visitNext();
+};
+
+const unusedPrincipalManagementOperation = () =>
+  Effect.die('The ambient PrincipalManagementRepository must not be used by the Action runtime');
+const ambientPrincipalManagementRepository: PrincipalManagementRepositoryService = {
+  bindApiKey: unusedPrincipalManagementOperation,
+  changePrincipalStatus: unusedPrincipalManagementOperation,
+  createNonHumanPrincipal: unusedPrincipalManagementOperation,
+  setApiKeyBindingStatus: unusedPrincipalManagementOperation,
+  validateSupportImpersonation: unusedPrincipalManagementOperation,
+};
+const providePrincipalManagementRepository = Effect.provideService(
+  PrincipalManagementRepository,
+  ambientPrincipalManagementRepository,
+);
 
 interface HarnessOptions {
   readonly commitFailureCode?: string;
@@ -142,7 +181,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
       finalized.push(input);
       currentInvocation = {
         ...currentInvocation,
-        completedAt: new Date(),
+        completedAt: completionTime(),
         status: 'rejected',
       };
       return Effect.void;
@@ -171,7 +210,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
       }
       currentInvocation = {
         ...currentInvocation,
-        completedAt: new Date(),
+        completedAt: completionTime(),
         status: 'rejected',
       };
       return Effect.void;
@@ -220,7 +259,9 @@ const makeHarness = (options: HarnessOptions = {}) => {
       }
       if (text === 'commit') {
         if (options.transactionMode === 'uncertain') {
-          throw { commitIndeterminate: true };
+          throw Object.assign(new Error('commit acknowledgement indeterminate'), {
+            commitIndeterminate: true,
+          });
         }
         if (options.commitFailureCode !== undefined) {
           throw Object.assign(new Error('commit acknowledgement failed'), {
@@ -446,7 +487,7 @@ const registration = () =>
 
 test('executes the complete stage order with transaction ownership and success evidence', async () => {
   const harness = makeHarness();
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     harness.runtime.runAction({
       payload: { amount: 3 },
       principal,
@@ -482,13 +523,80 @@ test('executes the complete stage order with transaction ownership and success e
   });
 });
 
+test('hashes the encoded representation of decoded DateTime and Option values', async () => {
+  const occurredAt = '2026-09-07T10:30:00.000Z';
+  const payloadSchema = Schema.Struct({
+    note: Schema.OptionFromNullOr(Schema.String),
+    occurredAt: Schema.DateTimeUtcFromString,
+  });
+  const action = defineAction(
+    {
+      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'shell.temporal.v1' },
+      actionKey: 'shell.temporal.change',
+      auditProfile: 'standard',
+      domainErrorSchema: Schema.Never,
+      domainEvents: {},
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+        entrypointKey: 'shell.temporal.change',
+        moduleKey: 'core.shell',
+        role: 'action',
+      }),
+      idempotency: 'required',
+      legalEntityScope: 'optional',
+      owningModuleKey: 'core.shell',
+      payloadSchema,
+      policies: [],
+      resultSchema: payloadSchema,
+      schemaVersion: '1',
+    },
+    (payload) => {
+      assert.equal(DateTime.formatIso(payload.occurredAt), occurredAt);
+      assert.equal(Option.isNone(payload.note), true);
+      return Effect.succeed(payload);
+    },
+  );
+  const harness = makeHarness();
+
+  const result = await runEffectTestPromise(
+    harness.runtime.runAction({
+      payload: { note: null, occurredAt },
+      principal,
+      registration: action,
+      transport: transport('temporal-payload'),
+    }),
+  );
+
+  assert.deepEqual(harness.requestHashes, [
+    computeActionRequestHash({
+      actionKey: 'shell.temporal.change',
+      normalizedPayload: { note: null, occurredAt },
+      owningModuleKey: 'core.shell',
+      principal,
+      schemaVersion: '1',
+      target: {
+        targetModuleKey: 'core.shell',
+        targetResourceId: 'primary',
+        targetResourceType: 'counter',
+      },
+    }),
+  ]);
+  assert.equal(DateTime.formatIso(result.occurredAt), occurredAt);
+  assert.equal(Option.isNone(result.note), true);
+  assert.equal(
+    harness.flushed[0]?.resultHash,
+    computeCanonicalValueHash({ note: null, occurredAt }),
+  );
+});
+
 test('uses a resolver-branded recovery only for the exact support-stop Action and still checks permission', async () => {
-  const recoveryPrincipal = await Effect.runPromise(
+  const recoveryPrincipal = await runEffectTestPromise(
     supportRecoveryPrincipalContextResolverFromRepository({
       load: async () => ({
         bindingPrincipalId: principal.principalId,
         bindingTenantId: principal.tenantId,
-        principalKind: 'human',
+        principalKind: 'human' as const,
         principalTenantId: principal.tenantId,
         tenantId: principal.tenantId,
       }),
@@ -504,28 +612,9 @@ test('uses a resolver-branded recovery only for the exact support-stop Action an
     tenantPermissionDecision: 'denied',
   });
 
-  const result = await Effect.runPromise(
-    harness.runtime.runAction({
-      payload: {
-        checkpoint: 'stopped',
-        originalPrincipalId: principal.principalId,
-        reason: 'Securely terminate support access',
-        sessionRef: 'better-auth-session:impersonated-session',
-        targetPrincipalId: '00000000-0000-4000-8000-000000000099',
-      },
-      principal: recoveryPrincipal,
-      registration: recordSupportImpersonationAction,
-      transport: transport('support-recovery'),
-    }),
-  );
-
-  assert.deepEqual(result, { checkpoint: 'stopped', recorded: true });
-  assert.deepEqual(harness.permissionCounts(), { permissionCheckCount: 1, rejectionCount: 0 });
-
-  const deniedHarness = makeHarness({ permissionDecision: 'denied' });
-  const denied = await Effect.runPromise(
-    Effect.flip(
-      deniedHarness.runtime.runAction({
+  const result = await runEffectTestPromise(
+    harness.runtime
+      .runAction({
         payload: {
           checkpoint: 'stopped',
           originalPrincipalId: principal.principalId,
@@ -535,8 +624,31 @@ test('uses a resolver-branded recovery only for the exact support-stop Action an
         },
         principal: recoveryPrincipal,
         registration: recordSupportImpersonationAction,
-        transport: transport('support-recovery-denied'),
-      }),
+        transport: transport('support-recovery'),
+      })
+      .pipe(providePrincipalManagementRepository),
+  );
+
+  assert.deepEqual(result, { checkpoint: 'stopped', recorded: true });
+  assert.deepEqual(harness.permissionCounts(), { permissionCheckCount: 1, rejectionCount: 0 });
+
+  const deniedHarness = makeHarness({ permissionDecision: 'denied' });
+  const denied = await runEffectTestPromise(
+    Effect.flip(
+      deniedHarness.runtime
+        .runAction({
+          payload: {
+            checkpoint: 'stopped',
+            originalPrincipalId: principal.principalId,
+            reason: 'Securely terminate support access',
+            sessionRef: 'better-auth-session:impersonated-session',
+            targetPrincipalId: '00000000-0000-4000-8000-000000000099',
+          },
+          principal: recoveryPrincipal,
+          registration: recordSupportImpersonationAction,
+          transport: transport('support-recovery-denied'),
+        })
+        .pipe(providePrincipalManagementRepository),
     ),
   );
   assert.equal(denied._tag, 'ActionPermissionDenied');
@@ -545,24 +657,26 @@ test('uses a resolver-branded recovery only for the exact support-stop Action an
     rejectionCount: 1,
   });
 
-  const wrongCheckpoint = await Effect.runPromise(
+  const wrongCheckpoint = await runEffectTestPromise(
     Effect.flip(
-      harness.runtime.runAction({
-        payload: {
-          checkpoint: 'requested',
-          originalPrincipalId: principal.principalId,
-          reason: 'Attempt to misuse recovery authority',
-          targetPrincipalId: '00000000-0000-4000-8000-000000000099',
-        },
-        principal: recoveryPrincipal,
-        registration: recordSupportImpersonationAction,
-        transport: transport('support-recovery-wrong-checkpoint'),
-      }),
+      harness.runtime
+        .runAction({
+          payload: {
+            checkpoint: 'requested',
+            originalPrincipalId: principal.principalId,
+            reason: 'Attempt to misuse recovery authority',
+            targetPrincipalId: '00000000-0000-4000-8000-000000000099',
+          },
+          principal: recoveryPrincipal,
+          registration: recordSupportImpersonationAction,
+          transport: transport('support-recovery-wrong-checkpoint'),
+        })
+        .pipe(providePrincipalManagementRepository),
     ),
   );
   assert.equal(wrongCheckpoint._tag, 'ActionTrustedContextValidationError');
 
-  const wrongAction = await Effect.runPromise(
+  const wrongAction = await runEffectTestPromise(
     Effect.flip(
       harness.runtime.runAction({
         payload: { amount: 1 },
@@ -576,81 +690,84 @@ test('uses a resolver-branded recovery only for the exact support-stop Action an
 });
 
 test('fails business Actions closed before invocation, permission, Policy, or handler access', async () => {
-  for (const [index, state] of (
-    [
-      'inactive',
-      'read_only',
-      'suspended',
-      'quarantined',
-      'deprecated',
-      'archived',
-      'missing',
-    ] as const
-  ).entries()) {
-    let handlerCalls = 0;
-    let policyCalls = 0;
-    const harness = makeHarness({ moduleState: state });
-    const action = defineAction(
-      {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'stock.read.v1' },
-        actionKey: `inventory.stock.reserve-state-${index}`,
-        auditProfile: 'standard',
-        domainErrorSchema: Schema.Never,
-        domainEvents: {},
-        entrypoint: defineTenantModuleEntrypoint({
-          access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
-          entrypointKey: `inventory.stock.reserve-state-${index}`,
-          moduleKey: 'inventory.stock',
-          role: 'action',
-        }),
-        idempotency: 'required',
-        legalEntityScope: 'optional',
-        owningModuleKey: 'inventory.stock',
-        payloadSchema: Schema.Void,
-        policies: [
-          defineGlobalPolicy({
-            evaluate: () => Effect.sync(() => (policyCalls += 1)),
-            policyKey: `global.unreachable-${index}.v1`,
+  await forEachSequential(
+    (
+      [
+        'inactive',
+        'read_only',
+        'suspended',
+        'quarantined',
+        'deprecated',
+        'archived',
+        'missing',
+      ] as const
+    ).map((state, index) => [index, state] as const),
+    async ([index, state]) => {
+      let handlerCalls = 0;
+      let policyCalls = 0;
+      const harness = makeHarness({ moduleState: state });
+      const action = defineAction(
+        {
+          accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'stock.read.v1' },
+          actionKey: `inventory.stock.reserve-state-${index}`,
+          auditProfile: 'standard',
+          domainErrorSchema: Schema.Never,
+          domainEvents: {},
+          entrypoint: defineTenantModuleEntrypoint({
+            access: 'write',
+            authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+            entrypointKey: `inventory.stock.reserve-state-${index}`,
+            moduleKey: 'inventory.stock',
+            role: 'action',
           }),
-        ],
-        resultSchema: Schema.Void,
-        schemaVersion: '1',
-      },
-      () =>
-        Effect.sync(() => {
-          handlerCalls += 1;
-        }),
-    );
-    const failure = await Effect.runPromise(
-      Effect.flip(
-        harness.runtime.runAction({
-          payload: undefined,
-          principal,
-          registration: action,
-          transport: transport(`state-${state}`),
-        }),
-      ),
-    );
-    assert.equal(failure._tag, 'ModuleStateDeniedError', state);
-    assert.equal(handlerCalls, 0);
-    assert.equal(policyCalls, 0);
-    assert.deepEqual(harness.counts(), {
-      createCount: 0,
-      lockCount: 0,
-      transactionCount: 0,
-      transitionCount: 0,
-    });
-    assert.deepEqual(harness.permissionCounts(), {
-      permissionCheckCount: 0,
-      rejectionCount: 0,
-    });
-    assert.deepEqual(harness.gateCounts(), {
-      handlerResolutionCount: 0,
-      moduleStateReadCount: 1,
-      moduleStateRecheckCount: 0,
-    });
-  }
+          idempotency: 'required',
+          legalEntityScope: 'optional',
+          owningModuleKey: 'inventory.stock',
+          payloadSchema: Schema.Void,
+          policies: [
+            defineGlobalPolicy({
+              evaluate: () => Effect.sync(() => (policyCalls += 1)),
+              policyKey: `global.unreachable-${index}.v1`,
+            }),
+          ],
+          resultSchema: Schema.Void,
+          schemaVersion: '1',
+        },
+        () =>
+          Effect.sync(() => {
+            handlerCalls += 1;
+          }),
+      );
+      const failure = await runEffectTestPromise(
+        Effect.flip(
+          harness.runtime.runAction({
+            payload: undefined,
+            principal,
+            registration: action,
+            transport: transport(`state-${state}`),
+          }),
+        ),
+      );
+      assert.equal(failure._tag, 'ModuleStateDeniedError', state);
+      assert.equal(handlerCalls, 0);
+      assert.equal(policyCalls, 0);
+      assert.deepEqual(harness.counts(), {
+        createCount: 0,
+        lockCount: 0,
+        transactionCount: 0,
+        transitionCount: 0,
+      });
+      assert.deepEqual(harness.permissionCounts(), {
+        permissionCheckCount: 0,
+        rejectionCount: 0,
+      });
+      assert.deepEqual(harness.gateCounts(), {
+        handlerResolutionCount: 0,
+        moduleStateReadCount: 1,
+        moduleStateRecheckCount: 0,
+      });
+    },
+  );
 });
 
 test('distinguishes unavailable early checks and rolls back a denied locked recheck', async () => {
@@ -680,7 +797,7 @@ test('distinguishes unavailable early checks and rolls back a denied locked rech
   );
 
   const unavailable = makeHarness({ moduleState: 'unavailable' });
-  const unavailableFailure = await Effect.runPromise(
+  const unavailableFailure = await runEffectTestPromise(
     Effect.flip(
       unavailable.runtime.runAction({
         payload: undefined,
@@ -694,7 +811,7 @@ test('distinguishes unavailable early checks and rolls back a denied locked rech
   assert.equal(unavailable.counts().createCount, 0);
 
   const locked = makeHarness({ lockedModuleState: 'denied' });
-  const lockedFailure = await Effect.runPromise(
+  const lockedFailure = await runEffectTestPromise(
     Effect.flip(
       locked.runtime.runAction({
         payload: undefined,
@@ -720,7 +837,7 @@ test('distinguishes unavailable early checks and rolls back a denied locked rech
 
 test('allows an explicitly authorized Action before Policy evaluation', async () => {
   const harness = makeHarness({ permissionDecision: 'allowed' });
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     harness.runtime.runAction({
       payload: { amount: 2 },
       principal,
@@ -764,33 +881,36 @@ test('requires a declared tenant role independently from the Action executor rel
     () => Effect.void,
   );
 
-  for (const [decision, expectedTag] of [
-    ['denied', 'ActionPermissionDenied'],
-    ['unavailable', 'ActionPermissionCheckError'],
-  ] as const) {
-    const harness = makeHarness({
-      permissionDecision: 'allowed',
-      tenantPermissionDecision: decision,
-    });
-    const failure = await Effect.runPromise(
-      Effect.flip(
-        harness.runtime.runAction({
-          payload: undefined,
-          principal,
-          registration: tenantAuthorizedRegistration,
-          transport: transport(`tenant-${decision}`),
-        }),
-      ),
-    );
-    assert.equal(failure._tag, expectedTag);
-    assert.equal(harness.counts().transitionCount, 0);
-  }
+  await forEachSequential(
+    [
+      ['denied', 'ActionPermissionDenied'],
+      ['unavailable', 'ActionPermissionCheckError'],
+    ] as const,
+    async ([decision, expectedTag]) => {
+      const harness = makeHarness({
+        permissionDecision: 'allowed',
+        tenantPermissionDecision: decision,
+      });
+      const failure = await runEffectTestPromise(
+        Effect.flip(
+          harness.runtime.runAction({
+            payload: undefined,
+            principal,
+            registration: tenantAuthorizedRegistration,
+            transport: transport(`tenant-${decision}`),
+          }),
+        ),
+      );
+      assert.equal(failure._tag, expectedTag);
+      assert.equal(harness.counts().transitionCount, 0);
+    },
+  );
 
   const allowed = makeHarness({
     permissionDecision: 'allowed',
     tenantPermissionDecision: 'allowed',
   });
-  await Effect.runPromise(
+  await runEffectTestPromise(
     allowed.runtime.runAction({
       payload: undefined,
       principal,
@@ -808,54 +928,57 @@ test('accepts every Party write authority as an explicit tenant permission', asy
     'merge_party_identity',
     'review_party_identity',
   ] as const;
-  for (const [index, permission] of partyPermissions.entries()) {
-    const actionKey = `party.registry.permission-${index}`;
-    const action = defineAction(
-      {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'party.read.v1' },
-        actionKey,
-        auditProfile: 'sensitive',
-        domainErrorSchema: Schema.Never,
-        domainEvents: {},
-        entrypoint: defineTenantModuleEntrypoint({
-          access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
-          entrypointKey: actionKey,
-          moduleKey: 'party.registry',
-          role: 'action',
+  await forEachSequential(
+    partyPermissions.map((permission, index) => [index, permission] as const),
+    async ([index, permission]) => {
+      const actionKey = `party.registry.permission-${index}`;
+      const action = defineAction(
+        {
+          accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'party.read.v1' },
+          actionKey,
+          auditProfile: 'sensitive',
+          domainErrorSchema: Schema.Never,
+          domainEvents: {},
+          entrypoint: defineTenantModuleEntrypoint({
+            access: 'write',
+            authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+            entrypointKey: actionKey,
+            moduleKey: 'party.registry',
+            role: 'action',
+          }),
+          idempotency: 'required',
+          legalEntityScope: 'optional',
+          owningModuleKey: 'party.registry',
+          payloadSchema: Schema.Void,
+          policies: [],
+          resultSchema: Schema.Void,
+          schemaVersion: '1',
+          tenantPermission: () => permission,
+        },
+        () => Effect.void,
+      );
+      const harness = makeHarness();
+      await runEffectTestPromise(
+        harness.runtime.runAction({
+          payload: undefined,
+          principal,
+          registration: action,
+          transport: transport(permission),
         }),
-        idempotency: 'required',
-        legalEntityScope: 'optional',
-        owningModuleKey: 'party.registry',
-        payloadSchema: Schema.Void,
-        policies: [],
-        resultSchema: Schema.Void,
-        schemaVersion: '1',
-        tenantPermission: () => permission,
-      },
-      () => Effect.void,
-    );
-    const harness = makeHarness();
-    await Effect.runPromise(
-      harness.runtime.runAction({
-        payload: undefined,
-        principal,
-        registration: action,
-        transport: transport(permission),
-      }),
-    );
-    assert.deepEqual(harness.tenantChecks, [
-      {
-        permission,
-        principalId: principal.principalId,
-        tenantIds: [principal.tenantId],
-      },
-    ]);
-    assert.deepEqual(harness.flushed[0]?.transport, {
-      correlationId: `correlation-${permission}`,
-      idempotencyKey: permission,
-    });
-  }
+      );
+      assert.deepEqual(harness.tenantChecks, [
+        {
+          permission,
+          principalId: principal.principalId,
+          tenantIds: [principal.tenantId],
+        },
+      ]);
+      assert.deepEqual(harness.flushed[0]?.transport, {
+        correlationId: `correlation-${permission}`,
+        idempotencyKey: permission,
+      });
+    },
+  );
 });
 
 test('canonicalizes every resolved tenant permission target for hash and evidence', async () => {
@@ -886,7 +1009,7 @@ test('canonicalizes every resolved tenant permission target for hash and evidenc
   );
   const first = makeHarness();
   const second = makeHarness();
-  await Effect.runPromise(
+  await runEffectTestPromise(
     first.runtime.runAction({
       payload: undefined,
       principal,
@@ -899,7 +1022,7 @@ test('canonicalizes every resolved tenant permission target for hash and evidenc
       },
     }),
   );
-  await Effect.runPromise(
+  await runEffectTestPromise(
     second.runtime.runAction({
       payload: undefined,
       principal,
@@ -969,7 +1092,7 @@ test('authorizes Counterparty creation against the trusted Legal Entity before P
   };
 
   const denied = makeHarness({ legalEntityPermissionDecision: 'denied' });
-  const failure = await Effect.runPromise(
+  const failure = await runEffectTestPromise(
     Effect.flip(
       denied.runtime.runAction({
         payload: undefined,
@@ -998,7 +1121,7 @@ test('authorizes Counterparty creation against the trusted Legal Entity before P
   assert.equal(denied.stages.at(-1), 'permission_checked');
 
   const unavailable = makeHarness({ legalEntityPermissionDecision: 'unavailable' });
-  const unavailableFailure = await Effect.runPromise(
+  const unavailableFailure = await runEffectTestPromise(
     Effect.flip(
       unavailable.runtime.runAction({
         payload: undefined,
@@ -1014,7 +1137,7 @@ test('authorizes Counterparty creation against the trusted Legal Entity before P
   assert.equal(unavailable.stages.includes('permission_checked'), false);
 
   const allowed = makeHarness();
-  await Effect.runPromise(
+  await runEffectTestPromise(
     allowed.runtime.runAction({
       payload: undefined,
       principal,
@@ -1056,9 +1179,9 @@ test('authorizes the resolved Resource target before Policy, transaction, and ha
       idempotency: 'required',
       legalEntityScope: 'required',
       owningModuleKey: 'party.registry',
-      payloadSchema: Schema.Struct({ counterpartyId: Schema.String }),
+      payloadSchema: Schema.Struct({ counterpartyId: CounterpartyIdSchema }),
       policies: [
-        defineGlobalPolicy<{ readonly counterpartyId: string }>({
+        defineGlobalPolicy<{ readonly counterpartyId: CounterpartyId }>({
           evaluate: (input) => {
             policyCalls += 1;
             assert.deepEqual(input.target, {
@@ -1072,7 +1195,7 @@ test('authorizes the resolved Resource target before Policy, transaction, and ha
         }),
       ],
       resourcePermission: defineActionResourcePermission<{
-        readonly counterpartyId: string;
+        readonly counterpartyId: CounterpartyId;
       }>(({ counterpartyId }, scope) => {
         assert.equal(scope.legalEntityId, principal.legalEntityId);
         return {
@@ -1094,7 +1217,7 @@ test('authorizes the resolved Resource target before Policy, transaction, and ha
   );
 
   const denied = makeHarness({ resourcePermissionDecision: 'denied' });
-  const failure = await Effect.runPromise(
+  const failure = await runEffectTestPromise(
     Effect.flip(
       denied.runtime.runAction({
         payload: { counterpartyId: 'counterparty-1' },
@@ -1138,7 +1261,7 @@ test('authorizes the resolved Resource target before Policy, transaction, and ha
   });
 
   const unavailable = makeHarness({ resourcePermissionDecision: 'unavailable' });
-  const unavailableFailure = await Effect.runPromise(
+  const unavailableFailure = await runEffectTestPromise(
     Effect.flip(
       unavailable.runtime.runAction({
         payload: { counterpartyId: 'counterparty-1' },
@@ -1198,7 +1321,7 @@ test('persists a definite permission denial before returning it and never evalua
     },
   );
 
-  const failure = await Effect.runPromise(
+  const failure = await runEffectTestPromise(
     Effect.flip(
       harness.runtime.runAction({
         payload: undefined,
@@ -1245,7 +1368,7 @@ test('persists a definite permission denial before returning it and never evalua
 
 test('fails closed before Policy evaluation when permission cannot be determined', async () => {
   const harness = makeHarness({ permissionFailure: true });
-  const failure = await Effect.runPromise(
+  const failure = await runEffectTestPromise(
     Effect.flip(
       harness.runtime.runAction({
         payload: { amount: 1 },
@@ -1278,7 +1401,7 @@ test('fails closed before Policy evaluation when permission cannot be determined
 
 test('does not claim permission denial when terminal evidence persistence rolls back', async () => {
   const harness = makeHarness({ permissionDecision: 'denied', rejectionFailure: true });
-  const failure = await Effect.runPromise(
+  const failure = await runEffectTestPromise(
     Effect.flip(
       harness.runtime.runAction({
         payload: { amount: 1 },
@@ -1348,7 +1471,7 @@ test('evaluates Policies in order before running and hands allowed checkpoints t
   );
   const harness = makeHarness();
 
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     harness.runtime.runAction({
       payload: { amount: 4 },
       principal,
@@ -1424,7 +1547,7 @@ test('short-circuits the first Policy denial, finalizes it, and never starts exe
   );
   const harness = makeHarness();
 
-  const denial = await Effect.runPromise(
+  const denial = await runEffectTestPromise(
     Effect.flip(
       harness.runtime.runAction({
         payload: { amount: 1 },
@@ -1470,62 +1593,65 @@ test('short-circuits the first Policy denial, finalizes it, and never starts exe
 test('sanitizes Policy defects and interrupts without finalizing', async () => {
   const evaluators = [() => Effect.die('secret evaluator defect'), () => Effect.interrupt] as const;
 
-  for (const [index, evaluate] of evaluators.entries()) {
-    let handlerExecutions = 0;
-    const policy = defineGlobalPolicy<unknown>({
-      evaluate,
-      policyKey: `global.failure-${index}.v1`,
-    });
-    const action = defineAction(
-      {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
-        actionKey: `shell.counter.policy-failure-${index}`,
-        auditProfile: 'standard',
-        domainErrorSchema: Schema.Never,
-        domainEvents: {},
-        entrypoint: defineSystemModuleEntrypoint({
-          access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
-          entrypointKey: `shell.counter.policy-failure-${index}`,
-          moduleKey: 'core.shell',
-          role: 'action',
-        }),
-        idempotency: 'required',
-        legalEntityScope: 'optional',
-        owningModuleKey: 'core.shell',
-        payloadSchema: Schema.Void,
-        policies: [policy],
-        resultSchema: Schema.Void,
-        schemaVersion: '1',
-      },
-      () => {
-        handlerExecutions += 1;
-        return Effect.void;
-      },
-    );
-    const harness = makeHarness();
-    const error = await Effect.runPromise(
-      Effect.flip(
-        harness.runtime.runAction({
-          payload: undefined,
-          principal,
-          registration: action,
-          transport: transport(`policy-failure-${index}`),
-        }),
-      ),
-    );
+  await forEachSequential(
+    evaluators.map((evaluate, index) => [index, evaluate] as const),
+    async ([index, evaluate]) => {
+      let handlerExecutions = 0;
+      const policy = defineGlobalPolicy<unknown>({
+        evaluate,
+        policyKey: `global.failure-${index}.v1`,
+      });
+      const action = defineAction(
+        {
+          accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+          actionKey: `shell.counter.policy-failure-${index}`,
+          auditProfile: 'standard',
+          domainErrorSchema: Schema.Never,
+          domainEvents: {},
+          entrypoint: defineSystemModuleEntrypoint({
+            access: 'write',
+            authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+            entrypointKey: `shell.counter.policy-failure-${index}`,
+            moduleKey: 'core.shell',
+            role: 'action',
+          }),
+          idempotency: 'required',
+          legalEntityScope: 'optional',
+          owningModuleKey: 'core.shell',
+          payloadSchema: Schema.Void,
+          policies: [policy],
+          resultSchema: Schema.Void,
+          schemaVersion: '1',
+        },
+        () => {
+          handlerExecutions += 1;
+          return Effect.void;
+        },
+      );
+      const harness = makeHarness();
+      const error = await runEffectTestPromise(
+        Effect.flip(
+          harness.runtime.runAction({
+            payload: undefined,
+            principal,
+            registration: action,
+            transport: transport(`policy-failure-${index}`),
+          }),
+        ),
+      );
 
-    assert.equal(error._tag, 'ActionPolicyEvaluationError');
-    assert.equal(error.reason.includes('secret'), false);
-    assert.equal(handlerExecutions, 0);
-    assert.equal(harness.finalized.length, 0);
-    assert.deepEqual(harness.counts(), {
-      createCount: 1,
-      lockCount: 0,
-      transactionCount: 0,
-      transitionCount: 0,
-    });
-  }
+      assert.equal(error._tag, 'ActionPolicyEvaluationError');
+      assert.equal(error.reason.includes('secret'), false);
+      assert.equal(handlerExecutions, 0);
+      assert.equal(harness.finalized.length, 0);
+      assert.deepEqual(harness.counts(), {
+        createCount: 1,
+        lockCount: 0,
+        transactionCount: 0,
+        transitionCount: 0,
+      });
+    },
+  );
 });
 
 test('returns persistence failure when denial evidence cannot be finalized', async () => {
@@ -1563,7 +1689,7 @@ test('returns persistence failure when denial evidence cannot be finalized', asy
   );
   const harness = makeHarness({ policyFinalizationFailure: true });
 
-  const error = await Effect.runPromise(
+  const error = await runEffectTestPromise(
     Effect.flip(
       harness.runtime.runAction({
         payload: undefined,
@@ -1582,19 +1708,22 @@ test('returns persistence failure when denial evidence cannot be finalized', asy
 
 test('creates fresh collectors for every execution', async () => {
   const harness = makeHarness();
-  for (const [key, amount] of [
-    ['first', 1],
-    ['second', 2],
-  ] as const) {
-    await Effect.runPromise(
-      harness.runtime.runAction({
-        payload: { amount },
-        principal,
-        registration: registration(),
-        transport: transport(key),
-      }),
-    );
-  }
+  await forEachSequential(
+    [
+      ['first', 1],
+      ['second', 2],
+    ] as const,
+    async ([key, amount]) => {
+      await runEffectTestPromise(
+        harness.runtime.runAction({
+          payload: { amount },
+          principal,
+          registration: registration(),
+          transport: transport(key),
+        }),
+      );
+    },
+  );
 
   assert.equal(harness.flushed.length, 2);
   assert.deepEqual(
@@ -1637,7 +1766,7 @@ test('evaluates Policies afresh for separate invocations', async () => {
     },
     () => Effect.void,
   );
-  for (const key of ['fresh-first', 'fresh-second']) {
+  await forEachSequential(['fresh-first', 'fresh-second'], async (key) => {
     const harness = makeHarness({
       createRecord: {
         actionInvocationId: key,
@@ -1646,7 +1775,7 @@ test('evaluates Policies afresh for separate invocations', async () => {
         status: 'received',
       },
     });
-    await Effect.runPromise(
+    await runEffectTestPromise(
       harness.runtime.runAction({
         payload: { amount: 1 },
         principal,
@@ -1654,14 +1783,14 @@ test('evaluates Policies afresh for separate invocations', async () => {
         transport: transport(key),
       }),
     );
-  }
+  });
 
   assert.equal(evaluations, 2);
 });
 
 test('rejects structural payloads, trusted context, and missing idempotency before invocation', async () => {
   const harness = makeHarness();
-  const invalidPayload = await Effect.runPromise(
+  const invalidPayload = await runEffectTestPromise(
     Effect.flip(
       harness.runtime.runAction({
         payload: { amount: 'not-a-number' },
@@ -1671,7 +1800,7 @@ test('rejects structural payloads, trusted context, and missing idempotency befo
       }),
     ),
   );
-  const invalidPrincipal = await Effect.runPromise(
+  const invalidPrincipal = await runEffectTestPromise(
     Effect.flip(
       harness.runtime.runAction({
         payload: { amount: 1 },
@@ -1681,7 +1810,7 @@ test('rejects structural payloads, trusted context, and missing idempotency befo
       }),
     ),
   );
-  const missingKey = await Effect.runPromise(
+  const missingKey = await runEffectTestPromise(
     Effect.flip(
       harness.runtime.runAction({
         payload: { amount: 1 },
@@ -1691,7 +1820,7 @@ test('rejects structural payloads, trusted context, and missing idempotency befo
       }),
     ),
   );
-  const forgedSystemPrincipal = await Effect.runPromise(
+  const forgedSystemPrincipal = await runEffectTestPromise(
     Effect.flip(
       harness.runtime.runAction({
         payload: { amount: 1 },
@@ -1715,9 +1844,13 @@ test('rejects structural payloads, trusted context, and missing idempotency befo
 });
 
 test('preserves declared domain rejections and rolls back collected evidence', async () => {
-  class DomainRejected extends Schema.TaggedError<DomainRejected>()('DomainRejected', {
+  const DomainRejectedContract = Schema.TaggedStruct('DomainRejected', {
     reason: Schema.String,
-  }) {}
+  });
+  type DomainRejectedSelf = typeof DomainRejectedContract.Type;
+  const DomainRejected = Schema.TaggedError<DomainRejectedSelf>()('DomainRejected', {
+    reason: Schema.String,
+  });
   const harness = makeHarness();
   let policyEvaluations = 0;
   const allowedPolicy = defineGlobalPolicy<unknown>({
@@ -1765,7 +1898,7 @@ test('preserves declared domain rejections and rolls back collected evidence', a
       }),
   );
 
-  const error = await Effect.runPromise(
+  const error = await runEffectTestPromise(
     Effect.flip(
       harness.runtime.runAction({
         payload: undefined,
@@ -1808,7 +1941,7 @@ test('sanitizes unexpected defects and rejects invalid typed results', async () 
     },
     () => Effect.die('secret database detail'),
   );
-  const defect = await Effect.runPromise(
+  const defect = await runEffectTestPromise(
     Effect.flip(
       defectHarness.runtime.runAction({
         payload: undefined,
@@ -1848,7 +1981,7 @@ test('sanitizes unexpected defects and rejects invalid typed results', async () 
       return Effect.succeed(result);
     },
   );
-  const resultError = await Effect.runPromise(
+  const resultError = await runEffectTestPromise(
     Effect.flip(
       resultHarness.runtime.runAction({
         payload: undefined,
@@ -1867,10 +2000,13 @@ test('sanitizes unexpected defects and rejects invalid typed results', async () 
 });
 
 test('sanitizes undeclared handler failures instead of widening the domain error contract', async () => {
-  class DeclaredDomainError extends Schema.TaggedError<DeclaredDomainError>()(
-    'DeclaredDomainError',
-    { reason: Schema.String },
-  ) {}
+  const DeclaredDomainErrorContract = Schema.TaggedStruct('DeclaredDomainError', {
+    reason: Schema.String,
+  });
+  type DeclaredDomainErrorSelf = typeof DeclaredDomainErrorContract.Type;
+  const DeclaredDomainError = Schema.TaggedError<DeclaredDomainErrorSelf>()('DeclaredDomainError', {
+    reason: Schema.String,
+  });
   const undeclaredDomainError = new DeclaredDomainError({
     reason: 'secret undeclared failure',
   });
@@ -1902,7 +2038,7 @@ test('sanitizes undeclared handler failures instead of widening the domain error
     },
     () => Effect.fail(undeclaredDomainError),
   );
-  const error = await Effect.runPromise(
+  const error = await runEffectTestPromise(
     Effect.flip(
       harness.runtime.runAction({
         payload: undefined,
@@ -1927,7 +2063,7 @@ test('handles committed, conflict, definite rollback, and indeterminate commit b
       status: 'succeeded',
     },
   });
-  const committedError = await Effect.runPromise(
+  const committedError = await runEffectTestPromise(
     Effect.flip(
       committed.runtime.runAction({
         payload: { amount: 1 },
@@ -1946,7 +2082,7 @@ test('handles committed, conflict, definite rollback, and indeterminate commit b
       status: 'running',
     },
   });
-  const conflictError = await Effect.runPromise(
+  const conflictError = await runEffectTestPromise(
     Effect.flip(
       conflict.runtime.runAction({
         payload: { amount: 1 },
@@ -1958,7 +2094,7 @@ test('handles committed, conflict, definite rollback, and indeterminate commit b
   );
 
   const definite = makeHarness({ transactionMode: 'definite-failure' });
-  const definiteError = await Effect.runPromise(
+  const definiteError = await runEffectTestPromise(
     Effect.flip(
       definite.runtime.runAction({
         payload: { amount: 1 },
@@ -1970,7 +2106,7 @@ test('handles committed, conflict, definite rollback, and indeterminate commit b
   );
 
   const uncertain = makeHarness({ transactionMode: 'uncertain' });
-  const uncertainError = await Effect.runPromise(
+  const uncertainError = await runEffectTestPromise(
     Effect.flip(
       uncertain.runtime.runAction({
         payload: { amount: 1 },
@@ -1982,7 +2118,7 @@ test('handles committed, conflict, definite rollback, and indeterminate commit b
   );
 
   const definiteCommit = makeHarness({ transactionMode: 'commit-definite' });
-  const definiteCommitError = await Effect.runPromise(
+  const definiteCommitError = await runEffectTestPromise(
     Effect.flip(
       definiteCommit.runtime.runAction({
         payload: { amount: 1 },
@@ -1997,7 +2133,7 @@ test('handles committed, conflict, definite rollback, and indeterminate commit b
   const acknowledgementErrors = await Promise.all(
     acknowledgementFailureCodes.map(async (code) => {
       const harness = makeHarness({ commitFailureCode: code });
-      return await Effect.runPromise(
+      return await runEffectTestPromise(
         Effect.flip(
           harness.runtime.runAction({
             payload: { amount: 1 },
@@ -2036,19 +2172,19 @@ test('resolves commit state explicitly and keeps unavailable outcomes indetermin
       status: 'running',
     },
   });
-  const openResolution = await Effect.runPromise(
+  const openResolution = await runEffectTestPromise(
     open.runtime.resolveActionCommit({ invocationId, principal }),
   );
 
   const committed = makeHarness({
     createRecord: {
       actionInvocationId: invocationId,
-      completedAt: new Date(),
+      completedAt: completionTime(),
       requestHash: 'request',
       status: 'succeeded',
     },
   });
-  const committedResolution = await Effect.runPromise(
+  const committedResolution = await runEffectTestPromise(
     Effect.flip(committed.runtime.resolveActionCommit({ invocationId, principal })),
   );
 
@@ -2061,7 +2197,7 @@ test('resolves commit state explicitly and keeps unavailable outcomes indetermin
     },
     resolutionUnavailable: true,
   });
-  const unavailableResolution = await Effect.runPromise(
+  const unavailableResolution = await runEffectTestPromise(
     Effect.flip(unavailable.runtime.resolveActionCommit({ invocationId, principal })),
   );
 
@@ -2078,12 +2214,12 @@ test('rejects terminal invocation states before handler execution', async () => 
   const terminal = makeHarness({
     createRecord: {
       actionInvocationId: 'terminal',
-      completedAt: new Date(),
+      completedAt: completionTime(),
       requestHash: '',
       status: 'failed',
     },
   });
-  const error = await Effect.runPromise(
+  const error = await runEffectTestPromise(
     Effect.flip(
       terminal.runtime.runAction({
         payload: { amount: 1 },
@@ -2127,7 +2263,7 @@ test('uses one runtime contract for Shell/Core and MicroVertical-shaped registra
     () => Effect.succeed({ reserved: true }),
   );
 
-  const shellResult = await Effect.runPromise(
+  const shellResult = await runEffectTestPromise(
     shell.runtime.runAction({
       payload: { amount: 1 },
       principal,
@@ -2135,7 +2271,7 @@ test('uses one runtime contract for Shell/Core and MicroVertical-shaped registra
       transport: transport('shell'),
     }),
   );
-  const moduleResult = await Effect.runPromise(
+  const moduleResult = await runEffectTestPromise(
     microvertical.runtime.runAction({
       payload: { quantity: 2 },
       principal,

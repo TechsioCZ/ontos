@@ -3,9 +3,10 @@
 // @ontos-action-slug correct-party-fact
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import {
   PartyCorrectionConflict,
+  PartyCorrectionResultJsonSchema,
   PartyCorrectionResultSchema,
 } from '../../shared/domain/correction-contracts.ts';
 import type { PartyCorrectionCommand } from '../../shared/domain/correction-contracts.ts';
@@ -33,7 +34,7 @@ const ErrorSchema = Schema.Union([
   PartyAliasWriteRejected,
 ]);
 const domainEvents = {
-  'party.registry.party-fact-corrected.v1': PartyCorrectionResultSchema,
+  'party.registry.party-fact-corrected.v1': PartyCorrectionResultJsonSchema,
 } as const;
 interface Services {
   readonly correct: (
@@ -41,38 +42,41 @@ interface Services {
     actionInvocationId: string,
   ) => ReturnType<typeof correctPartyFactRecord>;
 }
-const handle = (
+const handle = Effect.fn('CorrectPartyFactAction.handle')(function* handleCorrectPartyFact(
   payload: PartyCorrectionCommand,
   context: ActionHandlerContext<typeof domainEvents, Services>,
-) =>
-  Effect.gen(function* correctPartyFact() {
-    const result = yield* context.services.correct(payload, context.actionInvocationId);
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `party-correction:${result.retractedAssertionId}`,
-      resultCount: 1,
-      servingModuleKey: 'party.registry',
-      targetModuleKey: 'party.registry',
-      targetResourceId: result.relationshipRef?.resourceId ?? result.partyRef.resourceId,
-      targetResourceType: result.relationshipRef?.resourceType ?? result.partyRef.resourceType,
-    });
-    const event = yield* context.addDomainEvent({
-      eventType: 'party.registry.party-fact-corrected.v1',
-      payloadJson: result,
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
-      subjectResourceId: result.correctionRef.resourceId,
-      subjectResourceType: result.correctionRef.resourceType,
-    });
-    yield* context.addOutboxMessage(
-      event,
-      createCorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxMessage({
-        correctionRef: result.correctionRef,
-        partyRef: result.partyRef,
-      }),
-    );
-    return result;
+) {
+  const result = yield* context.services.correct(payload, context.actionInvocationId);
+  const relationshipRef = Option.getOrUndefined(result.relationshipRef);
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `party-correction:${result.retractedAssertionId}`,
+    resultCount: 1,
+    servingModuleKey: 'party.registry',
+    targetModuleKey: 'party.registry',
+    targetResourceId: relationshipRef?.resourceId ?? result.partyRef.resourceId,
+    targetResourceType: relationshipRef?.resourceType ?? result.partyRef.resourceType,
   });
+  const payloadJson = yield* Schema.encodeEffect(PartyCorrectionResultSchema)(result).pipe(
+    Effect.orDie,
+  );
+  const event = yield* context.addDomainEvent({
+    eventType: 'party.registry.party-fact-corrected.v1',
+    payloadJson,
+    producerModuleKey: 'party.registry',
+    subjectModuleKey: 'party.registry',
+    subjectResourceId: result.correctionRef.resourceId,
+    subjectResourceType: result.correctionRef.resourceType,
+  });
+  yield* context.addOutboxMessage(
+    event,
+    createCorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxMessage({
+      correctionRef: result.correctionRef,
+      partyRef: result.partyRef,
+    }),
+  );
+  return result;
+});
 export const correctPartyFactAction = defineAction(
   {
     accessEvidencePolicy: {

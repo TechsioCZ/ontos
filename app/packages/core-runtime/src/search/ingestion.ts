@@ -1,5 +1,3 @@
-/* oxlint-disable sonarjs/no-duplicate-string */
-/* eslint-disable anti-slop/no-unknown-parameters -- Public gateway input is decoded immediately by CoreSearchIngestionObservationSchema. */
 import { Context, Effect, Layer, Schema } from 'effect';
 import {
   CoreSearchProjectionInvalid,
@@ -7,6 +5,11 @@ import {
   CoreSearchProjectionStore,
 } from './projection.ts';
 import type { CoreSearchProjectionStoreService } from './projection.ts';
+
+const PARTY_REGISTRY_MODULE_KEY = 'party.registry' as const;
+const tenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
+type UnparsedCoreSearchIngestionObservation = typeof Schema.Unknown.Type;
+type CoreSearchProjectionMutationSink = Pick<CoreSearchProjectionStoreService, 'apply'>;
 
 export const CORE_SEARCH_PARTY_LIFECYCLE_TOPICS = [
   'party.registry.party-created.v1',
@@ -52,19 +55,19 @@ const workerKeySchema = Schema.Literals(CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS)
 const versionSchema = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/u));
 
 export const CoreSearchIngestionObservationSchema = Schema.Struct({
-  consumerModuleKey: Schema.Literal('party.registry'),
+  consumerModuleKey: Schema.Literal(PARTY_REGISTRY_MODULE_KEY),
   mutation: CoreSearchProjectionMutationSchema,
-  producerModuleKey: Schema.Literal('party.registry'),
+  producerModuleKey: Schema.Literal(PARTY_REGISTRY_MODULE_KEY),
   projectionVersion: versionSchema,
-  tenantId: Schema.String.check(Schema.isUUID()),
+  tenantId: tenantIdSchema,
   topic: topicSchema,
   workerKey: workerKeySchema,
 });
 export type CoreSearchIngestionObservation = typeof CoreSearchIngestionObservationSchema.Type;
 
 export interface CoreSearchIngestionRegistration {
-  readonly consumerModuleKey: 'party.registry';
-  readonly producerModuleKey: 'party.registry';
+  readonly consumerModuleKey: typeof PARTY_REGISTRY_MODULE_KEY;
+  readonly producerModuleKey: typeof PARTY_REGISTRY_MODULE_KEY;
   readonly topic: CoreSearchPartyLifecycleTopic;
   readonly workerKey: CoreSearchPartyProjectorWorkerKey;
 }
@@ -77,8 +80,8 @@ export const CORE_SEARCH_INGESTION_REGISTRATIONS: readonly CoreSearchIngestionRe
         ? []
         : [
             Object.freeze({
-              consumerModuleKey: 'party.registry' as const,
-              producerModuleKey: 'party.registry' as const,
+              consumerModuleKey: PARTY_REGISTRY_MODULE_KEY,
+              producerModuleKey: PARTY_REGISTRY_MODULE_KEY,
               topic,
               workerKey,
             }),
@@ -86,11 +89,21 @@ export const CORE_SEARCH_INGESTION_REGISTRATIONS: readonly CoreSearchIngestionRe
     }),
   );
 
-const invalid = (reason: string) =>
-  new CoreSearchProjectionInvalid({ code: 'core_search_projection_invalid', reason });
+const invalid = (reason: string, cause?: unknown): CoreSearchProjectionInvalid => {
+  if (cause === undefined) {
+    return new CoreSearchProjectionInvalid({ code: 'core_search_projection_invalid', reason });
+  }
+  return new CoreSearchProjectionInvalid({
+    cause,
+    code: 'core_search_projection_invalid',
+    reason,
+  });
+};
 
 export interface CoreSearchIngestionService {
-  readonly ingest: (input: unknown) => ReturnType<CoreSearchProjectionStoreService['apply']>;
+  readonly ingest: (
+    input: UnparsedCoreSearchIngestionObservation,
+  ) => ReturnType<CoreSearchProjectionStoreService['apply']>;
 }
 
 /** Core-owned consumer seam for post-commit Party lifecycle observations. */
@@ -100,11 +113,11 @@ export class CoreSearchIngestion extends Context.Service<
 >()('@app/core-runtime/search/ingestion/CoreSearchIngestion') {}
 
 export const makeCoreSearchIngestion = (
-  store: CoreSearchProjectionStoreService,
+  store: CoreSearchProjectionMutationSink,
 ): CoreSearchIngestionService => ({
   ingest: (input) =>
     Schema.decodeUnknownEffect(CoreSearchIngestionObservationSchema)(input).pipe(
-      Effect.mapError(() => invalid('Core Search ingestion observation is invalid')),
+      Effect.mapError((cause) => invalid('Core Search ingestion observation is invalid', cause)),
       Effect.flatMap((observation) => {
         const registered = CORE_SEARCH_INGESTION_REGISTRATIONS.some(
           (registration) =>

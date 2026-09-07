@@ -1,5 +1,6 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
-// @effect-diagnostics asyncFunction:off
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
 import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
@@ -92,26 +93,29 @@ void test('uses one canonical tenant module state schema', async () => {
   const decodedStates = await Promise.all(
     TENANT_MODULE_STATES.map(
       async (state) =>
-        await Effect.runPromise(Schema.decodeUnknownEffect(TenantModuleStateSchema)(state)),
+        await runEffectTestPromise(Schema.decodeUnknownEffect(TenantModuleStateSchema)(state)),
     ),
   );
   assert.deepEqual(decodedStates, TENANT_MODULE_STATES);
 
-  const failure = await Effect.runPromise(
+  const failure = await runEffectTestPromise(
     Effect.flip(Schema.decodeUnknownEffect(TenantModuleStateSchema)('enabled')),
   );
   assert.equal(failure._tag, 'SchemaError');
 });
 
 void test('maps only trusted supported authentication methods to history sources', async () => {
-  assert.equal(await Effect.runPromise(resolveTenantModuleStateChangeSource('session')), 'user');
+  assert.equal(await runEffectTestPromise(resolveTenantModuleStateChangeSource('session')), 'user');
   assert.equal(
-    await Effect.runPromise(resolveTenantModuleStateChangeSource('support_impersonation')),
+    await runEffectTestPromise(resolveTenantModuleStateChangeSource('support_impersonation')),
     'support',
   );
-  assert.equal(await Effect.runPromise(resolveTenantModuleStateChangeSource('system')), 'system');
+  assert.equal(
+    await runEffectTestPromise(resolveTenantModuleStateChangeSource('system')),
+    'system',
+  );
 
-  const unsupported = await Effect.runPromise(
+  const unsupported = await runEffectTestPromise(
     Effect.flip(resolveTenantModuleStateChangeSource('api_key')),
   );
   assert.equal(unsupported._tag, 'TenantModuleStateUnsupportedChangeSourceError');
@@ -119,10 +123,10 @@ void test('maps only trusted supported authentication methods to history sources
 });
 
 void test('rejects a no-op transition without changing first-state semantics', async () => {
-  await Effect.runPromise(rejectUnchangedTenantModuleState(null, 'active'));
-  await Effect.runPromise(rejectUnchangedTenantModuleState('inactive', 'active'));
+  await runEffectTestPromise(rejectUnchangedTenantModuleState(null, 'active'));
+  await runEffectTestPromise(rejectUnchangedTenantModuleState('inactive', 'active'));
 
-  const unchanged = await Effect.runPromise(
+  const unchanged = await runEffectTestPromise(
     Effect.flip(rejectUnchangedTenantModuleState('active', 'active')),
   );
   assert.equal(unchanged._tag, 'TenantModuleStateUnchangedError');
@@ -180,18 +184,18 @@ void test('validates only installed membership and the target module supported s
   const target = contract('property.registry', ['inactive', 'active', 'read_only']);
   const installed = catalog(other, target);
 
-  const unknown = await Effect.runPromise(
+  const unknown = await runEffectTestPromise(
     Effect.flip(validateTenantModuleStateTransition(installed, 'unknown.module', 'active')),
   );
   assert.equal(unknown._tag, 'TenantModuleStateUnknownModuleError');
-  const unsupported = await Effect.runPromise(
+  const unsupported = await runEffectTestPromise(
     Effect.flip(validateTenantModuleStateTransition(installed, 'property.registry', 'archived')),
   );
   assert.equal(unsupported._tag, 'TenantModuleStateUnsupportedStateError');
-  await Effect.runPromise(
+  await runEffectTestPromise(
     validateTenantModuleStateTransition(installed, 'property.registry', 'active'),
   );
-  await Effect.runPromise(
+  await runEffectTestPromise(
     validateTenantModuleStateTransition(installed, 'stale.module', 'inactive'),
   );
 });
@@ -207,7 +211,7 @@ void test('declares the generated Core Action contract and bounded business payl
   assert.doesNotMatch(JSON.stringify(descriptor.domainErrorSchema.ast), /dependency/iu);
 
   assert.deepEqual(
-    await Effect.runPromise(
+    await runEffectTestPromise(
       Schema.decodeUnknownEffect(descriptor.payloadSchema)({
         expectedState: 'inactive',
         moduleKey: 'testing.module',
@@ -223,7 +227,7 @@ void test('declares the generated Core Action contract and bounded business payl
     },
   );
   await assert.rejects(
-    Effect.runPromise(
+    runEffectTestPromise(
       Schema.decodeUnknownEffect(descriptor.payloadSchema)({
         moduleKey: 'testing.module',
         newState: 'active',
@@ -232,7 +236,7 @@ void test('declares the generated Core Action contract and bounded business payl
     ),
   );
   await assert.rejects(
-    Effect.runPromise(
+    runEffectTestPromise(
       Schema.decodeUnknownEffect(descriptor.payloadSchema)({
         moduleKey: 'testing.module',
         newState: 'enabled',

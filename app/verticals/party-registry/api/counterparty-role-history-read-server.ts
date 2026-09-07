@@ -7,145 +7,171 @@ import {
   HttpEffect,
   HttpServerResponse,
 } from '@modern-js/plugin-bff/effect-edge';
-import { Config } from 'effect';
+import { Match, Redacted, Schema } from 'effect';
 import { partyRegistryApi } from '../shared/api.ts';
+import {
+  CounterpartyRoleHistoryAuthenticationProblemSchema,
+  CounterpartyRoleHistoryForbiddenProblemSchema,
+  CounterpartyRoleHistoryInternalProblemSchema,
+  CounterpartyRoleHistoryInvalidProblemSchema,
+  CounterpartyRoleHistoryNotFoundProblemSchema,
+  CounterpartyRoleHistoryPolicyConflictProblemSchema,
+  CounterpartyRoleHistoryPolicyProblemSchema,
+  CounterpartyRoleHistoryUnavailableProblemSchema,
+} from '../shared/apis/counterparty-role-history.ts';
 import { counterpartyRoleHistoryRead } from '../src/api/counterparty-role-history.read.ts';
 import { verifyOperationPrincipal } from './auth/action-principal.ts';
+import { governedReadProblemStatus } from './read-server-support.ts';
 
-const authenticationProblem = () => ({
-  _tag: 'CounterpartyRoleHistoryAuthenticationProblem' as const,
-  detail: 'A valid audience-scoped Bearer assertion is required.',
-  status: 401 as const,
-  title: 'Authentication required',
-  type: 'https://ontos.dev/problems/operation-authentication-required',
-});
-const unavailableProblem = () => ({
-  _tag: 'CounterpartyRoleHistoryUnavailableProblem' as const,
-  detail: 'The governed read is temporarily unavailable.',
-  retryable: true as const,
-  status: 503 as const,
-  title: 'Read unavailable',
-  type: 'https://ontos.dev/problems/read-unavailable',
-});
-const invalidProblem = () => ({
-  _tag: 'CounterpartyRoleHistoryInvalidProblem' as const,
-  detail: 'The governed read request is invalid.',
-  status: 400 as const,
-  title: 'Invalid read request',
-  type: 'https://ontos.dev/problems/read-invalid',
-});
-const forbiddenProblem = () => ({
-  _tag: 'CounterpartyRoleHistoryForbiddenProblem' as const,
-  detail: 'The principal is not permitted to perform this read.',
-  status: 403 as const,
-  title: 'Read forbidden',
-  type: 'https://ontos.dev/problems/read-forbidden',
-});
-const notFoundProblem = () => ({
-  _tag: 'CounterpartyRoleHistoryNotFoundProblem' as const,
-  detail: 'The requested resource was not found.',
-  status: 404 as const,
-  title: 'Resource not found',
-  type: 'https://ontos.dev/problems/read-not-found',
-});
-const policyProblem = (status: 409 | 422) =>
-  status === 409
-    ? {
-        _tag: 'CounterpartyRoleHistoryPolicyConflictProblem' as const,
-        detail: 'The read conflicts with the current business state.',
-        status: 409 as const,
-        title: 'Read conflict',
-        type: 'https://ontos.dev/problems/read-policy-conflict',
-      }
-    : {
-        _tag: 'CounterpartyRoleHistoryPolicyProblem' as const,
-        detail: 'The read is not eligible under the current business policy.',
-        status: 422 as const,
-        title: 'Read ineligible',
-        type: 'https://ontos.dev/problems/read-policy-denied',
-      };
-const internalProblem = () => ({
-  _tag: 'CounterpartyRoleHistoryInternalProblem' as const,
-  detail: 'The governed read could not be completed.',
-  status: 500 as const,
-  title: 'Read failed',
-  type: 'https://ontos.dev/problems/read-failed',
-});
+const preserveCause = <Problem extends object>(problem: Problem, cause?: unknown): Problem => {
+  if (cause !== undefined) {
+    Object.defineProperty(problem, 'cause', { enumerable: false, value: cause });
+  }
+  return problem;
+};
+
+const problem = {
+  authentication: (cause?: unknown) =>
+    preserveCause(
+      CounterpartyRoleHistoryAuthenticationProblemSchema.make({
+        detail: 'A valid audience-scoped Bearer assertion is required.',
+        status: governedReadProblemStatus.authentication,
+        title: 'Authentication required',
+        type: 'https://ontos.dev/problems/operation-authentication-required',
+      }),
+      cause,
+    ),
+  forbidden: (cause?: unknown) =>
+    preserveCause(
+      CounterpartyRoleHistoryForbiddenProblemSchema.make({
+        detail: 'The principal is not permitted to perform this read.',
+        status: governedReadProblemStatus.forbidden,
+        title: 'Read forbidden',
+        type: 'https://ontos.dev/problems/read-forbidden',
+      }),
+      cause,
+    ),
+  internal: (cause?: unknown) =>
+    preserveCause(
+      CounterpartyRoleHistoryInternalProblemSchema.make({
+        detail: 'The governed read could not be completed.',
+        status: governedReadProblemStatus.internal,
+        title: 'Read failed',
+        type: 'https://ontos.dev/problems/read-failed',
+      }),
+      cause,
+    ),
+  invalid: (cause?: unknown) =>
+    preserveCause(
+      CounterpartyRoleHistoryInvalidProblemSchema.make({
+        detail: 'The governed read request is invalid.',
+        status: governedReadProblemStatus.invalid,
+        title: 'Invalid read request',
+        type: 'https://ontos.dev/problems/read-invalid',
+      }),
+      cause,
+    ),
+  notFound: (cause?: unknown) =>
+    preserveCause(
+      CounterpartyRoleHistoryNotFoundProblemSchema.make({
+        detail: 'The requested resource was not found.',
+        status: governedReadProblemStatus.notFound,
+        title: 'Resource not found',
+        type: 'https://ontos.dev/problems/read-not-found',
+      }),
+      cause,
+    ),
+  policy: (status: 409 | 422, cause?: unknown) =>
+    status === 409
+      ? preserveCause(
+          CounterpartyRoleHistoryPolicyConflictProblemSchema.make({
+            detail: 'The read conflicts with the current business state.',
+            status: governedReadProblemStatus.policyConflict,
+            title: 'Read conflict',
+            type: 'https://ontos.dev/problems/read-policy-conflict',
+          }),
+          cause,
+        )
+      : preserveCause(
+          CounterpartyRoleHistoryPolicyProblemSchema.make({
+            detail: 'The read is not eligible under the current business policy.',
+            status: governedReadProblemStatus.policyDenied,
+            title: 'Read ineligible',
+            type: 'https://ontos.dev/problems/read-policy-denied',
+          }),
+          cause,
+        ),
+  unavailable: (cause?: unknown) =>
+    preserveCause(
+      CounterpartyRoleHistoryUnavailableProblemSchema.make({
+        detail: 'The governed read is temporarily unavailable.',
+        retryable: true,
+        status: governedReadProblemStatus.unavailable,
+        title: 'Read unavailable',
+        type: 'https://ontos.dev/problems/read-unavailable',
+      }),
+      cause,
+    ),
+};
 const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
 );
-type VerificationProblem =
-  | ReturnType<typeof authenticationProblem>
-  | ReturnType<typeof unavailableProblem>;
-const readProblem = (error: ReadCoreError) => {
-  switch (error._tag) {
-    case 'ReadInputValidationError': {
-      return invalidProblem();
-    }
-    case 'OperationAuthenticationRequired': {
-      return authenticationProblem();
-    }
-    case 'ModuleStateDeniedError':
-    case 'OperationContextDenied':
-    case 'OperationContextInvalid':
-    case 'ReadPermissionDenied': {
-      return forbiddenProblem();
-    }
-    case 'ReadHandlerNotFound': {
-      return notFoundProblem();
-    }
-    case 'ReadPolicyDenied': {
-      return policyProblem(error.httpStatus);
-    }
-    case 'ModuleStateCheckUnavailableError':
-    case 'OperationContextUnavailable':
-    case 'ReadEvidencePersistenceError':
-    case 'ReadHandlerUnavailable':
-    case 'ReadPermissionUnavailable':
-    case 'ReadPolicyEvaluationError': {
-      return unavailableProblem();
-    }
-    case 'ReadEvidenceValidationError':
-    case 'ReadHandlerExecutionError':
-    case 'ReadResultValidationError': {
-      return internalProblem();
-    }
-    default: {
-      const exhaustive: never = error;
-      return exhaustive;
-    }
-  }
-};
+const isAuthenticationProblem = Schema.is(CounterpartyRoleHistoryAuthenticationProblemSchema);
+const failProblem = <Problem>(mapped: Problem) =>
+  (isAuthenticationProblem(mapped) ? bearerChallenge : Effect.void).pipe(
+    Effect.andThen(Effect.fail(mapped)),
+  );
+const readProblem = (error: ReadCoreError) =>
+  Match.value(error).pipe(
+    Match.tags({
+      ModuleStateCheckUnavailableError: problem.unavailable,
+      ModuleStateDeniedError: problem.forbidden,
+      OperationAuthenticationRequired: problem.authentication,
+      OperationContextDenied: problem.forbidden,
+      OperationContextInvalid: problem.forbidden,
+      OperationContextUnavailable: problem.unavailable,
+      ReadEvidencePersistenceError: problem.unavailable,
+      ReadEvidenceValidationError: problem.internal,
+      ReadHandlerExecutionError: problem.internal,
+      ReadHandlerNotFound: problem.notFound,
+      ReadHandlerUnavailable: problem.unavailable,
+      ReadInputValidationError: problem.invalid,
+      ReadPermissionDenied: problem.forbidden,
+      ReadPermissionUnavailable: problem.unavailable,
+      ReadPolicyDenied: (failure) => problem.policy(failure.httpStatus, failure),
+      ReadPolicyEvaluationError: problem.unavailable,
+      ReadResultValidationError: problem.internal,
+    }),
+    Match.exhaustive,
+  );
+
+const verifyPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
+  verifyOperationPrincipal(authorization).pipe(
+    Effect.catchTags({
+      ActionPrincipalConfigurationError: (failure) => Effect.fail(problem.unavailable(failure)),
+      ActionPrincipalExpiredError: (failure) => failProblem(problem.authentication(failure)),
+      ActionPrincipalInvalidError: (failure) => failProblem(problem.authentication(failure)),
+      ActionPrincipalMissingError: (failure) => failProblem(problem.authentication(failure)),
+      ActionPrincipalScopeError: (failure) => failProblem(problem.authentication(failure)),
+      ActionPrincipalUnavailableError: (failure) => Effect.fail(problem.unavailable(failure)),
+    }),
+  );
 
 export const counterpartyRoleHistoryReadApiLive = HttpApiBuilder.group(
   partyRegistryApi,
   'counterpartyRoleHistory',
   (handlers) =>
-    handlers.handle('execute', ({ payload, request }) =>
-      Effect.gen(function* governedProviderRead() {
+    handlers.handle(
+      'execute',
+      Effect.fn('counterpartyRoleHistoryReadApiLive.execute')(function* executeRead({
+        payload,
+        request,
+      }) {
         const correlationId = request.headers['x-correlation-id'];
         if (correlationId === undefined || correlationId.trim().length === 0) {
-          return yield* Effect.fail(invalidProblem());
+          return yield* Effect.fail(problem.invalid());
         }
-        const environment = yield* Config.all({
-          ONTOS_GATEWAY_ISSUER: Config.string('ONTOS_GATEWAY_ISSUER'),
-          ONTOS_GATEWAY_PUBLIC_JWKS: Config.string('ONTOS_GATEWAY_PUBLIC_JWKS'),
-        }).pipe(Effect.mapError(unavailableProblem));
-        const principal = yield* verifyOperationPrincipal(request.headers['authorization'], {
-          environment,
-        }).pipe(
-          Effect.catch((error) => {
-            if (
-              error._tag === 'ActionPrincipalConfigurationError' ||
-              error._tag === 'ActionPrincipalUnavailableError'
-            ) {
-              return Effect.fail<VerificationProblem>(unavailableProblem());
-            }
-            return bearerChallenge.pipe(
-              Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
-            );
-          }),
-        );
+        const principal = yield* verifyPrincipal(Redacted.make(request.headers['authorization']));
         const runtime = yield* ReadRuntime;
         return yield* runtime
           .runRead({
@@ -154,14 +180,7 @@ export const counterpartyRoleHistoryReadApiLive = HttpApiBuilder.group(
             registration: counterpartyRoleHistoryRead,
             transport: { correlationId },
           })
-          .pipe(
-            Effect.catch((error) => {
-              const problem = readProblem(error);
-              return (problem.status === 401 ? bearerChallenge : Effect.void).pipe(
-                Effect.andThen(Effect.fail(problem)),
-              );
-            }),
-          );
+          .pipe(Effect.mapError(readProblem), Effect.catchIf(isAuthenticationProblem, failProblem));
       }),
     ),
 );

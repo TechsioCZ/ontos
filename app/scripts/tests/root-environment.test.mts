@@ -10,7 +10,7 @@ const appRoot = path.resolve(import.meta.dirname, '../..');
 const repositoryRoot = path.dirname(appRoot);
 const expectedEnvironmentPath = path.join(appRoot, '.env');
 
-test('apps contain no environment files that can override the app-root .env', () => {
+void test('apps contain no environment files that can override the app-root .env', () => {
   const result = spawnSync(
     '/usr/bin/find',
     [
@@ -30,7 +30,7 @@ test('apps contain no environment files that can override the app-root .env', ()
   assert.equal(result.stdout.trim(), '');
 });
 
-test('workspace discovery resolves repository, app, shell, and microvertical directories', async () => {
+void test('workspace discovery resolves repository, app, shell, and microvertical directories', async () => {
   const { resolveAppWorkspaceRoot } =
     await import('../../packages/core-runtime/src/environment/workspace-environment.ts');
 
@@ -38,13 +38,13 @@ test('workspace discovery resolves repository, app, shell, and microvertical dir
     repositoryRoot,
     appRoot,
     path.join(appRoot, 'apps/shell-super-app'),
-    path.join(appRoot, 'verticals/contacts'),
+    path.join(appRoot, 'verticals/party-registry'),
   ]) {
     assert.equal(resolveAppWorkspaceRoot(directory), appRoot);
   }
 });
 
-test('all server configuration resolves the app-root .env from any invocation directory', () => {
+void test('all server configuration resolves the app-root .env from any invocation directory', () => {
   const databaseConfigUrl = pathToFileURL(
     path.join(appRoot, 'packages/core-runtime/src/db/config.ts'),
   ).href;
@@ -64,12 +64,22 @@ test('all server configuration resolves the app-root .env from any invocation di
       auth.ROOT_ENV_PATH,
     ]));
   `;
-  const { ULTRAMODERN_WORKSPACE_ROOT: _ignoredWorkspaceRoot, ...environment } = process.env;
-  const child = spawnSync(process.execPath, ['--input-type=module', '--eval', source], {
-    cwd: '/',
-    encoding: 'utf-8',
-    env: { ...environment, INIT_CWD: repositoryRoot },
-  });
+  const child = spawnSync(
+    '/usr/bin/env',
+    [
+      '-u',
+      'ULTRAMODERN_WORKSPACE_ROOT',
+      `INIT_CWD=${repositoryRoot}`,
+      process.execPath,
+      '--input-type=module',
+      '--eval',
+      source,
+    ],
+    {
+      cwd: '/',
+      encoding: 'utf-8',
+    },
+  );
 
   assert.equal(child.status, 0, child.stderr);
   assert.deepEqual(JSON.parse(child.stdout.trim()), [
@@ -79,7 +89,7 @@ test('all server configuration resolves the app-root .env from any invocation di
   ]);
 });
 
-test('Drizzle configuration remains bundleable as CommonJS', () => {
+void test('Drizzle configuration remains bundleable as CommonJS', () => {
   const outputDirectory = mkdtempSync(path.join(tmpdir(), 'ontos-drizzle-cjs-'));
   try {
     const result = spawnSync(

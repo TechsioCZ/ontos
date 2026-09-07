@@ -41,43 +41,42 @@ interface Services {
     invocationId: string,
   ) => ReturnType<typeof resolveDuplicateCandidateCreate>;
 }
-const handle = (
+const handle = Effect.fn('ResolveDuplicateCandidateCreateAction.handle')(function* resolveCreate(
   payload: ResolveDuplicateCandidateCreatePayload,
   context: ActionHandlerContext<typeof domainEvents, Services>,
-) =>
-  Effect.gen(function* resolveCreate() {
-    const result = yield* context.services.resolve(payload, context.actionInvocationId);
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: createHash('sha256')
-        .update(`duplicate-case-invariants:${payload.caseRef.resourceId}`)
-        .digest('hex'),
-      resultCount: 1,
-      servingModuleKey: 'party.registry',
-      targetModuleKey: 'party.registry',
-      targetResourceId: result.caseRef.resourceId,
-      targetResourceType: result.caseRef.resourceType,
-    });
-    if (result.partyRef === null) {
-      return yield* new DuplicateCandidateConflict({
-        code: 'duplicate_candidate_conflict',
-        reason: 'CREATE_NEW did not produce a Party',
-      });
-    }
-    const event = yield* context.addDomainEvent({
-      eventType: 'party.registry.party-created.v1',
-      payloadJson: { partyRef: result.partyRef },
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
-      subjectResourceId: result.partyRef.resourceId,
-      subjectResourceType: result.partyRef.resourceType,
-    });
-    yield* context.addOutboxMessage(
-      event,
-      createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage({ partyRef: result.partyRef }),
-    );
-    return result;
+) {
+  const result = yield* context.services.resolve(payload, context.actionInvocationId);
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: createHash('sha256')
+      .update(`duplicate-case-invariants:${payload.caseRef.resourceId}`)
+      .digest('hex'),
+    resultCount: 1,
+    servingModuleKey: 'party.registry',
+    targetModuleKey: 'party.registry',
+    targetResourceId: result.caseRef.resourceId,
+    targetResourceType: result.caseRef.resourceType,
   });
+  if (result.partyRef === null) {
+    return yield* new DuplicateCandidateConflict({
+      code: 'duplicate_candidate_conflict',
+      reason: 'CREATE_NEW did not produce a Party',
+    });
+  }
+  const event = yield* context.addDomainEvent({
+    eventType: 'party.registry.party-created.v1',
+    payloadJson: { partyRef: result.partyRef },
+    producerModuleKey: 'party.registry',
+    subjectModuleKey: 'party.registry',
+    subjectResourceId: result.partyRef.resourceId,
+    subjectResourceType: result.partyRef.resourceType,
+  });
+  yield* context.addOutboxMessage(
+    event,
+    createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage({ partyRef: result.partyRef }),
+  );
+  return result;
+});
 export const resolveDuplicateCandidateCreateAction = defineAction(
   {
     accessEvidencePolicy: {

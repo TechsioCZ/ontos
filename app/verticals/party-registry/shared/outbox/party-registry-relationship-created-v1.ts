@@ -5,6 +5,7 @@ import { PartyRelationshipLifecycleEventPayloadSchema } from '../domain/relation
 
 export const OutboxPayloadSchema = PartyRelationshipLifecycleEventPayloadSchema;
 export type OutboxPayload = typeof OutboxPayloadSchema.Type;
+export type OutboxPayloadJson = typeof OutboxPayloadSchema.Encoded;
 
 export const outboxTopic = 'party.registry.relationship-created.v1' as const;
 export const outboxProducerModuleKey = 'party.registry' as const;

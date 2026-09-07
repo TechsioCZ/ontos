@@ -1,77 +1,21 @@
-/* eslint-disable max-classes-per-file -- One closed Core module-state failure vocabulary. */
-import { Schema } from 'effect';
+import type { TenantModuleStateConcurrentChangeError } from './tenant-module-state-concurrent-change-error.ts';
+import type { TenantModuleStatePersistenceUnavailableError } from './tenant-module-state-persistence-unavailable-error.ts';
+import type { TenantModuleStateTenantMissingError } from './tenant-module-state-tenant-missing-error.ts';
+import type { TenantModuleStateUnchangedError } from './tenant-module-state-unchanged-error.ts';
+import type { TenantModuleStateUnknownModuleError } from './tenant-module-state-unknown-module-error.ts';
+import type { TenantModuleStateUnsupportedChangeSourceError } from './tenant-module-state-unsupported-change-source-error.ts';
+import type { TenantModuleStateUnsupportedStateError } from './tenant-module-state-unsupported-state-error.ts';
+import type { TenantModuleStateValidationUnavailableError } from './tenant-module-state-validation-unavailable-error.ts';
 
-export class TenantModuleStateReadUnavailableError extends Schema.TaggedError<TenantModuleStateReadUnavailableError>()(
-  'TenantModuleStateReadUnavailableError',
-  {
-    code: Schema.Literal('tenant_module_state_read_unavailable'),
-    reason: Schema.String,
-  },
-) {}
-
-export class TenantModuleStatePersistenceUnavailableError extends Schema.TaggedError<TenantModuleStatePersistenceUnavailableError>()(
-  'TenantModuleStatePersistenceUnavailableError',
-  {
-    code: Schema.Literal('tenant_module_state_persistence_unavailable'),
-    reason: Schema.String,
-  },
-) {}
-
-export class TenantModuleStateTenantMissingError extends Schema.TaggedError<TenantModuleStateTenantMissingError>()(
-  'TenantModuleStateTenantMissingError',
-  {
-    code: Schema.Literal('tenant_module_state_tenant_missing'),
-    reason: Schema.String,
-  },
-) {}
-
-export class TenantModuleStateUnchangedError extends Schema.TaggedError<TenantModuleStateUnchangedError>()(
-  'TenantModuleStateUnchangedError',
-  {
-    code: Schema.Literal('tenant_module_state_unchanged'),
-    reason: Schema.String,
-  },
-) {}
-
-export class TenantModuleStateConcurrentChangeError extends Schema.TaggedError<TenantModuleStateConcurrentChangeError>()(
-  'TenantModuleStateConcurrentChangeError',
-  {
-    code: Schema.Literal('tenant_module_state_changed_concurrently'),
-    reason: Schema.String,
-  },
-) {}
-
-export class TenantModuleStateUnsupportedChangeSourceError extends Schema.TaggedError<TenantModuleStateUnsupportedChangeSourceError>()(
-  'TenantModuleStateUnsupportedChangeSourceError',
-  {
-    code: Schema.Literal('tenant_module_state_change_source_unsupported'),
-    reason: Schema.String,
-  },
-) {}
-
-export class TenantModuleStateUnknownModuleError extends Schema.TaggedError<TenantModuleStateUnknownModuleError>()(
-  'TenantModuleStateUnknownModuleError',
-  {
-    code: Schema.Literal('tenant_module_state_module_unknown'),
-    reason: Schema.String,
-  },
-) {}
-
-export class TenantModuleStateUnsupportedStateError extends Schema.TaggedError<TenantModuleStateUnsupportedStateError>()(
-  'TenantModuleStateUnsupportedStateError',
-  {
-    code: Schema.Literal('tenant_module_state_unsupported'),
-    reason: Schema.String,
-  },
-) {}
-
-export class TenantModuleStateValidationUnavailableError extends Schema.TaggedError<TenantModuleStateValidationUnavailableError>()(
-  'TenantModuleStateValidationUnavailableError',
-  {
-    code: Schema.Literal('tenant_module_state_validation_unavailable'),
-    reason: Schema.String,
-  },
-) {}
+export { TenantModuleStateConcurrentChangeError } from './tenant-module-state-concurrent-change-error.ts';
+export { TenantModuleStatePersistenceUnavailableError } from './tenant-module-state-persistence-unavailable-error.ts';
+export { TenantModuleStateReadUnavailableError } from './tenant-module-state-read-unavailable-error.ts';
+export { TenantModuleStateTenantMissingError } from './tenant-module-state-tenant-missing-error.ts';
+export { TenantModuleStateUnchangedError } from './tenant-module-state-unchanged-error.ts';
+export { TenantModuleStateUnknownModuleError } from './tenant-module-state-unknown-module-error.ts';
+export { TenantModuleStateUnsupportedChangeSourceError } from './tenant-module-state-unsupported-change-source-error.ts';
+export { TenantModuleStateUnsupportedStateError } from './tenant-module-state-unsupported-state-error.ts';
+export { TenantModuleStateValidationUnavailableError } from './tenant-module-state-validation-unavailable-error.ts';
 
 export type TenantModuleStateTransitionError =
   | TenantModuleStateConcurrentChangeError

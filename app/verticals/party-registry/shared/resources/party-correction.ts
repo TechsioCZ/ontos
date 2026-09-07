@@ -3,15 +3,16 @@
 // @ontos-resource-slug party-correction
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
-
-const ResourceIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const TenantIdSchema = Schema.String.check(Schema.isUUID());
+import {
+  PartyRegistryResourceIdJsonSchema,
+  PartyRegistryTenantIdJsonSchema,
+} from './resource-ref-identifiers.ts';
 
 export const PartyCorrectionRefSchema = Schema.Struct({
   moduleId: Schema.Literal('party.registry'),
-  resourceId: ResourceIdSchema,
+  resourceId: PartyRegistryResourceIdJsonSchema,
   resourceType: Schema.Literal('party.registry.party-correction'),
-  tenantId: TenantIdSchema,
+  tenantId: PartyRegistryTenantIdJsonSchema,
 });
 export type PartyCorrectionRef = typeof PartyCorrectionRefSchema.Type;
 export const makePartyCorrectionRef = (

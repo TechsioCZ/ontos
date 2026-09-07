@@ -7,161 +7,162 @@ import {
   HttpEffect,
   HttpServerResponse,
 } from '@modern-js/plugin-bff/effect-edge';
-import { Config } from 'effect';
-import { partyRegistryApi } from '../shared/api.ts';
+import { Match, Redacted } from 'effect';
+import {
+  PartyContactPointDetailAuthenticationProblemSchema,
+  PartyContactPointDetailForbiddenProblemSchema,
+  PartyContactPointDetailInternalProblemSchema,
+  PartyContactPointDetailInvalidProblemSchema,
+  PartyContactPointDetailNotFoundProblemSchema,
+  PartyContactPointDetailPolicyConflictProblemSchema,
+  PartyContactPointDetailPolicyProblemSchema,
+  PartyContactPointDetailUnavailableProblemSchema,
+  partyRegistryApi,
+} from '../shared/api.ts';
 import { partyContactPointDetailRead } from '../src/api/party-contact-point-detail.read.ts';
 import { verifyOperationPrincipal } from './auth/action-principal.ts';
 
-const authenticationProblem = () => ({
-  _tag: 'PartyContactPointDetailAuthenticationProblem' as const,
-  detail: 'A valid audience-scoped Bearer assertion is required.',
-  status: 401 as const,
-  title: 'Authentication required',
-  type: 'https://ontos.dev/problems/operation-authentication-required',
-});
-const unavailableProblem = () => ({
-  _tag: 'PartyContactPointDetailUnavailableProblem' as const,
-  detail: 'The governed read is temporarily unavailable.',
-  retryable: true as const,
-  status: 503 as const,
-  title: 'Read unavailable',
-  type: 'https://ontos.dev/problems/read-unavailable',
-});
-const invalidProblem = () => ({
-  _tag: 'PartyContactPointDetailInvalidProblem' as const,
-  detail: 'The governed read request is invalid.',
-  status: 400 as const,
-  title: 'Invalid read request',
-  type: 'https://ontos.dev/problems/read-invalid',
-});
-const forbiddenProblem = () => ({
-  _tag: 'PartyContactPointDetailForbiddenProblem' as const,
-  detail: 'The principal is not permitted to perform this read.',
-  status: 403 as const,
-  title: 'Read forbidden',
-  type: 'https://ontos.dev/problems/read-forbidden',
-});
-const notFoundProblem = () => ({
-  _tag: 'PartyContactPointDetailNotFoundProblem' as const,
-  detail: 'The requested resource was not found.',
-  status: 404 as const,
-  title: 'Resource not found',
-  type: 'https://ontos.dev/problems/read-not-found',
-});
+const problemStatus = {
+  authentication: 401,
+  conflict: 409,
+  forbidden: 403,
+  ineligible: 422,
+  internal: 500,
+  invalid: 400,
+  notFound: 404,
+  unavailable: 503,
+} as const;
+
+const authenticationProblem = () =>
+  PartyContactPointDetailAuthenticationProblemSchema.make({
+    detail: 'A valid audience-scoped Bearer assertion is required.',
+    status: problemStatus.authentication,
+    title: 'Authentication required',
+    type: 'https://ontos.dev/problems/operation-authentication-required',
+  });
+const unavailableProblem = () =>
+  PartyContactPointDetailUnavailableProblemSchema.make({
+    detail: 'The governed read is temporarily unavailable.',
+    retryable: true,
+    status: problemStatus.unavailable,
+    title: 'Read unavailable',
+    type: 'https://ontos.dev/problems/read-unavailable',
+  });
+const invalidProblem = () =>
+  PartyContactPointDetailInvalidProblemSchema.make({
+    detail: 'The governed read request is invalid.',
+    status: problemStatus.invalid,
+    title: 'Invalid read request',
+    type: 'https://ontos.dev/problems/read-invalid',
+  });
+const forbiddenProblem = () =>
+  PartyContactPointDetailForbiddenProblemSchema.make({
+    detail: 'The principal is not permitted to perform this read.',
+    status: problemStatus.forbidden,
+    title: 'Read forbidden',
+    type: 'https://ontos.dev/problems/read-forbidden',
+  });
+const notFoundProblem = () =>
+  PartyContactPointDetailNotFoundProblemSchema.make({
+    detail: 'The requested resource was not found.',
+    status: problemStatus.notFound,
+    title: 'Resource not found',
+    type: 'https://ontos.dev/problems/read-not-found',
+  });
 const policyProblem = (status: 409 | 422) =>
-  status === 409
-    ? {
-        _tag: 'PartyContactPointDetailPolicyConflictProblem' as const,
+  status === problemStatus.conflict
+    ? PartyContactPointDetailPolicyConflictProblemSchema.make({
         detail: 'The read conflicts with the current business state.',
-        status: 409 as const,
+        status: problemStatus.conflict,
         title: 'Read conflict',
         type: 'https://ontos.dev/problems/read-policy-conflict',
-      }
-    : {
-        _tag: 'PartyContactPointDetailPolicyProblem' as const,
+      })
+    : PartyContactPointDetailPolicyProblemSchema.make({
         detail: 'The read is not eligible under the current business policy.',
-        status: 422 as const,
+        status: problemStatus.ineligible,
         title: 'Read ineligible',
         type: 'https://ontos.dev/problems/read-policy-denied',
-      };
-const internalProblem = () => ({
-  _tag: 'PartyContactPointDetailInternalProblem' as const,
-  detail: 'The governed read could not be completed.',
-  status: 500 as const,
-  title: 'Read failed',
-  type: 'https://ontos.dev/problems/read-failed',
-});
+      });
+const internalProblem = () =>
+  PartyContactPointDetailInternalProblemSchema.make({
+    detail: 'The governed read could not be completed.',
+    status: problemStatus.internal,
+    title: 'Read failed',
+    type: 'https://ontos.dev/problems/read-failed',
+  });
 const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
 );
 type VerificationProblem =
   | ReturnType<typeof authenticationProblem>
   | ReturnType<typeof unavailableProblem>;
-const readProblem = (error: ReadCoreError) => {
-  switch (error._tag) {
-    case 'ReadInputValidationError': {
-      return invalidProblem();
-    }
-    case 'OperationAuthenticationRequired': {
-      return authenticationProblem();
-    }
-    case 'ModuleStateDeniedError':
-    case 'OperationContextDenied':
-    case 'OperationContextInvalid':
-    case 'ReadPermissionDenied': {
-      return forbiddenProblem();
-    }
-    case 'ReadHandlerNotFound': {
-      return notFoundProblem();
-    }
-    case 'ReadPolicyDenied': {
-      return policyProblem(error.httpStatus);
-    }
-    case 'ModuleStateCheckUnavailableError':
-    case 'OperationContextUnavailable':
-    case 'ReadEvidencePersistenceError':
-    case 'ReadHandlerUnavailable':
-    case 'ReadPermissionUnavailable':
-    case 'ReadPolicyEvaluationError': {
-      return unavailableProblem();
-    }
-    case 'ReadEvidenceValidationError':
-    case 'ReadHandlerExecutionError':
-    case 'ReadResultValidationError': {
-      return internalProblem();
-    }
-    default: {
-      const exhaustive: never = error;
-      return exhaustive;
-    }
-  }
-};
+const failAuthentication = () =>
+  bearerChallenge.pipe(Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())));
+const readProblem = (error: ReadCoreError) =>
+  Match.value(error).pipe(
+    Match.tags({
+      ModuleStateCheckUnavailableError: unavailableProblem,
+      ModuleStateDeniedError: forbiddenProblem,
+      OperationAuthenticationRequired: authenticationProblem,
+      OperationContextDenied: forbiddenProblem,
+      OperationContextInvalid: forbiddenProblem,
+      OperationContextUnavailable: unavailableProblem,
+      ReadEvidencePersistenceError: unavailableProblem,
+      ReadEvidenceValidationError: internalProblem,
+      ReadHandlerExecutionError: internalProblem,
+      ReadHandlerNotFound: notFoundProblem,
+      ReadHandlerUnavailable: unavailableProblem,
+      ReadInputValidationError: invalidProblem,
+      ReadPermissionDenied: forbiddenProblem,
+      ReadPermissionUnavailable: unavailableProblem,
+      ReadPolicyDenied: ({ httpStatus }) => policyProblem(httpStatus),
+      ReadPolicyEvaluationError: unavailableProblem,
+      ReadResultValidationError: internalProblem,
+    }),
+    Match.exhaustive,
+  );
 
 export const partyContactPointDetailReadApiLive = HttpApiBuilder.group(
   partyRegistryApi,
   'partyContactPointDetail',
   (handlers) =>
-    handlers.handle('execute', ({ payload, request }) =>
-      Effect.gen(function* governedProviderRead() {
-        const correlationId = request.headers['x-correlation-id'];
-        if (correlationId === undefined || correlationId.trim().length === 0) {
-          return yield* Effect.fail(invalidProblem());
-        }
-        const environment = yield* Config.all({
-          ONTOS_GATEWAY_ISSUER: Config.string('ONTOS_GATEWAY_ISSUER'),
-          ONTOS_GATEWAY_PUBLIC_JWKS: Config.string('ONTOS_GATEWAY_PUBLIC_JWKS'),
-        }).pipe(Effect.mapError(unavailableProblem));
-        const principal = yield* verifyOperationPrincipal(request.headers['authorization'], {
-          environment,
-        }).pipe(
-          Effect.catch((error) => {
-            if (
-              error._tag === 'ActionPrincipalConfigurationError' ||
-              error._tag === 'ActionPrincipalUnavailableError'
-            ) {
-              return Effect.fail<VerificationProblem>(unavailableProblem());
-            }
-            return bearerChallenge.pipe(
-              Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
-            );
-          }),
-        );
-        const runtime = yield* ReadRuntime;
-        return yield* runtime
-          .runRead({
-            input: payload,
-            principal,
-            registration: partyContactPointDetailRead,
-            transport: { correlationId },
-          })
-          .pipe(
-            Effect.catch((error) => {
-              const problem = readProblem(error);
-              return (problem.status === 401 ? bearerChallenge : Effect.void).pipe(
-                Effect.andThen(Effect.fail(problem)),
-              );
+    handlers.handle(
+      'execute',
+      Effect.fn('partyContactPointDetailReadApiLive.execute')(
+        function* handleContactPointDetailRead({ payload, request }) {
+          const correlationId = request.headers['x-correlation-id'];
+          if (correlationId === undefined || correlationId.trim().length === 0) {
+            return yield* Effect.fail(invalidProblem());
+          }
+          const principal = yield* verifyOperationPrincipal(
+            Redacted.make(request.headers['authorization']),
+          ).pipe(
+            Effect.catchTags({
+              ActionPrincipalConfigurationError: () =>
+                Effect.fail<VerificationProblem>(unavailableProblem()),
+              ActionPrincipalExpiredError: failAuthentication,
+              ActionPrincipalInvalidError: failAuthentication,
+              ActionPrincipalMissingError: failAuthentication,
+              ActionPrincipalScopeError: failAuthentication,
+              ActionPrincipalUnavailableError: () =>
+                Effect.fail<VerificationProblem>(unavailableProblem()),
             }),
           );
-      }),
+          const runtime = yield* ReadRuntime;
+          return yield* runtime
+            .runRead({
+              input: payload,
+              principal,
+              registration: partyContactPointDetailRead,
+              transport: { correlationId },
+            })
+            .pipe(
+              Effect.mapError(readProblem),
+              Effect.catchTag('PartyContactPointDetailAuthenticationProblem', (problem) =>
+                bearerChallenge.pipe(Effect.andThen(Effect.fail(problem))),
+              ),
+            );
+        },
+      ),
     ),
 );

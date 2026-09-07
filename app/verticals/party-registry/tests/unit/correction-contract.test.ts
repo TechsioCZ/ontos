@@ -1,11 +1,13 @@
-// @effect-diagnostics asyncFunction:off globalDate:off
-/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type, unicorn/no-thenable -- This harness implements the correction service's Drizzle boundary. */
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off globalDate:off -- Existing compatibility boundary; expires: 2026-12-31.
+/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type, unicorn/no-thenable -- This harness implements the correction service's Drizzle boundary. expires: 2026-12-31. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
 import {
   PartyCorrectionCommandSchema,
   PartyCorrectionDetailSchema,
+  SupersedeRelationshipCorrectionCommandSchema,
   classifyCorrectionRoute,
 } from '../../shared/domain/correction-contracts.ts';
 import { confirmDuplicatePartiesAction } from '../../src/actions/confirm-duplicate-parties.action.ts';
@@ -40,7 +42,7 @@ const relationshipRef = {
   resourceType: 'party.registry.party-relationship',
   tenantId,
 } as const;
-const relationshipCommand = {
+const relationshipCommandEncoded = {
   ...evidence,
   correctionMode: 'SUPERSEDE',
   expectedRevision: 1,
@@ -49,6 +51,9 @@ const relationshipCommand = {
   replacementValidFrom: null,
   replacementValidTo: '2026-02-01T00:00:00.000Z',
 } as const;
+const relationshipCommand = decode(SupersedeRelationshipCorrectionCommandSchema)(
+  relationshipCommandEncoded,
+);
 
 test('correction is closed to Party type, display name, and official identifier assertions', () => {
   for (const factKind of ['PARTY_TYPE', 'DISPLAY_NAME', 'OFFICIAL_IDENTIFIER']) {
@@ -91,24 +96,25 @@ test('correction follow-up is typed and duplicate confirmation remains readiness
     ),
     false,
   );
+  const partyTypeCommand = decode(PartyCorrectionCommandSchema)({
+    ...evidence,
+    factKind: 'PARTY_TYPE',
+    partyId,
+    replacementValue: 'PERSON',
+    subjectEvidence: [
+      {
+        basis: 'REVIEWED_DOCUMENT',
+        evidenceRef: 'record/42',
+        kind: 'ACTOR_ATTESTATION',
+        observedSubject: 'PERSON',
+        statement: 'Reviewed this external organization',
+        subjectKey: 'one-subject',
+      },
+    ],
+    targetAssertionId: assertionId,
+  });
   assert.equal(
-    correctPartyFactAction.descriptor.tenantPermission?.({
-      ...evidence,
-      factKind: 'PARTY_TYPE',
-      partyId,
-      replacementValue: 'PERSON',
-      subjectEvidence: [
-        {
-          basis: 'REVIEWED_DOCUMENT',
-          evidenceRef: 'record/42',
-          kind: 'ACTOR_ATTESTATION',
-          observedSubject: 'PERSON',
-          statement: 'Reviewed this external organization',
-          subjectKey: 'one-subject',
-        },
-      ],
-      targetAssertionId: assertionId,
-    }),
+    correctPartyFactAction.descriptor.tenantPermission?.(partyTypeCommand),
     'manage_party_identity',
   );
   assert.equal(correctPartyFactAction.descriptor.auditProfile, 'sensitive');
@@ -122,11 +128,18 @@ test('relationship correction is closed, revisioned, interval checked, and has n
   const strictDecode = Schema.decodeUnknownSync(PartyCorrectionCommandSchema, {
     onExcessProperty: 'error',
   });
-  assert.deepEqual(strictDecode(relationshipCommand), relationshipCommand);
-  assert.throws(() => strictDecode({ ...relationshipCommand, reasonCode: 'OTHER' }));
-  assert.throws(() => strictDecode({ ...relationshipCommand, expectedRevision: 0 }));
+  const decoded = strictDecode(relationshipCommandEncoded);
+  assert.deepEqual(
+    Schema.encodeSync(PartyCorrectionCommandSchema)(decoded),
+    relationshipCommandEncoded,
+  );
+  assert.throws(() => strictDecode({ ...relationshipCommandEncoded, reasonCode: 'OTHER' }));
+  assert.throws(() => strictDecode({ ...relationshipCommandEncoded, expectedRevision: 0 }));
   assert.throws(() =>
-    strictDecode({ ...relationshipCommand, replacementValidFrom: '2026-03-01T00:00:00.000Z' }),
+    strictDecode({
+      ...relationshipCommandEncoded,
+      replacementValidFrom: '2026-03-01T00:00:00.000Z',
+    }),
   );
   for (const field of [
     'fromPartyRef',
@@ -136,7 +149,9 @@ test('relationship correction is closed, revisioned, interval checked, and has n
     'actingPrincipalId',
     'approvingPrincipalId',
   ]) {
-    assert.throws(() => strictDecode({ ...relationshipCommand, [field]: 'caller-controlled' }));
+    assert.throws(() =>
+      strictDecode({ ...relationshipCommandEncoded, [field]: 'caller-controlled' }),
+    );
   }
 });
 
@@ -220,7 +235,7 @@ test('relationship supersession preserves endpoint/type identity and stores trus
     [[replacement], [{ correctionId }]],
     [[original]],
   );
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     correctPartyFactRecord(h.transaction, tenantId, relationshipCommand, {
       actionInvocationId,
       principalId,
@@ -236,8 +251,8 @@ test('relationship supersession preserves endpoint/type identity and stores trus
   assert.equal(h.insertValues[1]?.['relationshipId'], assertionId);
   assert.equal(h.insertValues[1]?.['replacementRelationshipId'], replacementId);
   assert.equal(Object.hasOwn(h.insertValues[1] ?? {}, 'approvingPrincipalId'), false);
-  assert.equal(result.relationshipRef?.resourceId, assertionId);
-  assert.equal(result.replacementRelationshipRef?.resourceId, replacementId);
+  assert.equal(Option.getOrThrow(result.relationshipRef).resourceId, assertionId);
+  assert.equal(Option.getOrThrow(result.replacementRelationshipRef).resourceId, replacementId);
 });
 
 test('relationship retraction retains original effective validity and creates no replacement', async () => {
@@ -254,22 +269,28 @@ test('relationship retraction retains original effective validity and creates no
     [[{ correctionId }]],
     [[original]],
   );
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     correctPartyFactRecord(h.transaction, tenantId, command, { actionInvocationId, principalId }),
   );
   assert.deepEqual(h.updateSets[0], { assertionState: 'RETRACTED', revision: 2 });
   assert.equal(h.insertValues.length, 1);
-  assert.equal(result.replacementAssertionId, null);
+  assert.ok(Option.isNone(result.replacementAssertionId));
 });
 
 test('stale revision and foreign-tenant relationship correction fail before business writes', async () => {
   await Promise.all(
     [
-      { ...relationshipCommand, expectedRevision: 2 },
-      { ...relationshipCommand, relationshipRef: { ...relationshipRef, tenantId: organizationId } },
+      decode(SupersedeRelationshipCorrectionCommandSchema)({
+        ...relationshipCommandEncoded,
+        expectedRevision: 2,
+      }),
+      decode(SupersedeRelationshipCorrectionCommandSchema)({
+        ...relationshipCommandEncoded,
+        relationshipRef: { ...relationshipRef, tenantId: organizationId },
+      }),
     ].map(async (command) => {
       const h = transactionHarness([[], [relationshipRow()]]);
-      const error = await Effect.runPromise(
+      const error = await runEffectTestPromise(
         Effect.flip(
           correctPartyFactRecord(h.transaction, tenantId, command, {
             actionInvocationId,
@@ -301,7 +322,7 @@ test('UNRESOLVED Party Type enrichment is rejected before mutation by correction
       },
     ],
   ]);
-  const command = {
+  const command = decode(PartyCorrectionCommandSchema)({
     ...evidence,
     factKind: 'PARTY_TYPE',
     partyId,
@@ -317,8 +338,8 @@ test('UNRESOLVED Party Type enrichment is rejected before mutation by correction
       },
     ],
     targetAssertionId: assertionId,
-  } as const;
-  const error = await Effect.runPromise(
+  });
+  const error = await runEffectTestPromise(
     Effect.flip(
       correctPartyFactRecord(h.transaction, tenantId, command, { actionInvocationId, principalId }),
     ),
@@ -362,16 +383,22 @@ test('detail exposes immutable original/result semantics, governance, and source
     [
       relationshipRow({
         relationshipId: replacementId,
-        validTo: new Date(relationshipCommand.replacementValidTo),
+        validTo: new Date(relationshipCommandEncoded.replacementValidTo),
       }),
     ],
   ]);
-  const found = await Effect.runPromise(findPartyCorrection(h.transaction, tenantId, correctionId));
-  assert.equal(found._tag, 'found');
-  if (found._tag !== 'found') {
-    return;
-  }
-  const detail = decode(PartyCorrectionDetailSchema)(found.value);
+  const found = await runEffectTestPromise(
+    findPartyCorrection(h.transaction, tenantId, correctionId),
+  );
+  const detail = Match.value(found).pipe(
+    Match.tag('found', ({ value }) => Schema.encodeSync(PartyCorrectionDetailSchema)(value)),
+    Match.tag('not_found', () => assert.fail('Expected the correction detail to be found')),
+    Match.exhaustive,
+  );
+  assert.deepEqual(
+    Schema.encodeSync(PartyCorrectionDetailSchema)(decode(PartyCorrectionDetailSchema)(detail)),
+    detail,
+  );
   assert.equal(detail.actingPrincipalId, principalId);
   assert.equal(detail.approvingPrincipalId, null);
   assert.equal(detail.evidenceSource, 'DOCUMENT');
@@ -385,7 +412,7 @@ test('detail exposes immutable original/result semantics, governance, and source
     assert.equal(detail.originalAssertion.endEvidence?.recordedAt, '2026-01-16T00:00:00.000Z');
   }
   assert.equal(detail.resultingAssertion?.assertionId, replacementId);
-  assert.equal(detail.resultingAssertion?.validTo, relationshipCommand.replacementValidTo);
+  assert.equal(detail.resultingAssertion?.validTo, relationshipCommandEncoded.replacementValidTo);
   assert.equal(detail.governance.legalHolds, 'HONOR_GOVERNED_LEGAL_HOLDS');
   assert.equal(detail.governance.policyVersion, detail.policyVersion);
 });
@@ -398,7 +425,7 @@ test('relationship overlap is a typed conflict and no correction journal is writ
     [[original]],
     { cause: { code: '23P01', constraint: 'party_relationships_no_overlap_excl' } },
   );
-  const error = await Effect.runPromise(
+  const error = await runEffectTestPromise(
     Effect.flip(
       correctPartyFactRecord(h.transaction, tenantId, relationshipCommand, {
         actionInvocationId,
@@ -429,7 +456,7 @@ test('correction of a durable relationship preserves stored alias endpoints', as
     [[relationshipRow({ relationshipId: replacementId })], [{ correctionId }]],
     [[original]],
   );
-  await Effect.runPromise(
+  await runEffectTestPromise(
     correctPartyFactRecord(h.transaction, tenantId, relationshipCommand, {
       actionInvocationId,
       principalId,
@@ -474,7 +501,7 @@ test('Party Type correction reconciles newly eligible claims before superseding 
     [],
     [{ partyId: organizationId }],
   ]);
-  const command = {
+  const command = decode(PartyCorrectionCommandSchema)({
     ...evidence,
     factKind: 'PARTY_TYPE',
     partyId,
@@ -490,8 +517,8 @@ test('Party Type correction reconciles newly eligible claims before superseding 
       },
     ],
     targetAssertionId: assertionId,
-  } as const;
-  const error = await Effect.runPromise(
+  });
+  const error = await runEffectTestPromise(
     Effect.flip(
       correctPartyFactRecord(h.transaction, tenantId, command, { actionInvocationId, principalId }),
     ),
@@ -519,14 +546,14 @@ test('type Correction cannot treat a reviewer decision or source label as subjec
       },
     ],
   ]);
-  const command = {
+  const command = decode(PartyCorrectionCommandSchema)({
     ...evidence,
     factKind: 'PARTY_TYPE',
     partyId,
     replacementValue: 'ORGANIZATION',
     targetAssertionId: assertionId,
-  } as const;
-  const error = await Effect.runPromise(
+  });
+  const error = await runEffectTestPromise(
     Effect.flip(
       correctPartyFactRecord(h.transaction, tenantId, command, { actionInvocationId, principalId }),
     ),

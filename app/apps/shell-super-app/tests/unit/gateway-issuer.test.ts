@@ -1,10 +1,14 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { expect, test } from '@rstest/core';
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import { decodeJwt, decodeProtectedHeader, exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';
-import { issueGatewayContextAssertion } from '../../api/auth/gateway-issuer.ts';
-import type { GatewayIssuerDependencies } from '../../api/auth/gateway-issuer.ts';
+import {
+  issueGatewayContextAssertion,
+  makeGatewayIssuerLayer,
+} from '../../api/auth/gateway-issuer.ts';
+import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
 
 const withOptionalProperty = <
   Base extends object,
@@ -58,8 +62,8 @@ const makeConfiguration = async (): Promise<{
 
 const dependencies = (
   configuration: GatewayIssuerConfigValue,
-  overrides: Partial<GatewayIssuerDependencies> = {},
-): GatewayIssuerDependencies => ({
+  overrides: Partial<GatewayIssuerLayerOptions> = {},
+): GatewayIssuerLayerOptions => ({
   currentTimeSeconds: Effect.succeed(1_700_000_000),
   generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
   loadAudiences: Effect.succeed(new Set(['property-registry'])),
@@ -67,13 +71,33 @@ const dependencies = (
   ...overrides,
 });
 
-test('signs exact five-minute, audience-scoped EdDSA claims with the configured key ID', async () => {
+const issueGatewayContextAssertionWith = <Principal>(
+  input: {
+    readonly audience: string;
+    readonly principal: Principal;
+  },
+  options: GatewayIssuerLayerOptions,
+) => issueGatewayContextAssertion(input).pipe(Effect.provide(makeGatewayIssuerLayer(options)));
+
+test('signs exact claims and imports signing material once per issuer layer', async () => {
   const { configuration, publicKey } = await makeConfiguration();
-  const result = await Effect.runPromise(
-    issueGatewayContextAssertion(
-      { audience: 'property-registry', principal },
-      dependencies(configuration),
-    ),
+  let configurationLoads = 0;
+  const layer = makeGatewayIssuerLayer(
+    dependencies(configuration, {
+      loadConfig: Effect.sync(() => {
+        configurationLoads += 1;
+        return configuration;
+      }),
+    }),
+  );
+  const [result] = await runEffectTestPromise(
+    Effect.all(
+      [
+        issueGatewayContextAssertion({ audience: 'property-registry', principal }),
+        issueGatewayContextAssertion({ audience: 'property-registry', principal }),
+      ],
+      { concurrency: 2 },
+    ).pipe(Effect.provide(layer)),
   );
   const header = decodeProtectedHeader(result.token);
   const claims = decodeJwt(result.token);
@@ -100,6 +124,7 @@ test('signs exact five-minute, audience-scoped EdDSA claims with the configured 
   expect(JSON.stringify(claims)).not.toMatch(
     /email|displayName|credential|cookie|sessionToken|actionKey|permission|policy|businessPayload/u,
   );
+  expect(configurationLoads).toBe(1);
 });
 
 test('fails closed for unknown audiences and invalid Effect-managed time', async () => {
@@ -107,22 +132,22 @@ test('fails closed for unknown audiences and invalid Effect-managed time', async
   const audienceErrors = await Promise.all(
     [
       Effect.flip(
-        issueGatewayContextAssertion(
+        issueGatewayContextAssertionWith(
           { audience: 'billing', principal },
           dependencies(configuration),
         ),
       ),
       Effect.flip(
-        issueGatewayContextAssertion(
+        issueGatewayContextAssertionWith(
           { audience: 'property.registry', principal },
           dependencies(configuration),
         ),
       ),
-    ].map(async (effect) => await Effect.runPromise(effect)),
+    ].map(async (effect) => await runEffectTestPromise(effect)),
   );
-  const timeError = await Effect.runPromise(
+  const timeError = await runEffectTestPromise(
     Effect.flip(
-      issueGatewayContextAssertion(
+      issueGatewayContextAssertionWith(
         { audience: 'property-registry', principal },
         dependencies(configuration, { currentTimeSeconds: Effect.succeed(-1) }),
       ),
@@ -137,9 +162,9 @@ test('fails closed for unknown audiences and invalid Effect-managed time', async
 
 test('rejects transport correlation or any other excess principal claim', async () => {
   const { configuration } = await makeConfiguration();
-  const error = await Effect.runPromise(
+  const error = await runEffectTestPromise(
     Effect.flip(
-      issueGatewayContextAssertion(
+      issueGatewayContextAssertionWith(
         {
           audience: 'property-registry',
           principal: { ...principal, correlationId: 'must-remain-a-header' },
@@ -154,9 +179,9 @@ test('rejects transport correlation or any other excess principal claim', async 
 
 test('identifies configuration and signing failures without exposing key material', async () => {
   const { configuration } = await makeConfiguration();
-  const configurationError = await Effect.runPromise(
+  const configurationError = await runEffectTestPromise(
     Effect.flip(
-      issueGatewayContextAssertion(
+      issueGatewayContextAssertionWith(
         { audience: 'property-registry', principal },
         dependencies(configuration, {
           loadConfig: parseGatewayIssuerConfig({}),
@@ -164,9 +189,9 @@ test('identifies configuration and signing failures without exposing key materia
       ),
     ),
   );
-  const signingError = await Effect.runPromise(
+  const signingError = await runEffectTestPromise(
     Effect.flip(
-      issueGatewayContextAssertion(
+      issueGatewayContextAssertionWith(
         { audience: 'property-registry', principal },
         dependencies({
           ...configuration,
@@ -201,7 +226,7 @@ test('rejects missing configuration, HMAC keys, non-Ed25519 keys, and missing ke
   const errors = await Promise.all(
     invalidJwks.map(
       async (privateJwk) =>
-        await Effect.runPromise(
+        await runEffectTestPromise(
           Effect.flip(
             parseGatewayIssuerConfig(
               withOptionalProperty(
@@ -218,5 +243,5 @@ test('rejects missing configuration, HMAC keys, non-Ed25519 keys, and missing ke
         ),
     ),
   );
-  expect(errors.every((error) => error._tag === 'GatewayIssuerConfigError')).toBe(true);
+  expect(errors.every((error) => Predicate.isTagged(error, 'GatewayIssuerConfigError'))).toBe(true);
 });

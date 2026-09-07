@@ -1,7 +1,8 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
-// @effect-diagnostics asyncFunction:off
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import test from 'node:test';
-import { Effect, Schema, Predicate } from 'effect';
+import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
 import {
   decodeActionPayload,
   decodeActionResult,
@@ -41,10 +42,10 @@ void test('defines an immutable typed descriptor and decodes typed payloads and 
     (payload) => Effect.succeed({ total: payload.amount }),
   );
 
-  const payload = await Effect.runPromise(
+  const payload = await runEffectTestPromise(
     decodeActionPayload(registration.descriptor.payloadSchema, { amount: 4 }),
   );
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     decodeActionResult(registration.descriptor.resultSchema, { total: payload.amount }),
   );
 
@@ -127,11 +128,11 @@ test('uses Schema.Void for a no-payload Action', async () => {
     () => Effect.void,
   );
 
-  const payload = await Effect.runPromise(
+  const payload = await runEffectTestPromise(
     // eslint-disable-next-line unicorn/no-useless-undefined -- Explicitly proves the Schema.Void payload contract.
     decodeActionPayload(registration.descriptor.payloadSchema, undefined),
   );
-  const invalid = await Effect.runPromise(
+  const invalid = await runEffectTestPromise(
     Effect.flip(decodeActionPayload(registration.descriptor.payloadSchema, {})),
   );
 
@@ -170,12 +171,27 @@ void test('keeps the private handler outside the public Action registration', ()
 });
 
 void test('rejects invalid declared results through a typed error', async () => {
-  const error = await Effect.runPromise(
+  const error = await runEffectTestPromise(
     Effect.flip(decodeActionResult(Schema.Struct({ id: Schema.String }), { id: 1 })),
   );
 
   assert.equal(error._tag, 'ActionResultValidationError');
   assert.equal(error.code, 'action_result_invalid');
+});
+
+void test('validates decoded DateTime and Option results through their encoded representation', async () => {
+  const resultSchema = Schema.Struct({
+    archivedAt: Schema.OptionFromNullOr(Schema.DateTimeUtcFromString),
+    createdAt: Schema.DateTimeUtcFromString,
+  });
+  const decoded = Schema.decodeUnknownSync(resultSchema)({
+    archivedAt: null,
+    createdAt: '2026-09-07T10:30:00.000Z',
+  });
+  const result = await runEffectTestPromise(decodeActionResult(resultSchema, decoded));
+
+  assert.equal(Option.isNone(result.archivedAt), true);
+  assert.equal(DateTime.formatIso(result.createdAt), '2026-09-07T10:30:00.000Z');
 });
 
 void test('accepts global and same-owner Policy references and copies the collection', () => {

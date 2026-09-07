@@ -1,5 +1,5 @@
 import { v1 } from '@authzed/authzed-node';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { fullyConsistent } from '../permissions/client.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../permissions/schema.ts';
 import { toSpiceDbActionObjectId } from '../permissions/service.ts';
@@ -40,11 +40,13 @@ export interface ActionAuthorizationProvisioningResult {
 export interface ActionAuthorizationProvisioningClient {
   readonly checkPermission: (
     request: v1.CheckPermissionRequest,
-  ) => Promise<v1.CheckPermissionResponse | undefined>;
+  ) => Effect.Effect<Option.Option<v1.CheckPermissionResponse>, Error>;
   readonly writeRelationships: (
     request: v1.WriteRelationshipsRequest,
-  ) => Promise<v1.WriteRelationshipsResponse>;
-  readonly writeSchema: (request: v1.WriteSchemaRequest) => Promise<v1.WriteSchemaResponse>;
+  ) => Effect.Effect<v1.WriteRelationshipsResponse, Error>;
+  readonly writeSchema: (
+    request: v1.WriteSchemaRequest,
+  ) => Effect.Effect<v1.WriteSchemaResponse, Error>;
 }
 
 export class ActionAuthorizationProvisioningError extends Schema.TaggedError<ActionAuthorizationProvisioningError>()(
@@ -198,25 +200,35 @@ export const buildActionAuthorizationRelationships = (
       return leftKey.localeCompare(rightKey);
     });
 
-const serviceFailure = (): ActionAuthorizationProvisioningError =>
-  failure(
+const serviceFailure = (cause?: unknown): ActionAuthorizationProvisioningError => {
+  const error = failure(
     'action_authorization_service_unavailable',
     'The authorization service could not provision current Action rules safely',
   );
+  return cause === undefined ? error : Object.defineProperty(error, 'cause', { value: cause });
+};
 
-const callClient = <Value>(operation: () => Promise<Value>) =>
-  Effect.tryPromise({ catch: serviceFailure, try: operation });
+const callClient = <Value>(operation: Effect.Effect<Value, Error>) =>
+  operation.pipe(
+    Effect.mapError((cause) =>
+      Schema.is(ActionAuthorizationProvisioningError)(cause) ? cause : serviceFailure(cause),
+    ),
+  );
 
 const checkHasPermission = (
   client: ActionAuthorizationProvisioningClient,
   request: v1.CheckPermissionRequest,
   error: ActionAuthorizationProvisioningError,
 ) =>
-  callClient(() => client.checkPermission(request)).pipe(
-    Effect.flatMap((response) =>
-      response?.permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION
-        ? Effect.void
-        : Effect.fail(error),
+  callClient(client.checkPermission(request)).pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.fail(error),
+        onSome: (response) =>
+          response.permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION
+            ? Effect.void
+            : Effect.fail(error),
+      }),
     ),
   );
 
@@ -228,96 +240,120 @@ const checkNoPermission = (
     'The representative non-member authorization check did not deny',
   ),
 ) =>
-  callClient(() => client.checkPermission(request)).pipe(
-    Effect.flatMap((response) =>
-      response?.permissionship === v1.CheckPermissionResponse_Permissionship.NO_PERMISSION
-        ? Effect.void
-        : Effect.fail(error),
+  callClient(client.checkPermission(request)).pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.fail(error),
+        onSome: (response) =>
+          response.permissionship === v1.CheckPermissionResponse_Permissionship.NO_PERMISSION
+            ? Effect.void
+            : Effect.fail(error),
+      }),
     ),
   );
 
-export const provisionActionAuthorization = (
+export const provisionActionAuthorization = Effect.fn(
+  'ActionAuthorizationProvisioning.provisionActionAuthorization',
+)(function* provisionActionAuthorizationEffect(
   client: ActionAuthorizationProvisioningClient,
   input: ActionAuthorizationProvisioningInput,
-): Effect.Effect<ActionAuthorizationProvisioningResult, ActionAuthorizationProvisioningError> =>
-  Effect.gen(function* provisionActionAuthorizationEffect() {
-    const { actions, contexts, deniedPrincipalId, explicitActionAssertions } = yield* Effect.try({
-      catch: (error) =>
-        Schema.is(ActionAuthorizationProvisioningError)(error) ? error : serviceFailure(),
-      try: () => assertProvisioningInput(input),
-    });
+): Effect.fn.Return<ActionAuthorizationProvisioningResult, ActionAuthorizationProvisioningError> {
+  const { actions, contexts, deniedPrincipalId, explicitActionAssertions } = yield* Effect.try({
+    catch: (error) =>
+      Schema.is(ActionAuthorizationProvisioningError)(error) ? error : serviceFailure(error),
+    try: () => assertProvisioningInput(input),
+  });
 
-    yield* callClient(() =>
-      client.writeSchema(v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA })),
-    );
+  yield* callClient(
+    client.writeSchema(v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA })),
+  );
 
-    for (const context of contexts) {
-      yield* checkHasPermission(
+  yield* Effect.forEach(
+    contexts,
+    (context) =>
+      checkHasPermission(
         client,
         tenantAccessRequest(context),
         failure(
           'action_authorization_membership_missing',
           'A fixed provisioning Principal is not an active member of its Tenant',
         ),
-      );
-    }
-
-    const defaultActionKeys = actions.flatMap(({ actionKey, provisioning }) =>
-      provisioning === 'tenant_membership_default' ? [actionKey] : [],
-    );
-    const relationships = buildActionAuthorizationRelationships(defaultActionKeys, contexts);
-    yield* callClient(() =>
-      client.writeRelationships(
-        v1.WriteRelationshipsRequest.create({
-          updates: relationships.map((relationship) =>
-            v1.RelationshipUpdate.create({
-              operation: v1.RelationshipUpdate_Operation.TOUCH,
-              relationship,
-            }),
-          ),
-        }),
       ),
-    );
+    { concurrency: 1, discard: true },
+  );
 
-    for (const actionKey of defaultActionKeys) {
-      for (const context of contexts) {
-        yield* checkHasPermission(
-          client,
-          actionExecuteRequest(actionKey, context.principalId),
-          failure(
-            'action_authorization_verification_failed',
-            'An expected fixed Tenant Action grant did not verify',
+  const defaultActionKeys = actions.flatMap(({ actionKey, provisioning }) =>
+    provisioning === 'tenant_membership_default' ? [actionKey] : [],
+  );
+  const relationships = buildActionAuthorizationRelationships(defaultActionKeys, contexts);
+  yield* callClient(
+    client.writeRelationships(
+      v1.WriteRelationshipsRequest.create({
+        updates: relationships.map((relationship) =>
+          v1.RelationshipUpdate.create({
+            operation: v1.RelationshipUpdate_Operation.TOUCH,
+            relationship,
+          }),
+        ),
+      }),
+    ),
+  );
+
+  yield* Effect.forEach(
+    defaultActionKeys,
+    (actionKey) =>
+      Effect.forEach(
+        contexts,
+        (context) =>
+          checkHasPermission(
+            client,
+            actionExecuteRequest(actionKey, context.principalId),
+            failure(
+              'action_authorization_verification_failed',
+              'An expected fixed Tenant Action grant did not verify',
+            ),
           ),
-        );
-      }
-      yield* checkNoPermission(client, actionExecuteRequest(actionKey, deniedPrincipalId));
-    }
-    for (const { actionKey, assertions } of explicitActionAssertions) {
-      for (const assertion of assertions) {
-        const request = actionExecuteRequest(actionKey, assertion.principalId);
-        yield* assertion.expected === 'allowed'
-          ? checkHasPermission(
-              client,
-              request,
-              failure(
-                'action_authorization_verification_failed',
-                'An explicit Action allowed assertion did not verify',
-              ),
-            )
-          : checkNoPermission(
-              client,
-              request,
-              failure(
-                'action_authorization_verification_failed',
-                'An explicit Action denied assertion did not verify',
-              ),
-            );
-      }
-    }
+        { concurrency: 1, discard: true },
+      ).pipe(
+        Effect.andThen(
+          checkNoPermission(client, actionExecuteRequest(actionKey, deniedPrincipalId)),
+        ),
+      ),
+    { concurrency: 1, discard: true },
+  );
+  yield* Effect.forEach(
+    explicitActionAssertions,
+    ({ actionKey, assertions }) =>
+      Effect.forEach(
+        assertions,
+        (assertion) => {
+          const request = actionExecuteRequest(actionKey, assertion.principalId);
+          return assertion.expected === 'allowed'
+            ? checkHasPermission(
+                client,
+                request,
+                failure(
+                  'action_authorization_verification_failed',
+                  'An explicit Action allowed assertion did not verify',
+                ),
+              )
+            : checkNoPermission(
+                client,
+                request,
+                failure(
+                  'action_authorization_verification_failed',
+                  'An explicit Action denied assertion did not verify',
+                ),
+              );
+        },
+        { concurrency: 1, discard: true },
+      ),
+    { concurrency: 1, discard: true },
+  );
 
-    return {
-      actionCount: actions.length,
-      grantCount: relationships.length,
-      tenantCount: contexts.length,
-    };
-  });
+  return {
+    actionCount: actions.length,
+    grantCount: relationships.length,
+    tenantCount: contexts.length,
+  };
+});

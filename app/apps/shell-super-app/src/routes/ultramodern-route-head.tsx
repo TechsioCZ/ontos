@@ -1,12 +1,13 @@
 import { useLocalizedLocation, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Helmet } from '@modern-js/runtime/head';
+import { Result, Schema } from 'effect';
 import { ultramodernRouteMetadata } from './ultramodern-route-metadata';
 import type { RouteJsonLd } from './ultramodern-jsonld';
 
 const appName = 'Shell Super App';
 const fallbackLanguage = 'en';
 const supportedLanguages = ['en', 'cs'] as const;
-type SupportedLanguage = (typeof supportedLanguages)[number];
+const SupportedLanguageSchema = Schema.Literals(supportedLanguages);
 type GeneratedRouteMetadata = (typeof ultramodernRouteMetadata)[number];
 type RouteMetadata = Omit<GeneratedRouteMetadata, 'indexable' | 'jsonLd' | 'public'> & {
   readonly indexable: boolean;
@@ -16,8 +17,7 @@ type RouteMetadata = Omit<GeneratedRouteMetadata, 'indexable' | 'jsonLd' | 'publ
 
 const routeMetadata: readonly RouteMetadata[] = ultramodernRouteMetadata;
 
-const isSupportedLanguage = (value: string): value is SupportedLanguage =>
-  value === supportedLanguages[0] || value === supportedLanguages[1];
+const isSupportedLanguage = Schema.is(SupportedLanguageSchema);
 
 const normalisePath = (pathname: string) => {
   const normalised = pathname.replaceAll(/\/+/gu, '/').replace(/\/+$/u, '');
@@ -82,7 +82,7 @@ const resolveRouteMetadata = (pathname: string) => {
   return routeMetadata[0];
 };
 
-const isPublicIndexableRoute = (route: RouteMetadata | undefined): route is RouteMetadata =>
+const isPublicIndexableRoute = (route: RouteMetadata | undefined): boolean =>
   route !== undefined && route.public && route.indexable;
 
 const absoluteUrl = (pathname: string) => {
@@ -90,8 +90,10 @@ const absoluteUrl = (pathname: string) => {
   return `${origin}${pathname}`;
 };
 
+const encodeRouteJsonLd = Schema.encodeResult(Schema.fromJsonString(Schema.Json));
+
 const sanitiseJsonLd = (value: RouteJsonLd) =>
-  JSON.stringify(value).replaceAll('<', String.raw`\u003c`);
+  Result.getOrThrow(encodeRouteJsonLd(value)).replaceAll('<', String.raw`\u003c`);
 
 export const UltramodernRouteHead = () => {
   const { language, t } = useModernI18n();

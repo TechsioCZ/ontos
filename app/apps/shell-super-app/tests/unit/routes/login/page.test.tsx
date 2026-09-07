@@ -1,21 +1,32 @@
-import { afterEach, expect, rstest, test } from '@rstest/core';
-import { cleanup, render, screen } from '@testing-library/react';
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { afterEach, beforeEach, expect, rstest, test } from '@rstest/core';
+import { Effect, Redacted } from 'effect';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { toaster } from '@techsio/ui-kit/molecules/toast';
 import LoginPage from '../../../../src/routes/[lang]/login/page';
 
-const { navigateMock, runEffectRequestMock, signInMock } = rstest.hoisted(() => ({
+const { navigateMock, runBrowserEffectMock, signInMock } = rstest.hoisted(() => ({
   navigateMock: rstest.fn(async () => {}),
-  runEffectRequestMock: rstest.fn(async () => ({
-    identity: {
-      displayName: 'Ada',
-      email: 'ada@example.test',
-      principalId: 'principal-1',
-      tenantId: 'tenant-1',
-    },
-  })),
-  signInMock: rstest.fn(() => ({ operation: 'signIn' })),
+  runBrowserEffectMock: rstest.fn(),
+  signInMock: rstest.fn(),
 }));
+
+beforeEach(() => {
+  runBrowserEffectMock.mockImplementation(
+    async (effect: Effect.Effect<unknown, unknown>) => await runEffectTestPromise(effect),
+  );
+  signInMock.mockReturnValue(
+    Effect.succeed({
+      identity: {
+        displayName: 'Ada',
+        email: 'ada@example.test',
+        principalId: 'principal-1',
+        tenantId: 'tenant-1',
+      },
+    }),
+  );
+});
 
 const translations = new Map(
   Object.entries({
@@ -50,8 +61,11 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
 }));
 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({
-  runEffectRequest: runEffectRequestMock,
   signIn: signInMock,
+}));
+
+rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
+  runBrowserEffect: runBrowserEffectMock,
 }));
 
 const getLogin = () => screen.getByRole('textbox', { name: 'Login *' });
@@ -222,16 +236,19 @@ test('submits valid values through the Shell authentication client and navigates
     .type(getLogin(), 'admin')
     .then(async () => await user.type(getPassword(), 'secret'))
     .then(async () => await user.click(getSubmit()))
-    .then(() => {
-      expect(signInMock).toHaveBeenCalledWith(
-        {
-          email: 'admin',
-          password: 'secret',
-        },
-        { locale: 'en' },
-      );
-      expect(runEffectRequestMock).toHaveBeenCalledTimes(1);
-      expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
-      expect(screen.queryByText('Login details are incomplete')).toBeNull();
-    });
+    .then(
+      async () =>
+        await waitFor(() => {
+          expect(signInMock).toHaveBeenCalledWith(
+            {
+              email: 'admin',
+              password: Redacted.make('secret'),
+            },
+            { locale: 'en' },
+          );
+          expect(runBrowserEffectMock).toHaveBeenCalledTimes(1);
+          expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
+          expect(screen.queryByText('Login details are incomplete')).toBeNull();
+        }),
+    );
 });

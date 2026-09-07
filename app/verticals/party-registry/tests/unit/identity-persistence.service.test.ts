@@ -1,8 +1,11 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DateTime, Effect } from 'effect';
+import { DateTime, Effect, Match, Option, Result, Schema } from 'effect';
 import type { SQL } from 'drizzle-orm';
+import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
 import type { AresAppliedEvidence } from '../../shared/domain/ares-application.ts';
+import { partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { tenantIdentityWriteLockKey } from '../../src/services/party-identifier-claim.service.ts';
 import type {
@@ -31,22 +34,24 @@ const firstOwnerId = '33333333-3333-4333-8333-333333333333';
 const secondOwnerId = '44444444-4444-4444-8444-444444444444';
 const officialIdentifierId = '55555555-5555-4555-8555-555555555555';
 const instantAsDate = (instant: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(instant));
-const appliedEvidence: AresAppliedEvidence = {
-  authorityPolicyKey: 'party_registry.ares_enrichment',
-  authorityPolicyVersion: '1',
-  cacheAgeSeconds: 0,
-  decidedAt: '2026-01-01T00:00:00.000Z',
-  evidenceRef: 'ares:27074358:accepted',
-  fact: 'BUSINESS_NAME',
-  observedAt: '2026-01-01T00:00:00.000Z',
-  outcome: 'APPLY_ENRICHMENT',
-  provider: 'ares',
-  providerChangedOn: null,
-  providerRecordRef: '27074358',
-  queryIco: '27074358',
-  reasonCode: 'selected_missing_fact_confirmed',
-  servedAt: '2026-01-01T00:00:00.000Z',
-};
+const appliedEvidence = Result.getOrThrow(
+  Schema.decodeUnknownResult(AresAppliedEvidenceSchema)({
+    authorityPolicyKey: 'party_registry.ares_enrichment',
+    authorityPolicyVersion: '1',
+    cacheAgeSeconds: 0,
+    decidedAt: '2026-01-01T00:00:00.000Z',
+    evidenceRef: 'ares:27074358:accepted',
+    fact: 'BUSINESS_NAME',
+    observedAt: '2026-01-01T00:00:00.000Z',
+    outcome: 'APPLY_ENRICHMENT',
+    provider: 'ares',
+    providerChangedOn: null,
+    providerRecordRef: '27074358',
+    queryIco: '27074358',
+    reasonCode: 'selected_missing_fact_confirmed',
+    servedAt: '2026-01-01T00:00:00.000Z',
+  }),
+);
 
 const partyRow = (overrides: Partial<PartyRecord> = {}) => ({
   archivedAt: instantAsDate('2026-01-01T00:00:00.000Z'),
@@ -74,7 +79,7 @@ const identifierRow = (overrides: Partial<PartyOfficialIdentifierRecord> = {}) =
   ...overrides,
 });
 
-/* eslint-disable anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-chained-type-assertions, unicorn/no-thenable -- This local test double deliberately models Drizzle's overloaded thenable query boundary; no untrusted input enters it. */
+/* eslint-disable anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-chained-type-assertions, unicorn/no-thenable -- This local test double deliberately models Drizzle's overloaded thenable query boundary; no untrusted input enters it. expires: 2026-12-31. */
 const transactionHarness = (
   selectResponses: readonly unknown[][],
   updateResponses: readonly unknown[][] = [],
@@ -148,12 +153,14 @@ test('ended Party facts are made non-current as part of the same transition', ()
 });
 
 test('unnamed Party insertion persists no fabricated display-name assertion', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* verifyIdentityPersistence() {
       const candidateEvidence: AresAppliedEvidence = {
         ...appliedEvidence,
         fact: 'PARTY_CANDIDATE',
       };
+      const encodedCandidateEvidence =
+        yield* Schema.encodeEffect(AresAppliedEvidenceSchema)(candidateEvidence);
       const harness = transactionHarness(
         [],
         [],
@@ -180,10 +187,10 @@ test('unnamed Party insertion persists no fabricated display-name assertion', ()
               kind: 'ACTOR_ATTESTATION',
               observedSubject: 'ORGANIZATION',
               statement: 'Reviewed this external organization',
-              subjectKey: 'one-subject',
+              subjectKey: partySubjectKeyFromString('one-subject'),
             },
           ],
-          validFrom: '2026-01-01T00:00:00.000Z',
+          validFrom: DateTime.makeUnsafe('2026-01-01T00:00:00.000Z'),
         },
         {
           actionInvocationId: '66666666-6666-4666-8666-666666666666',
@@ -191,7 +198,7 @@ test('unnamed Party insertion persists no fabricated display-name assertion', ()
           principalId: '77777777-7777-4777-8777-777777777777',
         },
       );
-      assert.equal(result.displayName, null);
+      assert.ok(Option.isNone(result.displayName));
       assertTenantLockIsFirst(harness);
       // SAFETY: The first insert captured by insertPartyRecord targets the parties table.
       assert.equal(
@@ -205,18 +212,20 @@ test('unnamed Party insertion persists no fabricated display-name assertion', ()
         assertions.map((assertion) => assertion.factKind),
         ['PARTY_TYPE'],
       );
-      assert.deepEqual(assertions[0]?.externalEvidence, candidateEvidence);
+      assert.deepEqual(assertions[0]?.externalEvidence, encodedCandidateEvidence);
     }),
   ));
 
 test('identity updates close the preceding assertion before accepting its replacement', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* verifyIdentityPersistence() {
       const current = partyRow({ archivedAt: null });
       const harness = transactionHarness(
         [[current], [], [{ partyId }]],
         [[{ ...current, currentDisplayName: 'New name', revision: 5 }], []],
       );
+      const encodedAppliedEvidence =
+        yield* Schema.encodeEffect(AresAppliedEvidenceSchema)(appliedEvidence);
 
       const result = yield* updatePartyIdentityRecord(harness.transaction, tenantId, {
         actionInvocationId: '66666666-6666-4666-8666-666666666666',
@@ -240,7 +249,7 @@ test('identity updates close the preceding assertion before accepting its replac
       // SAFETY: The update service inserts only the replacement fact assertions captured here.
       const assertions = harness
         .insertedValues[0] as readonly (typeof partyFactAssertions.$inferInsert)[];
-      assert.deepEqual(assertions[0]?.externalEvidence, appliedEvidence);
+      assert.deepEqual(assertions[0]?.externalEvidence, encodedAppliedEvidence);
     }),
   ));
 
@@ -266,7 +275,7 @@ test('unarchive owner classification distinguishes conflict from ambiguity deter
 });
 
 test('future-effective identity updates do not replace current facts early', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* verifyIdentityPersistence() {
       const harness = transactionHarness([[partyRow({ archivedAt: null })], [], [{ partyId }]]);
       const result = yield* updatePartyIdentityRecord(harness.transaction, tenantId, {
@@ -286,7 +295,7 @@ test('future-effective identity updates do not replace current facts early', () 
   ));
 
 test('unarchive keeps the Party archived when an exact claim belongs to another Party', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* verifyIdentityPersistence() {
       const harness = transactionHarness([
         [partyRow()],
@@ -311,7 +320,7 @@ test('unarchive keeps the Party archived when an exact claim belongs to another 
   ));
 
 test('blocked unarchive persists a case and decision without mutating Party, then reuses the case on a fresh attempt', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* verifyDurableUnarchiveReview() {
       const candidateCaseId = '66666666-6666-4666-8666-666666666666';
       const decisionId = '77777777-7777-4777-8777-777777777777';
@@ -352,6 +361,10 @@ test('blocked unarchive persists a case and decision without mutating Party, the
         decisionId,
       );
       assert.equal(result._tag, 'blocked');
+      const blocked = Match.value(result).pipe(
+        Match.tag('blocked', ({ value }) => value),
+        Match.orElse(() => assert.fail('Expected unarchive to be blocked')),
+      );
       assertTenantLockIsFirst(harness);
       assert.deepEqual(harness.updateSets, []);
       assert.deepEqual(harness.deletedTargets, []);
@@ -378,11 +391,13 @@ test('blocked unarchive persists a case and decision without mutating Party, the
       assert.equal(decision.actionInvocationId, decisionId);
       assert.equal(decision.candidateCaseId, candidateCaseId);
       assert.equal(decision.outcome, 'AMBIGUOUS');
-      if (result._tag === 'blocked') {
-        assert.equal(result.value.reasonCode, 'EXACT_CLAIM_CONFLICT');
-        assert.equal(result.value.party.archivedAt, '2026-01-01T00:00:00.000Z');
-        assert.equal(result.value.party.revision, 4);
-      }
+      assert.equal(blocked.reasonCode, 'EXACT_CLAIM_CONFLICT');
+      assert.ok(Option.isSome(blocked.party.archivedAt));
+      assert.equal(
+        DateTime.formatIso(Option.getOrThrow(blocked.party.archivedAt)),
+        '2026-01-01T00:00:00.000Z',
+      );
+      assert.equal(blocked.party.revision, 4);
 
       const secondDecisionId = '88888888-8888-4888-8888-888888888888';
       const retryHarness = transactionHarness(
@@ -398,18 +413,20 @@ test('blocked unarchive persists a case and decision without mutating Party, the
         secondDecisionId,
       );
       assert.equal(retry._tag, 'blocked');
+      const retryBlocked = Match.value(retry).pipe(
+        Match.tag('blocked', ({ value }) => value),
+        Match.orElse(() => assert.fail('Expected retry to be blocked')),
+      );
       assert.equal(retryHarness.insertedValues.length, 1);
       assert.deepEqual(retryHarness.updateSets, []);
-      if (result._tag === 'blocked' && retry._tag === 'blocked') {
-        assert.deepEqual(retry.value.caseRef, result.value.caseRef);
-        assert.notDeepEqual(retry.value.decisionRef, result.value.decisionRef);
-        assert.deepEqual(retry.value.party, result.value.party);
-      }
+      assert.deepEqual(retryBlocked.caseRef, blocked.caseRef);
+      assert.notDeepEqual(retryBlocked.decisionRef, blocked.decisionRef);
+      assert.deepEqual(retryBlocked.party, blocked.party);
     }),
   ));
 
 test('unresolved unnamed unarchive review persists no invented display-name evidence', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* verifyUnresolvedUnarchiveReview() {
       const current = partyRow({ currentDisplayName: null, currentType: 'UNRESOLVED' });
       const caseRow = {
@@ -431,20 +448,22 @@ test('unresolved unnamed unarchive review persists no invented display-name evid
         secondOwnerId,
       );
       assert.equal(result._tag, 'blocked');
+      const blocked = Match.value(result).pipe(
+        Match.tag('blocked', ({ value }) => value),
+        Match.orElse(() => assert.fail('Expected unarchive to be blocked')),
+      );
       // SAFETY: The first captured insert is the immutable candidate case.
       const persistedCase = harness
         .insertedValues[0] as typeof duplicateCandidateCases.$inferInsert;
       assert.deepEqual(persistedCase.candidateSnapshot.names, []);
       assert.deepEqual(persistedCase.candidateSnapshot.officialIdentifiers, []);
       assert.deepEqual(harness.updateSets, []);
-      if (result._tag === 'blocked') {
-        assert.equal(result.value.reasonCode, 'UNRESOLVED_IDENTITY');
-      }
+      assert.equal(blocked.reasonCode, 'UNRESOLVED_IDENTITY');
     }),
   ));
 
 test('archive acquires the tenant identity lock before any Party row lock', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* verifyIdentityPersistence() {
       const harness = transactionHarness([[]]);
       const result = yield* transitionPartyRecord(
@@ -460,7 +479,7 @@ test('archive acquires the tenant identity lock before any Party row lock', () =
   ));
 
 test('unarchive restores an unclaimed eligible identifier before activating the Party', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* verifyIdentityPersistence() {
       const activeParty = partyRow({ archivedAt: null, revision: 5 });
       const harness = transactionHarness(
@@ -497,7 +516,7 @@ test('unarchive restores an unclaimed eligible identifier before activating the 
   ));
 
 test('unarchive rejects an alias rather than forwarding the write to its survivor', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* verifyIdentityPersistence() {
       const harness = transactionHarness([
         [partyRow()],
@@ -516,7 +535,7 @@ test('unarchive rejects an alias rather than forwarding the write to its survivo
   ));
 
 test('unarchive reports ambiguous exact claims without changing archived state', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* verifyIdentityPersistence() {
       const harness = transactionHarness([
         [partyRow()],
@@ -548,7 +567,7 @@ test('unarchive reports ambiguous exact claims without changing archived state',
   ));
 
 test('unarchive does not promote a PERSON ICO into an exclusive strong claim', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* verifyIdentityPersistence() {
       const currentParty = partyRow({ currentType: 'PERSON' });
       const harness = transactionHarness(
@@ -564,7 +583,7 @@ test('unarchive does not promote a PERSON ICO into an exclusive strong claim', (
   ));
 
 test('unarchive requires review while a duplicate case involving the Party remains open', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* verifyIdentityPersistence() {
       const caseId = '88888888-8888-4888-8888-888888888888';
       const harness = transactionHarness([
@@ -585,7 +604,7 @@ test('unarchive requires review while a duplicate case involving the Party remai
   ));
 
 test('unarchive requires review for unresolved identity without any eligible strong claim', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* verifyIdentityPersistence() {
       const harness = transactionHarness([
         [partyRow({ currentType: 'UNRESOLVED' })],
@@ -606,7 +625,7 @@ test('unarchive requires review for unresolved identity without any eligible str
   ));
 
 test('reviewed UNRESOLVED Party can unarchive using retained accepted creation evidence', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* restoreReviewedUnresolved() {
       const current = partyRow({ currentType: 'UNRESOLVED' });
       const harness = transactionHarness(
@@ -629,7 +648,7 @@ test('reviewed UNRESOLVED Party can unarchive using retained accepted creation e
   ));
 
 test('Party type enrichment refuses another owner of a newly eligible identifier', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* preventEnrichmentCollision() {
       const current = partyRow({ archivedAt: null, currentType: 'UNRESOLVED' });
       const harness = transactionHarness([
@@ -656,7 +675,7 @@ test('Party type enrichment refuses another owner of a newly eligible identifier
             kind: 'ACTOR_ATTESTATION',
             observedSubject: 'ORGANIZATION',
             statement: 'Reviewed this external organization',
-            subjectKey: 'one-subject',
+            subjectKey: partySubjectKeyFromString('one-subject'),
           },
         ],
         validFrom: '2026-01-01T00:00:00.000Z',
@@ -669,7 +688,7 @@ test('Party type enrichment refuses another owner of a newly eligible identifier
   ));
 
 test('Party type enrichment atomically claims identifiers that newly qualify', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* claimEnrichedIdentifier() {
       const current = partyRow({ archivedAt: null, currentType: 'UNRESOLVED' });
       const harness = transactionHarness(
@@ -691,7 +710,7 @@ test('Party type enrichment atomically claims identifiers that newly qualify', (
             kind: 'ACTOR_ATTESTATION',
             observedSubject: 'ORGANIZATION',
             statement: 'Reviewed this external organization',
-            subjectKey: 'one-subject',
+            subjectKey: partySubjectKeyFromString('one-subject'),
           },
         ],
         validFrom: '2026-01-01T00:00:00.000Z',
@@ -712,7 +731,7 @@ test('Party type enrichment atomically claims identifiers that newly qualify', (
   ));
 
 test('type correction reconciliation releases an ICO claim no longer eligible for a PERSON', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* releaseIneligibleClaim() {
       const harness = transactionHarness([
         [identifierRow()],
@@ -742,7 +761,7 @@ test('type correction reconciliation releases an ICO claim no longer eligible fo
   ));
 
 test('identity updates reject a historical end earlier than the assertion being replaced', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* rejectInvalidHistoricalInterval() {
       const harness = transactionHarness([
         [partyRow({ archivedAt: null })],
@@ -768,7 +787,7 @@ test('identity updates reject a historical end earlier than the assertion being 
   ));
 
 test('type enrichment rejects unevidenced type before accepting facts or claims', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* rejectUnsupportedType() {
       const current = partyRow({ archivedAt: null, currentType: 'UNRESOLVED' });
       const harness = transactionHarness([[current], [], [{ partyId }]]);

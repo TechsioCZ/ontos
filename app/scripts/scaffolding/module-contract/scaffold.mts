@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   MODULE_CONTRACT_GENERATOR_HEADER,
@@ -50,13 +50,11 @@ import {
   MODULE_MANIFEST_SHELL_SEARCH_SLOT_END,
   MODULE_MANIFEST_SHELL_SEARCH_SLOT_START,
   asJsonObject,
-  createMutation,
-  discoverVertical,
+  createMutationEffect,
+  discoverVerticalEffect,
   ensureUniqueMutationPaths,
-  isMissingFileError,
-  isStringValue,
   patchJsonObjectProperty,
-  readJson,
+  readJsonEffect,
   requireOntosModuleId,
   requiredString,
   resolveContainedPath,
@@ -66,55 +64,125 @@ import {
 } from '../shared.mts';
 import type {
   JsonValue,
+  Mutation,
   ModuleContractScaffoldConfig,
   ModuleContractScaffoldResult,
   ScaffoldPlan,
+  ScaffoldFailure,
   VerticalMetadata,
 } from '../shared.mts';
 
 const moduleMarkerPattern = /^\/\/ @ontos-module-id (?<moduleId>[^\s]+)$/mu;
+const MANIFEST_FILE_NAME = 'vertical.manifest.ts';
 
-const assertUniqueModuleId = async (
+class ModuleContractScaffoldError extends Schema.TaggedError<ModuleContractScaffoldError>()(
+  'ModuleContractScaffoldError',
+  {
+    cause: Schema.optionalKey(Schema.Unknown),
+    message: Schema.String,
+  },
+) {}
+
+const scaffoldError = (message: string, cause?: unknown): ModuleContractScaffoldError =>
+  new ModuleContractScaffoldError(cause === undefined ? { message } : { cause, message });
+
+const trySync = <Value,>(operation: () => Value) =>
+  Effect.try({
+    catch: (cause) =>
+      cause instanceof ModuleContractScaffoldError
+        ? cause
+        : scaffoldError(
+            cause instanceof Error ? cause.message : 'module contract update failed',
+            cause,
+          ),
+    try: operation,
+  });
+
+const readModuleOwner = (
+  fileSystem: FileSystem.FileSystem,
+  verticalsRoot: string,
+  entryName: string,
+) => {
+  const manifestPath = resolveContainedPath(verticalsRoot, entryName, MANIFEST_FILE_NAME);
+  return Effect.gen(function* readModuleOwnerEffect() {
+    const exists = yield* fileSystem
+      .exists(manifestPath)
+      .pipe(Effect.mapError((cause) => scaffoldError(`failed to inspect ${manifestPath}`, cause)));
+    if (!exists) {
+      return null;
+    }
+    const content = yield* fileSystem
+      .readFileString(manifestPath)
+      .pipe(Effect.mapError((cause) => scaffoldError(`failed to read ${manifestPath}`, cause)));
+    return {
+      entryName,
+      moduleId: moduleMarkerPattern.exec(content)?.groups?.['moduleId'],
+    };
+  });
+};
+
+const assertUniqueModuleId = (
   workspaceRoot: string,
   targetSlug: string,
   moduleId: string,
-): Promise<void> => {
-  const verticalsRoot = resolveContainedPath(workspaceRoot, 'verticals');
-  const entries = await readdir(verticalsRoot, { withFileTypes: true });
-  const owners = await Promise.all(
-    entries
-      .filter((entry) => entry.isDirectory() && entry.name !== targetSlug)
-      .map(async (entry) => {
-        const manifestPath = resolveContainedPath(
-          verticalsRoot,
-          entry.name,
-          'vertical.manifest.ts',
-        );
-        try {
-          const content = await readFile(manifestPath, 'utf-8');
-          return { entry, moduleId: content.match(moduleMarkerPattern)?.groups?.['moduleId'] };
-        } catch (error) {
-          if (isMissingFileError(error)) {
-            return null;
-          }
-          throw error;
-        }
-      }),
-  );
-  const duplicate = owners.find((owner) => owner?.moduleId === moduleId);
-  if (duplicate !== undefined && duplicate !== null) {
-    throw new Error(`duplicate OntOS module ID ${moduleId} in vertical ${duplicate.entry.name}`);
-  }
-};
+): Effect.Effect<void, ModuleContractScaffoldError, FileSystem.FileSystem> =>
+  Effect.gen(function* assertUniqueModuleIdEffect() {
+    const verticalsRoot = yield* trySync(() => resolveContainedPath(workspaceRoot, 'verticals'));
+    const fileSystem = yield* FileSystem.FileSystem;
+    const entries = yield* fileSystem
+      .readDirectory(verticalsRoot)
+      .pipe(
+        Effect.mapError((cause) =>
+          scaffoldError(`failed to inspect generated verticals at ${verticalsRoot}`, cause),
+        ),
+      );
+    const owners = yield* Effect.forEach(
+      entries.filter((entryName) => entryName !== targetSlug),
+      (entryName) => readModuleOwner(fileSystem, verticalsRoot, entryName),
+      { concurrency: 'unbounded' },
+    );
+    const duplicate = owners.find((owner) => owner?.moduleId === moduleId);
+    if (duplicate !== undefined && duplicate !== null) {
+      return yield* scaffoldError(
+        `duplicate OntOS module ID ${moduleId} in vertical ${duplicate.entryName}`,
+      );
+    }
+    return yield* Effect.void;
+  });
 
 const renderManifest = (vertical: VerticalMetadata, moduleId: string): string => {
   const valueName = `${toCamelCase(vertical.slug)}Manifest`;
   return `${MODULE_CONTRACT_GENERATOR_HEADER}
 // @ontos-deployment-app-id ${vertical.appId}
 // @ontos-module-id ${moduleId}
-import { defineOntosModuleManifest } from '@app/core-runtime';
+import {
+  defineOntosModuleManifest,
+  ShellNavigationContributionSchema,
+  ShellPageContributionSchema,
+  ShellPublicComponentContributionSchema,
+  ShellReportContributionSchema,
+  ShellSearchContributionSchema,
+} from '@app/core-runtime';
+import { Result, Schema } from 'effect';
 ${MODULE_MANIFEST_IMPORT_SLOT_START}
 ${MODULE_MANIFEST_IMPORT_SLOT_END}
+
+type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
+type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
+type PublicComponentContributionInput = typeof ShellPublicComponentContributionSchema.Encoded;
+type ReportContributionInput = typeof ShellReportContributionSchema.Encoded;
+type SearchContributionInput = typeof ShellSearchContributionSchema.Encoded;
+
+const navigationContribution = (value: NavigationContributionInput) =>
+  Result.getOrThrow(Schema.decodeUnknownResult(ShellNavigationContributionSchema)(value));
+const pageContribution = (value: PageContributionInput) =>
+  Result.getOrThrow(Schema.decodeUnknownResult(ShellPageContributionSchema)(value));
+const publicComponentContribution = (value: PublicComponentContributionInput) =>
+  Result.getOrThrow(Schema.decodeUnknownResult(ShellPublicComponentContributionSchema)(value));
+const reportContribution = (value: ReportContributionInput) =>
+  Result.getOrThrow(Schema.decodeUnknownResult(ShellReportContributionSchema)(value));
+const searchContribution = (value: SearchContributionInput) =>
+  Result.getOrThrow(Schema.decodeUnknownResult(ShellSearchContributionSchema)(value));
 
 export const ${valueName} = defineOntosModuleManifest({
   activation: {
@@ -252,112 +320,159 @@ const addArtifactCommand = (
   vertical: VerticalMetadata,
   target: 'cloudflare-dist' | 'dist',
   label: string,
-): string => {
-  const script = requiredString(current, `vertical ${vertical.slug} ${label} script`);
-  const command = `node ../../scripts/generate-ontos-module-contract.mts --vertical ${vertical.slug} --target ${target}`;
-  if (script.includes('generate-ontos-module-contract.mts')) {
-    throw new Error(`vertical ${vertical.slug} ${label} script already contains module emission`);
-  }
-  const buildToken = target === 'dist' ? 'modern build' : 'MODERNJS_DEPLOY=cloudflare modern build';
-  if (!script.includes(buildToken)) {
-    throw new Error(`vertical ${vertical.slug} ${label} script is not a generated Modern build`);
-  }
-  return script.replace(buildToken, `${buildToken} && ${command}`);
-};
-
-const patchPackage = (vertical: VerticalMetadata, moduleId: string): string => {
-  const dependencies = {
-    ...asJsonObject(vertical.packageJson['dependencies'], `vertical ${vertical.slug} dependencies`),
-  };
-  const currentCore = dependencies['@app/core-runtime'];
-  if (currentCore !== undefined && currentCore !== 'workspace:*') {
-    throw new Error(`vertical ${vertical.slug} has an incompatible @app/core-runtime dependency`);
-  }
-  dependencies['@app/core-runtime'] = 'workspace:*';
-  const sortedDependencies = Object.fromEntries(
-    Object.entries(dependencies).toSorted(([left], [right]) => left.localeCompare(right)),
-  );
-  const scripts = {
-    ...asJsonObject(vertical.packageJson['scripts'], `vertical ${vertical.slug} scripts`),
-  };
-  scripts['build'] = addArtifactCommand(scripts['build'], vertical, 'dist', 'build');
-  scripts['cloudflare:build'] = addArtifactCommand(
-    scripts['cloudflare:build'],
-    vertical,
-    'cloudflare-dist',
-    'cloudflare:build',
-  );
-  let content = patchJsonObjectProperty(
-    vertical.packageContent,
-    [],
-    'dependencies',
-    sortedDependencies,
-  );
-  content = patchJsonObjectProperty(content, [], 'scripts', scripts);
-  content = patchJsonObjectProperty(content, ['modernjs'], 'ontosModule', {
-    contractPath: '/.well-known/ontos-module-manifest.json',
-    manifest: './vertical.manifest.ts',
-    moduleId,
-    registration: './vertical.registration.ts',
-    schemaVersion: ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION,
+): Effect.Effect<string, ModuleContractScaffoldError> =>
+  Effect.gen(function* addArtifactCommandEffect() {
+    const script = yield* trySync(() =>
+      requiredString(current, `vertical ${vertical.slug} ${label} script`),
+    );
+    const command = `node ../../scripts/generate-ontos-module-contract.mts --vertical ${vertical.slug} --target ${target}`;
+    if (script.includes('generate-ontos-module-contract.mts')) {
+      return yield* scaffoldError(
+        `vertical ${vertical.slug} ${label} script already contains module emission`,
+      );
+    }
+    const buildToken =
+      target === 'dist' ? 'modern build' : 'MODERNJS_DEPLOY=cloudflare modern build';
+    if (!script.includes(buildToken)) {
+      return yield* scaffoldError(
+        `vertical ${vertical.slug} ${label} script is not a generated Modern build`,
+      );
+    }
+    return script.replace(buildToken, `${buildToken} && ${command}`);
   });
-  return content;
-};
 
-const patchTsconfig = async (
+const patchPackage = (
   vertical: VerticalMetadata,
-): Promise<ReturnType<typeof updateMutation>> => {
-  const tsconfigPath = resolveContainedPath(vertical.directory, 'tsconfig.json');
-  const { content, value } = await readJson(tsconfigPath, `vertical ${vertical.slug} tsconfig`);
-  const { include } = value;
-  if (!Array.isArray(include) || !include.every(isStringValue)) {
-    throw new Error(`vertical ${vertical.slug} tsconfig include must be a string array`);
-  }
-  const nextInclude = [
-    ...include,
-    ...['vertical.manifest.ts', 'vertical.registration.ts'].filter(
-      (entry) => !include.includes(entry),
-    ),
-  ];
-  return updateMutation(
-    tsconfigPath,
-    content,
-    patchJsonObjectProperty(content, [], 'include', nextInclude),
-  );
-};
+  moduleId: string,
+): Effect.Effect<string, ModuleContractScaffoldError> =>
+  Effect.gen(function* patchPackageEffect() {
+    const dependencies = yield* trySync(() => ({
+      ...asJsonObject(
+        vertical.packageJson['dependencies'],
+        `vertical ${vertical.slug} dependencies`,
+      ),
+    }));
+    const currentCore = dependencies['@app/core-runtime'];
+    if (currentCore !== undefined && currentCore !== 'workspace:*') {
+      return yield* scaffoldError(
+        `vertical ${vertical.slug} has an incompatible @app/core-runtime dependency`,
+      );
+    }
+    dependencies['@app/core-runtime'] = 'workspace:*';
+    const sortedDependencies = Object.fromEntries(
+      Object.entries(dependencies).toSorted(([left], [right]) => left.localeCompare(right)),
+    );
+    const scripts = yield* trySync(() => ({
+      ...asJsonObject(vertical.packageJson['scripts'], `vertical ${vertical.slug} scripts`),
+    }));
+    scripts['build'] = yield* addArtifactCommand(scripts['build'], vertical, 'dist', 'build');
+    scripts['cloudflare:build'] = yield* addArtifactCommand(
+      scripts['cloudflare:build'],
+      vertical,
+      'cloudflare-dist',
+      'cloudflare:build',
+    );
+    return yield* trySync(() => {
+      let content = patchJsonObjectProperty(
+        vertical.packageContent,
+        [],
+        'dependencies',
+        sortedDependencies,
+      );
+      content = patchJsonObjectProperty(content, [], 'scripts', scripts);
+      return patchJsonObjectProperty(content, ['modernjs'], 'ontosModule', {
+        contractPath: '/.well-known/ontos-module-manifest.json',
+        manifest: `./${MANIFEST_FILE_NAME}`,
+        moduleId,
+        registration: './vertical.registration.ts',
+        schemaVersion: ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION,
+      });
+    });
+  });
 
-export const planModuleContractScaffold = async (
+const patchTsconfig = (
+  vertical: VerticalMetadata,
+): Effect.Effect<
+  Option.Option<Mutation>,
+  ModuleContractScaffoldError | ScaffoldFailure,
+  FileSystem.FileSystem
+> =>
+  Effect.gen(function* patchTsconfigEffect() {
+    const tsconfigPath = yield* trySync(() =>
+      resolveContainedPath(vertical.directory, 'tsconfig.json'),
+    );
+    const { content, value } = yield* readJsonEffect(
+      tsconfigPath,
+      `vertical ${vertical.slug} tsconfig`,
+    );
+    const include = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.String))(
+      value['include'],
+    ).pipe(
+      Effect.mapError((cause) =>
+        scaffoldError(`vertical ${vertical.slug} tsconfig include must be a string array`, cause),
+      ),
+    );
+    const nextInclude = [
+      ...include,
+      ...[MANIFEST_FILE_NAME, 'vertical.registration.ts'].filter(
+        (entry) => !include.includes(entry),
+      ),
+    ];
+    return yield* trySync(() =>
+      Option.fromNullishOr(
+        updateMutation(
+          tsconfigPath,
+          content,
+          patchJsonObjectProperty(content, [], 'include', nextInclude),
+        ),
+      ),
+    );
+  });
+
+export const planModuleContractScaffold = (
   workspaceRoot: string,
   config: ModuleContractScaffoldConfig,
-): Promise<ScaffoldPlan<ModuleContractScaffoldResult>> => {
-  const moduleId = requireOntosModuleId(config.module);
-  const vertical = await discoverVertical(workspaceRoot, config.vertical);
-  await assertUniqueModuleId(workspaceRoot, vertical.slug, moduleId);
-  const manifestPath = resolveContainedPath(vertical.directory, 'vertical.manifest.ts');
-  const registrationPath = resolveContainedPath(vertical.directory, 'vertical.registration.ts');
-  const manifestMutation = await createMutation(manifestPath, renderManifest(vertical, moduleId));
-  const registrationMutation = await createMutation(
-    registrationPath,
-    renderRegistration(vertical, moduleId),
-  );
-  const packageContent = patchPackage(vertical, moduleId);
-  const packageMutation = updateMutation(
-    vertical.packagePath,
-    vertical.packageContent,
-    packageContent,
-  );
-  const tsconfigMutation = await patchTsconfig(vertical);
-  const mutations = [
-    manifestMutation,
-    registrationMutation,
-    packageMutation,
-    tsconfigMutation,
-  ].filter((mutation): mutation is NonNullable<typeof mutation> => mutation !== undefined);
-  ensureUniqueMutationPaths(mutations);
-  return {
-    mutations,
-    result: { appId: vertical.appId, manifestPath, moduleId, registrationPath },
-  };
-};
+): Effect.Effect<
+  ScaffoldPlan<ModuleContractScaffoldResult>,
+  ModuleContractScaffoldError | ScaffoldFailure,
+  FileSystem.FileSystem
+> =>
+  Effect.gen(function* planModuleContractScaffoldEffect() {
+    const moduleId = yield* trySync(() => requireOntosModuleId(config.module));
+    const vertical = yield* discoverVerticalEffect(workspaceRoot, config.vertical);
+    yield* assertUniqueModuleId(workspaceRoot, vertical.slug, moduleId);
+    const manifestPath = yield* trySync(() =>
+      resolveContainedPath(vertical.directory, MANIFEST_FILE_NAME),
+    );
+    const registrationPath = yield* trySync(() =>
+      resolveContainedPath(vertical.directory, 'vertical.registration.ts'),
+    );
+    const manifestMutation = yield* createMutationEffect(
+      manifestPath,
+      renderManifest(vertical, moduleId),
+    );
+    const registrationMutation = yield* createMutationEffect(
+      registrationPath,
+      renderRegistration(vertical, moduleId),
+    );
+    const packageContent = yield* patchPackage(vertical, moduleId);
+    const packageMutation = yield* trySync(() =>
+      Option.fromNullishOr(
+        updateMutation(vertical.packagePath, vertical.packageContent, packageContent),
+      ),
+    );
+    const tsconfigMutation = yield* patchTsconfig(vertical);
+    const mutations = EffectArray.getSomes([
+      Option.some(manifestMutation),
+      Option.some(registrationMutation),
+      packageMutation,
+      tsconfigMutation,
+    ]);
+    yield* trySync(() => ensureUniqueMutationPaths(mutations));
+    return {
+      mutations,
+      result: { appId: vertical.appId, manifestPath, moduleId, registrationPath },
+    };
+  });
 
 export default createCodesmithGenerator(planModuleContractScaffold);

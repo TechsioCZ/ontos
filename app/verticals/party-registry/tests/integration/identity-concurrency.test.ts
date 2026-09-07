@@ -1,12 +1,14 @@
-// @effect-diagnostics asyncFunction:off globalDate:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off globalDate:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect } from 'effect';
+import { DateTime, Effect } from 'effect';
 import { Pool } from 'pg';
 import { normalizeOfficialIdentifier } from '../../shared/domain/identifier-contracts.ts';
+import { partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
 import {
   duplicateCandidateCaseParties,
   duplicateCandidateCases,
@@ -29,7 +31,7 @@ const tenantId = 'bc100000-0000-4000-8000-000000000001';
 const principalId = 'bc200000-0000-4000-8000-000000000001';
 
 test('real PostgreSQL identity locks serialize concurrent exact creates and repeated identifier acceptance', async () => {
-  const connections = await Effect.runPromise(loadDatabaseConnectionPair());
+  const connections = await runEffectTestPromise(loadDatabaseConnectionPair());
   const adminPool = new Pool({ connectionString: connections.admin.connectionString });
   const runtimePool = new Pool({ connectionString: connections.runtime.connectionString, max: 2 });
   const admin = drizzle({ client: adminPool, relations: partyRelations });
@@ -70,16 +72,16 @@ test('real PostgreSQL identity locks serialize concurrent exact creates and repe
           kind: 'ACTOR_ATTESTATION' as const,
           observedSubject: 'ORGANIZATION' as const,
           statement: 'Reviewed this external organization',
-          subjectKey: 'one-subject',
+          subjectKey: partySubjectKeyFromString('one-subject'),
         },
       ],
-      validFrom: '2020-01-01T00:00:00.000Z',
+      validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
     };
     const results = await Promise.all(
       ['bc300000-0000-4000-8000-000000000001', 'bc300000-0000-4000-8000-000000000002'].map(
         (actionInvocationId) =>
           scoped((transaction) =>
-            Effect.runPromise(
+            runEffectTestPromise(
               createOrMatchParty(transaction, {
                 actionInvocationId,
                 candidate,
@@ -115,7 +117,7 @@ test('real PostgreSQL identity locks serialize concurrent exact creates and repe
     });
     const add = (actionInvocationId: string) =>
       scoped((transaction) =>
-        Effect.runPromise(
+        runEffectTestPromise(
           Effect.gen(function* acceptIdentifier() {
             yield* lockTenantIdentityWrites(transaction, tenantId);
             yield* lockAndResolveClaims(transaction, tenantId, [identifier]);

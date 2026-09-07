@@ -19,7 +19,10 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
-import type { AresAppliedEvidence } from '../../shared/domain/ares-application.ts';
+import type {
+  AresAppliedEvidence,
+  AresAppliedEvidenceSchema,
+} from '../../shared/domain/ares-application.ts';
 import type {
   MergeSelectionEvidenceStep,
   MergeSurvivorSelectionReason,
@@ -27,6 +30,7 @@ import type {
 import type { PartyRef } from '../../shared/resources/party.ts';
 
 export const PARTY_SCHEMA_NAME = 'party';
+type EncodedAresAppliedEvidence = typeof AresAppliedEvidenceSchema.Encoded;
 
 export const PARTY_TABLE_INVENTORY = [
   'counterparties',
@@ -173,7 +177,7 @@ export const partyFactAssertions = enableGovernedRls(
       isCurrent: boolean('is_current').default(true).notNull(),
       provenanceSource: text('provenance_source').notNull(),
       provenanceMethod: text('provenance_method').notNull(),
-      externalEvidence: jsonb('external_evidence').$type<AresAppliedEvidence>(),
+      externalEvidence: jsonb('external_evidence').$type<EncodedAresAppliedEvidence>(),
       provenanceAuthoritative: boolean('provenance_authoritative').default(false).notNull(),
       evidenceReference: text('evidence_reference'),
       verificationState: text('verification_state').default('UNVERIFIED').notNull(),
@@ -254,7 +258,7 @@ export const partyOfficialIdentifiers = enableGovernedRls(
       isCurrent: boolean('is_current').default(true).notNull(),
       provenanceSource: text('provenance_source').notNull(),
       provenanceMethod: text('provenance_method').notNull(),
-      externalEvidence: jsonb('external_evidence').$type<AresAppliedEvidence>(),
+      externalEvidence: jsonb('external_evidence').$type<EncodedAresAppliedEvidence>(),
       verificationState: text('verification_state').default('UNVERIFIED').notNull(),
       verifiedByPrincipalId: uuid('verified_by_principal_id'),
       verifiedAt: timestamp('verified_at', { withTimezone: true }),
@@ -398,7 +402,7 @@ export const partyContactPoints = enableGovernedRls(
       endedRecordedAt: timestamp('ended_recorded_at', { withTimezone: true }),
       provenanceSource: text('provenance_source').notNull(),
       provenanceMethod: text('provenance_method').notNull(),
-      externalEvidence: jsonb('external_evidence').$type<AresAppliedEvidence>(),
+      externalEvidence: jsonb('external_evidence').$type<EncodedAresAppliedEvidence>(),
       provenanceAuthoritative: boolean('provenance_authoritative').default(false).notNull(),
       evidenceReference: text('evidence_reference'),
       additionalEvidenceRefs: jsonb('additional_evidence_refs')
@@ -514,7 +518,7 @@ export const partyContactPointPurposes = enableGovernedRls(
       endedRecordedAt: timestamp('ended_recorded_at', { withTimezone: true }),
       provenanceSource: text('provenance_source').notNull(),
       provenanceMethod: text('provenance_method').notNull(),
-      externalEvidence: jsonb('external_evidence').$type<AresAppliedEvidence>(),
+      externalEvidence: jsonb('external_evidence').$type<EncodedAresAppliedEvidence>(),
       provenanceAuthoritative: boolean('provenance_authoritative').default(false).notNull(),
       evidenceReference: text('evidence_reference'),
       verificationState: text('verification_state').default('UNVERIFIED').notNull(),

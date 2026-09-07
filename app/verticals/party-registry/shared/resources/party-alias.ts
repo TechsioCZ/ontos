@@ -6,15 +6,16 @@ import { Schema } from 'effect';
 import { IsoTimestampSchema } from '../domain/identity-contracts.ts';
 import { PartyMergeRefSchema } from './party-merge.ts';
 import { PartyRefSchema } from './party.ts';
-
-const ResourceIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const TenantIdSchema = Schema.String.check(Schema.isUUID());
+import {
+  PartyRegistryResourceIdJsonSchema,
+  PartyRegistryTenantIdJsonSchema,
+} from './resource-ref-identifiers.ts';
 
 export const PartyAliasRefSchema = Schema.Struct({
   moduleId: Schema.Literal('party.registry'),
-  resourceId: ResourceIdSchema,
+  resourceId: PartyRegistryResourceIdJsonSchema,
   resourceType: Schema.Literal('party.registry.party-alias'),
-  tenantId: TenantIdSchema,
+  tenantId: PartyRegistryTenantIdJsonSchema,
 });
 export type PartyAliasRef = typeof PartyAliasRefSchema.Type;
 

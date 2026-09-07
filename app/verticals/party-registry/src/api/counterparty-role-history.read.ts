@@ -6,7 +6,7 @@ import {
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
 } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, Match } from 'effect';
 import {
   CounterpartyRoleHistoryRequestSchema,
   CounterpartyRoleHistoryResponseSchema,
@@ -42,6 +42,16 @@ export const counterpartyRoleHistoryPermissionTarget = (input: CounterpartyRoleH
   ] as const,
 });
 
+const roleHistoryUnavailable = (cause: unknown) =>
+  Object.defineProperty(
+    new ReadHandlerUnavailable({
+      code: 'read_handler_unavailable',
+      reason: 'Counterparty Role history is temporarily unavailable',
+    }),
+    'cause',
+    { value: cause },
+  );
+
 export const counterpartyRoleHistoryRead = defineRead(
   {
     accessKind: 'detail',
@@ -72,25 +82,25 @@ export const counterpartyRoleHistoryRead = defineRead(
   ) =>
     input.counterpartyRef.tenantId === context.scope.tenantId
       ? context.services.list(input.counterpartyRef.resourceId).pipe(
-          Effect.mapError(
-            () =>
-              new ReadHandlerUnavailable({
-                code: 'read_handler_unavailable',
-                reason: 'Counterparty Role history is temporarily unavailable',
-              }),
-          ),
+          Effect.mapError(roleHistoryUnavailable),
           Effect.flatMap((result) =>
-            result._tag === 'found'
-              ? Effect.succeed({
-                  evidence: { resultCount: result.value.length },
-                  result: { counterpartyRef: input.counterpartyRef, roles: result.value },
-                })
-              : Effect.fail(
+            Match.value(result).pipe(
+              Match.tag('found', ({ value }) =>
+                Effect.succeed({
+                  evidence: { resultCount: value.length },
+                  result: { counterpartyRef: input.counterpartyRef, roles: value },
+                }),
+              ),
+              Match.tag('not_found', () =>
+                Effect.fail(
                   new ReadHandlerNotFound({
                     code: 'read_handler_not_found',
                     reason: 'The Counterparty does not exist in the authorized context',
                   }),
                 ),
+              ),
+              Match.exhaustive,
+            ),
           ),
         )
       : Effect.fail(

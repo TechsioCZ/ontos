@@ -1,5 +1,6 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
-// @effect-diagnostics asyncFunction:off
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
 import { createActionCollector } from '../../src/actions/collector.ts';
@@ -40,11 +41,11 @@ const makeCollector = () =>
 
 void test('preserves event order, multiple messages, and events without messages', async () => {
   const collector = makeCollector();
-  const first = await Effect.runPromise(collector.addDomainEvent(event('first')));
-  await Effect.runPromise(collector.addDomainEvent(event('second')));
-  await Effect.runPromise(collector.addOutboxMessage(first, message('counter.project')));
-  await Effect.runPromise(collector.addOutboxMessage(first, message('counter.notify')));
-  await Effect.runPromise(
+  const first = await runEffectTestPromise(collector.addDomainEvent(event('first')));
+  await runEffectTestPromise(collector.addDomainEvent(event('second')));
+  await runEffectTestPromise(collector.addOutboxMessage(first, message('counter.project')));
+  await runEffectTestPromise(collector.addOutboxMessage(first, message('counter.notify')));
+  await runEffectTestPromise(
     collector.recordDataAccess({
       accessKind: 'read',
       queryHash: 'query-hash',
@@ -75,12 +76,12 @@ void test('preserves event order, multiple messages, and events without messages
 void test('rejects orphan and foreign Domain Event references', async () => {
   const first = makeCollector();
   const second = makeCollector();
-  const foreign = await Effect.runPromise(first.addDomainEvent(event('foreign')));
+  const foreign = await runEffectTestPromise(first.addDomainEvent(event('foreign')));
 
-  const foreignError = await Effect.runPromise(
+  const foreignError = await runEffectTestPromise(
     Effect.flip(second.addOutboxMessage(foreign, message('counter.project'))),
   );
-  const orphanError = await Effect.runPromise(
+  const orphanError = await runEffectTestPromise(
     Effect.flip(second.addOutboxMessageInput({}, message('counter.project'))),
   );
 
@@ -91,7 +92,7 @@ void test('rejects orphan and foreign Domain Event references', async () => {
 void test('does not expose externally mutable collector arrays or captured payloads', async () => {
   const collector = makeCollector();
   const mutablePayload = { value: 1 };
-  await Effect.runPromise(
+  await runEffectTestPromise(
     collector.addDomainEvent({
       ...event('immutable'),
       payloadJson: { id: 'immutable', mutable: mutablePayload },
@@ -117,7 +118,7 @@ void test('does not expose externally mutable collector arrays or captured paylo
 void test('captures one immutable JSON audit-evidence object and rejects invalid repeats', async () => {
   const collector = makeCollector();
   const nested = { reason: 'support request' };
-  await Effect.runPromise(collector.recordAuditEvidence({ checkpoint: 'started', nested }));
+  await runEffectTestPromise(collector.recordAuditEvidence({ checkpoint: 'started', nested }));
   nested.reason = 'mutated';
 
   const snapshot = collector.snapshot();
@@ -128,18 +129,18 @@ void test('captures one immutable JSON audit-evidence object and rejects invalid
   assert.equal(Object.isFrozen(snapshot.auditEvidence), true);
   assert.equal(Object.isFrozen(snapshot.auditEvidence.nested), true);
 
-  const repeated = await Effect.runPromise(
+  const repeated = await runEffectTestPromise(
     Effect.flip(collector.recordAuditEvidence({ checkpoint: 'stopped' })),
   );
-  const invalid = await Effect.runPromise(
+  const invalid = await runEffectTestPromise(
     Effect.flip(makeCollector().recordAuditEvidenceInput({ value: undefined })),
   );
-  const undeclared = await Effect.runPromise(
+  const undeclared = await runEffectTestPromise(
     Effect.flip(
       makeCollector().recordAuditEvidence({ checkpoint: 'started', secret: 'must-not-persist' }),
     ),
   );
-  const missingSchema = await Effect.runPromise(
+  const missingSchema = await runEffectTestPromise(
     Effect.flip(
       createActionCollector(domainEventContracts, 'shell.core', {
         captureMode: 'metadata_only',
@@ -159,7 +160,7 @@ void test('applies descriptor evidence policy and rejects incompatible evidence'
     policyKey: 'counter.read.redacted.v1',
     redactionProfile: 'counter.summary.v1',
   });
-  const error = await Effect.runPromise(
+  const error = await runEffectTestPromise(
     Effect.flip(
       collector.recordDataAccessInput({
         accessKind: 'read',
@@ -173,7 +174,7 @@ void test('applies descriptor evidence policy and rejects incompatible evidence'
   assert.equal(error._tag, 'ActionCollectorError');
 
   const metadataCollector = makeCollector();
-  await Effect.runPromise(
+  await runEffectTestPromise(
     metadataCollector.recordDataAccessInput({
       accessKind: 'read',
       evidenceCaptureMode: 'stored_artifact',
@@ -195,8 +196,8 @@ void test('applies descriptor evidence policy and rejects incompatible evidence'
 
 void test('rejects an Outbox producer that differs from its registered Domain Event', async () => {
   const collector = makeCollector();
-  const reference = await Effect.runPromise(collector.addDomainEvent(event('producer')));
-  const error = await Effect.runPromise(
+  const reference = await runEffectTestPromise(collector.addDomainEvent(event('producer')));
+  const error = await runEffectTestPromise(
     Effect.flip(
       collector.addOutboxMessage(reference, {
         payloadJson: {},
@@ -211,7 +212,7 @@ void test('rejects an Outbox producer that differs from its registered Domain Ev
 
 void test('enforces Action-declared event payloads and producer ownership', async () => {
   const collector = makeCollector();
-  const invalidPayload = await Effect.runPromise(
+  const invalidPayload = await runEffectTestPromise(
     Effect.flip(
       collector.addDomainEventInput({
         ...event('payload'),
@@ -219,7 +220,7 @@ void test('enforces Action-declared event payloads and producer ownership', asyn
       }),
     ),
   );
-  const invalidProducer = await Effect.runPromise(
+  const invalidProducer = await runEffectTestPromise(
     Effect.flip(
       collector.addDomainEvent({
         ...event('producer'),
@@ -227,7 +228,7 @@ void test('enforces Action-declared event payloads and producer ownership', asyn
       }),
     ),
   );
-  const undeclared = await Effect.runPromise(
+  const undeclared = await runEffectTestPromise(
     Effect.flip(
       collector.addDomainEventInput({
         ...event('undeclared'),
@@ -235,7 +236,7 @@ void test('enforces Action-declared event payloads and producer ownership', asyn
       }),
     ),
   );
-  const inheritedName = await Effect.runPromise(
+  const inheritedName = await runEffectTestPromise(
     Effect.flip(
       collector.addDomainEventInput({
         ...event('inherited'),

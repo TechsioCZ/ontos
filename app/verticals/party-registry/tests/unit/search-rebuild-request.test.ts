@@ -1,3 +1,4 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
@@ -45,7 +46,7 @@ test('authorized rebuild commits one linked request without reading identity or 
     actionPermission: 'allowed',
     tenantPermission: 'allowed',
   });
-  return Effect.runPromise(
+  return runEffectTestPromise(
     Effect.gen(function* authorizedRebuildRequest() {
       const result = yield* harness.runtime.runAction(request);
       assert.equal(result.status, 'QUEUED');
@@ -83,7 +84,7 @@ test('denied Party administration cannot queue a rebuild even with Action execut
     actionPermission: 'allowed',
     tenantPermission: 'denied',
   });
-  return Effect.runPromise(
+  return runEffectTestPromise(
     Effect.gen(function* deniedRebuildRequest() {
       const error = yield* harness.runtime.runAction(request).pipe(Effect.flip);
       assert.equal(error._tag, 'ActionPermissionDenied');
@@ -100,7 +101,7 @@ test('replaying the same authorized rebuild request queues only once', () => {
     actionPermission: 'allowed',
     tenantPermission: 'allowed',
   });
-  return Effect.runPromise(
+  return runEffectTestPromise(
     Effect.gen(function* replayRebuildRequest() {
       yield* harness.runtime.runAction(request);
       const replay = yield* harness.runtime.runAction(request).pipe(Effect.flip);
@@ -132,7 +133,7 @@ test('rebuild worker uses its trusted committed context, and failures remain ret
     code: 'party_search_projection_unavailable',
     reason: 'Party search projection is temporarily unavailable',
   });
-  return Effect.runPromise(
+  return runEffectTestPromise(
     Effect.gen(function* rebuildWorkerFailure() {
       const failure = yield* handleRebuildSearch({ requestId }, workerContext).pipe(
         Effect.provideService(PartySearchProjector, {

@@ -21,6 +21,17 @@ export const partyRegistryCorsAllowedHeaders = [
 
 export const partyRegistryCorsAllowedMethods = ['GET', 'HEAD', 'OPTIONS', 'POST'] as const;
 
+export const governedReadProblemStatus = {
+  authentication: 401,
+  forbidden: 403,
+  internal: 500,
+  invalid: 400,
+  notFound: 404,
+  policyConflict: 409,
+  policyDenied: 422,
+  unavailable: 503,
+} as const;
+
 export const partyRegistryCorsAllowedOrigins = (configuredOrigin: string): readonly string[] => {
   const origin = new URL(configuredOrigin);
   if (origin.hostname !== 'localhost' && origin.hostname !== '127.0.0.1') {
@@ -30,23 +41,19 @@ export const partyRegistryCorsAllowedOrigins = (configuredOrigin: string): reado
   return [`http://localhost${port}`, `http://127.0.0.1${port}`];
 };
 
-interface PartyRegistryOperationAttributes extends Record<string, string | undefined> {
-  'modernjs.operation.id': string;
-  'modernjs.operation.method': string;
-  'modernjs.operation.route': string;
-  'modernjs.operation.source': string;
-  'modernjs.trace.id'?: string;
+interface PartyRegistryOperationAttributes extends Readonly<Record<string, string>> {
+  readonly 'modernjs.operation.id': string;
+  readonly 'modernjs.operation.method': string;
+  readonly 'modernjs.operation.route': string;
+  readonly 'modernjs.operation.source': string;
 }
 
-export const operationAttributes = (operationContext: OperationContext) => {
-  const attributes: PartyRegistryOperationAttributes = {
+export const operationAttributes = (
+  operationContext: OperationContext,
+): PartyRegistryOperationAttributes =>
+  ({
     'modernjs.operation.id': operationContext.operationId,
     'modernjs.operation.method': operationContext.method,
     'modernjs.operation.route': operationContext.routePath,
     'modernjs.operation.source': operationContext.source,
-  };
-  if (operationContext.traceId !== undefined) {
-    attributes['modernjs.trace.id'] = operationContext.traceId;
-  }
-  return attributes;
-};
+  }) as const;

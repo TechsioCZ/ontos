@@ -1,6 +1,7 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect } from 'effect';
+import { DateTime, Effect } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import type { PartyContactPoint } from '../../shared/domain/contact-point.ts';
@@ -34,11 +35,11 @@ const replacement: PartyContactPoint = {
     method: 'MANUAL_CONFIRMATION',
     source: 'USER_ASSERTION',
   },
-  recordedAt: '2026-09-03T10:00:00.000Z',
+  recordedAt: DateTime.makeUnsafe('2026-09-03T10:00:00.000Z'),
   revision: 1,
   state: 'ACTIVE',
   storedPartyRef: partyRef,
-  validFrom: '2026-09-03T10:00:00.000Z',
+  validFrom: DateTime.makeUnsafe('2026-09-03T10:00:00.000Z'),
   validTo: null,
   value: {
     displayValue: 'correct@example.test',
@@ -50,7 +51,7 @@ const replacement: PartyContactPoint = {
 };
 
 test('correction publishes the corrected stable ref while returning the validated replacement', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* correctionScenario() {
       const collector = createActionCollector(
         updateContactPointAction.descriptor.domainEvents,

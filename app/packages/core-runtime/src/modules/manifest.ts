@@ -1,4 +1,4 @@
-import { Schema, Predicate } from 'effect';
+import { Predicate, Result, Schema } from 'effect';
 import { HttpApi } from 'effect/unstable/httpapi';
 import type { AnyActionRegistration } from '../actions/definition.ts';
 import { isActionRegistration } from '../actions/definition.ts';
@@ -19,10 +19,12 @@ const moduleFederationBoundaryPattern = /^[A-Za-z][A-Za-z0-9]*$/u;
 const schemaVersionPattern = /^[0-9]+$/u;
 const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
 
-export const OntosModuleIdSchema = Schema.String.check(Schema.isPattern(dottedIdentifierPattern));
+export const OntosModuleIdSchema = Schema.String.check(
+  Schema.isPattern(dottedIdentifierPattern),
+).pipe(Schema.brand('OntosModuleId'), Schema.decodeTo(Schema.String));
 export const OntosDeploymentAppIdSchema = Schema.String.check(
   Schema.isPattern(deploymentIdPattern),
-);
+).pipe(Schema.brand('OntosDeploymentAppId'), Schema.decodeTo(Schema.String));
 export const OntosModuleKindSchema = Schema.Literals([
   'business_module',
   'foundational_module',
@@ -41,6 +43,19 @@ export type OntosModuleId = typeof OntosModuleIdSchema.Type;
 export type OntosDeploymentAppId = typeof OntosDeploymentAppIdSchema.Type;
 export type OntosModuleKind = typeof OntosModuleKindSchema.Type;
 export type OntosModuleActivationState = typeof OntosModuleActivationStateSchema.Type;
+
+const OntosAccessFilteringSchema = Schema.Literals([
+  'legal_entity_scope',
+  'resource_permission',
+  'tenant_scope',
+]);
+const OntosOperationKeySchema = nonEmptyString.pipe(
+  Schema.brand('OntosOperationKey'),
+  Schema.decodeTo(Schema.String),
+);
+const OntosModuleFederationBoundaryIdSchema = Schema.String.check(
+  Schema.isPattern(moduleFederationBoundaryPattern),
+).pipe(Schema.brand('OntosModuleFederationBoundaryId'), Schema.decodeTo(Schema.String));
 
 export const OntosModuleIdentitySchema = Schema.Struct({
   description: nonEmptyString,
@@ -69,13 +84,13 @@ export const OntosActionContractSchema = Schema.Struct({
 
 export const OntosApiContractSchema = Schema.Struct({
   key: OntosModuleIdSchema,
-  operationKeys: Schema.Array(nonEmptyString),
+  operationKeys: Schema.Array(OntosOperationKeySchema),
 });
 
 export const OntosComponentContractSchema = Schema.Struct({
   expose: nonEmptyString,
   key: OntosModuleIdSchema,
-  mfBoundaryId: Schema.String.check(Schema.isPattern(moduleFederationBoundaryPattern)),
+  mfBoundaryId: OntosModuleFederationBoundaryIdSchema,
 });
 
 export const OntosResourceTypeSchema = Schema.Struct({
@@ -102,7 +117,7 @@ export const OntosPublicEventContractSchema = Schema.Struct({
 });
 
 export const OntosSearchDescriptorSchema = Schema.Struct({
-  accessFiltering: Schema.Literals(['legal_entity_scope', 'resource_permission', 'tenant_scope']),
+  accessFiltering: OntosAccessFilteringSchema,
   key: OntosModuleIdSchema,
   owningModuleId: OntosModuleIdSchema,
   requestFilters: Schema.optionalKey(Schema.Array(Schema.Literals(['includeArchived', 'role']))),
@@ -111,7 +126,7 @@ export const OntosSearchDescriptorSchema = Schema.Struct({
 });
 
 export const OntosReportDescriptorSchema = Schema.Struct({
-  accessFiltering: Schema.Literals(['legal_entity_scope', 'resource_permission', 'tenant_scope']),
+  accessFiltering: OntosAccessFilteringSchema,
   dimensions: Schema.Array(nonEmptyString),
   key: OntosModuleIdSchema,
   label: nonEmptyString,
@@ -209,10 +224,19 @@ export interface OntosModuleManifestInput {
 export type OntosModuleManifest<Input extends OntosModuleManifestInput = OntosModuleManifestInput> =
   Readonly<Input>;
 
+class OntosModuleManifestValidationError extends Schema.TaggedError<OntosModuleManifestValidationError>()(
+  'OntosModuleManifestValidationError',
+  { message: Schema.String },
+) {}
+
+const invalidManifest = (message: string): OntosModuleManifestValidationError =>
+  new OntosModuleManifestValidationError({ message });
+
 const exactDecode = <S extends Schema.ConstraintDecoder<unknown>, Value>(
   schema: S,
   value: Value,
-): S['Type'] => Schema.decodeUnknownSync(schema, { onExcessProperty: 'error' })(value);
+): S['Type'] =>
+  Result.getOrThrow(Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(value));
 
 const assertExactKeys = <Value extends object>(
   value: Value,
@@ -222,7 +246,7 @@ const assertExactKeys = <Value extends object>(
   const allowed = new Set(keys);
   for (const key of Reflect.ownKeys(value)) {
     if (!Predicate.isString(key) || !allowed.has(key)) {
-      throw new TypeError(`${label} contains unsupported private field ${String(key)}`);
+      throw invalidManifest(`${label} contains unsupported private field ${String(key)}`);
     }
   }
 };
@@ -247,7 +271,7 @@ const assertUnique = (values: readonly string[], label: string): void => {
   const seen = new Set<string>();
   for (const value of values) {
     if (seen.has(value)) {
-      throw new TypeError(`duplicate ${label} ${value}`);
+      throw invalidManifest(`duplicate ${label} ${value}`);
     }
     seen.add(value);
   }
@@ -255,7 +279,7 @@ const assertUnique = (values: readonly string[], label: string): void => {
 
 const assertOwner = (owner: string, expected: string, label: string): void => {
   if (owner !== expected) {
-    throw new TypeError(`${label} must be owned by manifest module ${expected}`);
+    throw invalidManifest(`${label} must be owned by manifest module ${expected}`);
   }
 };
 
@@ -297,21 +321,21 @@ export const validateOntosModuleExecutableReferences = <
 ): void => {
   for (const action of actions) {
     if (!isActionRegistration(action)) {
-      throw new TypeError('manifest Actions must be real values created by defineAction');
+      throw invalidManifest('manifest Actions must be real values created by defineAction');
     }
     assertOwner(action.descriptor.owningModuleKey, moduleId, 'Action');
     if (!action.descriptor.actionKey.startsWith(`${moduleId}.`)) {
-      throw new TypeError('Action key must be prefixed by its owning module ID');
+      throw invalidManifest('Action key must be prefixed by its owning module ID');
     }
   }
   if (apiValues.some((value) => !HttpApi.isHttpApi(value))) {
-    throw new TypeError('public API entries must reference real Effect HttpApi values');
+    throw invalidManifest('public API entries must reference real Effect HttpApi values');
   }
   if (componentValues.some((value) => !Predicate.isFunction(value))) {
-    throw new TypeError('public component entries must reference callable component values');
+    throw invalidManifest('public component entries must reference callable component values');
   }
   if (eventPayloadSchemas.some((value) => !Schema.isSchema(value))) {
-    throw new TypeError('public event payloadSchema must be an Effect Schema value');
+    throw invalidManifest('public event payloadSchema must be an Effect Schema value');
   }
 };
 
@@ -326,10 +350,10 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   exactDecode(OntosModuleIdentitySchema, input.module);
   exactDecode(OntosModuleActivationSchema, input.activation);
   if (input.module.kind !== 'business_module') {
-    throw new TypeError('V0 MicroVertical deployments may define only one business_module');
+    throw invalidManifest('V0 MicroVertical deployments may define only one business_module');
   }
   if (!input.activation.supportedStates.includes(input.activation.defaultState)) {
-    throw new TypeError('activation defaultState must be included in supportedStates');
+    throw invalidManifest('activation defaultState must be included in supportedStates');
   }
   assertUnique(input.activation.supportedStates, 'activation state');
 
@@ -370,7 +394,7 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
     assertOwner(descriptor.owningModuleId, input.module.id, 'public event');
     for (const resourceType of descriptor.referencesResourceTypes) {
       if (!resourceSet.has(resourceType)) {
-        throw new TypeError(`public event references undeclared resource type ${resourceType}`);
+        throw invalidManifest(`public event references undeclared resource type ${resourceType}`);
       }
     }
     return Object.freeze({
@@ -393,7 +417,7 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   for (const descriptor of search) {
     assertOwner(descriptor.owningModuleId, input.module.id, 'search descriptor');
     if (!resourceSet.has(descriptor.resourceType)) {
-      throw new TypeError(
+      throw invalidManifest(
         `search descriptor references undeclared resource type ${descriptor.resourceType}`,
       );
     }
@@ -401,7 +425,7 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
       (descriptor.accessFiltering === 'tenant_scope') !==
       (descriptor.tenantPermission !== undefined)
     ) {
-      throw new TypeError(
+      throw invalidManifest(
         'tenant-scoped search requires exactly one explicit Tenant permission declaration',
       );
     }
@@ -409,7 +433,7 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
       descriptor.requestFilters !== undefined &&
       new Set(descriptor.requestFilters).size !== descriptor.requestFilters.length
     ) {
-      throw new TypeError('search request filter declarations must be unique');
+      throw invalidManifest('search request filter declarations must be unique');
     }
   }
 
@@ -424,7 +448,7 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
     assertOwner(descriptor.owningModuleId, input.module.id, 'report descriptor');
     for (const resourceType of descriptor.resourceTypes) {
       if (!resourceSet.has(resourceType)) {
-        throw new TypeError(
+        throw invalidManifest(
           `report descriptor references undeclared resource type ${resourceType}`,
         );
       }

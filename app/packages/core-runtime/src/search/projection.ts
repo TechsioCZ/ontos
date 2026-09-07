@@ -1,8 +1,5 @@
-/* oxlint-disable react-doctor/js-combine-iterations */
-// @effect-diagnostics preferSchemaOverJson:off schemaSyncInEffect:off nodeBuiltinImport:off
-/* eslint-disable max-classes-per-file, anti-slop/no-conditional-empty-object-spread, anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters -- Public unknown inputs are decoded immediately by the declared schemas; canonical JSON and optional output fields are private representation mechanics. */
 import { createHash } from 'node:crypto';
-import { Clock, Context, Effect, Schema } from 'effect';
+import { Clock, Context, DateTime, Effect, Option, Predicate, Result, Schema } from 'effect';
 
 const boundedText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const stableKey = Schema.String.check(
@@ -10,14 +7,22 @@ const stableKey = Schema.String.check(
   Schema.isMaxLength(200),
   Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
 );
-const resourceId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const tenantId = Schema.String.check(Schema.isUUID());
+const moduleId = stableKey.pipe(Schema.brand('ModuleId'));
+const resourceId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+  Schema.brand('ResourceId'),
+);
+const resourceType = stableKey.pipe(Schema.brand('ResourceType'));
+const selectedLegalEntityId = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('SelectedLegalEntityId'),
+);
+const tenantId = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
 const projectionVersion = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/u));
+type UnparsedCoreSearchInput = typeof Schema.Unknown.Type;
 
 export const CoreSearchResourceRefSchema = Schema.Struct({
-  moduleId: stableKey,
+  moduleId,
   resourceId,
-  resourceType: stableKey,
+  resourceType,
   tenantId,
 });
 export type CoreSearchResourceRef = typeof CoreSearchResourceRefSchema.Type;
@@ -73,7 +78,7 @@ export const CoreSearchProjectionDocumentSchema = Schema.Struct({
   projectionVersion,
   ref: CoreSearchResourceRefSchema,
   searchableText: Schema.Array(boundedText).check(Schema.isMaxLength(100)),
-  selectedLegalEntityId: Schema.optionalKey(Schema.String.check(Schema.isUUID())),
+  selectedLegalEntityId: Schema.optionalKey(selectedLegalEntityId),
   subjectRef: Schema.optionalKey(CoreSearchResourceRefSchema),
   temporalFacets: Schema.optionalKey(
     Schema.Array(CoreSearchTemporalFacetSchema).check(Schema.isMaxLength(100)),
@@ -90,7 +95,7 @@ export const CoreSearchProjectionHitSchema = Schema.Struct({
   matchedSubjectRef: Schema.optionalKey(CoreSearchResourceRefSchema),
   metadata: Schema.Array(CoreSearchMetadataFieldSchema).check(Schema.isMaxLength(50)),
   ref: CoreSearchResourceRefSchema,
-  selectedLegalEntityId: Schema.optionalKey(Schema.String.check(Schema.isUUID())),
+  selectedLegalEntityId: Schema.optionalKey(selectedLegalEntityId),
   subjectRef: Schema.optionalKey(CoreSearchResourceRefSchema),
   temporalFacets: Schema.optionalKey(
     Schema.Array(CoreSearchTemporalFacetSchema).check(Schema.isMaxLength(100)),
@@ -100,22 +105,22 @@ export const CoreSearchProjectionHitSchema = Schema.Struct({
 export type CoreSearchProjectionHit = typeof CoreSearchProjectionHitSchema.Type;
 
 export const CoreSearchQuerySchema = Schema.Struct({
-  effectiveAt: Schema.optionalKey(boundedText),
+  effectiveAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   facets: Schema.optionalKey(Schema.Array(CoreSearchFacetSchema).check(Schema.isMaxLength(20))),
   includeArchived: Schema.Boolean,
-  moduleId: stableKey,
+  moduleId,
   query: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  resourceType: stableKey,
-  selectedLegalEntityId: Schema.optionalKey(Schema.String.check(Schema.isUUID())),
+  resourceType,
+  selectedLegalEntityId: Schema.optionalKey(selectedLegalEntityId),
   tenantId,
 });
 export type CoreSearchQuery = typeof CoreSearchQuerySchema.Type;
 
 export const CoreSearchProjectionReplacementSchema = Schema.Struct({
   documents: Schema.Array(CoreSearchProjectionDocumentSchema).check(Schema.isMaxLength(10_000)),
-  moduleId: stableKey,
+  moduleId,
   rebuildVersion: projectionVersion,
-  resourceType: stableKey,
+  resourceType,
   tenantId,
 });
 export type CoreSearchProjectionReplacement = typeof CoreSearchProjectionReplacementSchema.Type;
@@ -133,80 +138,107 @@ export type CoreSearchProjectionMutation = typeof CoreSearchProjectionMutationSc
 export class CoreSearchProjectionInvalid extends Schema.TaggedError<CoreSearchProjectionInvalid>()(
   'CoreSearchProjectionInvalid',
   {
+    cause: Schema.optionalKey(Schema.Unknown),
     code: Schema.Literal('core_search_projection_invalid'),
     reason: Schema.String,
   },
 ) {}
 
-export class CoreSearchProjectionUnavailable extends Schema.TaggedError<CoreSearchProjectionUnavailable>()(
+const projectionUnavailableFields = {
+  cause: Schema.optionalKey(Schema.Unknown),
+  code: Schema.Literal('core_search_projection_unavailable'),
+  reason: Schema.String,
+};
+const CoreSearchProjectionUnavailableSchema = Schema.TaggedStruct(
   'CoreSearchProjectionUnavailable',
-  {
-    code: Schema.Literal('core_search_projection_unavailable'),
-    reason: Schema.String,
-  },
-) {}
+  projectionUnavailableFields,
+);
+export type CoreSearchProjectionUnavailableError =
+  typeof CoreSearchProjectionUnavailableSchema.Type;
+export const CoreSearchProjectionUnavailable =
+  Schema.TaggedError<CoreSearchProjectionUnavailableError>()(
+    'CoreSearchProjectionUnavailable',
+    projectionUnavailableFields,
+  );
+type CoreSearchProjectionUnavailableInstance = InstanceType<typeof CoreSearchProjectionUnavailable>;
 
 export interface CoreSearchProjectionStoreService {
   /** Applies one idempotent versioned lifecycle observation. */
   readonly apply: (
-    input: unknown,
-  ) => Effect.Effect<void, CoreSearchProjectionInvalid | CoreSearchProjectionUnavailable>;
+    input: UnparsedCoreSearchInput,
+  ) => Effect.Effect<void, CoreSearchProjectionInvalid | CoreSearchProjectionUnavailableInstance>;
   /** Candidate access is Core-private: the query runtime strips searchable evidence before return. */
   readonly queryCandidates: (
     input: CoreSearchQuery,
-  ) => Effect.Effect<readonly CoreSearchProjectionDocument[], CoreSearchProjectionUnavailable>;
+  ) => Effect.Effect<
+    readonly CoreSearchProjectionDocument[],
+    CoreSearchProjectionUnavailableInstance
+  >;
   /**
    * Replaces one tenant/module/resource projection as one physical rebuild unit. Implementations
    * must leave the prior unit intact when validation or persistence fails.
    */
   readonly replace: (
-    input: unknown,
-  ) => Effect.Effect<void, CoreSearchProjectionInvalid | CoreSearchProjectionUnavailable>;
+    input: UnparsedCoreSearchInput,
+  ) => Effect.Effect<void, CoreSearchProjectionInvalid | CoreSearchProjectionUnavailableInstance>;
 }
 
 /** Production persistence implements this Core-owned port; business modules never own an index. */
-export class CoreSearchProjectionStore extends Context.Service<
-  CoreSearchProjectionStore,
-  CoreSearchProjectionStoreService
->()('@app/core-runtime/search/projection/CoreSearchProjectionStore') {}
+const defineContextService = Context.Service;
+export const CoreSearchProjectionStore = defineContextService<CoreSearchProjectionStoreService>(
+  '@app/core-runtime/search/projection/CoreSearchProjectionStore',
+);
+type CoreSearchProjectionStorePort =
+  typeof CoreSearchProjectionStore extends Context.Service<infer _Identifier, infer Store>
+    ? Store
+    : never;
 
 export interface CoreSearchQueryRuntimeService {
   readonly search: (
-    input: unknown,
+    input: UnparsedCoreSearchInput,
   ) => Effect.Effect<
     readonly CoreSearchProjectionHit[],
-    CoreSearchProjectionInvalid | CoreSearchProjectionUnavailable
+    CoreSearchProjectionInvalid | CoreSearchProjectionUnavailableInstance
   >;
 }
 
-export class CoreSearchQueryRuntime extends Context.Service<
-  CoreSearchQueryRuntime,
-  CoreSearchQueryRuntimeService
->()('@app/core-runtime/search/projection/CoreSearchQueryRuntime') {}
+export const CoreSearchQueryRuntime = defineContextService<CoreSearchQueryRuntimeService>(
+  '@app/core-runtime/search/projection/CoreSearchQueryRuntime',
+);
 
-const projectionUnitKey = (tenant: string, moduleId: string, resourceType: string): string =>
-  JSON.stringify([tenant, moduleId, resourceType]);
+const projectionUnitKeyCodec = Schema.fromJsonString(
+  Schema.Tuple([Schema.String, Schema.String, Schema.String]),
+);
+const encodeProjectionUnitKey = Schema.encodeUnknownResult(projectionUnitKeyCodec);
+const projectionUnitKey = (tenant: string, module: string, type: string): string =>
+  Result.getOrThrow(encodeProjectionUnitKey([tenant, module, type]));
 const documentKey = ({ ref }: CoreSearchProjectionDocument): string => ref.resourceId;
 const normalize = (value: string): string => value.normalize('NFKC').toLocaleLowerCase('und');
 
-const invalid = (reason: string) =>
-  new CoreSearchProjectionInvalid({ code: 'core_search_projection_invalid', reason });
-const unavailable = () =>
-  new CoreSearchProjectionUnavailable({
-    code: 'core_search_projection_unavailable',
-    reason: 'Core Search projection is temporarily unavailable',
+const invalid = (reason: string, cause?: unknown): CoreSearchProjectionInvalid => {
+  if (cause === undefined) {
+    return new CoreSearchProjectionInvalid({ code: 'core_search_projection_invalid', reason });
+  }
+  return new CoreSearchProjectionInvalid({
+    cause,
+    code: 'core_search_projection_invalid',
+    reason,
   });
+};
 
 const hasUniqueKeys = (values: readonly { readonly key: string }[]): boolean =>
   new Set(values.map(({ key }) => key)).size === values.length;
+
+const toEpochMillis = (value: string): number | undefined =>
+  DateTime.make(value).pipe(Option.map(DateTime.toEpochMillis), Option.getOrUndefined);
 
 const invalidPeriod = ({
   validFrom,
   validTo,
 }: Readonly<{ validFrom: string; validTo?: string }>): boolean => {
-  const from = Date.parse(validFrom);
-  const to = validTo === undefined ? undefined : Date.parse(validTo);
-  return !Number.isFinite(from) || (to !== undefined && (!Number.isFinite(to) || to <= from));
+  const from = toEpochMillis(validFrom);
+  const to = validTo === undefined ? undefined : toEpochMillis(validTo);
+  return from === undefined || (validTo !== undefined && (to === undefined || to <= from));
 };
 
 const validateDocument = (
@@ -216,7 +248,7 @@ const validateDocument = (
     readonly resourceType: string;
     readonly tenantId: string;
   }>,
-): void => {
+): Result.Result<true, CoreSearchProjectionInvalid> => {
   if (
     document.ref.tenantId !== expected.tenantId ||
     document.ref.moduleId !== expected.moduleId ||
@@ -238,61 +270,85 @@ const validateDocument = (
         (alias.temporalSearchableText ?? []).some(invalidPeriod),
     )
   ) {
-    throw invalid('Core Search replacement contains an inconsistent document');
+    return Result.fail(invalid('Core Search replacement contains an inconsistent document'));
   }
+  return Result.succeed(true);
 };
 
 const validateReplacement = (
   input: typeof CoreSearchProjectionReplacementSchema.Type,
-): typeof CoreSearchProjectionReplacementSchema.Type => {
+): Result.Result<
+  typeof CoreSearchProjectionReplacementSchema.Type,
+  CoreSearchProjectionInvalid
+> => {
   const seen = new Set<string>();
   const rebuildVersion = BigInt(input.rebuildVersion);
   for (const document of input.documents) {
-    validateDocument(document, input);
+    const validity = validateDocument(document, input);
+    if (Result.isFailure(validity)) {
+      return Result.fail(validity.failure);
+    }
     if (BigInt(document.projectionVersion) > rebuildVersion) {
-      throw invalid('Core Search replacement contains an inconsistent document');
+      return Result.fail(invalid('Core Search replacement contains an inconsistent document'));
     }
     const key = documentKey(document);
     if (seen.has(key)) {
-      throw invalid('Core Search replacement contains a duplicate resource');
+      return Result.fail(invalid('Core Search replacement contains a duplicate resource'));
     }
     seen.add(key);
   }
-  return input;
+  return Result.succeed(input);
+};
+
+const validateMutation = (
+  mutation: typeof CoreSearchProjectionMutationSchema.Type,
+): Result.Result<typeof CoreSearchProjectionMutationSchema.Type, CoreSearchProjectionInvalid> => {
+  if (mutation.kind === 'upsert') {
+    const validity = validateDocument(mutation.document, mutation.document.ref);
+    if (Result.isFailure(validity)) {
+      return Result.fail(validity.failure);
+    }
+  }
+  return Result.succeed(mutation);
 };
 
 export const decodeCoreSearchProjectionReplacement = (
-  input: unknown,
+  input: UnparsedCoreSearchInput,
 ): CoreSearchProjectionReplacement =>
-  validateReplacement(
-    Schema.decodeUnknownSync(CoreSearchProjectionReplacementSchema, {
-      onExcessProperty: 'error',
-    })(input),
+  Result.getOrThrow(
+    Result.flatMap(
+      Schema.decodeUnknownResult(CoreSearchProjectionReplacementSchema, {
+        onExcessProperty: 'error',
+      })(input),
+      validateReplacement,
+    ),
   );
 
 export const decodeCoreSearchProjectionMutation = (
-  input: unknown,
-): CoreSearchProjectionMutation => {
-  const mutation = Schema.decodeUnknownSync(CoreSearchProjectionMutationSchema, {
-    onExcessProperty: 'error',
-  })(input);
-  if (mutation.kind === 'upsert') {
-    validateDocument(mutation.document, mutation.document.ref);
-  }
-  return mutation;
-};
+  input: UnparsedCoreSearchInput,
+): CoreSearchProjectionMutation =>
+  Result.getOrThrow(
+    Result.flatMap(
+      Schema.decodeUnknownResult(CoreSearchProjectionMutationSchema, {
+        onExcessProperty: 'error',
+      })(input),
+      validateMutation,
+    ),
+  );
 
-const stableJson = (value: unknown): string => {
+const encodeJsonValue = Schema.encodeUnknownResult(Schema.fromJsonString(Schema.Any));
+
+const stableJson = (value: UnparsedCoreSearchInput): string => {
   if (Array.isArray(value)) {
     return `[${value.map(stableJson).join(',')}]`;
   }
-  if (value !== null && typeof value === 'object') {
+  if (Predicate.isObject(value)) {
     return `{${Object.entries(value)
       .toSorted(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
+      .map(([key, entry]) => `${Result.getOrThrow(encodeJsonValue(key))}:${stableJson(entry)}`)
       .join(',')}}`;
   }
-  return JSON.stringify(value);
+  return Result.getOrThrow(encodeJsonValue(value));
 };
 
 /** Private Core persistence identity, independent of transport object/document ordering. */
@@ -310,6 +366,28 @@ export const coreSearchReplacementFingerprint = (
     )
     .digest('hex');
 
+const projectionDocumentEquivalence = Schema.toEquivalence(CoreSearchProjectionDocumentSchema);
+
+const decodeMutationEffect = (input: UnparsedCoreSearchInput) =>
+  Schema.decodeUnknownEffect(CoreSearchProjectionMutationSchema, {
+    onExcessProperty: 'error',
+  })(input).pipe(
+    Effect.mapError((cause) =>
+      invalid('Core Search mutation does not match its declared contract', cause),
+    ),
+    Effect.flatMap((mutation) => Effect.fromResult(validateMutation(mutation))),
+  );
+
+const decodeReplacementEffect = (input: UnparsedCoreSearchInput) =>
+  Schema.decodeUnknownEffect(CoreSearchProjectionReplacementSchema, {
+    onExcessProperty: 'error',
+  })(input).pipe(
+    Effect.mapError((cause) =>
+      invalid('Core Search replacement does not match its declared contract', cause),
+    ),
+    Effect.flatMap((replacement) => Effect.fromResult(validateReplacement(replacement))),
+  );
+
 export const makeInMemoryCoreSearchProjectionStore = (): CoreSearchProjectionStoreService => {
   type Stored = Readonly<{
     readonly document?: CoreSearchProjectionDocument;
@@ -317,48 +395,46 @@ export const makeInMemoryCoreSearchProjectionStore = (): CoreSearchProjectionSto
   }>;
   const units = new Map<string, Map<string, Stored>>();
   const rebuilds = new Map<string, { readonly fingerprint: string; readonly version: bigint }>();
-  const apply: CoreSearchProjectionStoreService['apply'] = (input: unknown) =>
-    Effect.try({
-      catch: (error) =>
-        Schema.is(CoreSearchProjectionInvalid)(error)
-          ? error
-          : invalid('Core Search mutation does not match its declared contract'),
-      try: () => {
-        const mutation = decodeCoreSearchProjectionMutation(input);
-        const ref = mutation.kind === 'upsert' ? mutation.document.ref : mutation.ref;
-        const version =
-          mutation.kind === 'upsert'
-            ? mutation.document.projectionVersion
-            : mutation.projectionVersion;
-        const unitKey = projectionUnitKey(ref.tenantId, ref.moduleId, ref.resourceType);
-        const rebuild = rebuilds.get(unitKey);
-        if (rebuild !== undefined && BigInt(version) <= rebuild.version) {
-          return;
+  const apply: CoreSearchProjectionStoreService['apply'] = Effect.fn(
+    'CoreSearchProjectionStore.apply',
+  )(function* applyCoreSearchProjection(input: UnparsedCoreSearchInput) {
+    const mutation = yield* decodeMutationEffect(input);
+    const ref = mutation.kind === 'upsert' ? mutation.document.ref : mutation.ref;
+    const version =
+      mutation.kind === 'upsert' ? mutation.document.projectionVersion : mutation.projectionVersion;
+    const unitKey = projectionUnitKey(ref.tenantId, ref.moduleId, ref.resourceType);
+    const rebuild = rebuilds.get(unitKey);
+    if (rebuild !== undefined && BigInt(version) <= rebuild.version) {
+      return yield* Effect.void;
+    }
+    const unit = units.get(unitKey) ?? new Map<string, Stored>();
+    const current = unit.get(ref.resourceId);
+    if (current !== undefined) {
+      const order = BigInt(version) - BigInt(current.projectionVersion);
+      if (order < 0n) {
+        return yield* Effect.void;
+      }
+      if (order === 0n) {
+        const next = mutation.kind === 'upsert' ? mutation.document : undefined;
+        const unchanged =
+          current.document === undefined
+            ? next === undefined
+            : next !== undefined && projectionDocumentEquivalence(current.document, next);
+        if (!unchanged) {
+          return yield* invalid('Core Search mutation reuses a version for different content');
         }
-        const unit = units.get(unitKey) ?? new Map<string, Stored>();
-        const current = unit.get(ref.resourceId);
-        if (current !== undefined) {
-          const order = BigInt(version) - BigInt(current.projectionVersion);
-          if (order < 0n) {
-            return;
-          }
-          if (order === 0n) {
-            const next = mutation.kind === 'upsert' ? mutation.document : undefined;
-            if (JSON.stringify(current.document) !== JSON.stringify(next)) {
-              throw invalid('Core Search mutation reuses a version for different content');
-            }
-            return;
-          }
-        }
-        unit.set(
-          ref.resourceId,
-          mutation.kind === 'upsert'
-            ? { document: mutation.document, projectionVersion: version }
-            : { projectionVersion: version },
-        );
-        units.set(unitKey, unit);
-      },
-    });
+        return yield* Effect.void;
+      }
+    }
+    unit.set(
+      ref.resourceId,
+      mutation.kind === 'upsert'
+        ? { document: mutation.document, projectionVersion: version }
+        : { projectionVersion: version },
+    );
+    units.set(unitKey, unit);
+    return yield* Effect.void;
+  });
   const queryCandidates: CoreSearchProjectionStoreService['queryCandidates'] = (input) =>
     Effect.sync(() =>
       [
@@ -366,65 +442,67 @@ export const makeInMemoryCoreSearchProjectionStore = (): CoreSearchProjectionSto
           .get(projectionUnitKey(input.tenantId, input.moduleId, input.resourceType))
           ?.values() ?? []),
       ].flatMap(({ document }) => (document === undefined ? [] : [document])),
-    ).pipe(Effect.mapError(unavailable));
-  const replace: CoreSearchProjectionStoreService['replace'] = (input: unknown) =>
-    Effect.try({
-      catch: (error) =>
-        Schema.is(CoreSearchProjectionInvalid)(error)
-          ? error
-          : invalid('Core Search replacement does not match its declared contract'),
-      try: () => {
-        const replacement = decodeCoreSearchProjectionReplacement(input);
-        const unitKey = projectionUnitKey(
-          replacement.tenantId,
-          replacement.moduleId,
-          replacement.resourceType,
-        );
-        const prior = rebuilds.get(unitKey);
-        const version = BigInt(replacement.rebuildVersion);
-        const fingerprint = coreSearchReplacementFingerprint(replacement);
-        if (prior !== undefined) {
-          if (version < prior.version) {
-            return;
-          }
-          if (version === prior.version) {
-            if (fingerprint !== prior.fingerprint) {
-              throw invalid('Core Search rebuild reuses a version for different content');
-            }
-            return;
-          }
+    );
+  const replace: CoreSearchProjectionStoreService['replace'] = Effect.fn(
+    'CoreSearchProjectionStore.replace',
+  )(function* replaceCoreSearchProjection(input: UnparsedCoreSearchInput) {
+    const replacement = yield* decodeReplacementEffect(input);
+    const unitKey = projectionUnitKey(
+      replacement.tenantId,
+      replacement.moduleId,
+      replacement.resourceType,
+    );
+    const prior = rebuilds.get(unitKey);
+    const version = BigInt(replacement.rebuildVersion);
+    const fingerprint = coreSearchReplacementFingerprint(replacement);
+    if (prior !== undefined) {
+      if (version < prior.version) {
+        return yield* Effect.void;
+      }
+      if (version === prior.version) {
+        if (fingerprint !== prior.fingerprint) {
+          return yield* invalid('Core Search rebuild reuses a version for different content');
         }
-        const current = new Map(units.get(unitKey));
-        const nextIds = new Set(replacement.documents.map(({ ref }) => ref.resourceId));
-        for (const document of replacement.documents) {
-          const existing = current.get(document.ref.resourceId);
-          if (
-            existing === undefined ||
-            BigInt(existing.projectionVersion) < BigInt(document.projectionVersion)
-          ) {
-            current.set(document.ref.resourceId, {
-              document,
-              projectionVersion: document.projectionVersion,
-            });
-          } else if (
-            existing.projectionVersion === document.projectionVersion &&
-            JSON.stringify(existing.document) !== JSON.stringify(document)
-          ) {
-            throw invalid('Core Search rebuild reuses a version for different content');
-          }
-        }
-        for (const [id, existing] of current) {
-          if (
-            !nextIds.has(id) &&
-            BigInt(existing.projectionVersion) < BigInt(replacement.rebuildVersion)
-          ) {
-            current.set(id, { projectionVersion: replacement.rebuildVersion });
-          }
-        }
-        units.set(unitKey, current);
-        rebuilds.set(unitKey, { fingerprint, version });
-      },
-    });
+        return yield* Effect.void;
+      }
+    }
+    const current = new Map(units.get(unitKey));
+    const nextIds = new Set<string>(replacement.documents.map(({ ref }) => ref.resourceId));
+    let divergentDocumentVersion = false;
+    for (const document of replacement.documents) {
+      const existing = current.get(document.ref.resourceId);
+      if (
+        existing === undefined ||
+        BigInt(existing.projectionVersion) < BigInt(document.projectionVersion)
+      ) {
+        current.set(document.ref.resourceId, {
+          document,
+          projectionVersion: document.projectionVersion,
+        });
+      } else if (
+        existing.projectionVersion === document.projectionVersion &&
+        (existing.document === undefined ||
+          !projectionDocumentEquivalence(existing.document, document))
+      ) {
+        divergentDocumentVersion = true;
+        break;
+      }
+    }
+    if (divergentDocumentVersion) {
+      return yield* invalid('Core Search rebuild reuses a version for different content');
+    }
+    for (const [id, existing] of current) {
+      if (
+        !nextIds.has(id) &&
+        BigInt(existing.projectionVersion) < BigInt(replacement.rebuildVersion)
+      ) {
+        current.set(id, { projectionVersion: replacement.rebuildVersion });
+      }
+    }
+    units.set(unitKey, current);
+    rebuilds.set(unitKey, { fingerprint, version });
+    return yield* Effect.void;
+  });
   return Object.freeze({ apply, queryCandidates, replace });
 };
 
@@ -437,9 +515,14 @@ const matchesFacets = (
     const available = new Set(document.facets.find((candidate) => candidate.key === key)?.values);
     if (effectiveAt !== undefined) {
       for (const temporal of document.temporalFacets ?? []) {
-        const from = Date.parse(temporal.validFrom);
-        const to = temporal.validTo === undefined ? undefined : Date.parse(temporal.validTo);
-        if (temporal.key === key && from <= effectiveAt && (to === undefined || effectiveAt < to)) {
+        const from = toEpochMillis(temporal.validFrom);
+        const to = temporal.validTo === undefined ? undefined : toEpochMillis(temporal.validTo);
+        if (
+          temporal.key === key &&
+          from !== undefined &&
+          from <= effectiveAt &&
+          (to === undefined || effectiveAt < to)
+        ) {
           available.add(temporal.value);
         }
       }
@@ -447,24 +530,35 @@ const matchesFacets = (
     return values.every((value) => available.has(value));
   });
 
-const toHit = (document: CoreSearchProjectionDocument): CoreSearchProjectionHit => ({
-  archived: document.archived,
-  facets: document.facets,
-  ...(document.aliases !== undefined || document.matchedRef === undefined
-    ? {}
-    : { matchedRef: document.matchedRef }),
-  ...(document.aliases !== undefined || document.matchedSubjectRef === undefined
-    ? {}
-    : { matchedSubjectRef: document.matchedSubjectRef }),
-  metadata: document.metadata,
-  ref: document.ref,
-  ...(document.selectedLegalEntityId === undefined
-    ? {}
-    : { selectedLegalEntityId: document.selectedLegalEntityId }),
-  ...(document.subjectRef === undefined ? {} : { subjectRef: document.subjectRef }),
-  ...(document.temporalFacets === undefined ? {} : { temporalFacets: document.temporalFacets }),
-  title: document.title,
-});
+type MutableProjectionHit = {
+  -readonly [Key in keyof CoreSearchProjectionHit]: CoreSearchProjectionHit[Key];
+};
+
+const toHit = (document: CoreSearchProjectionDocument): CoreSearchProjectionHit => {
+  const hit: MutableProjectionHit = {
+    archived: document.archived,
+    facets: document.facets,
+    metadata: document.metadata,
+    ref: document.ref,
+    title: document.title,
+  };
+  if (document.aliases === undefined && document.matchedRef !== undefined) {
+    hit.matchedRef = document.matchedRef;
+  }
+  if (document.aliases === undefined && document.matchedSubjectRef !== undefined) {
+    hit.matchedSubjectRef = document.matchedSubjectRef;
+  }
+  if (document.selectedLegalEntityId !== undefined) {
+    hit.selectedLegalEntityId = document.selectedLegalEntityId;
+  }
+  if (document.subjectRef !== undefined) {
+    hit.subjectRef = document.subjectRef;
+  }
+  if (document.temporalFacets !== undefined) {
+    hit.temporalFacets = document.temporalFacets;
+  }
+  return hit;
+};
 
 const matchDocument = (
   document: CoreSearchProjectionDocument,
@@ -476,14 +570,17 @@ const matchDocument = (
     values.some((value) => normalize(value).includes(needle));
   const activeValues = (
     values: readonly (typeof CoreSearchTemporalSearchableTextSchema.Type)[] = [],
-  ) =>
-    values
-      .filter(
-        ({ validFrom, validTo }) =>
-          Date.parse(validFrom) <= effectiveAt &&
-          (validTo === undefined || effectiveAt < Date.parse(validTo)),
-      )
-      .map(({ value }) => value);
+  ): readonly string[] => {
+    const active: string[] = [];
+    for (const { validFrom, validTo, value } of values) {
+      const from = toEpochMillis(validFrom);
+      const to = validTo === undefined ? undefined : toEpochMillis(validTo);
+      if (from !== undefined && from <= effectiveAt && (to === undefined || effectiveAt < to)) {
+        active.push(value);
+      }
+    }
+    return active;
+  };
   if (
     matches([
       document.title,
@@ -505,40 +602,42 @@ const matchDocument = (
 };
 
 export const makeCoreSearchQueryRuntime = (
-  store: CoreSearchProjectionStoreService,
+  store: CoreSearchProjectionStorePort,
 ): CoreSearchQueryRuntimeService => {
-  const search: CoreSearchQueryRuntimeService['search'] = (input: unknown) =>
-    Effect.gen(function* coreSearchQueryEffect() {
-      const query = yield* Schema.decodeUnknownEffect(CoreSearchQuerySchema)(input).pipe(
-        Effect.mapError(() => invalid('Core Search query does not match its declared contract')),
-      );
-      if (query.effectiveAt !== undefined && !Number.isFinite(Date.parse(query.effectiveAt))) {
-        return yield* invalid('Core Search effective time is invalid');
+  const search: CoreSearchQueryRuntimeService['search'] = Effect.fn(
+    'CoreSearchQueryRuntime.search',
+  )(function* searchCoreSearchProjection(input: UnparsedCoreSearchInput) {
+    const query = yield* Schema.decodeUnknownEffect(CoreSearchQuerySchema)(input).pipe(
+      Effect.mapError((cause) =>
+        invalid('Core Search query does not match its declared contract', cause),
+      ),
+    );
+    const documents = yield* store.queryCandidates(query);
+    const needle = normalize(query.query);
+    const requestedFacets = query.facets ?? [];
+    const effectiveAt =
+      query.effectiveAt === undefined
+        ? yield* Clock.currentTimeMillis
+        : DateTime.toEpochMillis(query.effectiveAt);
+    const hits: CoreSearchProjectionHit[] = [];
+    for (const document of documents) {
+      if (
+        (query.includeArchived || !document.archived) &&
+        document.selectedLegalEntityId === query.selectedLegalEntityId &&
+        matchesFacets(document, requestedFacets, effectiveAt)
+      ) {
+        const hit = matchDocument(document, needle, effectiveAt);
+        if (hit !== undefined) {
+          hits.push(hit);
+        }
       }
-      const documents = yield* store.queryCandidates(query);
-      const needle = normalize(query.query);
-      const requestedFacets = query.facets ?? [];
-      const effectiveAt =
-        query.effectiveAt === undefined
-          ? yield* Clock.currentTimeMillis
-          : Date.parse(query.effectiveAt);
-      return documents
-        .filter(
-          (document) =>
-            (query.includeArchived || !document.archived) &&
-            document.selectedLegalEntityId === query.selectedLegalEntityId &&
-            matchesFacets(document, requestedFacets, effectiveAt),
-        )
-        .flatMap((document) => {
-          const hit = matchDocument(document, needle, effectiveAt);
-          return hit === undefined ? [] : [hit];
-        })
-        .toSorted(
-          (left, right) =>
-            left.title.localeCompare(right.title) ||
-            left.ref.resourceId.localeCompare(right.ref.resourceId),
-        );
-    });
+    }
+    return hits.toSorted(
+      (left, right) =>
+        left.title.localeCompare(right.title) ||
+        left.ref.resourceId.localeCompare(right.ref.resourceId),
+    );
+  });
   return Object.freeze({ search });
 };
 

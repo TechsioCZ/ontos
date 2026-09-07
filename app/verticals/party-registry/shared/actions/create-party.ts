@@ -4,6 +4,7 @@ import { PartyCandidateSchema, PartyCreateOutcomeSchema } from '../domain/identi
 import type { PartyCandidate } from '../domain/identity-contracts.ts';
 
 export const CreatePartyPayloadSchema = Schema.Struct({ candidate: PartyCandidateSchema });
+export const CreatePartyPayloadJsonSchema = Schema.toEncoded(CreatePartyPayloadSchema);
 export interface CreatePartyPayload {
   readonly candidate: PartyCandidate;
 }

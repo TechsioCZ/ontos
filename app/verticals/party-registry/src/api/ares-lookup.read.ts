@@ -7,7 +7,7 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, Match } from 'effect';
 import {
   AresLookupRequestSchema,
   AresLookupResponseSchema,
@@ -36,42 +36,87 @@ type AresLookupHandlerError =
   | ReadHandlerNotFound
   | ReadHandlerUnavailable;
 
-const mapAresFailure = (error: AresSubjectError): Effect.Effect<never, AresLookupHandlerError> => {
-  switch (error._tag) {
-    case 'AresSubjectNotFound': {
-      return Effect.fail(
-        new ReadHandlerNotFound({
-          code: 'read_handler_not_found',
-          reason: 'ARES has no economic subject for this IČO',
-        }),
-      );
-    }
-    case 'AresSubjectDenied':
-    case 'AresSubjectThrottled':
-    case 'AresSubjectTimeout':
-    case 'AresSubjectUnavailable': {
-      return Effect.fail(
-        new ReadHandlerUnavailable({
-          code: 'read_handler_unavailable',
-          reason: 'ARES lookup is temporarily unavailable',
-        }),
-      );
-    }
-    case 'AresSubjectInvalidIco':
-    case 'AresSubjectResponseInvalid': {
-      return Effect.fail(
-        new ReadHandlerExecutionError({
-          code: 'read_handler_execution_failed',
-          reason: 'ARES lookup could not produce a supported evidence response',
-        }),
-      );
-    }
-    default: {
-      const exhaustive: never = error;
-      return exhaustive;
-    }
-  }
-};
+const withCause = <MappedError extends AresLookupHandlerError>(
+  mappedError: MappedError,
+  cause: AresSubjectError,
+) => Object.defineProperty(mappedError, 'cause', { value: cause });
+
+const mapAresFailure = (error: AresSubjectError): Effect.Effect<never, AresLookupHandlerError> =>
+  Match.value(error).pipe(
+    Match.tags({
+      AresSubjectDenied: (cause) =>
+        Effect.fail(
+          withCause(
+            new ReadHandlerUnavailable({
+              code: 'read_handler_unavailable',
+              reason: 'ARES lookup is temporarily unavailable',
+            }),
+            cause,
+          ),
+        ),
+      AresSubjectInvalidIco: (cause) =>
+        Effect.fail(
+          withCause(
+            new ReadHandlerExecutionError({
+              code: 'read_handler_execution_failed',
+              reason: 'ARES lookup could not produce a supported evidence response',
+            }),
+            cause,
+          ),
+        ),
+      AresSubjectNotFound: (cause) =>
+        Effect.fail(
+          withCause(
+            new ReadHandlerNotFound({
+              code: 'read_handler_not_found',
+              reason: 'ARES has no economic subject for this IČO',
+            }),
+            cause,
+          ),
+        ),
+      AresSubjectResponseInvalid: (cause) =>
+        Effect.fail(
+          withCause(
+            new ReadHandlerExecutionError({
+              code: 'read_handler_execution_failed',
+              reason: 'ARES lookup could not produce a supported evidence response',
+            }),
+            cause,
+          ),
+        ),
+      AresSubjectThrottled: (cause) =>
+        Effect.fail(
+          withCause(
+            new ReadHandlerUnavailable({
+              code: 'read_handler_unavailable',
+              reason: 'ARES lookup is temporarily unavailable',
+            }),
+            cause,
+          ),
+        ),
+      AresSubjectTimeout: (cause) =>
+        Effect.fail(
+          withCause(
+            new ReadHandlerUnavailable({
+              code: 'read_handler_unavailable',
+              reason: 'ARES lookup is temporarily unavailable',
+            }),
+            cause,
+          ),
+        ),
+      AresSubjectUnavailable: (cause) =>
+        Effect.fail(
+          withCause(
+            new ReadHandlerUnavailable({
+              code: 'read_handler_unavailable',
+              reason: 'ARES lookup is temporarily unavailable',
+            }),
+            cause,
+          ),
+        ),
+    }),
+    Match.exhaustive,
+  );
 
 export const aresLookupRead = defineRead(
   {

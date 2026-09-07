@@ -1,4 +1,5 @@
-// @effect-diagnostics asyncFunction:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
@@ -70,8 +71,8 @@ test('runs the real Action lifecycle and preserves committed replay semantics', 
     tenantPermission: 'allowed',
   });
 
-  assert.deepEqual(await Effect.runPromise(harness.runtime.runAction(request)), { total: 2 });
-  const replay = await Effect.runPromise(harness.runtime.runAction(request).pipe(Effect.flip));
+  assert.deepEqual(await runEffectTestPromise(harness.runtime.runAction(request)), { total: 2 });
+  const replay = await runEffectTestPromise(harness.runtime.runAction(request).pipe(Effect.flip));
   const snapshot = harness.snapshot();
 
   assert.equal(replay._tag, 'ActionAlreadyCommitted');
@@ -86,7 +87,7 @@ test('runs the real Action lifecycle and preserves committed replay semantics', 
 
 test('defaults authorization closed and never starts a transaction for a denial', async () => {
   const harness = makeActionTestHarness();
-  const denied = await Effect.runPromise(harness.runtime.runAction(request).pipe(Effect.flip));
+  const denied = await runEffectTestPromise(harness.runtime.runAction(request).pipe(Effect.flip));
   const snapshot = harness.snapshot();
 
   assert.equal(denied._tag, 'ActionPermissionDenied');
@@ -141,7 +142,7 @@ test('substitutes typed owner services without replacing the private handler', a
     ],
   });
 
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     harness.runtime.runAction({
       payload: { amount: 4 },
       principal,
@@ -160,7 +161,7 @@ test('rejects missing idempotency before creating an invocation', async () => {
     actionPermission: 'allowed',
     tenantPermission: 'allowed',
   });
-  const failure = await Effect.runPromise(
+  const failure = await runEffectTestPromise(
     harness.runtime
       .runAction({
         payload: { amount: 2 },

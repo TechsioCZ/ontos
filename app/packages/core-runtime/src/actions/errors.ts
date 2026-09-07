@@ -1,5 +1,5 @@
-/* eslint-disable max-classes-per-file -- The public Core error union is intentionally co-located and exhaustive. */
 import { Schema } from 'effect';
+import type { Cause } from 'effect';
 import type {
   ModuleStateCheckUnavailableError,
   ModuleStateDeniedError,
@@ -10,144 +10,303 @@ const safeReason = {
   reason: Schema.String,
 } as const;
 
-export class ActionPayloadValidationError extends Schema.TaggedError<ActionPayloadValidationError>()(
+const ActionInvocationIdSchema = Schema.String.pipe(
+  Schema.brand('ActionInvocationId'),
+  Schema.decodeTo(Schema.String),
+);
+
+const actionPayloadValidationFields = {
+  code: Schema.Literal('action_payload_invalid'),
+  ...safeReason,
+};
+const ActionPayloadValidationErrorContract = Schema.TaggedStruct(
   'ActionPayloadValidationError',
-  {
-    code: Schema.Literal('action_payload_invalid'),
-    ...safeReason,
-  },
-) {}
+  actionPayloadValidationFields,
+);
+type ActionPayloadValidationErrorSelf = typeof ActionPayloadValidationErrorContract.Type &
+  Cause.YieldableError;
+const ActionPayloadValidationErrorValue = Schema.TaggedError<ActionPayloadValidationErrorSelf>()(
+  'ActionPayloadValidationError',
+  actionPayloadValidationFields,
+);
+export type ActionPayloadValidationError = InstanceType<typeof ActionPayloadValidationErrorValue>;
+export { ActionPayloadValidationErrorValue as ActionPayloadValidationError };
 
-export class ActionResultValidationError extends Schema.TaggedError<ActionResultValidationError>()(
+const actionResultValidationFields = {
+  code: Schema.Literal('action_result_invalid'),
+  ...safeReason,
+};
+const ActionResultValidationErrorContract = Schema.TaggedStruct(
   'ActionResultValidationError',
-  {
-    code: Schema.Literal('action_result_invalid'),
-    ...safeReason,
-  },
-) {}
+  actionResultValidationFields,
+);
+type ActionResultValidationErrorSelf = typeof ActionResultValidationErrorContract.Type &
+  Cause.YieldableError;
+const ActionResultValidationErrorValue = Schema.TaggedError<ActionResultValidationErrorSelf>()(
+  'ActionResultValidationError',
+  actionResultValidationFields,
+);
+export type ActionResultValidationError = InstanceType<typeof ActionResultValidationErrorValue>;
+export { ActionResultValidationErrorValue as ActionResultValidationError };
 
-export class ActionTrustedContextValidationError extends Schema.TaggedError<ActionTrustedContextValidationError>()(
+const actionTrustedContextValidationFields = {
+  code: Schema.Literal('action_trusted_context_invalid'),
+  ...safeReason,
+};
+const ActionTrustedContextValidationErrorContract = Schema.TaggedStruct(
   'ActionTrustedContextValidationError',
-  {
-    code: Schema.Literal('action_trusted_context_invalid'),
-    ...safeReason,
-  },
-) {}
+  actionTrustedContextValidationFields,
+);
+type ActionTrustedContextValidationErrorSelf =
+  typeof ActionTrustedContextValidationErrorContract.Type & Cause.YieldableError;
+const ActionTrustedContextValidationErrorValue =
+  Schema.TaggedError<ActionTrustedContextValidationErrorSelf>()(
+    'ActionTrustedContextValidationError',
+    actionTrustedContextValidationFields,
+  );
+export type ActionTrustedContextValidationError = InstanceType<
+  typeof ActionTrustedContextValidationErrorValue
+>;
+export { ActionTrustedContextValidationErrorValue as ActionTrustedContextValidationError };
 
-export class ActionIdempotencyKeyRequired extends Schema.TaggedError<ActionIdempotencyKeyRequired>()(
+const actionIdempotencyKeyRequiredFields = {
+  code: Schema.Literal('action_idempotency_key_required'),
+  ...safeReason,
+};
+const ActionIdempotencyKeyRequiredContract = Schema.TaggedStruct(
   'ActionIdempotencyKeyRequired',
-  {
-    code: Schema.Literal('action_idempotency_key_required'),
-    ...safeReason,
-  },
-) {}
+  actionIdempotencyKeyRequiredFields,
+);
+type ActionIdempotencyKeyRequiredSelf = typeof ActionIdempotencyKeyRequiredContract.Type &
+  Cause.YieldableError;
+const ActionIdempotencyKeyRequiredValue = Schema.TaggedError<ActionIdempotencyKeyRequiredSelf>()(
+  'ActionIdempotencyKeyRequired',
+  actionIdempotencyKeyRequiredFields,
+);
+export type ActionIdempotencyKeyRequired = InstanceType<typeof ActionIdempotencyKeyRequiredValue>;
+export { ActionIdempotencyKeyRequiredValue as ActionIdempotencyKeyRequired };
 
-export class ActionPermissionDenied extends Schema.TaggedError<ActionPermissionDenied>()(
+const actionPermissionDeniedFields = {
+  code: Schema.Literal('action_permission_denied'),
+  ...safeReason,
+};
+const ActionPermissionDeniedContract = Schema.TaggedStruct(
   'ActionPermissionDenied',
-  {
-    code: Schema.Literal('action_permission_denied'),
-    ...safeReason,
-  },
-) {}
+  actionPermissionDeniedFields,
+);
+type ActionPermissionDeniedSelf = typeof ActionPermissionDeniedContract.Type & Cause.YieldableError;
+const ActionPermissionDeniedValue = Schema.TaggedError<ActionPermissionDeniedSelf>()(
+  'ActionPermissionDenied',
+  actionPermissionDeniedFields,
+);
+export type ActionPermissionDenied = InstanceType<typeof ActionPermissionDeniedValue>;
+export { ActionPermissionDeniedValue as ActionPermissionDenied };
 
-export class ActionPermissionCheckError extends Schema.TaggedError<ActionPermissionCheckError>()(
+const actionPermissionCheckFields = {
+  code: Schema.Literal('action_permission_check_failed'),
+  ...safeReason,
+};
+const ActionPermissionCheckErrorContract = Schema.TaggedStruct(
   'ActionPermissionCheckError',
-  {
-    code: Schema.Literal('action_permission_check_failed'),
-    ...safeReason,
-  },
-) {}
+  actionPermissionCheckFields,
+);
+type ActionPermissionCheckErrorSelf = typeof ActionPermissionCheckErrorContract.Type &
+  Cause.YieldableError;
+const ActionPermissionCheckErrorValue = Schema.TaggedError<ActionPermissionCheckErrorSelf>()(
+  'ActionPermissionCheckError',
+  actionPermissionCheckFields,
+);
+export type ActionPermissionCheckError = InstanceType<typeof ActionPermissionCheckErrorValue>;
+export { ActionPermissionCheckErrorValue as ActionPermissionCheckError };
 
-export class ActionAlreadyCommitted extends Schema.TaggedError<ActionAlreadyCommitted>()(
+const actionAlreadyCommittedFields = {
+  code: Schema.Literal('action_already_committed'),
+  invocationId: ActionInvocationIdSchema,
+  ...safeReason,
+};
+const ActionAlreadyCommittedContract = Schema.TaggedStruct(
   'ActionAlreadyCommitted',
-  {
-    code: Schema.Literal('action_already_committed'),
-    invocationId: Schema.String,
-    ...safeReason,
-  },
-) {}
+  actionAlreadyCommittedFields,
+);
+type ActionAlreadyCommittedSelf = typeof ActionAlreadyCommittedContract.Type & Cause.YieldableError;
+const ActionAlreadyCommittedValue = Schema.TaggedError<ActionAlreadyCommittedSelf>()(
+  'ActionAlreadyCommitted',
+  actionAlreadyCommittedFields,
+);
+export type ActionAlreadyCommitted = InstanceType<typeof ActionAlreadyCommittedValue>;
+export { ActionAlreadyCommittedValue as ActionAlreadyCommitted };
 
-export class ActionRequestHashConflict extends Schema.TaggedError<ActionRequestHashConflict>()(
+const actionRequestHashConflictFields = {
+  code: Schema.Literal('action_request_hash_conflict'),
+  ...safeReason,
+};
+const ActionRequestHashConflictContract = Schema.TaggedStruct(
   'ActionRequestHashConflict',
-  {
-    code: Schema.Literal('action_request_hash_conflict'),
-    ...safeReason,
-  },
-) {}
+  actionRequestHashConflictFields,
+);
+type ActionRequestHashConflictSelf = typeof ActionRequestHashConflictContract.Type &
+  Cause.YieldableError;
+const ActionRequestHashConflictValue = Schema.TaggedError<ActionRequestHashConflictSelf>()(
+  'ActionRequestHashConflict',
+  actionRequestHashConflictFields,
+);
+export type ActionRequestHashConflict = InstanceType<typeof ActionRequestHashConflictValue>;
+export { ActionRequestHashConflictValue as ActionRequestHashConflict };
 
-export class ActionInvocationPersistenceError extends Schema.TaggedError<ActionInvocationPersistenceError>()(
+const actionInvocationPersistenceFields = {
+  code: Schema.Literal('action_invocation_persistence_failed'),
+  ...safeReason,
+};
+const ActionInvocationPersistenceErrorContract = Schema.TaggedStruct(
   'ActionInvocationPersistenceError',
-  {
-    code: Schema.Literal('action_invocation_persistence_failed'),
-    ...safeReason,
-  },
-) {}
+  actionInvocationPersistenceFields,
+);
+type ActionInvocationPersistenceErrorSelf = typeof ActionInvocationPersistenceErrorContract.Type &
+  Cause.YieldableError;
+const ActionInvocationPersistenceErrorValue =
+  Schema.TaggedError<ActionInvocationPersistenceErrorSelf>()(
+    'ActionInvocationPersistenceError',
+    actionInvocationPersistenceFields,
+  );
+export type ActionInvocationPersistenceError = InstanceType<
+  typeof ActionInvocationPersistenceErrorValue
+>;
+export { ActionInvocationPersistenceErrorValue as ActionInvocationPersistenceError };
 
-export class ActionInvocationNotFound extends Schema.TaggedError<ActionInvocationNotFound>()(
+const actionInvocationNotFoundFields = {
+  code: Schema.Literal('action_invocation_not_found'),
+  ...safeReason,
+};
+const ActionInvocationNotFoundContract = Schema.TaggedStruct(
   'ActionInvocationNotFound',
-  {
-    code: Schema.Literal('action_invocation_not_found'),
-    ...safeReason,
-  },
-) {}
+  actionInvocationNotFoundFields,
+);
+type ActionInvocationNotFoundSelf = typeof ActionInvocationNotFoundContract.Type &
+  Cause.YieldableError;
+const ActionInvocationNotFoundValue = Schema.TaggedError<ActionInvocationNotFoundSelf>()(
+  'ActionInvocationNotFound',
+  actionInvocationNotFoundFields,
+);
+export type ActionInvocationNotFound = InstanceType<typeof ActionInvocationNotFoundValue>;
+export { ActionInvocationNotFoundValue as ActionInvocationNotFound };
 
-export class ActionInvocationStateError extends Schema.TaggedError<ActionInvocationStateError>()(
+const actionInvocationStateFields = {
+  code: Schema.Literal('action_invocation_state_invalid'),
+  ...safeReason,
+};
+const ActionInvocationStateErrorContract = Schema.TaggedStruct(
   'ActionInvocationStateError',
-  {
-    code: Schema.Literal('action_invocation_state_invalid'),
-    ...safeReason,
-  },
-) {}
+  actionInvocationStateFields,
+);
+type ActionInvocationStateErrorSelf = typeof ActionInvocationStateErrorContract.Type &
+  Cause.YieldableError;
+const ActionInvocationStateErrorValue = Schema.TaggedError<ActionInvocationStateErrorSelf>()(
+  'ActionInvocationStateError',
+  actionInvocationStateFields,
+);
+export type ActionInvocationStateError = InstanceType<typeof ActionInvocationStateErrorValue>;
+export { ActionInvocationStateErrorValue as ActionInvocationStateError };
 
-export class ActionCollectorError extends Schema.TaggedError<ActionCollectorError>()(
+const actionCollectorFields = {
+  code: Schema.Literal('action_collector_invalid'),
+  ...safeReason,
+};
+const ActionCollectorErrorContract = Schema.TaggedStruct(
   'ActionCollectorError',
-  {
-    code: Schema.Literal('action_collector_invalid'),
-    ...safeReason,
-  },
-) {}
+  actionCollectorFields,
+);
+type ActionCollectorErrorSelf = typeof ActionCollectorErrorContract.Type & Cause.YieldableError;
+const ActionCollectorErrorValue = Schema.TaggedError<ActionCollectorErrorSelf>()(
+  'ActionCollectorError',
+  actionCollectorFields,
+);
+export type ActionCollectorError = InstanceType<typeof ActionCollectorErrorValue>;
+export { ActionCollectorErrorValue as ActionCollectorError };
 
-export class ActionHandlerExecutionError extends Schema.TaggedError<ActionHandlerExecutionError>()(
+const actionHandlerExecutionFields = {
+  code: Schema.Literal('action_handler_execution_failed'),
+  ...safeReason,
+};
+const ActionHandlerExecutionErrorContract = Schema.TaggedStruct(
   'ActionHandlerExecutionError',
-  {
-    code: Schema.Literal('action_handler_execution_failed'),
-    ...safeReason,
-  },
-) {}
+  actionHandlerExecutionFields,
+);
+type ActionHandlerExecutionErrorSelf = typeof ActionHandlerExecutionErrorContract.Type &
+  Cause.YieldableError;
+const ActionHandlerExecutionErrorValue = Schema.TaggedError<ActionHandlerExecutionErrorSelf>()(
+  'ActionHandlerExecutionError',
+  actionHandlerExecutionFields,
+);
+export type ActionHandlerExecutionError = InstanceType<typeof ActionHandlerExecutionErrorValue>;
+export { ActionHandlerExecutionErrorValue as ActionHandlerExecutionError };
 
-export class ActionPolicyDenied extends Schema.TaggedError<ActionPolicyDenied>()(
+const actionPolicyDeniedFields = {
+  code: Schema.Literal('action_policy_denied'),
+  policyReasonCode: Schema.String,
+  ...safeReason,
+};
+const ActionPolicyDeniedContract = Schema.TaggedStruct(
   'ActionPolicyDenied',
-  {
-    code: Schema.Literal('action_policy_denied'),
-    policyReasonCode: Schema.String,
-    ...safeReason,
-  },
-) {}
+  actionPolicyDeniedFields,
+);
+type ActionPolicyDeniedSelf = typeof ActionPolicyDeniedContract.Type & Cause.YieldableError;
+const ActionPolicyDeniedValue = Schema.TaggedError<ActionPolicyDeniedSelf>()(
+  'ActionPolicyDenied',
+  actionPolicyDeniedFields,
+);
+export type ActionPolicyDenied = InstanceType<typeof ActionPolicyDeniedValue>;
+export { ActionPolicyDeniedValue as ActionPolicyDenied };
 
-export class ActionPolicyEvaluationError extends Schema.TaggedError<ActionPolicyEvaluationError>()(
+const actionPolicyEvaluationFields = {
+  code: Schema.Literal('action_policy_evaluation_failed'),
+  ...safeReason,
+};
+const ActionPolicyEvaluationErrorContract = Schema.TaggedStruct(
   'ActionPolicyEvaluationError',
-  {
-    code: Schema.Literal('action_policy_evaluation_failed'),
-    ...safeReason,
-  },
-) {}
+  actionPolicyEvaluationFields,
+);
+type ActionPolicyEvaluationErrorSelf = typeof ActionPolicyEvaluationErrorContract.Type &
+  Cause.YieldableError;
+const ActionPolicyEvaluationErrorValue = Schema.TaggedError<ActionPolicyEvaluationErrorSelf>()(
+  'ActionPolicyEvaluationError',
+  actionPolicyEvaluationFields,
+);
+export type ActionPolicyEvaluationError = InstanceType<typeof ActionPolicyEvaluationErrorValue>;
+export { ActionPolicyEvaluationErrorValue as ActionPolicyEvaluationError };
 
-export class ActionTransactionError extends Schema.TaggedError<ActionTransactionError>()(
+const actionTransactionFields = {
+  code: Schema.Literal('action_transaction_failed'),
+  ...safeReason,
+};
+const ActionTransactionErrorContract = Schema.TaggedStruct(
   'ActionTransactionError',
-  {
-    code: Schema.Literal('action_transaction_failed'),
-    ...safeReason,
-  },
-) {}
+  actionTransactionFields,
+);
+type ActionTransactionErrorSelf = typeof ActionTransactionErrorContract.Type & Cause.YieldableError;
+const ActionTransactionErrorValue = Schema.TaggedError<ActionTransactionErrorSelf>()(
+  'ActionTransactionError',
+  actionTransactionFields,
+);
+export type ActionTransactionError = InstanceType<typeof ActionTransactionErrorValue>;
+export { ActionTransactionErrorValue as ActionTransactionError };
 
-export class ActionCommitIndeterminate extends Schema.TaggedError<ActionCommitIndeterminate>()(
+const actionCommitIndeterminateFields = {
+  code: Schema.Literal('action_commit_indeterminate'),
+  invocationId: ActionInvocationIdSchema,
+  ...safeReason,
+};
+const ActionCommitIndeterminateContract = Schema.TaggedStruct(
   'ActionCommitIndeterminate',
-  {
-    code: Schema.Literal('action_commit_indeterminate'),
-    invocationId: Schema.String,
-    ...safeReason,
-  },
-) {}
+  actionCommitIndeterminateFields,
+);
+type ActionCommitIndeterminateSelf = typeof ActionCommitIndeterminateContract.Type &
+  Cause.YieldableError;
+const ActionCommitIndeterminateValue = Schema.TaggedError<ActionCommitIndeterminateSelf>()(
+  'ActionCommitIndeterminate',
+  actionCommitIndeterminateFields,
+);
+export type ActionCommitIndeterminate = InstanceType<typeof ActionCommitIndeterminateValue>;
+export { ActionCommitIndeterminateValue as ActionCommitIndeterminate };
 
 export type ActionCoreError =
   | ActionAlreadyCommitted

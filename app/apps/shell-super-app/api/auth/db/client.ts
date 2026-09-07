@@ -1,4 +1,3 @@
-// @effect-diagnostics asyncFunction:off
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Context, Effect, Layer } from 'effect';
 import type { Scope } from 'effect';
@@ -18,21 +17,37 @@ export class AuthDatabase extends Context.Service<
 >()('@app/shell-super-app/api/auth/db/client/AuthDatabase') {}
 
 export interface PoolResource {
-  readonly end: () => Promise<void>;
+  readonly end: (callback?: never) => Promise<void>;
 }
+
+const connectionFailure = (cause: unknown) =>
+  Object.defineProperty(
+    new AuthDatabaseConnectionError({
+      reason: 'Unable to initialize the authentication PostgreSQL pool',
+    }),
+    'cause',
+    {
+      configurable: false,
+      enumerable: false,
+      value: cause,
+      writable: false,
+    },
+  );
+
+const invokePromiseWithoutSignal =
+  <Value>(operation: () => PromiseLike<Value>) =>
+  (_signal: AbortSignal): PromiseLike<Value> =>
+    operation();
 
 export const acquirePoolResource = <Resource extends PoolResource>(
   acquire: () => Resource,
 ): Effect.Effect<Resource, AuthDatabaseConnectionError, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.try({
-      catch: () =>
-        new AuthDatabaseConnectionError({
-          reason: 'Unable to initialize the authentication PostgreSQL pool',
-        }),
+      catch: connectionFailure,
       try: acquire,
     }),
-    (pool) => Effect.promise(async () => await pool.end()),
+    (pool) => Effect.promise(invokePromiseWithoutSignal(pool.end.bind(pool, undefined))),
   );
 
 export type PoolFactory = (configuration: PoolConfig) => Pool;

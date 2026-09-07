@@ -1,5 +1,6 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
-// @effect-diagnostics asyncFunction:off
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import test from 'node:test';
 import { Effect } from 'effect';
 import {
@@ -79,8 +80,8 @@ void test('evaluates typed allow and safe denial outcomes', async () => {
     policyKey: 'inventory.stock.available.v1',
   });
 
-  await Effect.runPromise(allowed.evaluate(input));
-  const denial = await Effect.runPromise(Effect.flip(denied.evaluate(input)));
+  await runEffectTestPromise(allowed.evaluate(input));
+  const denial = await runEffectTestPromise(Effect.flip(denied.evaluate(input)));
 
   assert.deepEqual(observed, [input]);
   assert.equal(denial._tag, 'PolicyDenied');

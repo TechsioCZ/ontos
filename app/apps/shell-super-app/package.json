@@ -26,7 +26,6 @@
     "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
   },
   "dependencies": {
-    "@app/contacts": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/party-registry": "workspace:*",
     "@app/shared-contracts": "workspace:*",
@@ -86,6 +85,6 @@
     "topology": "../../topology/reference-topology.json"
   },
   "zephyr:dependencies": {
-    "contacts": "@app/contacts@workspace:*"
+    "partyRegistry": "@app/party-registry@workspace:*"
   }
 }

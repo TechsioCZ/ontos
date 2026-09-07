@@ -1,3 +1,4 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { expect, test } from '@rstest/core';
 import { buildInstalledModuleCatalog } from '@app/core-runtime';
 import { Effect } from 'effect';
@@ -69,7 +70,7 @@ test('passes a dormant subscription with an absent producer to Core matching', a
     },
   ]);
   let received: unknown;
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     matchInstalledOutboxMessagesOnce(catalog, (input) => {
       received = input.subscriptions;
       return Effect.succeed({ deliveriesCreated: 1, messagesMatched: 1 });

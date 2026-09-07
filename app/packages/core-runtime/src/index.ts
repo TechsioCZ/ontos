@@ -120,6 +120,7 @@ export { CorePersistenceLive } from './runtime-infrastructure.ts';
 export {
   DatabaseConfig,
   DatabaseConfigError,
+  DatabaseConfigLive,
   ROOT_ENV_PATH,
   loadDatabaseConnectionPair,
   loadDatabaseConfig,
@@ -143,6 +144,22 @@ export type {
   PrincipalStatus,
 } from './db/schema.ts';
 export { tenantLegalEntityRlsPolicies, tenantRlsPolicies } from './db/scoped-transaction.ts';
+export {
+  DatabaseCommitAcknowledgementAmbiguous,
+  DatabaseDriverFailureKindSchema,
+  DatabaseDriverFailureSchema,
+  DatabaseDriverFailureInputSchema,
+  DatabaseDriverUnavailableFailure,
+  DatabaseTransactionFailure,
+  decodeDatabaseDriverFailure,
+  isDatabaseCommitAcknowledgementAmbiguous,
+  isDatabaseUnavailableFailure,
+} from './database/driver-failure.ts';
+export type {
+  DatabaseDriverFailure,
+  DatabaseDriverFailureInput,
+  DatabaseDriverFailureKind,
+} from './database/driver-failure.ts';
 export {
   ContextAccess,
   ContextAccessLive,
@@ -221,14 +238,18 @@ export type {
 } from './actions/context.ts';
 export {
   LEGAL_ENTITY_SCOPES,
+  OperationalScopeRepositoryLive,
   OperationalScopeResolver,
+  OperationalScopeResolverFromRepositoryLive,
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
 } from './operations/context.ts';
+export { OperationalScopeRepositoryContext } from './operations/repository-context.ts';
 export type {
   LegalEntityScope,
   OperationalScope,
   OperationalScopeRepository,
+  OperationalScopeRequest,
   OperationalScopeResolverService,
   ResolveOperationalScopeInput,
 } from './operations/context.ts';
@@ -267,12 +288,7 @@ export type {
   ReadHandlerContext,
   ReadHandlerResult,
 } from './reads/context.ts';
-export {
-  READ_RUNTIME_STAGES,
-  ReadRuntime,
-  ReadRuntimeLive,
-  makeReadRuntimeLive,
-} from './reads/runtime.ts';
+export { READ_RUNTIME_STAGES, ReadRuntime, ReadRuntimeLive } from './reads/runtime.ts';
 export type { ReadRuntimeOptions, ReadRuntimeService, ReadRuntimeStage } from './reads/runtime.ts';
 export {
   ReadEvidencePersistenceError,
@@ -601,7 +617,6 @@ export {
   OutboxWorkerDescriptorError,
 } from './outbox/errors.ts';
 export type { OutboxWorkerError } from './outbox/errors.ts';
-export { createOutboxWorkerHealth, serveOutboxWorkerHealth } from './outbox/health.ts';
 export type { OutboxWorkerHealth, OutboxWorkerHealthServer } from './outbox/health.ts';
 export { parseOutboxPollingConfig, runOutboxPollingLoop } from './outbox/poller.ts';
 export type {
@@ -610,11 +625,7 @@ export type {
   ParseOutboxPollingConfigInput,
   RunOutboxPollingLoopInput,
 } from './outbox/poller.ts';
-export {
-  OutboxWorkerInfrastructureLive,
-  runOutboxWorkerProcess,
-  startOutboxWorkerProcess,
-} from './outbox/process.ts';
+export { OutboxRepositoryLive } from './outbox/repository.ts';
 export type {
   RunOutboxWorkerProcessInput,
   StartOutboxWorkerProcessInput,

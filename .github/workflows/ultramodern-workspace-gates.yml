@@ -243,7 +243,6 @@ jobs:
         env:
           GIT_CEILING_DIRECTORIES: ${{ github.workspace }}
           MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
-          ULTRAMODERN_PUBLIC_URL_CONTACTS: https://contacts.invalid
           ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: https://party-registry.invalid
           ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
@@ -257,7 +256,6 @@ jobs:
     timeout-minutes: 60
     environment: stage
     env:
-      ZEROPS_CONTACTS_SERVICE_ID: ${{ vars.ZEROPS_CONTACTS_SERVICE_ID }}
       ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
       ZEROPS_PARTY_REGISTRY_SERVICE_ID: ${{ vars.ZEROPS_PARTY_REGISTRY_SERVICE_ID }}
       ZEROPS_PARTY_REGISTRY_WORKER_SERVICE_ID: ${{ vars.ZEROPS_PARTY_REGISTRY_WORKER_SERVICE_ID }}

@@ -2,25 +2,27 @@
 // @ontos-action-owner core.identity
 // @ontos-action-slug record-support-impersonation
 import { Effect, Schema } from 'effect';
-import { defineAction } from '../../actions/definition.ts';
 import type { ActionHandlerContext } from '../../actions/context.ts';
-import {
-  principalManagementRepositoryFromTransaction,
-  validateSupportImpersonation,
-} from '../../auth/principal-management.ts';
+import { defineAction } from '../../actions/definition.ts';
+import { principalManagementRepositoryFromTransaction } from '../../auth/principal-management.ts';
+import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
 import {
   IdentityTargetInvalidError,
   PrincipalManagementErrorSchema,
 } from '../../auth/principal-management-errors.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
-const uuid = Schema.String.check(Schema.isUUID());
+const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrincipalId'));
 const reason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 const safeSessionRef = Schema.String.check(
   Schema.isPattern(/^better-auth-session:[^\s:][^\s]{0,278}$/u),
   Schema.isMaxLength(300),
 );
-const checkpointFields = { originalPrincipalId: uuid, reason, targetPrincipalId: uuid };
+const checkpointFields = {
+  originalPrincipalId: PrincipalIdSchema,
+  reason,
+  targetPrincipalId: PrincipalIdSchema,
+};
 export const RecordSupportImpersonationPayloadSchema = Schema.Union([
   Schema.Struct({ ...checkpointFields, checkpoint: Schema.Literal('requested') }),
   Schema.Struct({
@@ -39,18 +41,20 @@ export const RecordSupportImpersonationResultSchema = Schema.Struct({
 export type RecordSupportImpersonationResult = Schema.Schema.Type<
   typeof RecordSupportImpersonationResultSchema
 >;
-const handle = (
-  payload: RecordSupportImpersonationPayload,
-  context: ActionHandlerContext<
-    Readonly<Record<never, never>>,
-    {
-      readonly validate: (
-        input: Parameters<typeof validateSupportImpersonation>[1],
-      ) => ReturnType<typeof validateSupportImpersonation>;
-    }
-  >,
-) =>
-  Effect.gen(function* recordSupportCheckpoint() {
+type ValidateSupportImpersonation =
+  PrincipalManagementRepositoryService['validateSupportImpersonation'];
+const handle = Effect.fn('RecordSupportImpersonationAction.handle')(
+  function* recordSupportImpersonationActionHandle(
+    payload: RecordSupportImpersonationPayload,
+    context: ActionHandlerContext<
+      Readonly<Record<never, never>>,
+      {
+        readonly validate: (
+          input: Parameters<ValidateSupportImpersonation>[0],
+        ) => ReturnType<ValidateSupportImpersonation>;
+      }
+    >,
+  ) {
     if (
       payload.originalPrincipalId !== context.scope.principalId ||
       payload.targetPrincipalId === payload.originalPrincipalId ||
@@ -102,7 +106,8 @@ const handle = (
           targetPrincipalId: payload.targetPrincipalId,
         });
     return { checkpoint: payload.checkpoint, recorded: true as const };
-  });
+  },
+);
 export const recordSupportImpersonationAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -133,8 +138,6 @@ export const recordSupportImpersonationAction = defineAction(
   handle,
   (transaction) => {
     const repository = principalManagementRepositoryFromTransaction(transaction);
-    return Effect.succeed({
-      validate: (input) => validateSupportImpersonation(repository, input),
-    });
+    return Effect.succeed({ validate: repository.validateSupportImpersonation });
   },
 );

@@ -31,6 +31,16 @@ interface Services {
   ) => Effect.Effect<PartyContactPointsResponse['items'], PartyContactPointPersistenceUnavailable>;
 }
 
+const contactPointsUnavailable = (cause: unknown) =>
+  Object.defineProperty(
+    new ReadHandlerUnavailable({
+      code: 'read_handler_unavailable',
+      reason: 'Party Contact Point persistence is temporarily unavailable',
+    }),
+    'cause',
+    { value: cause },
+  );
+
 export const partyContactPointsRead = defineRead(
   {
     accessKind: 'list',
@@ -50,13 +60,7 @@ export const partyContactPointsRead = defineRead(
   },
   (input, context: ReadHandlerContext<Services>) =>
     context.services.list(input).pipe(
-      Effect.mapError(
-        () =>
-          new ReadHandlerUnavailable({
-            code: 'read_handler_unavailable',
-            reason: 'Party Contact Point persistence is temporarily unavailable',
-          }),
-      ),
+      Effect.mapError(contactPointsUnavailable),
       Effect.map((items) => ({
         evidence: { resultCount: items.length },
         result: { items },

@@ -64,11 +64,12 @@ test('returns one bounded evidence envelope and strips unowned provider payload 
       seznamRegistraci: { unsafe: 'unbounded' },
     },
   });
+  const encoded = Schema.encodeSync(AresLookupResponseSchema)(decoded);
 
-  assert.deepEqual(decoded, evidence);
+  assert.deepEqual(encoded, evidence);
   assert.equal(Object.hasOwn(decoded, 'rawResponse'), false);
   assert.equal(Object.hasOwn(decoded.subject, 'czNace'), false);
-  assert.deepEqual(Schema.decodeUnknownSync(AresSubjectEvidenceSchema)(decoded), evidence);
+  assert.deepEqual(Schema.decodeUnknownSync(AresSubjectEvidenceSchema)(encoded), decoded);
 });
 
 test('keeps observed time separate from provider change time and cache-serving time', () => {
@@ -83,11 +84,12 @@ test('keeps observed time separate from provider change time and cache-serving t
     cacheAgeSeconds: 120,
     servedAt: '2026-09-03T08:02:00.000Z',
   });
+  const encoded = Schema.encodeSync(AresSubjectEvidenceSchema)(cached);
 
-  assert.equal(cached.observedAt, '2026-09-03T08:00:00.000Z');
-  assert.equal(cached.servedAt, '2026-09-03T08:02:00.000Z');
-  assert.equal(cached.providerChangedOn, '2026-09-01');
-  assert.equal(cached.cacheAgeSeconds, 120);
+  assert.equal(encoded.observedAt, '2026-09-03T08:00:00.000Z');
+  assert.equal(encoded.servedAt, '2026-09-03T08:02:00.000Z');
+  assert.equal(encoded.providerChangedOn, '2026-09-01');
+  assert.equal(encoded.cacheAgeSeconds, 120);
 });
 
 test('allows ARES evidence to route only through standard Party-owned lifecycle Actions', () => {

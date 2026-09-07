@@ -1,51 +1,102 @@
-export interface SpiceDbDatabaseBootstrapConfig {
-  readonly adminUrl: string;
-  readonly database: 'spicedb';
-  readonly password: string;
-  readonly user: 'spicedb';
+import { Redacted, Result, Schema } from 'effect';
+
+export interface SpiceDbDatabaseBootstrapEnvironment {
+  readonly DATABASE_ADMIN_URL?: string;
+  readonly SPICEDB_DATABASE_URL?: string;
 }
 
-const parsePostgresUrl = (name: string, value: string | undefined): URL => {
-  const candidate = value?.trim();
-  if (candidate === undefined || candidate.length === 0) {
-    throw new Error(`${name} is required`);
-  }
+const requiredEnvironmentValue = Schema.Trim.check(Schema.isMinLength(1));
 
-  let parsed: URL;
-  try {
-    parsed = new URL(candidate);
-  } catch {
-    throw new Error(`${name} must be a valid PostgreSQL URL`);
-  }
-  if (!['postgres:', 'postgresql:'].includes(parsed.protocol)) {
-    throw new Error(`${name} must use PostgreSQL`);
-  }
-  return parsed;
-};
+const SpiceDbDatabaseBootstrapEnvironmentSchema = Schema.Struct({
+  DATABASE_ADMIN_URL: requiredEnvironmentValue,
+  SPICEDB_DATABASE_URL: requiredEnvironmentValue,
+});
+
+const PostgreSqlUrlSchema = Schema.URLFromString.check(
+  Schema.makeFilter((url) =>
+    url.protocol === 'postgres:' || url.protocol === 'postgresql:'
+      ? undefined
+      : 'URL must use PostgreSQL',
+  ),
+);
+
+const PercentEncodedUriComponentSchema = Schema.String.check(
+  Schema.makeFilter((value) => {
+    let issue: string | undefined;
+    try {
+      decodeURIComponent(value);
+    } catch {
+      issue = 'URL credentials must use valid percent encoding';
+    }
+    return issue;
+  }),
+);
+
+const SpiceDbDatabasePairSchema = Schema.Struct({
+  admin: Schema.URL,
+  spicedb: Schema.URL,
+  spicedbUser: Schema.String,
+}).check(
+  Schema.makeFilter(({ admin, spicedb, spicedbUser }) => {
+    if (spicedb.hostname !== admin.hostname || spicedb.port !== admin.port) {
+      return 'SPICEDB_DATABASE_URL must target the administrative PostgreSQL service';
+    }
+    if (spicedbUser !== 'spicedb' || spicedb.pathname !== '/spicedb') {
+      return 'SPICEDB_DATABASE_URL must use the spicedb login and database';
+    }
+    if (spicedb.password.length === 0) {
+      return 'SPICEDB_DATABASE_URL must contain the spicedb password';
+    }
+    return admin.href === spicedb.href || admin.username === spicedb.username
+      ? 'Administrative and SpiceDB PostgreSQL identities must be distinct'
+      : undefined;
+  }),
+);
+
+const makeSpiceDbDatabaseBootstrapConfig = (fields: {
+  readonly adminUrl: string;
+  readonly password: Redacted.Redacted;
+}) =>
+  Object.freeze({
+    adminUrl: fields.adminUrl,
+    database: 'spicedb' as const,
+    get password() {
+      return Redacted.value(fields.password);
+    },
+    user: 'spicedb' as const,
+  });
+
+export type SpiceDbDatabaseBootstrapConfig = ReturnType<typeof makeSpiceDbDatabaseBootstrapConfig>;
 
 export const parseSpiceDbDatabaseBootstrapConfig = (
-  environment: Readonly<Record<string, string | undefined>>,
+  environment: SpiceDbDatabaseBootstrapEnvironment,
 ): SpiceDbDatabaseBootstrapConfig => {
-  const admin = parsePostgresUrl('DATABASE_ADMIN_URL', environment['DATABASE_ADMIN_URL']);
-  const spicedb = parsePostgresUrl('SPICEDB_DATABASE_URL', environment['SPICEDB_DATABASE_URL']);
+  const source = Result.getOrThrow(
+    Schema.decodeUnknownResult(SpiceDbDatabaseBootstrapEnvironmentSchema)(environment),
+  );
+  const admin = Result.getOrThrow(
+    Schema.decodeUnknownResult(PostgreSqlUrlSchema)(source.DATABASE_ADMIN_URL),
+  );
+  const spicedb = Result.getOrThrow(
+    Schema.decodeUnknownResult(PostgreSqlUrlSchema)(source.SPICEDB_DATABASE_URL),
+  );
+  const pair = Result.getOrThrow(
+    Schema.decodeUnknownResult(SpiceDbDatabasePairSchema)({
+      admin,
+      spicedb,
+      spicedbUser: decodeURIComponent(
+        Result.getOrThrow(
+          Schema.decodeUnknownResult(PercentEncodedUriComponentSchema)(spicedb.username),
+        ),
+      ),
+    }),
+  );
+  const encodedPassword = Result.getOrThrow(
+    Schema.decodeUnknownResult(PercentEncodedUriComponentSchema)(pair.spicedb.password),
+  );
 
-  if (spicedb.hostname !== admin.hostname || spicedb.port !== admin.port) {
-    throw new Error('SPICEDB_DATABASE_URL must target the administrative PostgreSQL service');
-  }
-  if (decodeURIComponent(spicedb.username) !== 'spicedb' || spicedb.pathname !== '/spicedb') {
-    throw new Error('SPICEDB_DATABASE_URL must use the spicedb login and database');
-  }
-  if (spicedb.password.length === 0) {
-    throw new Error('SPICEDB_DATABASE_URL must contain the spicedb password');
-  }
-  if (admin.href === spicedb.href || admin.username === spicedb.username) {
-    throw new Error('Administrative and SpiceDB PostgreSQL identities must be distinct');
-  }
-
-  return {
-    adminUrl: admin.href,
-    database: 'spicedb',
-    password: decodeURIComponent(spicedb.password),
-    user: 'spicedb',
-  };
+  return makeSpiceDbDatabaseBootstrapConfig({
+    adminUrl: pair.admin.href,
+    password: Redacted.make(decodeURIComponent(encodedPassword)),
+  });
 };

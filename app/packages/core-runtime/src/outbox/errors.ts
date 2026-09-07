@@ -1,42 +1,94 @@
-/* eslint-disable max-classes-per-file -- The typed Outbox runtime error union is intentionally co-located. */
 import { Cause, Schema } from 'effect';
 
 const reason = { reason: Schema.String } as const;
 
-export class OutboxWorkerDescriptorError extends Schema.TaggedError<OutboxWorkerDescriptorError>()(
+const OutboxWorkerDescriptorErrorContract = Schema.TaggedStruct('OutboxWorkerDescriptorError', {
+  code: Schema.Literal('outbox_worker_descriptor_invalid'),
+  ...reason,
+});
+type OutboxWorkerDescriptorErrorSelf = typeof OutboxWorkerDescriptorErrorContract.Type &
+  Cause.YieldableError;
+const OutboxWorkerDescriptorErrorValue = Schema.TaggedError<OutboxWorkerDescriptorErrorSelf>()(
   'OutboxWorkerDescriptorError',
   { code: Schema.Literal('outbox_worker_descriptor_invalid'), ...reason },
-) {}
+);
+export type OutboxWorkerDescriptorError = InstanceType<typeof OutboxWorkerDescriptorErrorValue>;
+export { OutboxWorkerDescriptorErrorValue as OutboxWorkerDescriptorError };
 
-export class OutboxPayloadDecodeError extends Schema.TaggedError<OutboxPayloadDecodeError>()(
+const OutboxPayloadDecodeErrorContract = Schema.TaggedStruct('OutboxPayloadDecodeError', {
+  code: Schema.Literal('outbox_payload_invalid'),
+  ...reason,
+});
+type OutboxPayloadDecodeErrorSelf = typeof OutboxPayloadDecodeErrorContract.Type &
+  Cause.YieldableError;
+const OutboxPayloadDecodeErrorValue = Schema.TaggedError<OutboxPayloadDecodeErrorSelf>()(
   'OutboxPayloadDecodeError',
   { code: Schema.Literal('outbox_payload_invalid'), ...reason },
-) {}
+);
+export type OutboxPayloadDecodeError = InstanceType<typeof OutboxPayloadDecodeErrorValue>;
+export { OutboxPayloadDecodeErrorValue as OutboxPayloadDecodeError };
 
-export class OutboxPersistenceError extends Schema.TaggedError<OutboxPersistenceError>()(
+const OutboxPersistenceErrorContract = Schema.TaggedStruct('OutboxPersistenceError', {
+  code: Schema.Literal('outbox_persistence_failed'),
+  ...reason,
+});
+type OutboxPersistenceErrorSelf = typeof OutboxPersistenceErrorContract.Type & Cause.YieldableError;
+const OutboxPersistenceErrorValue = Schema.TaggedError<OutboxPersistenceErrorSelf>()(
   'OutboxPersistenceError',
   { code: Schema.Literal('outbox_persistence_failed'), ...reason },
-) {}
+);
+export type OutboxPersistenceError = InstanceType<typeof OutboxPersistenceErrorValue>;
+export { OutboxPersistenceErrorValue as OutboxPersistenceError };
 
-export class OutboxClaimLostError extends Schema.TaggedError<OutboxClaimLostError>()(
+const OutboxClaimLostErrorContract = Schema.TaggedStruct('OutboxClaimLostError', {
+  code: Schema.Literal('outbox_claim_lost'),
+  ...reason,
+});
+type OutboxClaimLostErrorSelf = typeof OutboxClaimLostErrorContract.Type & Cause.YieldableError;
+const OutboxClaimLostErrorValue = Schema.TaggedError<OutboxClaimLostErrorSelf>()(
   'OutboxClaimLostError',
   { code: Schema.Literal('outbox_claim_lost'), ...reason },
-) {}
+);
+export type OutboxClaimLostError = InstanceType<typeof OutboxClaimLostErrorValue>;
+export { OutboxClaimLostErrorValue as OutboxClaimLostError };
 
-export class OutboxModuleStateError extends Schema.TaggedError<OutboxModuleStateError>()(
+const OutboxModuleStateErrorContract = Schema.TaggedStruct('OutboxModuleStateError', {
+  code: Schema.Literal('outbox_consumer_module_inactive'),
+  ...reason,
+});
+type OutboxModuleStateErrorSelf = typeof OutboxModuleStateErrorContract.Type & Cause.YieldableError;
+const OutboxModuleStateErrorValue = Schema.TaggedError<OutboxModuleStateErrorSelf>()(
   'OutboxModuleStateError',
   { code: Schema.Literal('outbox_consumer_module_inactive'), ...reason },
-) {}
+);
+export type OutboxModuleStateError = InstanceType<typeof OutboxModuleStateErrorValue>;
+export { OutboxModuleStateErrorValue as OutboxModuleStateError };
 
-export class OutboxHandlerExecutionError extends Schema.TaggedError<OutboxHandlerExecutionError>()(
+const OutboxHandlerExecutionErrorContract = Schema.TaggedStruct('OutboxHandlerExecutionError', {
+  code: Schema.Literal('outbox_handler_execution_failed'),
+  ...reason,
+});
+type OutboxHandlerExecutionErrorSelf = typeof OutboxHandlerExecutionErrorContract.Type &
+  Cause.YieldableError;
+const OutboxHandlerExecutionErrorValue = Schema.TaggedError<OutboxHandlerExecutionErrorSelf>()(
   'OutboxHandlerExecutionError',
   { code: Schema.Literal('outbox_handler_execution_failed'), ...reason },
-) {}
+);
+export type OutboxHandlerExecutionError = InstanceType<typeof OutboxHandlerExecutionErrorValue>;
+export { OutboxHandlerExecutionErrorValue as OutboxHandlerExecutionError };
 
-export class OutboxPollerConfigError extends Schema.TaggedError<OutboxPollerConfigError>()(
+const OutboxPollerConfigErrorContract = Schema.TaggedStruct('OutboxPollerConfigError', {
+  code: Schema.Literal('outbox_poller_config_invalid'),
+  ...reason,
+});
+type OutboxPollerConfigErrorSelf = typeof OutboxPollerConfigErrorContract.Type &
+  Cause.YieldableError;
+const OutboxPollerConfigErrorValue = Schema.TaggedError<OutboxPollerConfigErrorSelf>()(
   'OutboxPollerConfigError',
   { code: Schema.Literal('outbox_poller_config_invalid'), ...reason },
-) {}
+);
+export type OutboxPollerConfigError = InstanceType<typeof OutboxPollerConfigErrorValue>;
+export { OutboxPollerConfigErrorValue as OutboxPollerConfigError };
 
 export type OutboxWorkerError =
   | OutboxClaimLostError
@@ -47,7 +99,7 @@ export type OutboxWorkerError =
   | OutboxPersistenceError
   | OutboxWorkerDescriptorError;
 
-const persistenceCauses = new WeakMap<OutboxPersistenceError, unknown>();
+const PERSISTENCE_CAUSE_PROPERTY = 'ontosOutboxPersistenceCause';
 
 export const outboxPersistenceError = <FailureCause>(
   cause: FailureCause,
@@ -56,14 +108,15 @@ export const outboxPersistenceError = <FailureCause>(
     code: 'outbox_persistence_failed',
     reason: 'The Outbox Worker persistence operation failed',
   });
-  persistenceCauses.set(failure, cause);
+  Object.defineProperty(failure, PERSISTENCE_CAUSE_PROPERTY, { value: cause });
   return failure;
 };
 
 export const getOutboxPersistenceCause = (
   failure: OutboxPersistenceError,
 ): Cause.Cause<never> | undefined => {
-  const cause = persistenceCauses.get(failure);
+  const cause =
+    PERSISTENCE_CAUSE_PROPERTY in failure ? failure[PERSISTENCE_CAUSE_PROPERTY] : undefined;
   return cause === undefined ? undefined : Cause.die(cause);
 };
 

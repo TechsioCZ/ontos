@@ -3,15 +3,16 @@
 // @ontos-resource-slug counterparty-role-period
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
-
-const ResourceIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const TenantIdSchema = Schema.String.check(Schema.isUUID());
+import {
+  PartyRegistryResourceIdJsonSchema,
+  PartyRegistryTenantIdJsonSchema,
+} from './resource-ref-identifiers.ts';
 
 export const CounterpartyRolePeriodRefSchema = Schema.Struct({
   moduleId: Schema.Literal('party.registry'),
-  resourceId: ResourceIdSchema,
+  resourceId: PartyRegistryResourceIdJsonSchema,
   resourceType: Schema.Literal('party.registry.counterparty-role-period'),
-  tenantId: TenantIdSchema,
+  tenantId: PartyRegistryTenantIdJsonSchema,
 });
 export type CounterpartyRolePeriodRef = typeof CounterpartyRolePeriodRefSchema.Type;
 

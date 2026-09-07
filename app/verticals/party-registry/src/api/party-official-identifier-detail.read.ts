@@ -6,7 +6,7 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, Match } from 'effect';
 import {
   PartyOfficialIdentifierDetailRequestSchema,
   PartyOfficialIdentifierDetailResponseSchema,
@@ -23,6 +23,14 @@ export const partyOfficialIdentifierDetailEntrypoint = defineTenantModuleEntrypo
 interface Services {
   readonly find: (identifierId: string) => ReturnType<typeof findOfficialIdentifierRecord>;
 }
+const unavailable = (cause: unknown) => {
+  const failure = new ReadHandlerUnavailable({
+    code: 'read_handler_unavailable',
+    reason: 'Official Identifier persistence is unavailable',
+  });
+  Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+  return failure;
+};
 export const partyOfficialIdentifierDetailRead = defineRead(
   {
     accessKind: 'detail',
@@ -42,22 +50,22 @@ export const partyOfficialIdentifierDetailRead = defineRead(
   },
   (input, context: ReadHandlerContext<Services>) =>
     context.services.find(input.officialIdentifierRef.resourceId).pipe(
-      Effect.mapError(
-        () =>
-          new ReadHandlerUnavailable({
-            code: 'read_handler_unavailable',
-            reason: 'Official Identifier persistence is unavailable',
-          }),
-      ),
+      Effect.mapError(unavailable),
       Effect.flatMap((found) =>
-        found._tag === 'found'
-          ? Effect.succeed({ evidence: { resultCount: 1 }, result: found.value })
-          : Effect.fail(
+        Match.value(found).pipe(
+          Match.tag('found', ({ value }) =>
+            Effect.succeed({ evidence: { resultCount: 1 }, result: value }),
+          ),
+          Match.tag('not_found', () =>
+            Effect.fail(
               new ReadHandlerNotFound({
                 code: 'read_handler_not_found',
                 reason: 'The Official Identifier does not exist',
               }),
             ),
+          ),
+          Match.exhaustive,
+        ),
       ),
     ),
   (transaction, scope) =>

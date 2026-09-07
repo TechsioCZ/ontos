@@ -1,7 +1,19 @@
-/* eslint-disable promise/prefer-await-to-callbacks -- The Authzed client exposes Promise APIs. */
+#!/usr/bin/env node
 import { pathToFileURL } from 'node:url';
 import { v1 } from '@authzed/authzed-node';
-import { Effect } from 'effect';
+import { NodeServices } from '@effect/platform-node';
+import {
+  Console,
+  Effect,
+  Exit,
+  flow,
+  ManagedRuntime,
+  Number as EffectNumber,
+  Redacted,
+  Result,
+  Schema,
+} from 'effect';
+import { Argument, Command } from 'effect/unstable/cli';
 import { Pool } from 'pg';
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 import {
@@ -12,16 +24,31 @@ import {
   fullyConsistent,
   spiceDbClientSecurity,
 } from '../packages/core-runtime/src/permissions/client.ts';
+import type { SpiceDbConfigValue } from '../packages/core-runtime/src/permissions/config.ts';
 import { loadSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
 
 const LEGACY_MODULE_ID = 'crm.core';
 const CONTACTS_MODULE_ID = 'contacts.core';
 const MAX_CONTEXTS = 500;
-const MAX_PRINCIPALS = 5_000;
+const MAX_PRINCIPALS = 5000;
 const MAX_RELATIONSHIPS_PER_CONTEXT = 100;
 const DENIED_PROBE_PRINCIPAL_ID = 'contacts-identity-migration-denied-probe';
+const OUTSIDE_AUTHORITATIVE_CONTEXT_MESSAGE =
+  'A module-access relationship is outside the authoritative context';
 
-export type ContactsAuthorizationMigrationMode = 'finalize' | 'prepare' | 'verify';
+export const ContactsAuthorizationMigrationModeSchema = Schema.Literals([
+  'finalize',
+  'prepare',
+  'verify',
+]);
+
+export type ContactsAuthorizationMigrationMode =
+  typeof ContactsAuthorizationMigrationModeSchema.Type;
+
+export class ContactsAuthorizationMigrationError extends Schema.TaggedError<ContactsAuthorizationMigrationError>()(
+  'ContactsAuthorizationMigrationError',
+  { message: Schema.String },
+) {}
 
 export interface ContactsAuthorizationRelationship {
   readonly relation: 'accessor' | 'legal_entity';
@@ -34,45 +61,6 @@ export interface ContactsAuthorizationContextPlan {
   readonly state: 'already_finalized' | 'already_prepared' | 'legacy_only' | 'unconfigured';
   readonly touchContacts: boolean;
 }
-
-const relationshipKey = (relationship: ContactsAuthorizationRelationship): string =>
-  `${relationship.relation}\0${relationship.subjectType}\0${relationship.subjectId}`;
-
-const sameRelationshipSet = (
-  left: readonly ContactsAuthorizationRelationship[],
-  right: readonly ContactsAuthorizationRelationship[],
-): boolean => {
-  const leftKeys = new Set(left.map(relationshipKey));
-  const rightKeys = new Set(right.map(relationshipKey));
-  return leftKeys.size === rightKeys.size && [...leftKeys].every((key) => rightKeys.has(key));
-};
-
-export const planContactsAuthorizationContext = (
-  mode: ContactsAuthorizationMigrationMode,
-  legacy: readonly ContactsAuthorizationRelationship[],
-  contacts: readonly ContactsAuthorizationRelationship[],
-): ContactsAuthorizationContextPlan => {
-  if (legacy.length === 0 && contacts.length === 0) {
-    return { deleteLegacy: false, state: 'unconfigured', touchContacts: false };
-  }
-  if (legacy.length === 0) {
-    return { deleteLegacy: false, state: 'already_finalized', touchContacts: false };
-  }
-  if (contacts.length === 0) {
-    if (mode !== 'prepare') {
-      throw new Error('Contacts authorization is missing while legacy authorization still exists');
-    }
-    return { deleteLegacy: false, state: 'legacy_only', touchContacts: true };
-  }
-  if (!sameRelationshipSet(legacy, contacts)) {
-    throw new Error('Legacy and Contacts authorization relationships differ');
-  }
-  return {
-    deleteLegacy: mode === 'finalize',
-    state: 'already_prepared',
-    touchContacts: false,
-  };
-};
 
 interface DatabaseContextRow {
   readonly legal_entity_id: string;
@@ -92,115 +80,242 @@ interface AuthoritativeContext {
   readonly tenantId: string;
 }
 
-const loadAuthoritativeContexts = async (
-  connectionString: string,
-): Promise<AuthoritativeContext[]> => {
-  const pool = new Pool({ connectionString, max: 1 });
-  try {
-    const contextResult = await pool.query<DatabaseContextRow>(
-      `select
-         legal_entity.legal_entity_id::text,
-         module_state.module_key,
-         module_state.tenant_id::text
-       from core.tenant_module_states as module_state
-       join core.legal_entities as legal_entity
-         on legal_entity.tenant_id = module_state.tenant_id
-       where module_state.module_key in ($1, $2)
-       order by module_state.tenant_id, legal_entity.legal_entity_id
-       limit $3`,
-      [LEGACY_MODULE_ID, CONTACTS_MODULE_ID, MAX_CONTEXTS + 1],
-    );
+interface ContextMigrationResult {
+  readonly deleted: number;
+  readonly touched: number;
+}
+
+interface ContactsAuthorizationMigrationResult {
+  readonly contexts: number;
+  readonly deleted: number;
+  readonly touched: number;
+}
+
+type SpiceDbClient = ReturnType<typeof v1.NewClient>;
+
+const migrationFailure = (message: string): ContactsAuthorizationMigrationError =>
+  new ContactsAuthorizationMigrationError({ message });
+
+const relationshipKey = (relationship: ContactsAuthorizationRelationship): string =>
+  `${relationship.relation}\0${relationship.subjectType}\0${relationship.subjectId}`;
+
+const sameRelationshipSet = (
+  left: readonly ContactsAuthorizationRelationship[],
+  right: readonly ContactsAuthorizationRelationship[],
+): boolean => {
+  const leftKeys = new Set(left.map(relationshipKey));
+  const rightKeys = new Set(right.map(relationshipKey));
+  return leftKeys.size === rightKeys.size && [...leftKeys].every((key) => rightKeys.has(key));
+};
+
+const planContactsAuthorizationContextResult = (
+  mode: ContactsAuthorizationMigrationMode,
+  legacy: readonly ContactsAuthorizationRelationship[],
+  contacts: readonly ContactsAuthorizationRelationship[],
+): Result.Result<ContactsAuthorizationContextPlan, ContactsAuthorizationMigrationError> => {
+  if (legacy.length === 0 && contacts.length === 0) {
+    return Result.succeed({ deleteLegacy: false, state: 'unconfigured', touchContacts: false });
+  }
+  if (legacy.length === 0) {
+    return Result.succeed({
+      deleteLegacy: false,
+      state: 'already_finalized',
+      touchContacts: false,
+    });
+  }
+  if (contacts.length === 0) {
+    if (mode !== 'prepare') {
+      return Result.fail(
+        migrationFailure(
+          'Contacts authorization is missing while legacy authorization still exists',
+        ),
+      );
+    }
+    return Result.succeed({ deleteLegacy: false, state: 'legacy_only', touchContacts: true });
+  }
+  if (!sameRelationshipSet(legacy, contacts)) {
+    return Result.fail(migrationFailure('Legacy and Contacts authorization relationships differ'));
+  }
+  return Result.succeed({
+    deleteLegacy: mode === 'finalize',
+    state: 'already_prepared',
+    touchContacts: false,
+  });
+};
+
+export const planContactsAuthorizationContext = (
+  mode: ContactsAuthorizationMigrationMode,
+  legacy: readonly ContactsAuthorizationRelationship[],
+  contacts: readonly ContactsAuthorizationRelationship[],
+): ContactsAuthorizationContextPlan =>
+  Result.getOrThrow(planContactsAuthorizationContextResult(mode, legacy, contacts));
+
+const acquirePool = (connection: Redacted.Redacted) =>
+  Effect.acquireRelease(
+    Effect.try({
+      catch: () => migrationFailure('The authorization migration database pool could not open'),
+      try: () => new Pool({ connectionString: Redacted.value(connection), max: 1 }),
+    }),
+    (pool) => Effect.promise(async () => await pool.end()),
+  );
+
+const loadAuthoritativeContexts = (
+  connection: Redacted.Redacted,
+): Effect.Effect<AuthoritativeContext[], ContactsAuthorizationMigrationError> =>
+  Effect.gen(function* loadAuthoritativeContextsEffect() {
+    const pool = yield* acquirePool(connection);
+    const contextResult = yield* Effect.tryPromise({
+      catch: () => migrationFailure('The authoritative module contexts could not be read'),
+      try: async () =>
+        await pool.query<DatabaseContextRow>(
+          `select
+             legal_entity.legal_entity_id::text,
+             module_state.module_key,
+             module_state.tenant_id::text
+           from core.tenant_module_states as module_state
+           join core.legal_entities as legal_entity
+             on legal_entity.tenant_id = module_state.tenant_id
+           where module_state.module_key in ($1, $2)
+           order by module_state.tenant_id, legal_entity.legal_entity_id
+           limit $3`,
+          [LEGACY_MODULE_ID, CONTACTS_MODULE_ID, MAX_CONTEXTS + 1],
+        ),
+    });
     if (contextResult.rows.length > MAX_CONTEXTS) {
-      throw new Error(`Authorization migration exceeds the ${MAX_CONTEXTS}-context safety bound`);
+      return yield* migrationFailure(
+        `Authorization migration exceeds the ${MAX_CONTEXTS}-context safety bound`,
+      );
     }
     if (contextResult.rows.some((row) => row.module_key === LEGACY_MODULE_ID)) {
-      throw new Error(
+      return yield* migrationFailure(
         'Core module identity migration must complete before authorization migration',
       );
     }
     const tenantIds = [...new Set(contextResult.rows.map((row) => row.tenant_id))];
-    if (tenantIds.length === 0) return [];
-    const principalResult = await pool.query<PrincipalRow>(
-      `select principal_id::text, status, tenant_id::text
-       from core.principals
-       where tenant_id = any($1::uuid[])
-       order by tenant_id, principal_id
-       limit $2`,
-      [tenantIds, MAX_PRINCIPALS + 1],
-    );
+    if (tenantIds.length === 0) {
+      return [];
+    }
+    const principalResult = yield* Effect.tryPromise({
+      catch: () => migrationFailure('The authoritative Principals could not be read'),
+      try: async () =>
+        await pool.query<PrincipalRow>(
+          `select principal_id::text, status, tenant_id::text
+           from core.principals
+           where tenant_id = any($1::uuid[])
+           order by tenant_id, principal_id
+           limit $2`,
+          [tenantIds, MAX_PRINCIPALS + 1],
+        ),
+    });
     if (principalResult.rows.length > MAX_PRINCIPALS) {
-      throw new Error(
+      return yield* migrationFailure(
         `Authorization migration exceeds the ${MAX_PRINCIPALS}-principal safety bound`,
       );
     }
     const activePrincipalsByTenant = new Map<string, Set<string>>();
     for (const principal of principalResult.rows) {
-      if (principal.status !== 'active') continue;
-      const ids = activePrincipalsByTenant.get(principal.tenant_id) ?? new Set<string>();
-      ids.add(principal.principal_id);
-      activePrincipalsByTenant.set(principal.tenant_id, ids);
+      if (principal.status === 'active') {
+        const ids = activePrincipalsByTenant.get(principal.tenant_id) ?? new Set<string>();
+        ids.add(principal.principal_id);
+        activePrincipalsByTenant.set(principal.tenant_id, ids);
+      }
     }
     return contextResult.rows.map((row) => ({
       activePrincipalIds: activePrincipalsByTenant.get(row.tenant_id) ?? new Set<string>(),
       legalEntityId: row.legal_entity_id,
       tenantId: row.tenant_id,
     }));
-  } finally {
-    await pool.end();
+  }).pipe(Effect.scoped);
+
+const hasExpectedRelationshipEnvelope = (
+  relationship: v1.Relationship,
+  resourceId: string,
+): boolean =>
+  relationship.subject !== undefined &&
+  relationship.subject.object !== undefined &&
+  relationship.subject.optionalRelation === '' &&
+  relationship.resource !== undefined &&
+  relationship.resource.objectId === resourceId &&
+  relationship.resource.objectType === 'module_access' &&
+  relationship.optionalCaveat === undefined &&
+  relationship.optionalExpiresAt === undefined;
+
+const decodeRelationship = (
+  relationship: v1.Relationship | undefined,
+  resourceId: string,
+  legalEntityObjectId: string,
+  activePrincipalIds: ReadonlySet<string>,
+): Result.Result<ContactsAuthorizationRelationship, ContactsAuthorizationMigrationError> => {
+  if (relationship === undefined) {
+    return Result.fail(migrationFailure(OUTSIDE_AUTHORITATIVE_CONTEXT_MESSAGE));
   }
+  if (!hasExpectedRelationshipEnvelope(relationship, resourceId)) {
+    return Result.fail(migrationFailure(OUTSIDE_AUTHORITATIVE_CONTEXT_MESSAGE));
+  }
+  const subjectId = relationship.subject?.object?.objectId ?? '';
+  const subjectType = relationship.subject?.object?.objectType;
+  const { relation } = relationship;
+  const isLegalEntity =
+    relation === 'legal_entity' &&
+    subjectType === 'legal_entity' &&
+    subjectId === legalEntityObjectId;
+  const isAccessor =
+    relation === 'accessor' && subjectType === 'principal' && activePrincipalIds.has(subjectId);
+  if (isLegalEntity) {
+    return Result.succeed({ relation: 'legal_entity', subjectId, subjectType: 'legal_entity' });
+  }
+  if (isAccessor) {
+    return Result.succeed({ relation: 'accessor', subjectId, subjectType: 'principal' });
+  }
+  return Result.fail(migrationFailure(OUTSIDE_AUTHORITATIVE_CONTEXT_MESSAGE));
 };
 
-const readRelationships = async (
-  client: ReturnType<typeof v1.NewClient>,
+const readRelationships = (
+  client: SpiceDbClient,
   resourceId: string,
   context: AuthoritativeContext,
-): Promise<ContactsAuthorizationRelationship[]> => {
-  const responses = await client.promises.readRelationships(
-    v1.ReadRelationshipsRequest.create({
-      consistency: fullyConsistent,
-      optionalLimit: MAX_RELATIONSHIPS_PER_CONTEXT + 1,
-      relationshipFilter: v1.RelationshipFilter.create({
-        optionalResourceId: resourceId,
-        resourceType: 'module_access',
-      }),
-    }),
-  );
-  if (responses.length > MAX_RELATIONSHIPS_PER_CONTEXT) {
-    throw new Error('A module-access context exceeds the relationship safety bound');
-  }
-  const legalEntityObjectId = toLegalEntityAccessObjectId(context.tenantId, context.legalEntityId);
-  if (legalEntityObjectId === undefined)
-    throw new Error('Invalid authoritative legal-entity context');
-  return responses.map(({ relationship }) => {
-    const subject = relationship?.subject;
-    const subjectId = subject?.object?.objectId ?? '';
-    const subjectType = subject?.object?.objectType;
-    const relation = relationship?.relation;
-    const isLegalEntity =
-      relation === 'legal_entity' &&
-      subjectType === 'legal_entity' &&
-      subjectId === legalEntityObjectId;
-    const isAccessor =
-      relation === 'accessor' &&
-      subjectType === 'principal' &&
-      context.activePrincipalIds.has(subjectId);
-    if (
-      relationship?.resource?.objectId !== resourceId ||
-      relationship.resource.objectType !== 'module_access' ||
-      relationship.optionalCaveat !== undefined ||
-      relationship.optionalExpiresAt !== undefined ||
-      subject?.optionalRelation !== '' ||
-      (!isLegalEntity && !isAccessor)
-    ) {
-      throw new Error('A module-access relationship is outside the authoritative context');
+): Effect.Effect<ContactsAuthorizationRelationship[], ContactsAuthorizationMigrationError> =>
+  Effect.gen(function* readRelationshipsEffect() {
+    const responses = yield* Effect.tryPromise({
+      catch: () => migrationFailure('Module-access relationships could not be read'),
+      try: async () =>
+        await client.promises.readRelationships(
+          v1.ReadRelationshipsRequest.create({
+            consistency: fullyConsistent,
+            optionalLimit: MAX_RELATIONSHIPS_PER_CONTEXT + 1,
+            relationshipFilter: v1.RelationshipFilter.create({
+              optionalResourceId: resourceId,
+              resourceType: 'module_access',
+            }),
+          }),
+        ),
+    });
+    if (responses.length > MAX_RELATIONSHIPS_PER_CONTEXT) {
+      return yield* migrationFailure(
+        'A module-access context exceeds the relationship safety bound',
+      );
     }
-    return {
-      relation: relation as ContactsAuthorizationRelationship['relation'],
-      subjectId,
-      subjectType: subjectType as ContactsAuthorizationRelationship['subjectType'],
-    };
+    const legalEntityObjectId = toLegalEntityAccessObjectId(
+      context.tenantId,
+      context.legalEntityId,
+    );
+    if (legalEntityObjectId === undefined) {
+      return yield* migrationFailure('Invalid authoritative legal-entity context');
+    }
+    return yield* Effect.forEach(
+      responses,
+      ({ relationship }) =>
+        Effect.fromResult(
+          decodeRelationship(
+            relationship,
+            resourceId,
+            legalEntityObjectId,
+            context.activePrincipalIds,
+          ),
+        ),
+      { concurrency: 'unbounded' },
+    );
   });
-};
 
 const toRelationship = (
   resourceId: string,
@@ -217,150 +332,220 @@ const toRelationship = (
     }),
   });
 
-const writeRelationships = async (
-  client: ReturnType<typeof v1.NewClient>,
+const writeRelationships = (
+  client: SpiceDbClient,
   operation: v1.RelationshipUpdate_Operation,
   resourceId: string,
   relationships: readonly ContactsAuthorizationRelationship[],
-): Promise<void> => {
-  if (relationships.length === 0) return;
-  await client.promises.writeRelationships(
-    v1.WriteRelationshipsRequest.create({
-      updates: relationships.map((item) =>
-        v1.RelationshipUpdate.create({
-          operation,
-          relationship: toRelationship(resourceId, item),
+): Effect.Effect<void, ContactsAuthorizationMigrationError> => {
+  if (relationships.length === 0) {
+    return Effect.void;
+  }
+  return Effect.tryPromise({
+    catch: () => migrationFailure('Module-access relationships could not be written'),
+    try: async () =>
+      await client.promises.writeRelationships(
+        v1.WriteRelationshipsRequest.create({
+          updates: relationships.map((item) =>
+            v1.RelationshipUpdate.create({
+              operation,
+              relationship: toRelationship(resourceId, item),
+            }),
+          ),
         }),
       ),
-    }),
-  );
+  }).pipe(Effect.asVoid);
 };
 
-const assertContactsPermissions = async (
-  client: ReturnType<typeof v1.NewClient>,
+const checkContactsPermission = (
+  client: SpiceDbClient,
+  resourceId: string,
+  principalId: string,
+): Effect.Effect<v1.CheckPermissionResponse_Permissionship, ContactsAuthorizationMigrationError> =>
+  Effect.tryPromise({
+    catch: () => migrationFailure('Contacts permission verification could not complete'),
+    try: async () =>
+      await client.promises.checkPermission(
+        v1.CheckPermissionRequest.create({
+          consistency: fullyConsistent,
+          permission: 'access',
+          resource: v1.ObjectReference.create({
+            objectId: resourceId,
+            objectType: 'module_access',
+          }),
+          subject: v1.SubjectReference.create({
+            object: v1.ObjectReference.create({ objectId: principalId, objectType: 'principal' }),
+          }),
+        }),
+      ),
+  }).pipe(Effect.map((response) => response.permissionship));
+
+const assertContactsPermissions = (
+  client: SpiceDbClient,
   resourceId: string,
   relationships: readonly ContactsAuthorizationRelationship[],
-): Promise<void> => {
-  const accessorIds = relationships
-    .filter((item) => item.relation === 'accessor')
-    .map((item) => item.subjectId);
-  for (const principalId of accessorIds) {
-    const response = await client.promises.checkPermission(
-      v1.CheckPermissionRequest.create({
-        consistency: fullyConsistent,
-        permission: 'access',
-        resource: v1.ObjectReference.create({ objectId: resourceId, objectType: 'module_access' }),
-        subject: v1.SubjectReference.create({
-          object: v1.ObjectReference.create({ objectId: principalId, objectType: 'principal' }),
-        }),
-      }),
+): Effect.Effect<void, ContactsAuthorizationMigrationError> =>
+  Effect.gen(function* assertContactsPermissionsEffect() {
+    const accessorIds = relationships
+      .filter((item) => item.relation === 'accessor')
+      .map((item) => item.subjectId);
+    yield* Effect.forEach(
+      accessorIds,
+      (principalId) =>
+        checkContactsPermission(client, resourceId, principalId).pipe(
+          Effect.filterOrFail(
+            (permissionship) =>
+              permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
+            () =>
+              migrationFailure(
+                'Contacts permission verification did not preserve an allowed principal',
+              ),
+          ),
+        ),
+      { concurrency: 1, discard: true },
     );
-    if (response.permissionship !== v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION) {
-      throw new Error('Contacts permission verification did not preserve an allowed principal');
+    const deniedPermissionship = yield* checkContactsPermission(
+      client,
+      resourceId,
+      DENIED_PROBE_PRINCIPAL_ID,
+    );
+    if (deniedPermissionship !== v1.CheckPermissionResponse_Permissionship.NO_PERMISSION) {
+      yield* migrationFailure(
+        'Contacts permission verification did not preserve the denied boundary',
+      );
     }
-  }
-  const deniedResponse = await client.promises.checkPermission(
-    v1.CheckPermissionRequest.create({
-      consistency: fullyConsistent,
-      permission: 'access',
-      resource: v1.ObjectReference.create({ objectId: resourceId, objectType: 'module_access' }),
-      subject: v1.SubjectReference.create({
-        object: v1.ObjectReference.create({
-          objectId: DENIED_PROBE_PRINCIPAL_ID,
-          objectType: 'principal',
-        }),
-      }),
-    }),
-  );
-  if (deniedResponse.permissionship !== v1.CheckPermissionResponse_Permissionship.NO_PERMISSION) {
-    throw new Error('Contacts permission verification did not preserve the denied boundary');
-  }
-};
+  });
 
-const parseMode = (value: string | undefined): ContactsAuthorizationMigrationMode => {
-  if (value === 'prepare' || value === 'verify' || value === 'finalize') return value;
-  throw new Error(
-    'Expected exactly one authorization migration mode: prepare, verify, or finalize',
-  );
-};
-
-export const migrateContactsAuthorization = async (
+const migrateContext = (
+  client: SpiceDbClient,
   mode: ContactsAuthorizationMigrationMode,
-): Promise<{ readonly contexts: number; readonly deleted: number; readonly touched: number }> => {
-  const [database, spiceDb] = await Promise.all([
-    Effect.runPromise(loadDatabaseConnectionPair()),
-    Effect.runPromise(loadSpiceDbConfig()),
-  ]);
-  const contexts = await loadAuthoritativeContexts(database.admin.connectionString);
-  const client = v1.NewClient(
-    spiceDb.preSharedKey,
-    spiceDb.endpoint,
-    spiceDbClientSecurity(spiceDb),
-  );
-  let deleted = 0;
-  let touched = 0;
-  try {
-    for (const context of contexts) {
-      const legacyResourceId = toModuleAccessObjectId(
-        context.tenantId,
-        context.legalEntityId,
-        LEGACY_MODULE_ID,
-      );
-      const contactsResourceId = toModuleAccessObjectId(
-        context.tenantId,
-        context.legalEntityId,
-        CONTACTS_MODULE_ID,
-      );
-      if (legacyResourceId === undefined || contactsResourceId === undefined) {
-        throw new Error('Invalid authoritative module-access context');
-      }
-      const [legacy, contactsBefore] = await Promise.all([
+  context: AuthoritativeContext,
+): Effect.Effect<ContextMigrationResult, ContactsAuthorizationMigrationError> =>
+  Effect.gen(function* migrateContextEffect() {
+    const legacyResourceId = toModuleAccessObjectId(
+      context.tenantId,
+      context.legalEntityId,
+      LEGACY_MODULE_ID,
+    );
+    const contactsResourceId = toModuleAccessObjectId(
+      context.tenantId,
+      context.legalEntityId,
+      CONTACTS_MODULE_ID,
+    );
+    if (legacyResourceId === undefined || contactsResourceId === undefined) {
+      return yield* migrationFailure('Invalid authoritative module-access context');
+    }
+    const [legacy, contactsBefore] = yield* Effect.all(
+      [
         readRelationships(client, legacyResourceId, context),
         readRelationships(client, contactsResourceId, context),
-      ]);
-      const plan = planContactsAuthorizationContext(mode, legacy, contactsBefore);
-      if (plan.touchContacts) {
-        await writeRelationships(
-          client,
-          v1.RelationshipUpdate_Operation.TOUCH,
-          contactsResourceId,
-          legacy,
-        );
-        touched += legacy.length;
-      }
-      const contactsAfter = await readRelationships(client, contactsResourceId, context);
-      if (legacy.length > 0 && !sameRelationshipSet(legacy, contactsAfter)) {
-        throw new Error('Contacts relationship verification failed after preparation');
-      }
-      if (contactsAfter.length > 0) {
-        await assertContactsPermissions(client, contactsResourceId, contactsAfter);
-      }
-      if (plan.deleteLegacy) {
-        await writeRelationships(
-          client,
-          v1.RelationshipUpdate_Operation.DELETE,
-          legacyResourceId,
-          legacy,
-        );
-        deleted += legacy.length;
-        const remainingLegacy = await readRelationships(client, legacyResourceId, context);
-        if (remainingLegacy.length > 0)
-          throw new Error('Legacy relationship cleanup was incomplete');
+      ],
+      { concurrency: 'unbounded' },
+    );
+    const plan = yield* Effect.fromResult(
+      planContactsAuthorizationContextResult(mode, legacy, contactsBefore),
+    );
+    if (plan.touchContacts) {
+      yield* writeRelationships(
+        client,
+        v1.RelationshipUpdate_Operation.TOUCH,
+        contactsResourceId,
+        legacy,
+      );
+    }
+    const contactsAfter = yield* readRelationships(client, contactsResourceId, context);
+    if (legacy.length > 0 && !sameRelationshipSet(legacy, contactsAfter)) {
+      return yield* migrationFailure('Contacts relationship verification failed after preparation');
+    }
+    if (contactsAfter.length > 0) {
+      yield* assertContactsPermissions(client, contactsResourceId, contactsAfter);
+    }
+    if (plan.deleteLegacy) {
+      yield* writeRelationships(
+        client,
+        v1.RelationshipUpdate_Operation.DELETE,
+        legacyResourceId,
+        legacy,
+      );
+      const remainingLegacy = yield* readRelationships(client, legacyResourceId, context);
+      if (remainingLegacy.length > 0) {
+        return yield* migrationFailure('Legacy relationship cleanup was incomplete');
       }
     }
-    return { contexts: contexts.length, deleted, touched };
-  } finally {
-    client.close();
-  }
-};
+    return {
+      deleted: plan.deleteLegacy ? legacy.length : 0,
+      touched: plan.touchContacts ? legacy.length : 0,
+    };
+  });
 
-const isMain =
-  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isMain) {
-  const mode = parseMode(process.argv[2]);
-  if (process.argv.length !== 3) throw new Error('Authorization migration accepts one mode only');
-  const result = await migrateContactsAuthorization(mode);
-  console.log(
-    `Contacts authorization ${mode} completed (${result.contexts} contexts, ${result.touched} touched, ${result.deleted} deleted)`,
+const acquireSpiceDbClient = (configuration: SpiceDbConfigValue) =>
+  Effect.acquireRelease(
+    Effect.try({
+      catch: () => migrationFailure('The authorization migration SpiceDB client could not open'),
+      try: () =>
+        v1.NewClient(
+          configuration.preSharedKey,
+          configuration.endpoint,
+          spiceDbClientSecurity(configuration),
+        ),
+    }),
+    (client) => Effect.sync(() => client.close()),
   );
+
+const migrateContactsAuthorizationEffect = (
+  mode: ContactsAuthorizationMigrationMode,
+): Effect.Effect<ContactsAuthorizationMigrationResult, ContactsAuthorizationMigrationError> =>
+  Effect.gen(function* migrateContactsAuthorizationProgram() {
+    const [database, spiceDb] = yield* Effect.all(
+      [
+        loadDatabaseConnectionPair().pipe(
+          Effect.mapError((error) => migrationFailure(error.reason)),
+        ),
+        loadSpiceDbConfig().pipe(Effect.mapError((error) => migrationFailure(error.reason))),
+      ],
+      { concurrency: 'unbounded' },
+    );
+    const contexts = yield* loadAuthoritativeContexts(
+      Redacted.make(database.admin.connectionString),
+    );
+    const client = yield* acquireSpiceDbClient(spiceDb);
+    const contextResults = yield* Effect.forEach(
+      contexts,
+      (context) => migrateContext(client, mode, context),
+      { concurrency: 1 },
+    );
+    return {
+      contexts: contextResults.length,
+      deleted: EffectNumber.sumAll(contextResults.map((result) => result.deleted)),
+      touched: EffectNumber.sumAll(contextResults.map((result) => result.touched)),
+    };
+  }).pipe(Effect.scoped);
+
+const migrationRuntime = ManagedRuntime.make(NodeServices.layer);
+
+export const migrateContactsAuthorization: (
+  mode: ContactsAuthorizationMigrationMode,
+) => Promise<ContactsAuthorizationMigrationResult> = flow(
+  migrateContactsAuthorizationEffect,
+  migrationRuntime.runPromise,
+);
+
+const command = Command.make(
+  'migrate-contacts-authorization',
+  { mode: Argument.choice('mode', ['prepare', 'verify', 'finalize']) },
+  ({ mode }) =>
+    Effect.gen(function* migrateContactsAuthorizationCommand() {
+      const result = yield* migrateContactsAuthorizationEffect(mode).pipe(
+        Effect.tapError((error) => Console.error(error.message)),
+      );
+      yield* Console.log(
+        `Contacts authorization ${mode} completed (${result.contexts} contexts, ${result.touched} touched, ${result.deleted} deleted)`,
+      );
+    }),
+);
+
+const [, invokedPath] = process.argv;
+if (invokedPath !== undefined && import.meta.url === pathToFileURL(invokedPath).href) {
+  const exit = await migrationRuntime.runPromiseExit(Command.run(command, { version: '1.0.0' }));
+  process.exitCode = Exit.isSuccess(exit) ? 0 : 1;
 }

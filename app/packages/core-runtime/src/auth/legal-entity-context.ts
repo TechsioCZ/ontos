@@ -1,36 +1,21 @@
-/* eslint-disable max-classes-per-file, no-nested-ternary, unicorn/no-nested-ternary -- The legal-entity context owns one closed failure vocabulary and classification expression. */
-// @effect-diagnostics asyncFunction:off
 import { and, eq } from 'drizzle-orm';
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, Duration, Effect, Layer } from 'effect';
 import { CoreDatabase } from '../db/client.ts';
 import { legalEntities } from '../db/schema.ts';
+import type { CoreDatabaseExecutor } from '../db/types.ts';
+import { LegalEntityContextAmbiguousError } from './legal-entity-context-ambiguous-error.ts';
+import { LegalEntityContextInactiveError } from './legal-entity-context-inactive-error.ts';
+import { LegalEntityContextInvalidError } from './legal-entity-context-invalid-error.ts';
+import { LegalEntityContextMissingError } from './legal-entity-context-missing-error.ts';
+import { LegalEntityContextUnavailableError } from './legal-entity-context-unavailable-error.ts';
+
+export { LegalEntityContextAmbiguousError } from './legal-entity-context-ambiguous-error.ts';
+export { LegalEntityContextInactiveError } from './legal-entity-context-inactive-error.ts';
+export { LegalEntityContextInvalidError } from './legal-entity-context-invalid-error.ts';
+export { LegalEntityContextMissingError } from './legal-entity-context-missing-error.ts';
+export { LegalEntityContextUnavailableError } from './legal-entity-context-unavailable-error.ts';
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-
-export class LegalEntityContextMissingError extends Schema.TaggedError<LegalEntityContextMissingError>()(
-  'LegalEntityContextMissingError',
-  {},
-) {}
-
-export class LegalEntityContextInactiveError extends Schema.TaggedError<LegalEntityContextInactiveError>()(
-  'LegalEntityContextInactiveError',
-  {},
-) {}
-
-export class LegalEntityContextInvalidError extends Schema.TaggedError<LegalEntityContextInvalidError>()(
-  'LegalEntityContextInvalidError',
-  {},
-) {}
-
-export class LegalEntityContextAmbiguousError extends Schema.TaggedError<LegalEntityContextAmbiguousError>()(
-  'LegalEntityContextAmbiguousError',
-  {},
-) {}
-
-export class LegalEntityContextUnavailableError extends Schema.TaggedError<LegalEntityContextUnavailableError>()(
-  'LegalEntityContextUnavailableError',
-  { reason: Schema.String },
-) {}
 
 export type LegalEntityContextError =
   | LegalEntityContextMissingError
@@ -51,8 +36,15 @@ export interface SafeLegalEntity {
   readonly legalName: string;
 }
 
-const compareText = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0;
+const compareText = (left: string, right: string): number => {
+  if (left < right) {
+    return -1;
+  }
+  if (left > right) {
+    return 1;
+  }
+  return 0;
+};
 
 const validRecord = (record: LegalEntityContextRecord, tenantId: string): boolean =>
   uuidPattern.test(record.legalEntityId) &&
@@ -100,41 +92,42 @@ export const classifyActiveLegalEntities = (
     ),
   );
 
-export const classifySelectedLegalEntity = (
+export const classifySelectedLegalEntity = Effect.fn(
+  'LegalEntityContext.classifySelectedLegalEntity',
+)(function* classifySelectedLegalEntityEffect(
   records: readonly LegalEntityContextRecord[],
   tenantId: string,
   legalEntityId: string,
-): Effect.Effect<
+): Effect.fn.Return<
   SafeLegalEntity,
   Exclude<LegalEntityContextError, LegalEntityContextUnavailableError>
-> =>
-  Effect.gen(function* classifySelectedLegalEntityEffect() {
-    const validated = yield* validateRecords(records, tenantId);
-    if (!uuidPattern.test(legalEntityId)) {
-      return yield* new LegalEntityContextInvalidError();
-    }
+> {
+  const validated = yield* validateRecords(records, tenantId);
+  if (!uuidPattern.test(legalEntityId)) {
+    return yield* new LegalEntityContextInvalidError();
+  }
 
-    const matching = validated.filter((record) => record.legalEntityId === legalEntityId);
-    if (matching.length === 0) {
-      return yield* new LegalEntityContextMissingError();
-    }
-    if (matching.length !== 1) {
-      return yield* new LegalEntityContextAmbiguousError();
-    }
+  const matching = validated.filter((record) => record.legalEntityId === legalEntityId);
+  if (matching.length === 0) {
+    return yield* new LegalEntityContextMissingError();
+  }
+  if (matching.length !== 1) {
+    return yield* new LegalEntityContextAmbiguousError();
+  }
 
-    const [selected] = matching;
-    if (selected === undefined) {
-      return yield* new LegalEntityContextMissingError();
-    }
-    if (selected.status !== 'active') {
-      return yield* new LegalEntityContextInactiveError();
-    }
+  const [selected] = matching;
+  if (selected === undefined) {
+    return yield* new LegalEntityContextMissingError();
+  }
+  if (selected.status !== 'active') {
+    return yield* new LegalEntityContextInactiveError();
+  }
 
-    return {
-      legalEntityId: selected.legalEntityId,
-      legalName: selected.legalName,
-    };
-  });
+  return {
+    legalEntityId: selected.legalEntityId,
+    legalName: selected.legalName,
+  };
+});
 
 export interface LegalEntityContextService {
   readonly listActiveForTenant: (
@@ -151,47 +144,97 @@ export class LegalEntityContext extends Context.Service<
   LegalEntityContextService
 >()('@app/core-runtime/auth/legal-entity-context/LegalEntityContext') {}
 
-export interface LegalEntityContextRepositoryService {
-  readonly load: (
-    tenantId: string,
-    legalEntityId?: string,
-  ) => Promise<readonly LegalEntityContextRecord[]>;
+type LegalEntityContextRecordPromise = PromiseLike<readonly LegalEntityContextRecord[]>;
+type LegalEntityContextRecordLoadResult =
+  | Effect.Effect<readonly LegalEntityContextRecord[], LegalEntityContextUnavailableError>
+  | LegalEntityContextRecordPromise;
+
+interface LegalEntityContextRecordReader<Result extends LegalEntityContextRecordLoadResult> {
+  readonly load: (tenantId: string, legalEntityId?: string) => Result;
 }
 
-const legalEntityContextRepositoryFromDatabase = (
-  database: (typeof CoreDatabase)['Service'],
-): LegalEntityContextRepositoryService => ({
+export type LegalEntityContextRepositoryService = LegalEntityContextRecordReader<
+  Promise<readonly LegalEntityContextRecord[]>
+>;
+
+const attachCause = <Failure extends object, FailureCause>(
+  failure: Failure,
+  cause?: FailureCause,
+): Failure =>
+  cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
+
+const unavailable = <FailureCause>(cause?: FailureCause): LegalEntityContextUnavailableError =>
+  attachCause(
+    new LegalEntityContextUnavailableError({
+      reason: 'Unable to resolve the legal-entity context',
+    }),
+    cause,
+  );
+
+const DATABASE_OPERATION_TIMEOUT = Duration.seconds(30);
+
+const promiseLoad = (
+  loaded: LegalEntityContextRecordPromise,
+): Effect.Effect<readonly LegalEntityContextRecord[], LegalEntityContextUnavailableError> =>
+  Effect.tryPromise({
+    catch: unavailable,
+    try: () => loaded,
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: DATABASE_OPERATION_TIMEOUT,
+      orElse: () => Effect.fail(unavailable()),
+    }),
+  );
+
+const normalizeLoadResult = (
+  loaded: LegalEntityContextRecordLoadResult,
+): Effect.Effect<readonly LegalEntityContextRecord[], LegalEntityContextUnavailableError> =>
+  Effect.isEffect(loaded) ? loaded : promiseLoad(loaded);
+
+const legalEntityContextRepositoryFromDatabase = (database: {
+  readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
+}): LegalEntityContextRecordReader<
+  Effect.Effect<readonly LegalEntityContextRecord[], LegalEntityContextUnavailableError>
+> => ({
   load: (tenantId, legalEntityId) =>
-    database.executor
-      .select({
-        legalEntityId: legalEntities.legalEntityId,
-        legalName: legalEntities.legalName,
-        status: legalEntities.status,
-        tenantId: legalEntities.tenantId,
-      })
-      .from(legalEntities)
-      .where(
-        and(
-          eq(legalEntities.tenantId, tenantId),
-          ...(legalEntityId === undefined ? [] : [eq(legalEntities.legalEntityId, legalEntityId)]),
-        ),
-      ),
+    Effect.tryPromise({
+      catch: unavailable,
+      try: () =>
+        database.executor
+          .select({
+            legalEntityId: legalEntities.legalEntityId,
+            legalName: legalEntities.legalName,
+            status: legalEntities.status,
+            tenantId: legalEntities.tenantId,
+          })
+          .from(legalEntities)
+          .where(
+            and(
+              eq(legalEntities.tenantId, tenantId),
+              ...(legalEntityId === undefined
+                ? []
+                : [eq(legalEntities.legalEntityId, legalEntityId)]),
+            ),
+          ),
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: DATABASE_OPERATION_TIMEOUT,
+        orElse: () => Effect.fail(unavailable()),
+      }),
+    ),
 });
 
-export const legalEntityContextFromRepository = (
-  repository: LegalEntityContextRepositoryService,
+export const legalEntityContextFromRepository = <Result extends LegalEntityContextRecordLoadResult>(
+  repository: LegalEntityContextRecordReader<Result>,
 ): LegalEntityContextService => {
   const loadRecords = (
     tenantId: string,
     legalEntityId?: string,
   ): Effect.Effect<readonly LegalEntityContextRecord[], LegalEntityContextUnavailableError> =>
-    Effect.tryPromise({
-      catch: () =>
-        new LegalEntityContextUnavailableError({
-          reason: 'Unable to resolve the legal-entity context',
-        }),
-      try: async () => await repository.load(tenantId, legalEntityId),
-    });
+    Effect.try({
+      catch: unavailable,
+      try: () => repository.load(tenantId, legalEntityId),
+    }).pipe(Effect.flatMap(normalizeLoadResult));
 
   return {
     listActiveForTenant: (tenantId) =>
@@ -205,9 +248,9 @@ export const legalEntityContextFromRepository = (
   };
 };
 
-export const makeLegalEntityContext = (
-  database: (typeof CoreDatabase)['Service'],
-): LegalEntityContextService =>
+export const makeLegalEntityContext = (database: {
+  readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
+}): LegalEntityContextService =>
   legalEntityContextFromRepository(legalEntityContextRepositoryFromDatabase(database));
 
 export const LegalEntityContextLive = Layer.effect(

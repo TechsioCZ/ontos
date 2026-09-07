@@ -1,8 +1,7 @@
-/* eslint-disable unicorn/no-await-expression-member -- Assertions read the exact Effect result inline. */
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
-// @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off
 import test from 'node:test';
-import { Effect } from 'effect';
+import { Effect, flow } from 'effect';
 import {
   classifyActiveLegalEntities,
   classifySelectedLegalEntity,
@@ -14,6 +13,12 @@ import type {
 } from '../../src/auth/legal-entity-context.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
+const effectTest = <Value, Failure>(name: string, effect: Effect.Effect<Value, Failure>): void => {
+  test(
+    name,
+    flow(() => Effect.asVoid(effect), runEffectTestPromise),
+  );
+};
 const activeRecord: LegalEntityContextRecord = {
   legalEntityId: '20000000-0000-4000-8000-000000000001',
   legalName: 'Zeta s.r.o.',
@@ -21,18 +26,23 @@ const activeRecord: LegalEntityContextRecord = {
   tenantId,
 };
 
-const failureTag = async (
-  effect: Effect.Effect<unknown, LegalEntityContextError>,
-): Promise<string> => (await Effect.runPromise(Effect.flip(effect)))._tag;
+const failureTag = <Value>(effect: Effect.Effect<Value, LegalEntityContextError>) =>
+  effect.pipe(
+    Effect.match({
+      onFailure: (error) => error._tag,
+      onSuccess: () => assert.fail('Expected legal-entity context classification to fail'),
+    }),
+  );
 
-void test('lists zero, one, and many active legal entities in deterministic safe order', async () => {
-  assert.deepEqual(await Effect.runPromise(classifyActiveLegalEntities([], tenantId)), []);
-  assert.deepEqual(await Effect.runPromise(classifyActiveLegalEntities([activeRecord], tenantId)), [
-    { legalEntityId: activeRecord.legalEntityId, legalName: 'Zeta s.r.o.' },
-  ]);
-  assert.deepEqual(
-    await Effect.runPromise(
-      classifyActiveLegalEntities(
+effectTest(
+  'lists zero, one, and many active legal entities in deterministic safe order',
+  Effect.gen(function* listsActiveLegalEntities() {
+    assert.deepEqual(yield* classifyActiveLegalEntities([], tenantId), []);
+    assert.deepEqual(yield* classifyActiveLegalEntities([activeRecord], tenantId), [
+      { legalEntityId: activeRecord.legalEntityId, legalName: 'Zeta s.r.o.' },
+    ]);
+    assert.deepEqual(
+      yield* classifyActiveLegalEntities(
         [
           activeRecord,
           {
@@ -60,73 +70,84 @@ void test('lists zero, one, and many active legal entities in deterministic safe
         ],
         tenantId,
       ),
-    ),
-    [
-      {
-        legalEntityId: '20000000-0000-4000-8000-000000000002',
-        legalName: 'Alpha s.r.o.',
-      },
-      {
-        legalEntityId: '20000000-0000-4000-8000-000000000003',
-        legalName: 'Alpha s.r.o.',
-      },
-      { legalEntityId: activeRecord.legalEntityId, legalName: 'Zeta s.r.o.' },
-    ],
-  );
-});
+      [
+        {
+          legalEntityId: '20000000-0000-4000-8000-000000000002',
+          legalName: 'Alpha s.r.o.',
+        },
+        {
+          legalEntityId: '20000000-0000-4000-8000-000000000003',
+          legalName: 'Alpha s.r.o.',
+        },
+        { legalEntityId: activeRecord.legalEntityId, legalName: 'Zeta s.r.o.' },
+      ],
+    );
+  }),
+);
 
-void test('validates exactly one active selection and rejects missing or inactive selections', async () => {
-  assert.deepEqual(
-    await Effect.runPromise(
-      classifySelectedLegalEntity([activeRecord], tenantId, activeRecord.legalEntityId),
-    ),
-    { legalEntityId: activeRecord.legalEntityId, legalName: activeRecord.legalName },
-  );
-  assert.equal(
-    await failureTag(
-      classifySelectedLegalEntity([activeRecord], tenantId, '20000000-0000-4000-8000-000000000099'),
-    ),
-    'LegalEntityContextMissingError',
-  );
-  assert.equal(
-    await failureTag(
-      classifySelectedLegalEntity(
-        [{ ...activeRecord, status: 'suspended' }],
-        tenantId,
-        activeRecord.legalEntityId,
+effectTest(
+  'validates exactly one active selection and rejects missing or inactive selections',
+  Effect.gen(function* validatesLegalEntitySelection() {
+    assert.deepEqual(
+      yield* classifySelectedLegalEntity([activeRecord], tenantId, activeRecord.legalEntityId),
+      { legalEntityId: activeRecord.legalEntityId, legalName: activeRecord.legalName },
+    );
+    assert.equal(
+      yield* failureTag(
+        classifySelectedLegalEntity(
+          [activeRecord],
+          tenantId,
+          '20000000-0000-4000-8000-000000000099',
+        ),
       ),
-    ),
-    'LegalEntityContextInactiveError',
-  );
-});
-
-void test('rejects cross-tenant, malformed, and duplicate records', async () => {
-  assert.equal(
-    await failureTag(
-      classifyActiveLegalEntities(
-        [{ ...activeRecord, tenantId: '10000000-0000-4000-8000-000000000002' }],
-        tenantId,
+      'LegalEntityContextMissingError',
+    );
+    assert.equal(
+      yield* failureTag(
+        classifySelectedLegalEntity(
+          [{ ...activeRecord, status: 'suspended' }],
+          tenantId,
+          activeRecord.legalEntityId,
+        ),
       ),
-    ),
-    'LegalEntityContextInvalidError',
-  );
-  assert.equal(
-    await failureTag(classifyActiveLegalEntities([{ ...activeRecord, legalName: '' }], tenantId)),
-    'LegalEntityContextInvalidError',
-  );
-  assert.equal(
-    await failureTag(classifyActiveLegalEntities([activeRecord, { ...activeRecord }], tenantId)),
-    'LegalEntityContextAmbiguousError',
-  );
-});
+      'LegalEntityContextInactiveError',
+    );
+  }),
+);
 
-void test('types database failures as sanitized legal-entity context unavailability', async () => {
-  const context = legalEntityContextFromRepository({
-    load: async () => {
-      throw new Error('secret database diagnostic');
-    },
-  });
-  const error = await Effect.runPromise(Effect.flip(context.listActiveForTenant(tenantId)));
-  assert.equal(error._tag, 'LegalEntityContextUnavailableError');
-  assert.doesNotMatch(error.reason, /secret database diagnostic/u);
-});
+effectTest(
+  'rejects cross-tenant, malformed, and duplicate records',
+  Effect.gen(function* rejectsInvalidLegalEntityRecords() {
+    assert.equal(
+      yield* failureTag(
+        classifyActiveLegalEntities(
+          [{ ...activeRecord, tenantId: '10000000-0000-4000-8000-000000000002' }],
+          tenantId,
+        ),
+      ),
+      'LegalEntityContextInvalidError',
+    );
+    assert.equal(
+      yield* failureTag(
+        classifyActiveLegalEntities([{ ...activeRecord, legalName: '' }], tenantId),
+      ),
+      'LegalEntityContextInvalidError',
+    );
+    assert.equal(
+      yield* failureTag(classifyActiveLegalEntities([activeRecord, { ...activeRecord }], tenantId)),
+      'LegalEntityContextAmbiguousError',
+    );
+  }),
+);
+
+effectTest(
+  'types database failures as sanitized legal-entity context unavailability',
+  Effect.gen(function* sanitizesLegalEntityDatabaseFailure() {
+    const context = legalEntityContextFromRepository({
+      load: flow(() => Effect.die(new Error('secret database diagnostic')), runEffectTestPromise),
+    });
+    const error = yield* Effect.flip(context.listActiveForTenant(tenantId));
+    assert.equal(error._tag, 'LegalEntityContextUnavailableError');
+    assert.doesNotMatch(error.reason, /secret database diagnostic/u);
+  }),
+);

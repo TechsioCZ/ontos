@@ -1,14 +1,12 @@
-import { Predicate } from 'effect';
-import type { Effect, Schema } from 'effect';
+import { Predicate, Schema } from 'effect';
+import type { Effect } from 'effect';
 import { OutboxWorkerDescriptorError } from './errors.ts';
 import type { TenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
 
 const outboxWorkerRegistration: unique symbol = Symbol(
   '@app/core-runtime/outbox/worker-registration',
 );
-const outboxWorkerHandler: unique symbol = Symbol(
-  '@app/core-runtime/outbox/worker-registration/handler',
-);
+const verifiedOutboxWorkerHandlerContext = '__verifiedOutboxWorkerHandlerContext' as const;
 
 export interface OutboxWorkerRetryPolicy {
   readonly initialBackoffMs: number;
@@ -17,10 +15,11 @@ export interface OutboxWorkerRetryPolicy {
   readonly multiplier: number;
 }
 
-export interface OutboxWorkerHandlerContext {
+export interface OutboxWorkerHandlerContext extends Readonly<
+  Partial<Record<'correlationId', string>>
+> {
   readonly attemptNumber: number;
   readonly claimId: string;
-  readonly correlationId?: string;
   readonly deliveryId: string;
   readonly domainEventId: string;
   readonly messageId: string;
@@ -31,20 +30,25 @@ export interface OutboxWorkerHandlerContext {
   readonly workerKey: string;
 }
 
-const verifiedHandlerContexts = new WeakSet<OutboxWorkerHandlerContext>();
+const VerifiedOutboxWorkerHandlerContextSchema = Schema.Struct({
+  [verifiedOutboxWorkerHandlerContext]: Schema.Literal(true),
+});
 
 /** Core-private construction seam: caller-created context objects are not trusted worker claims. */
 export const attestOutboxWorkerHandlerContext = (
   context: OutboxWorkerHandlerContext,
 ): OutboxWorkerHandlerContext => {
-  const verified = Object.freeze({ ...context });
-  verifiedHandlerContexts.add(verified);
-  return verified;
+  const verified = { ...context };
+  Object.defineProperty(verified, verifiedOutboxWorkerHandlerContext, {
+    enumerable: false,
+    value: true,
+  });
+  return Object.freeze(verified);
 };
 
 export const isVerifiedOutboxWorkerHandlerContext = (
   context: OutboxWorkerHandlerContext,
-): boolean => verifiedHandlerContexts.has(context);
+): boolean => Schema.is(VerifiedOutboxWorkerHandlerContextSchema)(context);
 
 export interface OutboxWorkerDescriptor<
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
@@ -73,18 +77,11 @@ export type OutboxWorkerHandler<Payload, Error, Requirements = never> = (
   context: OutboxWorkerHandlerContext,
 ) => Effect.Effect<void, Error, Requirements>;
 
-declare class OutboxWorkerHandlerVariance<Payload, Error, Requirements> {
-  invoke(
-    payload: Payload,
-    context: OutboxWorkerHandlerContext,
-  ): Effect.Effect<void, Error, Requirements>;
-}
-
-type BivariantOutboxWorkerHandler<Payload, Error, Requirements> = OutboxWorkerHandlerVariance<
+type BivariantOutboxWorkerHandler<Payload, Error, Requirements> = OutboxWorkerHandler<
   Payload,
   Error,
   Requirements
->['invoke'];
+>;
 
 export interface OutboxWorkerRegistration<
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
@@ -96,13 +93,48 @@ export interface OutboxWorkerRegistration<
   readonly _handlerError?: HandlerError;
   readonly _handlerRequirements?: HandlerRequirements;
   readonly descriptor: Readonly<OutboxWorkerDescriptor<PayloadSchema, Consumer, Producer>>;
-  readonly [outboxWorkerHandler]: BivariantOutboxWorkerHandler<
+  readonly [outboxWorkerRegistration]: true;
+}
+
+class OutboxWorkerRegistrationValue<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  Consumer extends string,
+  Producer extends string,
+  HandlerError,
+  HandlerRequirements,
+> implements OutboxWorkerRegistration<
+  PayloadSchema,
+  Consumer,
+  Producer,
+  HandlerError,
+  HandlerRequirements
+> {
+  readonly [outboxWorkerRegistration] = true;
+  readonly #handler: BivariantOutboxWorkerHandler<
     PayloadSchema['Type'],
     HandlerError,
     HandlerRequirements
   >;
-  readonly [outboxWorkerRegistration]: true;
+  readonly descriptor: Readonly<OutboxWorkerDescriptor<PayloadSchema, Consumer, Producer>>;
+
+  constructor(
+    descriptor: Readonly<OutboxWorkerDescriptor<PayloadSchema, Consumer, Producer>>,
+    handler: BivariantOutboxWorkerHandler<PayloadSchema['Type'], HandlerError, HandlerRequirements>,
+  ) {
+    this.descriptor = descriptor;
+    this.#handler = handler;
+  }
+
+  resolveHandler(): BivariantOutboxWorkerHandler<
+    PayloadSchema['Type'],
+    HandlerError,
+    HandlerRequirements
+  > {
+    return this.#handler;
+  }
 }
+
+const isOutboxWorkerRegistrationValue = Schema.is(Schema.instanceOf(OutboxWorkerRegistrationValue));
 
 export type AnyOutboxWorkerRegistration = OutboxWorkerRegistration<
   Schema.ConstraintDecoder<unknown>,
@@ -242,16 +274,15 @@ export const defineOutboxWorker = <
     throw descriptorError('handler must be an Effect function');
   }
 
-  const registration = Object.freeze({
-    descriptor: Object.freeze({
+  const registration = new OutboxWorkerRegistrationValue(
+    Object.freeze({
       ...descriptor,
       entrypoint: descriptor.entrypoint,
       retryPolicy: Object.freeze({ ...descriptor.retryPolicy }),
     }),
-    [outboxWorkerHandler]: handler,
-    [outboxWorkerRegistration]: true as const,
-  });
-  return registration;
+    handler,
+  );
+  return Object.freeze(registration);
 };
 
 export const validateOutboxWorkerRegistrations = <Registration extends AnyOutboxWorkerRegistration>(
@@ -259,7 +290,11 @@ export const validateOutboxWorkerRegistrations = <Registration extends AnyOutbox
 ): readonly Registration[] => {
   const workerKeys = new Set<string>();
   for (const registration of registrations) {
-    if (!registration[outboxWorkerRegistration] || !Object.isFrozen(registration)) {
+    if (
+      !isOutboxWorkerRegistrationValue(registration) ||
+      !registration[outboxWorkerRegistration] ||
+      !Object.isFrozen(registration)
+    ) {
       throw descriptorError('every Outbox Worker must be created by defineOutboxWorker');
     }
     const { workerKey } = registration.descriptor;
@@ -324,7 +359,10 @@ export function getOutboxWorkerHandler<Registration extends AnyOutboxWorkerRegis
   OutboxWorkerRequirements<Registration>
 >;
 export function getOutboxWorkerHandler(registration: AnyOutboxWorkerRegistration) {
-  return registration[outboxWorkerHandler];
+  if (!isOutboxWorkerRegistrationValue(registration)) {
+    throw descriptorError('every Outbox Worker must be created by defineOutboxWorker');
+  }
+  return registration.resolveHandler();
 }
 
 export const retryBackoffMs = (

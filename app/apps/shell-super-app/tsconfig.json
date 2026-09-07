@@ -30,9 +30,6 @@
       "path": "../../packages/shared-design-tokens"
     },
     {
-      "path": "../../verticals/contacts"
-    },
-    {
       "path": "../../verticals/party-registry"
     }
   ]

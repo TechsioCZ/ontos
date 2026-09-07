@@ -1,3 +1,5 @@
+import { Result, Schema } from 'effect';
+
 const digitWords = [
   'zero',
   'one',
@@ -11,13 +13,23 @@ const digitWords = [
   'nine',
 ] as const;
 
+export class TailwindPrefixError extends Schema.TaggedError<TailwindPrefixError>()(
+  'TailwindPrefixError',
+  { message: Schema.String },
+) {}
+
 export const tailwindPrefixForNamespace = (namespace: string): string => {
   const prefix = namespace
     .toLowerCase()
     .replaceAll(/[^a-z0-9]/gu, '')
     .replaceAll(/[0-9]/gu, (digit) => digitWords[Number(digit)] ?? '');
-  if (prefix.length === 0) {
-    throw new Error('vertical namespace does not produce a valid Tailwind federation prefix');
-  }
-  return prefix;
+  return Result.getOrThrow(
+    prefix.length === 0
+      ? Result.fail(
+          new TailwindPrefixError({
+            message: 'vertical namespace does not produce a valid Tailwind federation prefix',
+          }),
+        )
+      : Result.succeed(prefix),
+  );
 };

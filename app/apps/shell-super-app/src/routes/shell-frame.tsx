@@ -1,4 +1,3 @@
-/* eslint-disable complexity, no-nested-ternary, unicorn/no-nested-ternary -- The responsive Shell layout derives accessible selector and navigation states from closed props. */
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -60,6 +59,42 @@ export interface AuthenticatedDashboardLayoutProps {
   readonly unavailableDeployments: readonly ShellUnavailableDeployment[];
 }
 
+const selectorStatus = (failed: boolean, unavailable: boolean): 'default' | 'error' | 'warning' => {
+  if (failed) {
+    return 'error';
+  }
+  return unavailable ? 'warning' : 'default';
+};
+
+const selectorStatusText = (
+  pending: boolean,
+  failed: boolean,
+  unavailable: boolean,
+  messages: {
+    readonly failed: string;
+    readonly pending: string;
+    readonly unavailable: string;
+  },
+): string | null => {
+  if (pending) {
+    return messages.pending;
+  }
+  if (failed) {
+    return messages.failed;
+  }
+  return unavailable ? messages.unavailable : null;
+};
+
+const tenantSelectorDisabled = (
+  tenantState: AuthenticatedDashboardLayoutProps['tenantState'],
+  tenantSwitchPending: boolean,
+  tenantItems: readonly { readonly value: string }[],
+  currentTenantId: string,
+): boolean =>
+  tenantState === 'unavailable' ||
+  tenantSwitchPending ||
+  !tenantItems.some((item) => item.value !== currentTenantId);
+
 export const AuthenticatedDashboardLayout = ({
   children,
   currentLegalEntityId,
@@ -104,36 +139,36 @@ export const AuthenticatedDashboardLayout = ({
     label: legalName,
     value: legalEntityId,
   }));
-  let tenantStatus: 'default' | 'error' | 'warning' = 'default';
-  if (tenantSwitchFailed) {
-    tenantStatus = 'error';
-  } else if (tenantState === 'unavailable') {
-    tenantStatus = 'warning';
-  }
-  let tenantStatusText: string | null = null;
-  if (tenantSwitchPending) {
-    tenantStatusText = t('shell.dashboard.tenant.pending');
-  } else if (tenantSwitchFailed) {
-    tenantStatusText = t('shell.dashboard.tenant.failed');
-  } else if (tenantState === 'unavailable') {
-    tenantStatusText = t('shell.dashboard.tenant.unavailable');
-  }
-  const tenantSelectDisabled =
-    tenantState === 'unavailable' ||
-    tenantSwitchPending ||
-    !tenantItems.some((item) => item.value !== currentTenantId);
-  const legalEntityStatus = legalEntitySwitchFailed
-    ? 'error'
-    : legalEntityState === 'unavailable'
-      ? 'warning'
-      : 'default';
-  const legalEntityStatusText = legalEntitySwitchPending
-    ? t('shell.dashboard.legalEntity.pending')
-    : legalEntitySwitchFailed
-      ? t('shell.dashboard.legalEntity.failed')
-      : legalEntityState === 'unavailable'
-        ? t('shell.dashboard.legalEntity.unavailable')
-        : null;
+  const tenantUnavailable = tenantState === 'unavailable';
+  const tenantStatus = selectorStatus(tenantSwitchFailed, tenantUnavailable);
+  const tenantStatusText = selectorStatusText(
+    tenantSwitchPending,
+    tenantSwitchFailed,
+    tenantUnavailable,
+    {
+      failed: t('shell.dashboard.tenant.failed'),
+      pending: t('shell.dashboard.tenant.pending'),
+      unavailable: t('shell.dashboard.tenant.unavailable'),
+    },
+  );
+  const tenantSelectDisabled = tenantSelectorDisabled(
+    tenantState,
+    tenantSwitchPending,
+    tenantItems,
+    currentTenantId,
+  );
+  const legalEntityUnavailable = legalEntityState === 'unavailable';
+  const legalEntityStatus = selectorStatus(legalEntitySwitchFailed, legalEntityUnavailable);
+  const legalEntityStatusText = selectorStatusText(
+    legalEntitySwitchPending,
+    legalEntitySwitchFailed,
+    legalEntityUnavailable,
+    {
+      failed: t('shell.dashboard.legalEntity.failed'),
+      pending: t('shell.dashboard.legalEntity.pending'),
+      unavailable: t('shell.dashboard.legalEntity.unavailable'),
+    },
+  );
 
   useEffect(() => {
     if (tenantSwitchFailed) {

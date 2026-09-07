@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { DateTime } from 'effect';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import {
   assertCanonicalWriteTarget,
@@ -15,7 +16,7 @@ const party = (resourceId: string, tenant = tenantId): PartyRef => ({
 });
 const alias = (aliasPartyId: string, survivorPartyId: string, tenant = tenantId) => ({
   aliasPartyRef: party(aliasPartyId, tenant),
-  createdAt: '2026-01-01T00:00:00.000Z',
+  createdAt: DateTime.makeUnsafe('2026-01-01T00:00:00.000Z'),
   mergeRef: {
     moduleId: 'party.registry' as const,
     resourceId: `merge-${aliasPartyId}`,

@@ -1,3 +1,4 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect } from 'effect';
@@ -24,7 +25,7 @@ test('Counterparty provider requires trusted Legal Entity context and candidate 
 });
 
 test('Party provider sends only trusted tenant scope to the Core projection gateway', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* trustedPartyScope() {
       const calls: unknown[] = [];
       const gateway: PartySearchProjectionGatewayService = {
@@ -46,7 +47,7 @@ test('Party provider sends only trusted tenant scope to the Core projection gate
   ));
 
 test('Counterparty provider derives Legal Entity from trusted scope and never from payload', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* trustedCounterpartyScope() {
       const calls: unknown[] = [];
       const gateway: PartySearchProjectionGatewayService = {

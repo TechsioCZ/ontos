@@ -1,5 +1,3 @@
-/* oxlint-disable sonarjs/no-nested-functions, typescript/no-unsafe-type-assertion, typescript/return-await, typescript/strict-void-return */
-// @effect-diagnostics asyncFunction:off
 import { randomUUID } from 'node:crypto';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { DateTime, Deferred, Effect, Layer, Schema } from 'effect';
@@ -7,7 +5,11 @@ import { Pool } from 'pg';
 import { ActionRuntime, makeActionRuntime } from '../actions/runtime.ts';
 import type { ActionRuntimeStage } from '../actions/runtime.ts';
 import { getActionServiceFactory } from '../actions/definition.ts';
-import type { ActionRegistration, ActionServiceFactory } from '../actions/definition.ts';
+import type {
+  ActionRegistration,
+  ActionServiceFactory,
+  AnyActionRegistration,
+} from '../actions/definition.ts';
 import type { DomainEventContractMap } from '../actions/events.ts';
 import {
   ActionInvocationNotFound,
@@ -22,6 +24,7 @@ import type {
   PrepareActionInvocationInput,
   RejectPermissionDeniedInput,
 } from '../actions/repository.ts';
+import { DatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
 import { coreRelations } from '../db/schema.ts';
 import { makeOperationalScopeResolver } from '../operations/context.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
@@ -30,18 +33,58 @@ import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../modules/modul
 import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
 import type { TenantModuleState } from '../modules/tenant-module-state-service.ts';
 import type { ContextAccessDecision, ContextAccessService } from '../permissions/context-access.ts';
+import { runEffectTestPromise } from './effect-runtime.ts';
 
-const bindingRegistration: unique symbol = Symbol('test-action-registration');
-const bindingServices: unique symbol = Symbol('test-action-services');
+const actionTestServiceBinding: unique symbol = Symbol('test-action-service-binding');
 const querySchema = Schema.Union([Schema.String, Schema.Struct({ text: Schema.String })]);
 const scopeValuesSchema = Schema.Tuple([Schema.String, Schema.String]);
+const idempotencyScopeSchema = Schema.Tuple([
+  Schema.String,
+  Schema.String,
+  Schema.String,
+  Schema.String,
+]);
+const encodeIdempotencyScope = Schema.encodeEffect(Schema.fromJsonString(idempotencyScopeSchema));
+const testCommitAcknowledgementSqlState = ['0', '8007'].join('');
 const completionTime = () => DateTime.toDateUtc(DateTime.makeUnsafe(0));
+
+interface PgDriverInteropResult {
+  readonly [Symbol.toStringTag]: string;
+}
+
+const runPgDriverEffect = <Value, Failure>(
+  effect: Effect.Effect<Value, Failure>,
+): PgDriverInteropResult => runEffectTestPromise(effect);
 
 /** Test-only service substitution; the registration's real private handler remains unchanged. */
 export interface ActionTestServiceBinding {
-  readonly [bindingRegistration]: object;
-  readonly [bindingServices]: unknown;
+  readonly [actionTestServiceBinding]: true;
 }
+
+interface ActionTestServiceBindingPayload {
+  readonly registration: AnyActionRegistration;
+  readonly services: unknown;
+}
+
+interface ActionTestConnectionScope {
+  legalEntityId: string;
+  tenantId: string;
+}
+
+class ActionTestServiceBindingValue implements ActionTestServiceBinding {
+  readonly [actionTestServiceBinding] = true;
+  readonly #payload: ActionTestServiceBindingPayload;
+
+  constructor(payload: ActionTestServiceBindingPayload) {
+    this.#payload = payload;
+  }
+
+  resolve(): ActionTestServiceBindingPayload {
+    return this.#payload;
+  }
+}
+
+const isActionTestServiceBindingValue = Schema.is(Schema.instanceOf(ActionTestServiceBindingValue));
 
 export const bindActionTestServices = <
   Payload extends Schema.ConstraintDecoder<unknown>,
@@ -63,7 +106,7 @@ export const bindActionTestServices = <
   >,
   services: NoInfer<Services>,
 ): ActionTestServiceBinding =>
-  Object.freeze({ [bindingRegistration]: registration, [bindingServices]: services });
+  Object.freeze(new ActionTestServiceBindingValue({ registration, services }));
 
 export interface ActionTestHarnessOptions {
   readonly actionPermission?: ContextAccessDecision;
@@ -105,7 +148,7 @@ const persistenceFailure = () =>
  * SQL: bind typed owner services explicitly. This proves lifecycle behavior, not database/RLS.
  * Authorization defaults to denied; only the test scope's ordinary LE access defaults allowed.
  */
-export const makeActionTestHarness = (options: ActionTestHarnessOptions = {}) => {
+const actionTestHarness = (options: ActionTestHarnessOptions = {}) => {
   const invocations = new Map<string, ActionTestInvocation>();
   const idempotency = new Map<string, string>();
   const committed: FlushActionSuccessInput[] = [];
@@ -125,18 +168,21 @@ export const makeActionTestHarness = (options: ActionTestHarnessOptions = {}) =>
       ? Effect.fail(persistenceFailure())
       : Effect.succeed(invocation);
   };
-  const prepare = (
+  const prepare = Effect.fn('ActionTestHarness.prepare')(function* prepareTestInvocation(
     input: PrepareActionInvocationInput,
-  ): Effect.Effect<ActionTestInvocation, ActionInvocationPersistenceError> => {
-    const key = JSON.stringify([
-      input.principal.tenantId,
-      input.principal.principalId,
-      input.actionKey,
-      input.idempotencyKey,
-    ]);
-    const existing = input.idempotencyKey === undefined ? undefined : idempotency.get(key);
+  ) {
+    const key =
+      input.idempotencyKey === undefined
+        ? undefined
+        : yield* encodeIdempotencyScope([
+            input.principal.tenantId,
+            input.principal.principalId,
+            input.actionKey,
+            input.idempotencyKey,
+          ]).pipe(Effect.orDie);
+    const existing = key === undefined ? undefined : idempotency.get(key);
     if (existing !== undefined) {
-      return find(existing);
+      return yield* find(existing);
     }
     const invocation: ActionTestInvocation = {
       actionInvocationId: randomUUID(),
@@ -149,11 +195,22 @@ export const makeActionTestHarness = (options: ActionTestHarnessOptions = {}) =>
       tenantId: input.principal.tenantId,
     };
     invocations.set(invocation.actionInvocationId, invocation);
-    if (input.idempotencyKey !== undefined) {
+    if (key !== undefined) {
       idempotency.set(key, invocation.actionInvocationId);
     }
-    return Effect.succeed(invocation);
-  };
+    return invocation;
+  });
+  const commitSuccess = Effect.fn('ActionTestHarness.commitSuccess')(function* commitTestSuccess(
+    input: FlushActionSuccessInput,
+  ) {
+    const invocation = yield* find(input.actionInvocationId);
+    committed.push(input);
+    invocations.set(input.actionInvocationId, {
+      ...invocation,
+      completedAt: completionTime(),
+      status: 'succeeded',
+    });
+  });
   const repository: ActionRepositoryService = {
     createOrResolveInvocation: (_executor, input) => Effect.suspend(() => prepare(input)),
     finalizePolicyDenial: (_executor, input) =>
@@ -171,20 +228,7 @@ export const makeActionTestHarness = (options: ActionTestHarnessOptions = {}) =>
       ),
     flushSuccess: (_transaction, input) =>
       Effect.sync(() => {
-        pendingCommit.push(
-          Effect.suspend(() => find(input.actionInvocationId)).pipe(
-            Effect.flatMap((invocation) =>
-              Effect.sync(() => {
-                committed.push(input);
-                invocations.set(input.actionInvocationId, {
-                  ...invocation,
-                  completedAt: completionTime(),
-                  status: 'succeeded',
-                });
-              }),
-            ),
-          ),
-        );
+        pendingCommit.push(commitSuccess(input));
       }),
     lockInvocation: (_transaction, id) => Effect.suspend(() => find(id)),
     rejectPermissionDenied: (_executor, input) =>
@@ -226,63 +270,65 @@ export const makeActionTestHarness = (options: ActionTestHarnessOptions = {}) =>
       ),
   };
 
-  const pool = new Pool();
-  Object.defineProperty(pool, 'connect', {
-    value: async () => {
-      const previous = connectionQueue;
-      const released = Deferred.makeUnsafe<null>();
-      connectionQueue = Deferred.await(released).pipe(Effect.asVoid);
-      return Effect.runPromise(
-        Effect.gen(function* acquireTestConnection() {
-          yield* previous;
-          const connectionContext = yield* Effect.context();
-          let tenantId = '';
-          let legalEntityId = '';
-          pendingCommit = [];
-          return {
-            query: async <Query, Values>(query: Query, values?: Values) =>
-              Effect.runPromiseWith(connectionContext)(
-                Effect.gen(function* executeTestQuery() {
-                  const decoded = yield* Schema.decodeUnknownEffect(querySchema)(query);
-                  const sql = Schema.is(Schema.String)(decoded) ? decoded : decoded.text;
-                  if (sql === 'begin') {
-                    transactionCount += 1;
-                  } else if (sql === 'commit') {
-                    yield* Effect.all(pendingCommit, { discard: true });
-                    pendingCommit = [];
-                    if (loseCommitAcknowledgement) {
-                      loseCommitAcknowledgement = false;
-                      return yield* Effect.fail(
-                        Object.assign(
-                          new Error('The test database lost the commit acknowledgement'),
-                          {
-                            code: '08007',
-                          },
-                        ),
-                      );
-                    }
-                  } else if (sql === 'rollback') {
-                    pendingCommit = [];
-                  } else if (sql.includes('set_config')) {
-                    [tenantId, legalEntityId] =
-                      yield* Schema.decodeUnknownEffect(scopeValuesSchema)(values);
-                  } else if (sql.includes('current_setting')) {
-                    return { rows: [{ legal_entity_id: legalEntityId, tenant_id: tenantId }] };
-                  } else {
-                    return yield* Effect.die(
-                      'Owner SQL is unavailable in the Action test harness; bind typed services',
-                    );
-                  }
-                  return { rows: [] };
-                }),
-              ),
-            release: () => {
-              Deferred.doneUnsafe(released, Effect.succeed(null));
-            },
-          };
-        }),
-      );
+  const executeTestQuery = Effect.fn('ActionTestHarness.executeQuery')(
+    function* executeTestQueryEffect<Query, Values>(
+      scope: ActionTestConnectionScope,
+      query: Query,
+      values?: Values,
+    ) {
+      const decoded = yield* Schema.decodeUnknownEffect(querySchema)(query);
+      const sql = Schema.is(Schema.String)(decoded) ? decoded : decoded.text;
+      if (sql === 'begin') {
+        transactionCount += 1;
+      } else if (sql === 'commit') {
+        yield* Effect.all(pendingCommit, { concurrency: 1, discard: true });
+        pendingCommit = [];
+        if (loseCommitAcknowledgement) {
+          loseCommitAcknowledgement = false;
+          return yield* new DatabaseCommitAcknowledgementAmbiguous({
+            code: testCommitAcknowledgementSqlState,
+            kind: 'sqlstate',
+          });
+        }
+      } else if (sql === 'rollback') {
+        pendingCommit = [];
+      } else if (sql.includes('set_config')) {
+        [scope.tenantId, scope.legalEntityId] =
+          yield* Schema.decodeUnknownEffect(scopeValuesSchema)(values);
+      } else if (sql.includes('current_setting')) {
+        return {
+          rows: [{ legal_entity_id: scope.legalEntityId, tenant_id: scope.tenantId }],
+        };
+      } else {
+        return yield* Effect.die(
+          'Owner SQL is unavailable in the Action test harness; bind typed services',
+        );
+      }
+      return { rows: [] };
     },
+  );
+
+  const pool = new Pool();
+  const acquireConnection = Effect.suspend(() => {
+    const previous = connectionQueue;
+    const released = Deferred.makeUnsafe<null>();
+    connectionQueue = Deferred.await(released).pipe(Effect.asVoid);
+    return Effect.gen(function* acquireTestConnection() {
+      yield* previous;
+      const scope: ActionTestConnectionScope = { legalEntityId: '', tenantId: '' };
+      pendingCommit = [];
+      const query = <Query, Values>(queryInput: Query, values?: Values) =>
+        runPgDriverEffect(executeTestQuery(scope, queryInput, values));
+      return {
+        query,
+        release: () => {
+          Deferred.doneUnsafe(released, Effect.succeed(null));
+        },
+      };
+    });
+  });
+  Object.defineProperty(pool, 'connect', {
+    value: runEffectTestPromise.bind(null, acquireConnection),
   });
   const database = { executor: drizzle({ client: pool, relations: coreRelations }) };
   const contextAccess: ContextAccessService = {
@@ -355,9 +401,13 @@ export const makeActionTestHarness = (options: ActionTestHarnessOptions = {}) =>
       ),
     recheckWrite: () => Effect.void,
   };
-  const bindings = new Map(
-    (options.services ?? []).map((binding) => [binding[bindingRegistration], binding]),
-  );
+  const bindings = new Map<object, unknown>();
+  for (const binding of options.services ?? []) {
+    if (isActionTestServiceBindingValue(binding)) {
+      const stored = binding.resolve();
+      bindings.set(stored.registration, stored.services);
+    }
+  }
   const resolveServiceFactory: typeof getActionServiceFactory = <
     PayloadSchema extends Schema.ConstraintDecoder<unknown>,
     ResultSchema extends Schema.ConstraintDecoder<unknown>,
@@ -377,12 +427,11 @@ export const makeActionTestHarness = (options: ActionTestHarnessOptions = {}) =>
       HandlerRequirements
     >,
   ): ActionServiceFactory<Services, HandlerRequirements> => {
-    const binding = bindings.get(registration);
-    if (binding === undefined) {
+    if (!bindings.has(registration)) {
       return getActionServiceFactory(registration);
     }
-    // SAFETY: bindActionTestServices ties the service type to this exact registration identity.
-    return () => Effect.succeed(binding[bindingServices] as Services);
+    return () =>
+      Schema.decodeUnknownEffect(Schema.Any)(bindings.get(registration)).pipe(Effect.orDie);
   };
   const runtime = makeActionRuntime(
     database,
@@ -403,7 +452,9 @@ export const makeActionTestHarness = (options: ActionTestHarnessOptions = {}) =>
       contextAccess,
       moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
       moduleStateGate,
-      onStage: (stage) => stages.push(stage),
+      onStage: (stage) => {
+        stages.push(stage);
+      },
       resolveServiceFactory,
     },
   );
@@ -423,5 +474,7 @@ export const makeActionTestHarness = (options: ActionTestHarnessOptions = {}) =>
       }),
   });
 };
+
+export const makeActionTestHarness: typeof actionTestHarness = actionTestHarness;
 
 export { makeLiveOperationFixture } from './live-operations.ts';

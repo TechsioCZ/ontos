@@ -1,5 +1,6 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
-// @effect-diagnostics asyncFunction:off
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import test from 'node:test';
 import { Effect } from 'effect';
 import { acquirePoolResource } from '../../src/db/client.ts';
@@ -16,7 +17,7 @@ void test('loads the root environment independently of the invocation directory'
 
   try {
     process.chdir('/');
-    const configuration = await Effect.runPromise(
+    const configuration = await runEffectTestPromise(
       loadDatabaseConfig({
         environment: {},
         envPath: rootExamplePath,
@@ -34,7 +35,7 @@ void test('loads the root environment independently of the invocation directory'
 });
 
 void test('parses valid local PostgreSQL connection settings', async () => {
-  const configuration = await Effect.runPromise(
+  const configuration = await runEffectTestPromise(
     parseDatabaseConfig({
       DATABASE_URL: 'postgresql://ontos:ontos@localhost:5433/ontos',
     }),
@@ -50,8 +51,8 @@ void test('parses valid local PostgreSQL connection settings', async () => {
 });
 
 void test('keeps missing and malformed configuration in the typed error channel', async () => {
-  const missing = await Effect.runPromise(Effect.flip(parseDatabaseConfig({})));
-  const malformed = await Effect.runPromise(
+  const missing = await runEffectTestPromise(Effect.flip(parseDatabaseConfig({})));
+  const malformed = await runEffectTestPromise(
     Effect.flip(
       parseDatabaseConfig({
         DATABASE_URL: 'https://localhost/not-postgres',
@@ -64,20 +65,20 @@ void test('keeps missing and malformed configuration in the typed error channel'
 });
 
 void test('requires distinct administrative and least-privilege runtime identities', async () => {
-  const valid = await Effect.runPromise(
+  const valid = await runEffectTestPromise(
     parseDatabaseConnectionPair({
       DATABASE_ADMIN_URL: 'postgresql://ontos_admin:admin@localhost:5433/ontos',
       DATABASE_URL: 'postgresql://ontos_runtime:runtime@localhost:5433/ontos',
     }),
   );
-  const missing = await Effect.runPromise(
+  const missing = await runEffectTestPromise(
     Effect.flip(
       parseDatabaseConnectionPair({
         DATABASE_URL: 'postgresql://ontos_runtime:runtime@localhost:5433/ontos',
       }),
     ),
   );
-  const identical = await Effect.runPromise(
+  const identical = await runEffectTestPromise(
     Effect.flip(
       parseDatabaseConnectionPair({
         DATABASE_ADMIN_URL: 'postgresql://ontos:secret@localhost:5433/ontos',
@@ -85,7 +86,7 @@ void test('requires distinct administrative and least-privilege runtime identiti
       }),
     ),
   );
-  const superuserCompatible = await Effect.runPromise(
+  const superuserCompatible = await runEffectTestPromise(
     Effect.flip(
       parseDatabaseConnectionPair({
         DATABASE_ADMIN_URL: 'postgresql://ontos_admin:admin@localhost:5433/ontos',
@@ -93,13 +94,13 @@ void test('requires distinct administrative and least-privilege runtime identiti
       }),
     ),
   );
-  const queryParameterIdentities = await Effect.runPromise(
+  const queryParameterIdentities = await runEffectTestPromise(
     parseDatabaseConnectionPair({
       DATABASE_ADMIN_URL: 'postgresql://connection-proxy@localhost:5433/ontos?user=ontos_admin',
       DATABASE_URL: 'postgresql://connection-proxy@localhost:5433/ontos?user=ontos_runtime',
     }),
   );
-  const queryParameterCollision = await Effect.runPromise(
+  const queryParameterCollision = await runEffectTestPromise(
     Effect.flip(
       parseDatabaseConnectionPair({
         DATABASE_ADMIN_URL: 'postgresql://admin-authority@localhost:5433/ontos?user=effective_role',
@@ -121,7 +122,7 @@ void test('requires distinct administrative and least-privilege runtime identiti
 void test('finalizes the pool resource when its Effect scope closes', async () => {
   let finalized = false;
 
-  await Effect.runPromise(
+  await runEffectTestPromise(
     Effect.scoped(
       acquirePoolResource(() => ({
         end: async () => {

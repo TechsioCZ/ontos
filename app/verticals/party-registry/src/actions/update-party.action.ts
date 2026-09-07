@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Match, Schema } from 'effect';
 import {
   PartyAliasResolutionBrokenChain,
   PartyAliasResolutionCrossTenant,
@@ -12,14 +12,22 @@ import {
   PartyAliasResolutionUnavailable,
   PartyAliasWriteRejected,
 } from '../../shared/domain/merge-alias-resolution.ts';
+import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-resolution.ts';
 import {
+  partyIdFromString,
   PartyLifecycleConflict,
   PartyNotFound,
   PartyPersistenceUnavailable,
   PartyEvidenceInsufficient,
+  PartySchema,
+} from '../../shared/domain/identity-contracts.ts';
+import type {
+  PartyEvidenceInsufficientError,
+  PartyPersistenceUnavailableError,
 } from '../../shared/domain/identity-contracts.ts';
 import { PartyRefSchema } from '../../shared/resources/party.ts';
 import { updatePartyIdentityRecord } from '../services/party-identity-persistence.service.ts';
+import type { PartyLifecycle } from '../services/party-identity-persistence.service.ts';
 import { createUpdatePartyPartyRegistryPartyUpdatedV1OutboxMessage } from './update-party.party-registry-party-updated-v1.outbox-message.ts';
 
 import {
@@ -47,61 +55,95 @@ const ErrorSchema = Schema.Union([
 const domainEvents = {
   'party.registry.party-updated.v1': Schema.Struct({ partyRef: PartyRefSchema }),
 } as const;
+type UpdatePartyPersistenceError =
+  | PartyAliasResolutionError
+  | PartyAliasWriteRejected
+  | PartyEvidenceInsufficientError
+  | PartyPersistenceUnavailableError;
+const updatePartyRecord: (
+  transaction: Parameters<typeof updatePartyIdentityRecord>[0],
+  tenantId: string,
+  input: Parameters<typeof updatePartyIdentityRecord>[2],
+) => Effect.Effect<PartyLifecycle, UpdatePartyPersistenceError> = updatePartyIdentityRecord;
 interface Services {
   readonly update: (
     payload: UpdatePartyPayload,
     actionInvocationId: string,
-  ) => ReturnType<typeof updatePartyIdentityRecord>;
+  ) => Effect.Effect<PartyLifecycle, UpdatePartyPersistenceError>;
 }
 
-const handle = (
+type PersistedParty = typeof PartySchema.Type | typeof PartySchema.Encoded;
+const decodeParty = (party: PersistedParty) =>
+  Schema.is(PartySchema)(party)
+    ? Effect.succeed(party)
+    : Schema.decodeUnknownEffect(PartySchema)(party).pipe(
+        Effect.mapError((cause) =>
+          Object.defineProperty(
+            new PartyPersistenceUnavailable({
+              code: 'party_persistence_unavailable',
+              reason: 'The stored Party could not be decoded',
+            }),
+            'cause',
+            { configurable: true, value: cause },
+          ),
+        ),
+      );
+
+const handle = Effect.fn('UpdatePartyAction.handle')(function* updateParty(
   payload: UpdatePartyPayload,
   context: ActionHandlerContext<typeof domainEvents, Services>,
-) =>
-  Effect.gen(function* updateParty() {
-    const result = yield* context.services.update(payload, context.actionInvocationId);
-    if (result._tag === 'not_found') {
-      return yield* new PartyNotFound({
-        code: 'party_not_found',
-        partyId: payload.partyRef.resourceId,
-        reason: 'The Party does not exist',
-      });
-    }
-    if (result._tag === 'conflict') {
-      return yield* new PartyLifecycleConflict({
-        code: 'party_lifecycle_conflict',
-        reason:
-          'The Party revision is stale, archived, or the requested change requires correction or unsupported future scheduling',
-        requestedState: 'ACTIVE',
-      });
-    }
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: createHash('sha256')
-        .update(`party-update-invariants:${result.value.partyRef.resourceId}`)
-        .digest('hex'),
-      resultCount: 1,
-      servingModuleKey: 'party.registry',
-      targetModuleKey: 'party.registry',
-      targetResourceId: result.value.partyRef.resourceId,
-      targetResourceType: result.value.partyRef.resourceType,
-    });
-    const event = yield* context.addDomainEvent({
-      eventType: 'party.registry.party-updated.v1',
-      payloadJson: { partyRef: result.value.partyRef },
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
-      subjectResourceId: result.value.partyRef.resourceId,
-      subjectResourceType: result.value.partyRef.resourceType,
-    });
-    yield* context.addOutboxMessage(
-      event,
-      createUpdatePartyPartyRegistryPartyUpdatedV1OutboxMessage({
-        partyRef: result.value.partyRef,
-      }),
-    );
-    return result.value;
+) {
+  const persistenceResult = yield* context.services.update(payload, context.actionInvocationId);
+  const result = yield* Match.value(persistenceResult).pipe(
+    Match.tag('not_found', () =>
+      Effect.fail(
+        new PartyNotFound({
+          code: 'party_not_found',
+          partyId: partyIdFromString(payload.partyRef.resourceId),
+          reason: 'The Party does not exist',
+        }),
+      ),
+    ),
+    Match.tag('conflict', () =>
+      Effect.fail(
+        new PartyLifecycleConflict({
+          code: 'party_lifecycle_conflict',
+          reason:
+            'The Party revision is stale, archived, or the requested change requires correction or unsupported future scheduling',
+          requestedState: 'ACTIVE',
+        }),
+      ),
+    ),
+    Match.tag('found', ({ value }) => decodeParty(value)),
+    Match.exhaustive,
+  );
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: createHash('sha256')
+      .update(`party-update-invariants:${result.partyRef.resourceId}`)
+      .digest('hex'),
+    resultCount: 1,
+    servingModuleKey: 'party.registry',
+    targetModuleKey: 'party.registry',
+    targetResourceId: result.partyRef.resourceId,
+    targetResourceType: result.partyRef.resourceType,
   });
+  const event = yield* context.addDomainEvent({
+    eventType: 'party.registry.party-updated.v1',
+    payloadJson: { partyRef: result.partyRef },
+    producerModuleKey: 'party.registry',
+    subjectModuleKey: 'party.registry',
+    subjectResourceId: result.partyRef.resourceId,
+    subjectResourceType: result.partyRef.resourceType,
+  });
+  yield* context.addOutboxMessage(
+    event,
+    createUpdatePartyPartyRegistryPartyUpdatedV1OutboxMessage({
+      partyRef: result.partyRef,
+    }),
+  );
+  return result;
+});
 export const updatePartyAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -132,7 +174,7 @@ export const updatePartyAction = defineAction(
   (transaction, scope) =>
     Effect.succeed({
       update: (payload: UpdatePartyPayload, actionInvocationId: string) =>
-        updatePartyIdentityRecord(transaction, scope.tenantId, {
+        updatePartyRecord(transaction, scope.tenantId, {
           actionInvocationId,
           displayName: payload.displayName,
           expectedRevision: payload.expectedRevision,
@@ -143,7 +185,7 @@ export const updatePartyAction = defineAction(
           provenanceMethod: payload.provenanceMethod,
           provenanceSource: payload.provenanceSource,
           subjectEvidence: payload.subjectEvidence,
-          validFrom: payload.validFrom,
+          validFrom: DateTime.formatIso(DateTime.makeUnsafe(payload.validFrom)),
         }),
     }),
 );

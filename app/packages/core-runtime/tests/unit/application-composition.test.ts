@@ -1,3 +1,4 @@
+import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
@@ -13,7 +14,7 @@ const sha256 = (character: string) => character.repeat(64);
 const assertInvalid = <Value>(
   effect: Effect.Effect<Value, ApplicationCompositionValidationError>,
   reason: RegExp,
-): void => assert.match(Effect.runSync(Effect.flip(effect)).reason, reason);
+): void => assert.match(runEffectTestSync(Effect.flip(effect)).reason, reason);
 
 type Candidate = ReturnType<typeof candidate>;
 type Evidence = ReturnType<typeof evidence>;
@@ -141,7 +142,7 @@ const addModuleCopy = (
 
 test('accepts one provider-neutral composition and produces deterministic canonical JSON', () => {
   const input = candidate();
-  const composition = Effect.runSync(validateApplicationCompositionCandidate(input, evidence()));
+  const composition = runEffectTestSync(validateApplicationCompositionCandidate(input, evidence()));
 
   assert.deepEqual(composition, input);
   assert.equal(Object.isFrozen(composition), true);
@@ -160,7 +161,7 @@ test('accepts one provider-neutral composition and produces deterministic canoni
   reorderedModule.sharedSingletons.reverse();
   reordered.shell.coreCapabilities.reverse();
   reordered.shell.sharedSingletons.reverse();
-  /* oxlint-disable perfectionist/sort-objects -- Deliberately reorder nested fields to test canonical encoding. */
+  /* oxlint-disable perfectionist/sort-objects -- Deliberately reorder nested fields to test canonical encoding. expires: 2026-12-31. */
   reordered.shell.coreCapabilities = reordered.shell.coreCapabilities.map(({ id, version }) => ({
     version,
     id,
@@ -210,7 +211,7 @@ test('allows loopback HTTP only with trusted development evidence', () => {
         );
       }
       assert.deepEqual(
-        Effect.runSync(
+        runEffectTestSync(
           validateApplicationCompositionCandidate(input, {
             ...observed,
             environment: 'development',

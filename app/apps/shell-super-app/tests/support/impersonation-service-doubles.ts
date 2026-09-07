@@ -31,13 +31,13 @@ const providerDefaults: SupportAuthProvider['api'] = {
 };
 
 const storeDefaults: SupportImpersonationStore = {
-  deleteRecovery: async () => await unconfiguredPromise('deleteRecovery'),
-  deleteSession: async () => await unconfiguredPromise('deleteSession'),
-  insertRecovery: async () => await unconfiguredPromise('insertRecovery'),
-  loadExpiredRecovery: async () => await unconfiguredPromise('loadExpiredRecovery'),
-  loadOriginalSession: async () => await unconfiguredPromise('loadOriginalSession'),
-  loadRecoveries: async () => await unconfiguredPromise('loadRecoveries'),
-  updateImpersonationSession: async () => await unconfiguredPromise('updateImpersonationSession'),
+  deleteRecovery: () => unconfiguredEffect('deleteRecovery'),
+  deleteSession: () => unconfiguredEffect('deleteSession'),
+  insertRecovery: () => unconfiguredEffect('insertRecovery'),
+  loadExpiredRecovery: () => unconfiguredEffect('loadExpiredRecovery'),
+  loadOriginalSession: () => unconfiguredEffect('loadOriginalSession'),
+  loadRecoveries: () => unconfiguredEffect('loadRecoveries'),
+  updateImpersonationSession: () => unconfiguredEffect('updateImpersonationSession'),
 };
 
 const supportRecoveryDefaults: SupportRecoveryPrincipalContextResolverService = {

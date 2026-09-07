@@ -5,12 +5,12 @@ const routeMeta = {
   descriptionKey: 'shell.moduleTarget.seoDescription',
   entrypoint: defineSystemModuleEntrypoint({
     access: 'read',
-    authorization: { kind: 'authenticated_principal' },
-    entrypointKey: 'shell-super-app.page.contacts-contacts',
+    authorization: { kind: 'context_permission', permission: 'module.access' },
+    entrypointKey: 'shell-super-app.page.party-registry-contacts',
     moduleKey: 'shell-super-app',
     role: 'page',
   }),
-  id: 'shell-contacts-contacts',
+  id: 'shell-party-registry-contacts',
   indexable: false,
   localisedPaths: {
     cs: '/contacts',

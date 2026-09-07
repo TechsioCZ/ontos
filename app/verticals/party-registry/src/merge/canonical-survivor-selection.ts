@@ -6,27 +6,35 @@ import type {
   MergeSurvivorSelectionInput,
   MergeSurvivorSelectionReason,
 } from '../../shared/domain/merge-selection.ts';
-import { MERGE_SURVIVOR_SELECTION_POLICY_VERSION } from '../../shared/domain/merge-selection.ts';
+import {
+  ConfirmedDuplicateDecisionIdSchema,
+  MERGE_SURVIVOR_SELECTION_POLICY_VERSION,
+  MergeSelectionEvidenceStepSchema,
+  MergeSurvivorSelectionReasonSchema,
+} from '../../shared/domain/merge-selection.ts';
+import { PartyRefSchema } from '../../shared/resources/party.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
+import { Schema } from 'effect';
 
-export type CanonicalSurvivorSelection =
-  | Readonly<{
-      _tag: 'CanonicalSurvivorSelected';
-      confirmedDuplicateDecisionId: string;
-      decidingCriterion: MergeSurvivorSelectionReason;
-      evidenceChain: readonly MergeSelectionEvidenceStep[];
-      policyVersion: typeof MERGE_SURVIVOR_SELECTION_POLICY_VERSION;
-      survivorPartyRef: PartyRef;
-    }>
-  | Readonly<{
-      _tag: 'SurvivorSelectionBlocked';
-      blocker:
-        | 'AUTHORITATIVE_IDENTITY_CONFLICT'
-        | 'CROSS_TENANT_MERGE_SET'
-        | 'DUPLICATE_SET_NOT_CONFIRMED'
-        | 'INVALID_MERGE_SET';
-      conflictingPartyRefs: readonly PartyRef[];
-    }>;
+export const CanonicalSurvivorSelectionSchema = Schema.Union([
+  Schema.TaggedStruct('CanonicalSurvivorSelected', {
+    confirmedDuplicateDecisionId: Schema.toEncoded(ConfirmedDuplicateDecisionIdSchema),
+    decidingCriterion: MergeSurvivorSelectionReasonSchema,
+    evidenceChain: Schema.Array(MergeSelectionEvidenceStepSchema),
+    policyVersion: Schema.Literal(MERGE_SURVIVOR_SELECTION_POLICY_VERSION),
+    survivorPartyRef: PartyRefSchema,
+  }),
+  Schema.TaggedStruct('SurvivorSelectionBlocked', {
+    blocker: Schema.Literals([
+      'AUTHORITATIVE_IDENTITY_CONFLICT',
+      'CROSS_TENANT_MERGE_SET',
+      'DUPLICATE_SET_NOT_CONFIRMED',
+      'INVALID_MERGE_SET',
+    ]),
+    conflictingPartyRefs: Schema.Array(PartyRefSchema),
+  }),
+]);
+export type CanonicalSurvivorSelection = typeof CanonicalSurvivorSelectionSchema.Type;
 
 const compareDescending = (left: number, right: number) => right - left;
 const compareLifecycle = (left: MergeSurvivorCandidate, right: MergeSurvivorCandidate) =>

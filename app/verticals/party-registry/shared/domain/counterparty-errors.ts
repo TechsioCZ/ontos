@@ -1,90 +1,10 @@
-/* eslint-disable max-classes-per-file -- Counterparty Actions share one closed typed domain-error vocabulary. */
-import { Schema } from 'effect';
-import { CounterpartyUuidSchema } from './counterparty-contract.ts';
-
-export class CounterpartyNotFound extends Schema.TaggedError<CounterpartyNotFound>()(
-  'CounterpartyNotFound',
-  {
-    code: Schema.Literal('counterparty_not_found'),
-    counterpartyId: CounterpartyUuidSchema,
-    reason: Schema.String,
-  },
-) {}
-
-export class CounterpartyPartyNotFound extends Schema.TaggedError<CounterpartyPartyNotFound>()(
-  'CounterpartyPartyNotFound',
-  {
-    code: Schema.Literal('counterparty_party_not_found'),
-    partyId: CounterpartyUuidSchema,
-    reason: Schema.String,
-  },
-) {}
-
-export class CounterpartyPartyArchived extends Schema.TaggedError<CounterpartyPartyArchived>()(
-  'CounterpartyPartyArchived',
-  {
-    code: Schema.Literal('counterparty_party_archived'),
-    partyId: CounterpartyUuidSchema,
-    reason: Schema.String,
-  },
-) {}
-
-export class CounterpartyScopeMismatch extends Schema.TaggedError<CounterpartyScopeMismatch>()(
-  'CounterpartyScopeMismatch',
-  {
-    code: Schema.Literal('counterparty_scope_mismatch'),
-    reason: Schema.String,
-  },
-) {}
-
-export class CounterpartyEvidenceInsufficient extends Schema.TaggedError<CounterpartyEvidenceInsufficient>()(
-  'CounterpartyEvidenceInsufficient',
-  {
-    code: Schema.Literal('counterparty_evidence_insufficient'),
-    method: Schema.String,
-    reason: Schema.String,
-  },
-) {}
-
-export class CounterpartyRoleOverlap extends Schema.TaggedError<CounterpartyRoleOverlap>()(
-  'CounterpartyRoleOverlap',
-  {
-    code: Schema.Literal('counterparty_role_overlap'),
-    reason: Schema.String,
-    roleType: Schema.Literals(['CUSTOMER', 'SUPPLIER']),
-  },
-) {}
-
-export class CounterpartyRolePeriodNotFound extends Schema.TaggedError<CounterpartyRolePeriodNotFound>()(
-  'CounterpartyRolePeriodNotFound',
-  {
-    code: Schema.Literal('counterparty_role_period_not_found'),
-    reason: Schema.String,
-    rolePeriodId: CounterpartyUuidSchema,
-  },
-) {}
-
-export class CounterpartyRoleAlreadyEnded extends Schema.TaggedError<CounterpartyRoleAlreadyEnded>()(
-  'CounterpartyRoleAlreadyEnded',
-  {
-    code: Schema.Literal('counterparty_role_already_ended'),
-    reason: Schema.String,
-    rolePeriodId: CounterpartyUuidSchema,
-  },
-) {}
-
-export class CounterpartyTemporalConflict extends Schema.TaggedError<CounterpartyTemporalConflict>()(
-  'CounterpartyTemporalConflict',
-  {
-    code: Schema.Literal('counterparty_temporal_conflict'),
-    reason: Schema.String,
-  },
-) {}
-
-export class CounterpartyPersistenceUnavailable extends Schema.TaggedError<CounterpartyPersistenceUnavailable>()(
-  'CounterpartyPersistenceUnavailable',
-  {
-    code: Schema.Literal('counterparty_persistence_unavailable'),
-    reason: Schema.String,
-  },
-) {}
+export { CounterpartyEvidenceInsufficient } from './counterparty-errors/evidence-insufficient.ts';
+export { CounterpartyNotFound } from './counterparty-errors/not-found.ts';
+export { CounterpartyPartyArchived } from './counterparty-errors/party-archived.ts';
+export { CounterpartyPartyNotFound } from './counterparty-errors/party-not-found.ts';
+export { CounterpartyPersistenceUnavailable } from './counterparty-errors/persistence-unavailable.ts';
+export { CounterpartyRoleAlreadyEnded } from './counterparty-errors/role-already-ended.ts';
+export { CounterpartyRoleOverlap } from './counterparty-errors/role-overlap.ts';
+export { CounterpartyRolePeriodNotFound } from './counterparty-errors/role-period-not-found.ts';
+export { CounterpartyScopeMismatch } from './counterparty-errors/scope-mismatch.ts';
+export { CounterpartyTemporalConflict } from './counterparty-errors/temporal-conflict.ts';

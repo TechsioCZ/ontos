@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { DateTime } from 'effect';
+import { partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
 import type {
   PartyCandidate,
   PartySubjectEvidence,
@@ -22,7 +24,7 @@ const evidence = (
   kind: 'ACTOR_ATTESTATION',
   observedSubject,
   statement: 'Observed this concrete subject during onboarding',
-  subjectKey: 'one-subject',
+  subjectKey: partySubjectKeyFromString('one-subject'),
 });
 const candidate = (overrides: Partial<PartyCandidate> = {}): PartyCandidate => ({
   evidenceRefs: [],
@@ -30,7 +32,7 @@ const candidate = (overrides: Partial<PartyCandidate> = {}): PartyCandidate => (
   partyType: 'UNRESOLVED',
   provenance: { method: 'MANUAL', source: 'onboarding' },
   subjectEvidence: [evidence('CONCRETE_SUBJECT')],
-  validFrom: '2020-01-01T00:00:00.000Z',
+  validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
   ...overrides,
 });
 const decide = (value: PartyCandidate) =>
@@ -76,7 +78,10 @@ test('technical records, managed Legal Entities and multiple subjects fail close
   assert.equal(
     decide(
       candidate({
-        subjectEvidence: [evidence('PERSON'), { ...evidence('PERSON'), subjectKey: 'another' }],
+        subjectEvidence: [
+          evidence('PERSON'),
+          { ...evidence('PERSON'), subjectKey: partySubjectKeyFromString('another') },
+        ],
       }),
     ).reasonCode,
     'one_concrete_subject_required',

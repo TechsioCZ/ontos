@@ -6,11 +6,12 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, Option } from 'effect';
 import {
   PartyRelationshipDetailRequestSchema,
   PartyRelationshipDetailResponseSchema,
 } from '../../shared/apis/party-relationship-detail.ts';
+import type { PartyRelationshipDetailRequest } from '../../shared/apis/party-relationship-detail.ts';
 import type {
   PartyRelationshipDetail,
   PartyRelationshipPersistenceUnavailable,
@@ -24,6 +25,25 @@ export const partyRelationshipDetailEntrypoint = defineTenantModuleEntrypoint({
   moduleKey: 'party.registry',
   role: 'api',
 });
+
+const relationshipUnavailable = (cause: unknown) =>
+  Object.defineProperty(
+    new ReadHandlerUnavailable({
+      code: 'read_handler_unavailable',
+      reason: 'Party Relationship persistence is temporarily unavailable',
+    }),
+    'cause',
+    { value: cause },
+  );
+
+interface Services {
+  readonly find: (
+    relationshipId: string,
+  ) => Effect.Effect<
+    Option.Option<PartyRelationshipDetail>,
+    PartyRelationshipPersistenceUnavailable
+  >;
+}
 
 export const partyRelationshipDetailRead = defineRead(
   {
@@ -42,42 +62,33 @@ export const partyRelationshipDetailRead = defineRead(
     resultSchema: PartyRelationshipDetailResponseSchema,
     schemaVersion: '1',
   },
-  (
-    input,
-    context: ReadHandlerContext<{
-      readonly find: (
-        relationshipId: string,
-      ) => Effect.Effect<PartyRelationshipDetail | null, PartyRelationshipPersistenceUnavailable>;
-    }>,
-  ) =>
-    Effect.gen(function* readRelationship() {
-      if (input.relationshipRef.tenantId !== context.scope.tenantId) {
-        return yield* new ReadHandlerNotFound({
-          code: 'read_handler_not_found',
-          reason: 'The requested Party Relationship does not exist',
-        });
-      }
-      const relationship = yield* context.services.find(input.relationshipRef.resourceId).pipe(
-        Effect.mapError(
-          () =>
-            new ReadHandlerUnavailable({
-              code: 'read_handler_unavailable',
-              reason: 'Party Relationship persistence is temporarily unavailable',
-            }),
-        ),
-      );
-      if (relationship === null) {
-        return yield* new ReadHandlerNotFound({
-          code: 'read_handler_not_found',
-          reason: 'The requested Party Relationship does not exist',
-        });
-      }
-      return { evidence: { resultCount: 1 }, result: relationship };
-    }),
+  Effect.fn('PartyRelationshipDetailRead.partyRelationshipDetailRead')(function* readRelationship(
+    input: PartyRelationshipDetailRequest,
+    context: ReadHandlerContext<Services>,
+  ) {
+    if (input.relationshipRef.tenantId !== context.scope.tenantId) {
+      return yield* new ReadHandlerNotFound({
+        code: 'read_handler_not_found',
+        reason: 'The requested Party Relationship does not exist',
+      });
+    }
+    const relationship = yield* context.services
+      .find(input.relationshipRef.resourceId)
+      .pipe(Effect.mapError(relationshipUnavailable));
+    if (Option.isNone(relationship)) {
+      return yield* new ReadHandlerNotFound({
+        code: 'read_handler_not_found',
+        reason: 'The requested Party Relationship does not exist',
+      });
+    }
+    return { evidence: { resultCount: 1 }, result: relationship.value };
+  }),
   (transaction, scope) =>
     Effect.succeed({
       find: (relationshipId: string) =>
-        findPartyRelationshipRecord(transaction, scope.tenantId, relationshipId),
+        findPartyRelationshipRecord(transaction, scope.tenantId, relationshipId).pipe(
+          Effect.map(Option.fromNullishOr),
+        ),
     }),
   () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );

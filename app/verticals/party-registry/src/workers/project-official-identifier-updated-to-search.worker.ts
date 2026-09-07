@@ -13,14 +13,15 @@ import {
   outboxTopic,
 } from '@app/party-registry/outbox/party-registry-official-identifier-updated-v1';
 
-export const handleProjectOfficialIdentifierUpdatedToSearch = (
+export const handleProjectOfficialIdentifierUpdatedToSearch = Effect.fn(
+  'handleProjectOfficialIdentifierUpdatedToSearch',
+)(function* projectCommittedIdentifierUpdate(
   payload: typeof OutboxPayloadSchema.Type,
   context: OutboxWorkerHandlerContext,
-) =>
-  Effect.gen(function* projectCommittedIdentifierUpdate() {
-    const projector = yield* PartySearchProjector;
-    yield* projector.project(context, { partyId: payload.partyRef.resourceId });
-  });
+) {
+  const projector = yield* PartySearchProjector;
+  yield* projector.project(context, { partyId: payload.partyRef.resourceId });
+});
 
 export const projectOfficialIdentifierUpdatedToSearchWorker = defineOutboxWorker(
   {

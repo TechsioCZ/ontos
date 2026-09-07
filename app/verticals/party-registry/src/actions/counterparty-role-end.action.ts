@@ -8,7 +8,7 @@ import {
   defineTenantModuleEntrypoint,
   OperationContextUnavailable,
 } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Match, Schema } from 'effect';
 import { CounterpartyAuditEvidenceSchema } from '../../shared/domain/counterparty-contract.ts';
 import {
   CounterpartyNotFound,
@@ -60,11 +60,11 @@ export interface CounterpartyRoleEndServices {
   ) => Effect.Effect<PersistenceResult, CounterpartyPersistenceUnavailable>;
 }
 
-const handleCounterpartyRoleEnd = (
-  payload: CounterpartyRoleEndPayload,
-  context: ActionHandlerContext<CounterpartyRoleEndDomainEvents, CounterpartyRoleEndServices>,
-) =>
-  Effect.gen(function* endCounterpartyRole() {
+const handleCounterpartyRoleEnd = Effect.fn('CounterpartyRoleEndAction.handleCounterpartyRoleEnd')(
+  function* endCounterpartyRole(
+    payload: CounterpartyRoleEndPayload,
+    context: ActionHandlerContext<CounterpartyRoleEndDomainEvents, CounterpartyRoleEndServices>,
+  ) {
     if (
       payload.counterpartyRef.tenantId !== context.scope.tenantId ||
       payload.rolePeriodRef.tenantId !== context.scope.tenantId
@@ -74,41 +74,55 @@ const handleCounterpartyRoleEnd = (
         reason: 'Counterparty Role references must belong to the trusted Tenant',
       });
     }
-    const result = yield* context.services.end(payload, context);
-    if (result._tag === 'counterparty_not_found') {
-      return yield* new CounterpartyNotFound({
-        code: 'counterparty_not_found',
-        counterpartyId: result.counterpartyId,
-        reason: 'The Counterparty does not exist in the selected Legal Entity',
-      });
-    }
-    if (result._tag === 'evidence_insufficient') {
-      return yield* new CounterpartyEvidenceInsufficient({
-        code: 'counterparty_evidence_insufficient',
-        method: result.method,
-        reason: `The evidence does not establish the end of the ${result.roleType} relationship`,
-      });
-    }
-    if (result._tag === 'role_not_found') {
-      return yield* new CounterpartyRolePeriodNotFound({
-        code: 'counterparty_role_period_not_found',
-        reason: 'The Counterparty Role period does not exist in this context',
-        rolePeriodId: result.rolePeriodId,
-      });
-    }
-    if (result._tag === 'already_ended') {
-      return yield* new CounterpartyRoleAlreadyEnded({
-        code: 'counterparty_role_already_ended',
-        reason: 'A different request cannot overwrite an ended Role period; use correction',
-        rolePeriodId: result.rolePeriodId,
-      });
-    }
-    if (result._tag === 'temporal_conflict') {
-      return yield* new CounterpartyTemporalConflict({
-        code: 'counterparty_temporal_conflict',
-        reason: 'The effective end cannot precede the Role period start',
-      });
-    }
+    const persistenceResult = yield* context.services.end(payload, context);
+    const result = yield* Match.value(persistenceResult).pipe(
+      Match.tag('counterparty_not_found', ({ counterpartyId }) =>
+        Effect.fail(
+          new CounterpartyNotFound({
+            code: 'counterparty_not_found',
+            counterpartyId,
+            reason: 'The Counterparty does not exist in the selected Legal Entity',
+          }),
+        ),
+      ),
+      Match.tag('evidence_insufficient', ({ method, roleType }) =>
+        Effect.fail(
+          new CounterpartyEvidenceInsufficient({
+            code: 'counterparty_evidence_insufficient',
+            method,
+            reason: `The evidence does not establish the end of the ${roleType} relationship`,
+          }),
+        ),
+      ),
+      Match.tag('role_not_found', ({ rolePeriodId }) =>
+        Effect.fail(
+          new CounterpartyRolePeriodNotFound({
+            code: 'counterparty_role_period_not_found',
+            reason: 'The Counterparty Role period does not exist in this context',
+            rolePeriodId,
+          }),
+        ),
+      ),
+      Match.tag('already_ended', ({ rolePeriodId }) =>
+        Effect.fail(
+          new CounterpartyRoleAlreadyEnded({
+            code: 'counterparty_role_already_ended',
+            reason: 'A different request cannot overwrite an ended Role period; use correction',
+            rolePeriodId,
+          }),
+        ),
+      ),
+      Match.tag('temporal_conflict', () =>
+        Effect.fail(
+          new CounterpartyTemporalConflict({
+            code: 'counterparty_temporal_conflict',
+            reason: 'The effective end cannot precede the Role period start',
+          }),
+        ),
+      ),
+      Match.tag('found', (found) => Effect.succeed(found)),
+      Match.exhaustive,
+    );
     yield* context.recordAuditEvidence({
       evidenceReference: payload.provenance.evidenceReference ?? null,
       provenanceMethod: payload.provenance.method,
@@ -152,7 +166,8 @@ const handleCounterpartyRoleEnd = (
       );
     }
     return actionResult;
-  });
+  },
+);
 
 export const counterpartyRoleEndAction = defineAction(
   {

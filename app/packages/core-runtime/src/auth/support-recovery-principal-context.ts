@@ -1,24 +1,19 @@
-// @effect-diagnostics asyncFunction:off
-/* eslint-disable max-classes-per-file -- The recovery resolver and its closed failures form one capability boundary. */
 import { and, eq } from 'drizzle-orm';
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, Duration, Effect, Layer, Option, Schema } from 'effect';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import { CoreDatabase } from '../db/client.ts';
 import { principalAuthBindings, principals, tenants } from '../db/schema.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
-import { trustSupportRecoveryPrincipalContext } from './system-principal-context-provenance.ts';
 import { recordSupportImpersonationAction } from '../modules/actions/record-support-impersonation.action.ts';
+import { SupportRecoveryPrincipalContextDeniedError } from './support-recovery-principal-context-denied-error.ts';
+import { SupportRecoveryPrincipalContextUnavailableError } from './support-recovery-principal-context-unavailable-error.ts';
+import { trustSupportRecoveryPrincipalContext } from './system-principal-context-provenance.ts';
+
+export { SupportRecoveryPrincipalContextDeniedError } from './support-recovery-principal-context-denied-error.ts';
+export { SupportRecoveryPrincipalContextUnavailableError } from './support-recovery-principal-context-unavailable-error.ts';
 
 const uuid = Schema.String.check(Schema.isUUID());
 
-export class SupportRecoveryPrincipalContextDeniedError extends Schema.TaggedError<SupportRecoveryPrincipalContextDeniedError>()(
-  'SupportRecoveryPrincipalContextDeniedError',
-  { code: Schema.Literal('support_recovery_context_denied'), reason: Schema.String },
-) {}
-export class SupportRecoveryPrincipalContextUnavailableError extends Schema.TaggedError<SupportRecoveryPrincipalContextUnavailableError>()(
-  'SupportRecoveryPrincipalContextUnavailableError',
-  { code: Schema.Literal('support_recovery_context_unavailable'), reason: Schema.String },
-) {}
 export type SupportRecoveryPrincipalContextError =
   | SupportRecoveryPrincipalContextDeniedError
   | SupportRecoveryPrincipalContextUnavailableError;
@@ -32,118 +27,189 @@ export interface SupportRecoveryPrincipalContextResolverService {
   }) => Effect.Effect<TrustedPrincipalContext, SupportRecoveryPrincipalContextError>;
 }
 
-export interface SupportRecoveryPrincipalContextRepositoryService {
-  readonly load: (input: {
-    readonly originalAuthBindingId: string;
-    readonly originalPrincipalId: string;
-    readonly tenantId: string;
-  }) => Promise<
-    | {
-        readonly bindingPrincipalId: string;
-        readonly bindingTenantId: string;
-        readonly principalKind: (typeof principals.$inferSelect)['kind'];
-        readonly principalTenantId: string;
-        readonly tenantId: string;
-      }
-    | undefined
+interface SupportRecoveryPrincipalContextRecord {
+  readonly bindingPrincipalId: string;
+  readonly bindingTenantId: string;
+  readonly principalKind: (typeof principals.$inferSelect)['kind'];
+  readonly principalTenantId: string;
+  readonly tenantId: string;
+}
+
+interface SupportRecoveryPrincipalContextRepositoryInput {
+  readonly originalAuthBindingId: string;
+  readonly originalPrincipalId: string;
+  readonly tenantId: string;
+}
+
+type SupportRecoveryPrincipalContextPromiseLoadResult<Value> = PromiseLike<Value>;
+type SupportRecoveryPrincipalContextRepositoryLoadResult =
+  SupportRecoveryPrincipalContextPromiseLoadResult<
+    SupportRecoveryPrincipalContextRecord | undefined
+  >;
+
+interface SupportRecoveryPrincipalContextRecordReader<
+  Result extends SupportRecoveryPrincipalContextRepositoryLoadResult,
+> {
+  readonly load: (input: SupportRecoveryPrincipalContextRepositoryInput) => Result;
+}
+
+export type SupportRecoveryPrincipalContextRepositoryService =
+  SupportRecoveryPrincipalContextRecordReader<
+    Promise<SupportRecoveryPrincipalContextRecord | undefined>
+  >;
+
+interface SupportRecoveryPrincipalContextEffectRecordReader {
+  readonly load: (
+    input: SupportRecoveryPrincipalContextRepositoryInput,
+  ) => Effect.Effect<
+    Option.Option<SupportRecoveryPrincipalContextRecord>,
+    SupportRecoveryPrincipalContextUnavailableError
   >;
 }
 
+const attachCause = <Failure extends object>(failure: Failure, cause: unknown): Failure =>
+  cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
+
+const unavailable = (cause?: unknown): SupportRecoveryPrincipalContextUnavailableError =>
+  attachCause(
+    new SupportRecoveryPrincipalContextUnavailableError({
+      code: 'support_recovery_context_unavailable',
+      reason: 'The support recovery identity could not be revalidated',
+    }),
+    cause,
+  );
+
+const DATABASE_OPERATION_TIMEOUT = Duration.seconds(30);
+
+const supportRecoveryPrincipalContextEffectRecordReaderFromPromise = (
+  repository: SupportRecoveryPrincipalContextRecordReader<SupportRecoveryPrincipalContextRepositoryLoadResult>,
+): SupportRecoveryPrincipalContextEffectRecordReader => ({
+  load: (input) =>
+    Effect.tryPromise({
+      catch: unavailable,
+      try: () => repository.load(input),
+    }).pipe(
+      Effect.map(Option.fromNullishOr),
+      Effect.timeoutOrElse({
+        duration: DATABASE_OPERATION_TIMEOUT,
+        orElse: () => Effect.fail(unavailable()),
+      }),
+    ),
+});
+
 const supportRecoveryPrincipalContextRepositoryFromDatabase = (database: {
   readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
-}): SupportRecoveryPrincipalContextRepositoryService => ({
-  load: async (input) => {
-    const [loaded] = await database.executor
-      .select({
-        bindingPrincipalId: principalAuthBindings.principalId,
-        bindingTenantId: principalAuthBindings.tenantId,
-        principalKind: principals.kind,
-        principalTenantId: principals.tenantId,
-        tenantId: tenants.tenantId,
-      })
-      .from(principalAuthBindings)
-      .innerJoin(
-        principals,
-        and(
-          eq(principals.tenantId, principalAuthBindings.tenantId),
-          eq(principals.principalId, principalAuthBindings.principalId),
-        ),
-      )
-      .innerJoin(tenants, eq(tenants.tenantId, principalAuthBindings.tenantId))
-      .where(
-        and(
-          eq(principalAuthBindings.principalAuthBindingId, input.originalAuthBindingId),
-          eq(principalAuthBindings.tenantId, input.tenantId),
-          eq(principalAuthBindings.principalId, input.originalPrincipalId),
-          eq(principalAuthBindings.provider, 'better_auth'),
-          eq(principalAuthBindings.subjectType, 'user'),
-        ),
-      )
-      .limit(1);
-    return loaded;
-  },
+}): SupportRecoveryPrincipalContextEffectRecordReader => ({
+  load: (input: SupportRecoveryPrincipalContextRepositoryInput) =>
+    Effect.tryPromise({
+      catch: unavailable,
+      try: () =>
+        database.executor
+          .select({
+            bindingPrincipalId: principalAuthBindings.principalId,
+            bindingTenantId: principalAuthBindings.tenantId,
+            principalKind: principals.kind,
+            principalTenantId: principals.tenantId,
+            tenantId: tenants.tenantId,
+          })
+          .from(principalAuthBindings)
+          .innerJoin(
+            principals,
+            and(
+              eq(principals.tenantId, principalAuthBindings.tenantId),
+              eq(principals.principalId, principalAuthBindings.principalId),
+            ),
+          )
+          .innerJoin(tenants, eq(tenants.tenantId, principalAuthBindings.tenantId))
+          .where(
+            and(
+              eq(principalAuthBindings.principalAuthBindingId, input.originalAuthBindingId),
+              eq(principalAuthBindings.tenantId, input.tenantId),
+              eq(principalAuthBindings.principalId, input.originalPrincipalId),
+              eq(principalAuthBindings.provider, 'better_auth'),
+              eq(principalAuthBindings.subjectType, 'user'),
+            ),
+          )
+          .limit(1),
+    }).pipe(
+      Effect.map(([loaded]) => Option.fromNullishOr(loaded)),
+      Effect.timeoutOrElse({
+        duration: DATABASE_OPERATION_TIMEOUT,
+        orElse: () => Effect.fail(unavailable()),
+      }),
+    ),
+});
+
+const supportRecoveryPrincipalContextResolverFromEffectRecordReader = (
+  repository: SupportRecoveryPrincipalContextEffectRecordReader,
+): SupportRecoveryPrincipalContextResolverService => ({
+  resolveStoppedImpersonation: Effect.fn(
+    'SupportRecoveryPrincipalContext.resolveStoppedImpersonation',
+  )(function* resolveStoppedImpersonation(input): Effect.fn.Return<
+    TrustedPrincipalContext,
+    SupportRecoveryPrincipalContextError
+  > {
+    if (
+      !Schema.is(uuid)(input.originalAuthBindingId) ||
+      !Schema.is(uuid)(input.originalPrincipalId) ||
+      !Schema.is(uuid)(input.tenantId) ||
+      input.originalSessionId.length === 0 ||
+      input.originalSessionId.length > 280 ||
+      /\s/u.test(input.originalSessionId)
+    ) {
+      return yield* new SupportRecoveryPrincipalContextDeniedError({
+        code: 'support_recovery_context_denied',
+        reason: 'The support recovery identity is invalid',
+      });
+    }
+    const maybeRecord = yield* repository.load({
+      originalAuthBindingId: input.originalAuthBindingId,
+      originalPrincipalId: input.originalPrincipalId,
+      tenantId: input.tenantId,
+    });
+    if (Option.isNone(maybeRecord)) {
+      return yield* new SupportRecoveryPrincipalContextDeniedError({
+        code: 'support_recovery_context_denied',
+        reason: 'The support recovery identity is not a historical tenant-local user binding',
+      });
+    }
+    const record = maybeRecord.value;
+    if (
+      record.bindingPrincipalId !== input.originalPrincipalId ||
+      record.bindingTenantId !== input.tenantId ||
+      record.principalKind !== 'human' ||
+      record.principalTenantId !== input.tenantId ||
+      record.tenantId !== input.tenantId
+    ) {
+      return yield* new SupportRecoveryPrincipalContextDeniedError({
+        code: 'support_recovery_context_denied',
+        reason: 'The support recovery identity is not a historical tenant-local user binding',
+      });
+    }
+    return trustSupportRecoveryPrincipalContext(
+      Object.freeze({
+        authBindingId: input.originalAuthBindingId,
+        authContextRef: `better-auth-session:${input.originalSessionId}`,
+        authMethod: 'session' as const,
+        principalId: input.originalPrincipalId,
+        tenantId: input.tenantId,
+      }),
+      recordSupportImpersonationAction,
+    );
+  }),
 });
 
 export const supportRecoveryPrincipalContextResolverFromRepository = (
-  repository: SupportRecoveryPrincipalContextRepositoryService,
-): SupportRecoveryPrincipalContextResolverService => ({
-  resolveStoppedImpersonation: (input) =>
-    Effect.gen(function* resolveSupportRecoveryPrincipal() {
-      if (
-        !Schema.is(uuid)(input.originalAuthBindingId) ||
-        !Schema.is(uuid)(input.originalPrincipalId) ||
-        !Schema.is(uuid)(input.tenantId) ||
-        input.originalSessionId.length === 0 ||
-        input.originalSessionId.length > 280 ||
-        /\s/u.test(input.originalSessionId)
-      ) {
-        return yield* new SupportRecoveryPrincipalContextDeniedError({
-          code: 'support_recovery_context_denied',
-          reason: 'The support recovery identity is invalid',
-        });
-      }
-      const record = yield* Effect.tryPromise({
-        catch: () =>
-          new SupportRecoveryPrincipalContextUnavailableError({
-            code: 'support_recovery_context_unavailable',
-            reason: 'The support recovery identity could not be revalidated',
-          }),
-        try: async () =>
-          await repository.load({
-            originalAuthBindingId: input.originalAuthBindingId,
-            originalPrincipalId: input.originalPrincipalId,
-            tenantId: input.tenantId,
-          }),
-      });
-      if (
-        record?.bindingPrincipalId !== input.originalPrincipalId ||
-        record.bindingTenantId !== input.tenantId ||
-        record.principalKind !== 'human' ||
-        record.principalTenantId !== input.tenantId ||
-        record.tenantId !== input.tenantId
-      ) {
-        return yield* new SupportRecoveryPrincipalContextDeniedError({
-          code: 'support_recovery_context_denied',
-          reason: 'The support recovery identity is not a historical tenant-local user binding',
-        });
-      }
-      return trustSupportRecoveryPrincipalContext(
-        Object.freeze({
-          authBindingId: input.originalAuthBindingId,
-          authContextRef: `better-auth-session:${input.originalSessionId}`,
-          authMethod: 'session' as const,
-          principalId: input.originalPrincipalId,
-          tenantId: input.tenantId,
-        }),
-        recordSupportImpersonationAction,
-      );
-    }),
-});
+  repository: SupportRecoveryPrincipalContextRecordReader<SupportRecoveryPrincipalContextRepositoryLoadResult>,
+): SupportRecoveryPrincipalContextResolverService =>
+  supportRecoveryPrincipalContextResolverFromEffectRecordReader(
+    supportRecoveryPrincipalContextEffectRecordReaderFromPromise(repository),
+  );
 
 export const makeSupportRecoveryPrincipalContextResolver = (database: {
   readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
 }): SupportRecoveryPrincipalContextResolverService =>
-  supportRecoveryPrincipalContextResolverFromRepository(
+  supportRecoveryPrincipalContextResolverFromEffectRecordReader(
     supportRecoveryPrincipalContextRepositoryFromDatabase(database),
   );
 

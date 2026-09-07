@@ -1,13 +1,17 @@
-// @effect-diagnostics asyncFunction:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 import { executeAresLookupWithAuthorization } from '../../src/api/ares-lookup-client.ts';
 import { loadPartiesClientWithAuthorization } from '../../src/api/parties-search-client.ts';
 import { executePartyDetailWithAuthorization } from '../../src/api/party-detail-client.ts';
+import { AresSubjectLookupIcoSchema } from '../../shared/domain/ares-evidence.ts';
+
+const ico = Schema.decodeUnknownSync(AresSubjectLookupIcoSchema)('12345678');
 
 test('targets the mounted owner BFF prefix and supports a separate owner deployment', async () => {
   const requests: string[] = [];
@@ -21,11 +25,11 @@ test('targets the mounted owner BFF prefix and supports a separate owner deploym
     value: { origin: 'https://shell.example', pathname: '/en/contacts' },
   });
   const capture = <Success, Failure>(request: Effect.Effect<Success, Failure>) =>
-    Effect.runPromise(
+    runEffectTestPromise(
       request.pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, fakeFetch)),
     );
   try {
-    await capture(executeAresLookupWithAuthorization({ ico: '12345678' }, 'Bearer test', 'test'));
+    await capture(executeAresLookupWithAuthorization({ ico }, 'Bearer test', 'test'));
     await capture(
       executePartyDetailWithAuthorization(
         {
@@ -42,7 +46,7 @@ test('targets the mounted owner BFF prefix and supports a separate owner deploym
     );
     await capture(loadPartiesClientWithAuthorization({ query: 'Example' }, 'Bearer test', 'test'));
     await capture(
-      executeAresLookupWithAuthorization({ ico: '12345678' }, 'Bearer test', 'test', {
+      executeAresLookupWithAuthorization({ ico }, 'Bearer test', 'test', {
         baseUrl: 'https://party.example/party-registry-api',
       }),
     );

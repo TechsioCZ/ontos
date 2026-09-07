@@ -1,3 +1,4 @@
+import { runEffectTestPromise } from '../../../packages/core-runtime/src/testing/effect-runtime.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
@@ -5,7 +6,8 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import test from 'node:test';
+import nodeTest from 'node:test';
+import { Predicate } from 'effect';
 import { TrustedPrincipalContextSchema } from '../../../packages/core-runtime/src/actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../../../packages/core-runtime/src/actions/principal-context.ts';
 import {
@@ -27,7 +29,10 @@ import {
 } from '../../../packages/shared-contracts/src/gateway-context.ts';
 import { SignJWT, exportJWK, generateKeyPair, generateSecret, importJWK } from 'jose';
 import type { JWK } from 'jose';
-import { issueGatewayContextAssertion } from '../../../apps/shell-super-app/api/auth/gateway-issuer.ts';
+import {
+  issueGatewayContextAssertion,
+  makeGatewayIssuerLayer,
+} from '../../../apps/shell-super-app/api/auth/gateway-issuer.ts';
 import type { GatewayIssuerConfigValue } from '../../../apps/shell-super-app/api/auth/gateway-issuer-config.ts';
 import { getHelpText, runScaffold } from '../cli.mts';
 import type { ScaffoldCommand } from '../cli.mts';
@@ -41,13 +46,22 @@ interface Fixture {
   readonly root: string;
 }
 
-type GeneratedPrincipalErrorTag =
-  | 'ActionPrincipalConfigurationError'
-  | 'ActionPrincipalExpiredError'
-  | 'ActionPrincipalInvalidError'
-  | 'ActionPrincipalMissingError'
-  | 'ActionPrincipalScopeError'
-  | 'ActionPrincipalUnavailableError';
+const GeneratedPrincipalErrorTagSchema = Schema.Literals([
+  'ActionPrincipalConfigurationError',
+  'ActionPrincipalExpiredError',
+  'ActionPrincipalInvalidError',
+  'ActionPrincipalMissingError',
+  'ActionPrincipalScopeError',
+  'ActionPrincipalUnavailableError',
+]);
+type GeneratedPrincipalErrorTag = typeof GeneratedPrincipalErrorTagSchema.Type;
+
+const test = (name: string, handler: () => void | Promise<void>): void => {
+  void nodeTest(name, handler);
+};
+
+const isGeneratedPrincipalError = (tag: GeneratedPrincipalErrorTag) =>
+  Schema.is(Schema.Struct({ _tag: Schema.Literal(tag) }));
 
 interface FixtureVertical {
   readonly appId: string;
@@ -61,6 +75,40 @@ interface GeneratedPrincipalEnvironment {
   readonly ONTOS_GATEWAY_ISSUER?: string;
   readonly ONTOS_GATEWAY_PUBLIC_JWKS?: string;
 }
+
+interface GeneratedPrincipalModule {
+  readonly verifyActionPrincipal: (
+    authorization: string | undefined,
+    options: {
+      readonly currentTimeSeconds: Effect.Effect<number>;
+      readonly environment: GeneratedPrincipalEnvironment;
+      readonly redemption: { readonly consume: () => Effect.Effect<void> };
+    },
+  ) => Effect.Effect<TrustedPrincipalContext, { readonly _tag: GeneratedPrincipalErrorTag }>;
+}
+
+interface GeneratedActionGatewayModule {
+  readonly makeActionGateway: (
+    acquire: (payload: { readonly audience: string }) => Effect.Effect<{ readonly token: string }>,
+  ) => {
+    readonly invoke: <Success>(
+      attempt: (authorization: string) => Effect.Effect<Success>,
+    ) => Effect.Effect<Success>;
+  };
+}
+
+const GeneratedPrincipalModuleSchema = Schema.Struct({
+  verifyActionPrincipal: Schema.declare<GeneratedPrincipalModule['verifyActionPrincipal']>(
+    (value): value is GeneratedPrincipalModule['verifyActionPrincipal'] =>
+      Predicate.isFunction(value),
+  ),
+});
+const GeneratedActionGatewayModuleSchema = Schema.Struct({
+  makeActionGateway: Schema.declare<GeneratedActionGatewayModule['makeActionGateway']>(
+    (value): value is GeneratedActionGatewayModule['makeActionGateway'] =>
+      Predicate.isFunction(value),
+  ),
+});
 
 const StringRecordSchema = Schema.Record(Schema.String, Schema.String);
 const FixturePackageSchema = Schema.Struct({
@@ -80,6 +128,56 @@ const EsbuildMetafileSchema = Schema.Struct({
 const RetryableProblemSchema = Schema.Struct({
   retryable: Schema.optional(Schema.Boolean),
 });
+const problemFields = {
+  detail: Schema.String,
+  status: Schema.Finite,
+  title: Schema.String,
+  type: Schema.String,
+};
+const asProblemDetails = HttpApiSchema.asJson({ contentType: 'application/problem+json' });
+const ActionAuthenticationProblemSchema = Schema.TaggedStruct(
+  'ActionAuthenticationProblem',
+  problemFields,
+).pipe(asProblemDetails, HttpApiSchema.status(401));
+const ActionVerificationUnavailableProblemSchema = Schema.TaggedStruct(
+  'ActionVerificationUnavailableProblem',
+  { ...problemFields, retryable: Schema.Literal(true) },
+).pipe(asProblemDetails, HttpApiSchema.status(503));
+type EndpointProblem =
+  | typeof ActionAuthenticationProblemSchema.Type
+  | typeof ActionVerificationUnavailableProblemSchema.Type;
+const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
+  Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
+);
+const failActionAuthentication = () =>
+  bearerChallenge.pipe(
+    Effect.andThen(
+      Effect.fail<EndpointProblem>({
+        _tag: 'ActionAuthenticationProblem',
+        detail: 'A valid Bearer assertion is required.',
+        status: 401,
+        title: 'Action authentication required',
+        type: 'https://ontos.dev/problems/action-authentication-required',
+      }),
+    ),
+  );
+const failActionVerificationUnavailable = () =>
+  Effect.fail<EndpointProblem>({
+    _tag: 'ActionVerificationUnavailableProblem',
+    detail: 'Action identity verification is temporarily unavailable.',
+    retryable: true,
+    status: 503,
+    title: 'Action verification unavailable',
+    type: 'https://ontos.dev/problems/action-verification-unavailable',
+  });
+const generatedPrincipalErrorHandlers = {
+  ActionPrincipalConfigurationError: failActionVerificationUnavailable,
+  ActionPrincipalExpiredError: failActionAuthentication,
+  ActionPrincipalInvalidError: failActionAuthentication,
+  ActionPrincipalMissingError: failActionAuthentication,
+  ActionPrincipalScopeError: failActionAuthentication,
+  ActionPrincipalUnavailableError: failActionVerificationUnavailable,
+};
 const FixtureTsconfigSchema = Schema.Struct({
   references: Schema.Array(Schema.Struct({ path: Schema.String })),
 });
@@ -99,12 +197,90 @@ const decodeInventoryLocale = (source: string) =>
     JSON.parse(source),
   );
 
+const inventorySlug = 'inventory-stock';
+const shellAppId = 'shell-super-app';
+const fixtureGatewayIssuer = 'https://shell.example.test';
+const preservedFixtureValue = 'preserve-me';
+const topologyFile = 'topology/reference-topology.json';
+const inventoryPackageName = `@app/${inventorySlug}`;
+const workspaceVersion = 'workspace:*';
+const fixtureGatewayJti = '60000000-0000-4000-8000-000000000001';
+const actionInvokeUrl = 'https://inventory.example.test/actions/invoke';
+const generatedOutboxContractPath = './shared/outbox/orders-created.ts';
+const workerStartScript = 'node --experimental-strip-types ./src/worker-host/main.ts';
+const workerRegistryEntry = 'ordersCreatedProjectorWorker,';
+const pagePlaceholder = 'This page is ready for implementation.';
+const purchasingOrdersUrl = '/purchasing/orders';
+const customerDetailUrl = '/inventory/customers/:id';
+const customerEditUrl = '/inventory/customers/:id/edit';
+const scaffoldCommand = {
+  actionService: 'action-service',
+  externalHttpAdapter: 'external-http-adapter',
+  microverticalActionBoundary: 'microvertical-action-boundary',
+  microverticalPage: 'microvertical-page',
+  moduleApi: 'module-api',
+  outboxMessage: 'outbox-message',
+  outboxWorker: 'outbox-worker',
+  publicComponent: 'public-component',
+  searchProvider: 'search-provider',
+  searchProviderAccess: 'search-provider-access',
+} as const;
+const scaffoldFlag = {
+  accessFiltering: '--access-filtering',
+  authorization: '--authorization',
+  legalEntityScope: '--legal-entity-scope',
+  operation: '--operation',
+  producer: '--producer',
+  provider: '--provider',
+  requestFilters: '--request-filters',
+  resource: '--resource',
+  vertical: '--vertical',
+} as const;
+const fixtureName = {
+  action: 'create-order',
+  actionModule: 'core.modules',
+  customerEditPage: 'customer-edit',
+  inventoryItems: 'inventory-items',
+  ordersCreated: 'orders.created',
+  ordersCreatedLogger: 'orders-created-logger',
+  ordersLogger: 'orders-logger',
+  ordersShipped: 'orders.shipped',
+  policy: 'tenant-active',
+  purchaseOrdersPage: 'purchase-orders',
+  resourceDetail: 'resource-detail',
+  stockLevels: 'stock-levels',
+} as const;
+const rootPackageFile = 'package.json';
+const coreRuntimeIndexFile = 'packages/core-runtime/src/index.ts';
+const coreActionCatalogFile = 'packages/core-runtime/src/modules/actions/catalog.ts';
+const shellSentinelFile = 'apps/shell-super-app/src/sentinel.ts';
+const shellVerticalClientsFile = 'apps/shell-super-app/src/api/vertical-clients.ts';
+const inventoryManifestFile = 'verticals/inventory-stock/vertical.manifest.ts';
+const inventoryRegistrationFile = 'verticals/inventory-stock/vertical.registration.ts';
+const inventoryFederationConfigFile = 'verticals/inventory-stock/module-federation.config.ts';
+const inventorySearchProviderFile =
+  'verticals/inventory-stock/src/search/inventory-items.provider.ts';
+const inventorySearchContractFile =
+  'verticals/inventory-stock/shared/apis/inventory-items-search.ts';
+const inventoryActionPrincipalFile = 'verticals/inventory-stock/api/auth/action-principal.ts';
+const inventoryActionGatewayFile = 'verticals/inventory-stock/src/api/action-gateway.ts';
+const inventoryPackageFile = 'verticals/inventory-stock/package.json';
+const inventoryActionFile = 'verticals/inventory-stock/src/actions/create-order.action.ts';
+const inventoryOutboxContractFile = 'verticals/inventory-stock/shared/outbox/orders-created.ts';
+const billingApiIndexFile = 'verticals/billing/api/index.ts';
+const billingWorkersIndexFile = 'verticals/billing/src/workers/index.ts';
+const inventoryTsconfigFile = 'verticals/inventory-stock/tsconfig.json';
+const inventoryEnglishLocaleFile = 'verticals/inventory-stock/locales/en/inventory.json';
+const inventoryOrdersRouteFile = 'verticals/inventory-stock/src/routes/[lang]/orders/page.tsx';
+const effectNodeModulePath = 'node_modules/effect';
+const pluginBffNodeModulePath = 'node_modules/@modern-js/plugin-bff';
+
 const inventoryVertical: FixtureVertical = {
-  appId: 'inventory-stock',
+  appId: inventorySlug,
   mfBoundaryId: 'verticalInventoryStock',
   moduleId: 'inventory.stock',
   namespace: 'inventory',
-  slug: 'inventory-stock',
+  slug: inventorySlug,
 };
 
 const billingVertical: FixtureVertical = {
@@ -152,7 +328,7 @@ const makeGatewayKey = async (
   const publicJwk = await exportJWK(pair.publicKey);
   return {
     configuration: {
-      issuer: 'https://shell.example.test',
+      issuer: fixtureGatewayIssuer,
       privateJwk: {
         alg: 'EdDSA',
         crv: 'Ed25519',
@@ -214,22 +390,28 @@ const createVertical = async (root: string, vertical: FixtureVertical): Promise<
         build: 'modern build && MODERNJS_DEPLOY=node modern deploy --skip-build',
         'cloudflare:build':
           'MODERNJS_DEPLOY=cloudflare modern build && MODERNJS_DEPLOY=cloudflare modern deploy --skip-build',
-        existing: 'preserve-me',
+        existing: preservedFixtureValue,
       },
       version: '0.1.0',
     }),
   );
+  await writeFixtureFile(
+    root,
+    `verticals/${vertical.slug}/api/index.ts`,
+    `export const existingApiRuntime = '${vertical.moduleId}';\n`,
+  );
   await Promise.all(
-    ['cs', 'en'].map((locale) =>
-      writeFixtureFile(
-        root,
-        `verticals/${vertical.slug}/locales/${locale}/${vertical.namespace}.json`,
-        json({
-          [vertical.namespace]: {
-            existing: `${locale}-preserved`,
-          },
-        }),
-      ),
+    ['cs', 'en'].map(
+      async (locale) =>
+        await writeFixtureFile(
+          root,
+          `verticals/${vertical.slug}/locales/${locale}/${vertical.namespace}.json`,
+          json({
+            [vertical.namespace]: {
+              existing: `${locale}-preserved`,
+            },
+          }),
+        ),
     ),
   );
   const resourcesName = `${vertical.slug
@@ -276,15 +458,15 @@ export const ${resourcesName} = {
 
 const createFixture = async (): Promise<Fixture> => {
   const root = await mkdtemp(path.join(tmpdir(), 'ontos-scaffolding-'));
-  await writeFixtureFile(root, 'package.json', json({ name: 'fixture', private: true }));
+  await writeFixtureFile(root, rootPackageFile, json({ name: 'fixture', private: true }));
   await writeFixtureFile(
     root,
-    'packages/core-runtime/src/index.ts',
+    coreRuntimeIndexFile,
     `export const existingCoreSurface = true;\n\n// <generated-core-action-exports>\n// </generated-core-action-exports>\n\n// <generated-global-policy-exports>\n// </generated-global-policy-exports>\n`,
   );
   await writeFixtureFile(
     root,
-    'packages/core-runtime/src/modules/actions/catalog.ts',
+    coreActionCatalogFile,
     `export const existingCatalogSurface = true;
 
 // <generated-core-action-catalog-imports>
@@ -296,14 +478,10 @@ export const coreActionCatalog = [
 ];
 `,
   );
+  await writeFixtureFile(root, shellSentinelFile, 'export const shell = true;\n');
   await writeFixtureFile(
     root,
-    'apps/shell-super-app/src/sentinel.ts',
-    'export const shell = true;\n',
-  );
-  await writeFixtureFile(
-    root,
-    'apps/shell-super-app/src/api/vertical-clients.ts',
+    shellVerticalClientsFile,
     `export const ultramodernVerticalClients = [
   // @ontos-codegen-start shell-page-clients
   // @ontos-codegen-end shell-page-clients
@@ -316,7 +494,7 @@ export const coreActionCatalog = [
   await createVertical(root, contactsVertical);
   await writeFixtureFile(
     root,
-    'topology/reference-topology.json',
+    topologyFile,
     json({
       schemaVersion: 1,
       verticals: [inventoryVertical, billingVertical, hrVertical, contactsVertical].map(
@@ -335,10 +513,15 @@ export const coreActionCatalog = [
     }),
   );
   await Promise.all(
-    [inventoryVertical, billingVertical, hrVertical, contactsVertical].map((vertical) =>
-      runScaffold('module-contract', ['--vertical', vertical.slug, '--module', vertical.moduleId], {
-        workspaceRoot: root,
-      }),
+    [inventoryVertical, billingVertical, hrVertical, contactsVertical].map(
+      async (vertical) =>
+        await runScaffold(
+          'module-contract',
+          [scaffoldFlag.vertical, vertical.slug, '--module', vertical.moduleId],
+          {
+            workspaceRoot: root,
+          },
+        ),
     ),
   );
   return { root };
@@ -374,47 +557,47 @@ const snapshotTree = async (root: string): Promise<Readonly<Record<string, strin
   return snapshot;
 };
 
-const readFixtureFile = (root: string, relativePath: string): Promise<string> =>
-  readFile(path.join(root, relativePath), 'utf-8');
+const readFixtureFile = async (root: string, relativePath: string): Promise<string> =>
+  await readFile(path.join(root, relativePath), 'utf-8');
 
-const run = (
+const run = async (
   fixture: Fixture,
   command: ScaffoldCommand,
-  arguments_: readonly string[],
+  scaffoldArguments: readonly string[],
   routeRefresh?: (appId: string) => void,
 ) =>
-  runScaffold(
+  await runScaffold(
     command,
     (() => {
-      let flags = [...arguments_];
+      let flags = [...scaffoldArguments];
       if (
         command === 'action' &&
         flags.includes('--action') &&
-        !flags.includes('--legal-entity-scope')
+        !flags.includes(scaffoldFlag.legalEntityScope)
       ) {
-        flags = [...flags, '--legal-entity-scope', 'optional'];
+        flags = [...flags, scaffoldFlag.legalEntityScope, 'optional'];
       }
-      if (!flags.includes('--authorization')) {
+      if (!flags.includes(scaffoldFlag.authorization)) {
         if (command === 'action') {
           flags = [
             ...flags,
-            '--authorization',
+            scaffoldFlag.authorization,
             'action_execution',
             '--provisioning',
             'tenant_membership_default',
           ];
-        } else if (command === 'outbox-worker') {
-          flags = [...flags, '--authorization', 'owner_local_background'];
+        } else if (command === scaffoldCommand.outboxWorker) {
+          flags = [...flags, scaffoldFlag.authorization, 'owner_local_background'];
         } else if (
-          command === 'microvertical-page' ||
-          command === 'module-api' ||
-          command === 'public-component' ||
+          command === scaffoldCommand.microverticalPage ||
+          command === scaffoldCommand.moduleApi ||
+          command === scaffoldCommand.publicComponent ||
           command === 'report' ||
-          command === 'search-provider'
+          command === scaffoldCommand.searchProvider
         ) {
           flags = [
             ...flags,
-            '--authorization',
+            scaffoldFlag.authorization,
             'context_permission',
             '--permission',
             'module.access',
@@ -430,7 +613,7 @@ const run = (
   );
 
 const addInventoryItemResourceType = async (fixture: Fixture): Promise<void> => {
-  const manifestPath = path.join(fixture.root, 'verticals/inventory-stock/vertical.manifest.ts');
+  const manifestPath = path.join(fixture.root, inventoryManifestFile);
   const manifest = await readFile(manifestPath, 'utf-8');
   await writeFile(
     manifestPath,
@@ -461,19 +644,19 @@ test('documents every command and treats --help as a write-free operation', asyn
     (
       [
         'action',
-        'action-service',
-        'external-http-adapter',
-        'microvertical-action-boundary',
-        'microvertical-page',
+        scaffoldCommand.actionService,
+        scaffoldCommand.externalHttpAdapter,
+        scaffoldCommand.microverticalActionBoundary,
+        scaffoldCommand.microverticalPage,
         'module-contract',
-        'module-api',
-        'outbox-message',
-        'outbox-worker',
+        scaffoldCommand.moduleApi,
+        scaffoldCommand.outboxMessage,
+        scaffoldCommand.outboxWorker,
         'policy',
-        'public-component',
+        scaffoldCommand.publicComponent,
         'report',
-        'search-provider-access',
-        'search-provider',
+        scaffoldCommand.searchProviderAccess,
+        scaffoldCommand.searchProvider,
       ] as const
     ).map(async (command) => {
       const result = await runScaffold(command, ['--', '--help'], {
@@ -485,58 +668,55 @@ test('documents every command and treats --help as a write-free operation', asyn
   );
   assert.match(getHelpText('action'), /--vertical <vertical>/u);
   assert.match(getHelpText('action'), /--scope core --module <core\.module>/u);
-  assert.match(getHelpText('microvertical-page'), /--url <url>/u);
-  assert.match(getHelpText('microvertical-page'), /defaults to \/<vertical>\/<page>/u);
-  assert.match(getHelpText('microvertical-page'), /:parameter/u);
-  assert.match(getHelpText('microvertical-page'), /\/contacts\/customers\/:id\/edit/u);
+  assert.match(getHelpText(scaffoldCommand.microverticalPage), /--url <url>/u);
+  assert.match(getHelpText(scaffoldCommand.microverticalPage), /defaults to \/<vertical>\/<page>/u);
+  assert.match(getHelpText(scaffoldCommand.microverticalPage), /:parameter/u);
+  assert.match(getHelpText(scaffoldCommand.microverticalPage), /\/contacts\/customers\/:id\/edit/u);
   assert.match(
-    getHelpText('external-http-adapter'),
+    getHelpText(scaffoldCommand.externalHttpAdapter),
     /scaffold:external-http-adapter -- --vertical <vertical> --provider <provider> --operation <operation>/u,
   );
   assert.match(
-    getHelpText('external-http-adapter'),
+    getHelpText(scaffoldCommand.externalHttpAdapter),
     /--vertical contacts --provider ares --operation subject/u,
   );
-  assert.match(getHelpText('search-provider-access'), /--tenant-permission read_party_identity/u);
+  assert.match(
+    getHelpText(scaffoldCommand.searchProviderAccess),
+    /--tenant-permission read_party_identity/u,
+  );
 });
 
 test('search-provider access updates only generated access metadata and fails atomically on drift', async () => {
   await withFixture(async (fixture) => {
     await mkdir(path.join(fixture.root, 'verticals/retired/node_modules'), { recursive: true });
     await addInventoryItemResourceType(fixture);
-    await run(fixture, 'search-provider', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.searchProvider, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--name',
-      'inventory-items',
-      '--resource',
+      fixtureName.inventoryItems,
+      scaffoldFlag.resource,
       'item',
     ]);
-    await run(fixture, 'search-provider-access', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.searchProviderAccess, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--name',
-      'inventory-items',
-      '--legal-entity-scope',
+      fixtureName.inventoryItems,
+      scaffoldFlag.legalEntityScope,
       'optional',
-      '--access-filtering',
+      scaffoldFlag.accessFiltering,
       'tenant_scope',
-      '--request-filters',
+      scaffoldFlag.requestFilters,
       'includeArchived',
       '--tenant-permission',
       'read_party_identity',
     ]);
 
     const [manifest, provider, contract] = await Promise.all([
-      readFixtureFile(fixture.root, 'verticals/inventory-stock/vertical.manifest.ts'),
-      readFixtureFile(
-        fixture.root,
-        'verticals/inventory-stock/src/search/inventory-items.provider.ts',
-      ),
-      readFixtureFile(
-        fixture.root,
-        'verticals/inventory-stock/shared/apis/inventory-items-search.ts',
-      ),
+      readFixtureFile(fixture.root, inventoryManifestFile),
+      readFixtureFile(fixture.root, inventorySearchProviderFile),
+      readFixtureFile(fixture.root, inventorySearchContractFile),
     ]);
     assert.match(
       manifest,
@@ -547,25 +727,22 @@ test('search-provider access updates only generated access metadata and fails at
     assert.match(provider, /kind: 'tenant', permission: 'read_party_identity'/u);
     assert.match(contract, /includeArchived: Schema\.optionalKey\(Schema\.Boolean\)/u);
 
-    const providerPath = path.join(
-      fixture.root,
-      'verticals/inventory-stock/src/search/inventory-items.provider.ts',
-    );
+    const providerPath = path.join(fixture.root, inventorySearchProviderFile);
     await writeFile(
       providerPath,
       `${provider}\n// Owner-customized searchable semantics remain untouched.\n`,
     );
     const beforeIdempotentUpdate = await snapshotTree(fixture.root);
-    await run(fixture, 'search-provider-access', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.searchProviderAccess, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--name',
-      'inventory-items',
-      '--legal-entity-scope',
+      fixtureName.inventoryItems,
+      scaffoldFlag.legalEntityScope,
       'optional',
-      '--access-filtering',
+      scaffoldFlag.accessFiltering,
       'tenant_scope',
-      '--request-filters',
+      scaffoldFlag.requestFilters,
       'includeArchived',
       '--tenant-permission',
       'read_party_identity',
@@ -577,16 +754,16 @@ test('search-provider access updates only generated access metadata and fails at
     );
     const beforeRejectedUpdate = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'search-provider-access', [
-        '--vertical',
-        'inventory-stock',
+      run(fixture, scaffoldCommand.searchProviderAccess, [
+        scaffoldFlag.vertical,
+        inventorySlug,
         '--name',
-        'inventory-items',
-        '--legal-entity-scope',
+        fixtureName.inventoryItems,
+        scaffoldFlag.legalEntityScope,
         'required',
-        '--access-filtering',
+        scaffoldFlag.accessFiltering,
         'resource_permission',
-        '--request-filters',
+        scaffoldFlag.requestFilters,
         'includeArchived,role',
       ]),
       /Codesmith-owned provider/u,
@@ -597,16 +774,21 @@ test('search-provider access updates only generated access metadata and fails at
 
 test('generated API owner slots sort property keys before suffix variants', async () => {
   await withFixture(async (fixture) => {
-    await run(fixture, 'module-api', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.moduleApi, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--name',
       'party-match-decision',
     ]);
-    await run(fixture, 'module-api', ['--vertical', 'inventory-stock', '--name', 'party-match']);
+    await run(fixture, scaffoldCommand.moduleApi, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--name',
+      'party-match',
+    ]);
     const sources = await Promise.all(
-      ['vertical.manifest.ts', 'vertical.registration.ts'].map((owner) =>
-        readFixtureFile(fixture.root, `verticals/inventory-stock/${owner}`),
+      [inventoryManifestFile, inventoryRegistrationFile].map(
+        async (owner) => await readFixtureFile(fixture.root, owner),
       ),
     );
     for (const source of sources) {
@@ -618,26 +800,26 @@ test('generated API owner slots sort property keys before suffix variants', asyn
 test('generated read clients fetch mounted owner URLs and support separately deployed hosts', async () => {
   await withFixture(async (fixture) => {
     await addInventoryItemResourceType(fixture);
-    await run(fixture, 'module-api', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.moduleApi, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--name',
-      'resource-detail',
+      fixtureName.resourceDetail,
     ]);
-    await run(fixture, 'search-provider', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.searchProvider, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--name',
-      'inventory-items',
-      '--resource',
+      fixtureName.inventoryItems,
+      scaffoldFlag.resource,
       'item',
     ]);
     await run(fixture, 'report', [
-      '--vertical',
-      'inventory-stock',
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--name',
-      'stock-levels',
-      '--resource',
+      fixtureName.stockLevels,
+      scaffoldFlag.resource,
       'item',
     ]);
     await mkdir(path.join(fixture.root, 'node_modules/@app'), { recursive: true });
@@ -648,13 +830,13 @@ test('generated read clients fetch mounted owner URLs and support separately dep
       'dir',
     );
     await symlink(
-      path.join(appRoot, 'node_modules/effect'),
-      path.join(fixture.root, 'node_modules/effect'),
+      path.join(appRoot, effectNodeModulePath),
+      path.join(fixture.root, effectNodeModulePath),
       'dir',
     );
     await symlink(
-      path.join(appRoot, 'node_modules/@modern-js/plugin-bff'),
-      path.join(fixture.root, 'node_modules/@modern-js/plugin-bff'),
+      path.join(appRoot, pluginBffNodeModulePath),
+      path.join(fixture.root, pluginBffNodeModulePath),
       'dir',
     );
     const result = spawnSync(
@@ -665,6 +847,7 @@ test('generated read clients fetch mounted owner URLs and support separately dep
         `
       import { Effect } from 'effect';
       import { FetchHttpClient } from 'effect/unstable/http';
+      import { runEffectTestPromise } from '${pathToFileURL(path.join(appRoot, 'packages/core-runtime/src/testing/effect-runtime.ts')).href}';
       import { executeResourceDetail, executeResourceDetailWithAuthorization } from './verticals/inventory-stock/src/api/resource-detail-client.ts';
       import { loadInventoryItemsClient, loadInventoryItemsClientWithAuthorization } from './verticals/inventory-stock/src/api/inventory-items-search-client.ts';
       import { loadStockLevelsClient, loadStockLevelsClientWithAuthorization } from './verticals/inventory-stock/src/api/stock-levels-report-client.ts';
@@ -679,17 +862,17 @@ test('generated read clients fetch mounted owner URLs and support separately dep
           calls.push({ url: String(url), method: init.method, authorization: new Headers(init.headers).get('authorization'), correlationId: new Headers(init.headers).get('x-correlation-id') });
           return Response.json(response);
         };
-        await Effect.runPromise(invoke(payload, 'Bearer proof', 'correlation-proof', { baseUrl: new URL('https://inventory.example.test/custom/inventory-stock-api') }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch)));
+        await runEffectTestPromise(invoke(payload, 'Bearer proof', 'correlation-proof', { baseUrl: new URL('https://inventory.example.test/custom/inventory-stock-api') }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch)));
       }
       globalThis.location = { origin: 'https://shell.example.test', pathname: '/cs/inventory' };
       for (const [invoke, payload, response] of cases) {
-        await Effect.runPromise(invoke(payload, 'Bearer proof', 'correlation-proof').pipe(Effect.provideService(FetchHttpClient.Fetch, async (url, init) => {
+        await runEffectTestPromise(invoke(payload, 'Bearer proof', 'correlation-proof').pipe(Effect.provideService(FetchHttpClient.Fetch, async (url, init) => {
           calls.push({ url: String(url), method: init.method, authorization: new Headers(init.headers).get('authorization'), correlationId: new Headers(init.headers).get('x-correlation-id') });
           return Response.json(response);
         })));
       }
       for (const [, payload, response, invoke] of cases) {
-        await Effect.runPromise(invoke(payload, 'correlation-proof', { baseUrl: 'https://inventory.example.test/custom/inventory-stock-api' }).pipe(Effect.provideService(FetchHttpClient.Fetch, async (url, init) => {
+        await runEffectTestPromise(invoke(payload, 'correlation-proof', { baseUrl: 'https://inventory.example.test/custom/inventory-stock-api' }).pipe(Effect.provideService(FetchHttpClient.Fetch, async (url, init) => {
           if (String(url) === 'https://shell.example.test/shell-super-app-api/auth/gateway-context') {
             return Response.json({ expiresAt: 2_000_000_000, token: 'proof' });
           }
@@ -727,54 +910,54 @@ test('generated read clients fetch mounted owner URLs and support separately dep
 
 test('governed contribution generators patch owner contracts and lazy adapters atomically', async () => {
   await withFixture(async (fixture) => {
-    const manifestPath = path.join(fixture.root, 'verticals/inventory-stock/vertical.manifest.ts');
+    const manifestPath = path.join(fixture.root, inventoryManifestFile);
     await addInventoryItemResourceType(fixture);
 
-    await run(fixture, 'module-api', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.moduleApi, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--name',
-      'resource-detail',
+      fixtureName.resourceDetail,
     ]);
-    await run(fixture, 'module-api', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.moduleApi, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--name',
       'resource-history',
     ]);
-    await run(fixture, 'public-component', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.publicComponent, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--name',
       'inventory-summary',
     ]);
-    await run(fixture, 'public-component', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.publicComponent, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--name',
       'inventory-alerts',
     ]);
-    await run(fixture, 'search-provider', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.searchProvider, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--name',
-      'inventory-items',
-      '--resource',
+      fixtureName.inventoryItems,
+      scaffoldFlag.resource,
       'item',
     ]);
     await run(fixture, 'report', [
-      '--vertical',
-      'inventory-stock',
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--name',
-      'stock-levels',
-      '--resource',
+      fixtureName.stockLevels,
+      scaffoldFlag.resource,
       'item',
     ]);
 
     const [nextManifest, registration, federation] = await Promise.all([
       readFile(manifestPath, 'utf-8'),
-      readFixtureFile(fixture.root, 'verticals/inventory-stock/vertical.registration.ts'),
-      readFixtureFile(fixture.root, 'verticals/inventory-stock/module-federation.config.ts'),
+      readFixtureFile(fixture.root, inventoryRegistrationFile),
+      readFixtureFile(fixture.root, inventoryFederationConfigFile),
     ]);
     assert.match(nextManifest, /inventory\.stock\.component\.inventory-summary/u);
     assert.match(nextManifest, /inventory\.stock\.search\.inventory-items/u);
@@ -809,10 +992,7 @@ test('governed contribution generators patch owner contracts and lazy adapters a
       fixture.root,
       'verticals/inventory-stock/src/api/resource-history-client.ts',
     );
-    const searchProvider = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/src/search/inventory-items.provider.ts',
-    );
+    const searchProvider = await readFixtureFile(fixture.root, inventorySearchProviderFile);
     const reportProvider = await readFixtureFile(
       fixture.root,
       'verticals/inventory-stock/src/reports/stock-levels.provider.ts',
@@ -833,27 +1013,33 @@ test('governed contribution generators patch owner contracts and lazy adapters a
       fixture.root,
       'verticals/inventory-stock/api/resource-detail-read-server.ts',
     );
-    const operationBoundary = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/api/auth/action-principal.ts',
-    );
-    assert.match(searchClient, /makeEffectHttpApiClient\(InventoryItemsSearchApi,/u);
-    assert.match(reportClient, /makeEffectHttpApiClient\(StockLevelsReportApi,/u);
+    const operationBoundary = await readFixtureFile(fixture.root, inventoryActionPrincipalFile);
+    assert.match(searchClient, /makeEffectHttpApiClient\(InventoryItemsSearchApi, \{/u);
+    assert.match(reportClient, /makeEffectHttpApiClient\(StockLevelsReportApi, \{/u);
     assert.match(
       moduleApiContract,
       /headers: \{\},\s+params: \{\},\s+payload: ResourceDetailRequestSchema,\s+query: \{\}/u,
     );
     assert.match(
       moduleApiClient,
-      /client\.resourceDetail\.execute\(\{ headers: \{\}, params: \{\}, payload, query: \{\} \}\)/u,
+      /client\.resourceDetail\.execute\(\{\s+headers: \{\},\s+params: \{\},\s+payload,\s+query: \{\},?\s+\}\)/u,
     );
     assert.match(moduleApiContract, /HttpApiGroup\.make\('resourceDetail'\)/u);
     assert.match(secondModuleApiContract, /HttpApiGroup\.make\('resourceHistory'\)/u);
     assert.match(secondModuleApiClient, /client\.resourceHistory\.execute\(/u);
     for (const client of [moduleApiClient, searchClient, reportClient]) {
+      assert.match(client, /Context\.Reference</u);
+      assert.match(client, /Effect\.provideService\(/u);
+      assert.match(
+        client,
+        /prependUrl\(\s*request,\s*\(baseUrl \?\? '\/inventory-stock-api'\)\.toString\(\)/u,
+      );
       assert.match(client, /operationGateway\.invoke\(\(authorization\) =>/u);
       assert.match(client, /WithAuthorization/u);
-      assert.match(client, /setHeaders\(\{ authorization, 'x-correlation-id': correlationId \}\)/u);
+      assert.match(
+        client,
+        /setHeaders\(\{\s+authorization,\s+'x-correlation-id': correlationId,?\s+\}\)/u,
+      );
     }
     assert.doesNotMatch(searchClient, /\.provider\.ts|import\(/u);
     assert.doesNotMatch(reportClient, /\.provider\.ts|import\(/u);
@@ -867,25 +1053,27 @@ test('governed contribution generators patch owner contracts and lazy adapters a
     assert.match(moduleApiRead, /defineRead\(/u);
     assert.match(moduleApiRead, /legalEntityScope: 'required'/u);
     for (const server of [moduleApiServer, searchServer, reportServer]) {
-      assert.match(server, /verifyOperationPrincipal\(request\.headers\.authorization,/u);
+      assert.match(server, /verifyOperationPrincipal\(\s*request\.headers\.authorization,/u);
       assert.match(server, /yield\* ReadRuntime/u);
       assert.match(server, /\.runRead\(\{/u);
       assert.match(server, /HttpEffect\.appendPreResponseHandler/u);
       assert.match(server, /'www-authenticate', 'Bearer'/u);
-      assert.match(server, /case 'ReadHandlerNotFound'/u);
-      assert.match(server, /case 'ReadPolicyDenied'/u);
-      assert.match(server, /policyProblem\(error\.httpStatus\)/u);
-      assert.match(server, /problem\.status === 401 \? bearerChallenge/u);
+      assert.match(server, /Match\.tags\(\{/u);
+      assert.match(server, /ReadHandlerNotFound: notFoundProblem/u);
+      assert.match(
+        server,
+        /ReadPolicyDenied: \(failure\) => policyProblem\(failure\.httpStatus\)/u,
+      );
+      assert.match(server, /Effect\.catchTags\(\{/u);
+      assert.doesNotMatch(server, /switch \(error\._tag\)|error\._tag ===/u);
+      assert.match(server, /problem\.status === 401\s+\?\s+bearerChallenge/u);
       assert.doesNotMatch(server, /tenantId|legalEntityId|principalId|CoreDatabase|from 'pg'/u);
     }
     assert.match(
       operationBoundary,
       /export const verifyOperationPrincipal = verifyActionPrincipal/u,
     );
-    const searchContract = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/shared/apis/inventory-items-search.ts',
-    );
+    const searchContract = await readFixtureFile(fixture.root, inventorySearchContractFile);
     assert.match(
       searchContract,
       /HttpApiEndpoint\.post\('execute', '\/inventory\.stock\/search\/inventory-items'/u,
@@ -896,9 +1084,9 @@ test('governed contribution generators patch owner contracts and lazy adapters a
 
     const beforeRepeat = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'public-component', [
-        '--vertical',
-        'inventory-stock',
+      run(fixture, scaffoldCommand.publicComponent, [
+        scaffoldFlag.vertical,
+        inventorySlug,
         '--name',
         'inventory-summary',
       ]),
@@ -906,11 +1094,15 @@ test('governed contribution generators patch owner contracts and lazy adapters a
     );
     assert.deepEqual(await snapshotTree(fixture.root), beforeRepeat);
     await assert.rejects(
-      run(fixture, 'module-api', ['--vertical', 'inventory-stock', '--name', '../unsafe']),
+      run(fixture, scaffoldCommand.moduleApi, [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--name',
+        '../unsafe',
+      ]),
       /lower-kebab-case/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), beforeRepeat);
-
     const billingFederationPath = path.join(
       fixture.root,
       'verticals/billing/module-federation.config.ts',
@@ -929,14 +1121,24 @@ void ignored;
 `,
       'utf-8',
     );
-    await run(fixture, 'public-component', ['--vertical', 'billing', '--name', 'billing-summary']);
+    await run(fixture, scaffoldCommand.publicComponent, [
+      scaffoldFlag.vertical,
+      'billing',
+      '--name',
+      'billing-summary',
+    ]);
     const commentSafeFederation = await readFile(billingFederationPath, 'utf-8');
     assert.match(commentSafeFederation, /\/exposes: \\\{\\\}\/u/u);
     assert.match(commentSafeFederation, /\.\/BillingSummary/u);
     await writeFile(billingFederationPath, 'export default {};\n', 'utf-8');
     const beforeUnpatchable = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'public-component', ['--vertical', 'billing', '--name', 'billing-details']),
+      run(fixture, scaffoldCommand.publicComponent, [
+        scaffoldFlag.vertical,
+        'billing',
+        '--name',
+        'billing-details',
+      ]),
       /exposes object is missing/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), beforeUnpatchable);
@@ -947,7 +1149,7 @@ test('recognizes only exact schema-only Outbox package subpaths as cross-vertica
   const producerPackage = {
     exports: {
       '.': './src/index.ts',
-      './outbox/orders-created': './shared/outbox/orders-created.ts',
+      './outbox/orders-created': generatedOutboxContractPath,
       './workers': './src/workers/index.ts',
     },
   };
@@ -955,7 +1157,7 @@ test('recognizes only exact schema-only Outbox package subpaths as cross-vertica
   assert.doesNotThrow(() =>
     assertPublishedOutboxDependencyUsage({
       dependencyPackageJson: producerPackage,
-      dependencyPackageName: '@app/inventory-stock',
+      dependencyPackageName: inventoryPackageName,
       moduleSpecifiers: ['@app/inventory-stock/outbox/orders-created'],
     }),
   );
@@ -963,7 +1165,7 @@ test('recognizes only exact schema-only Outbox package subpaths as cross-vertica
     () =>
       assertPublishedOutboxDependencyUsage({
         dependencyPackageJson: producerPackage,
-        dependencyPackageName: '@app/inventory-stock',
+        dependencyPackageName: inventoryPackageName,
         moduleSpecifiers: ['@app/inventory-stock/workers'],
       }),
     /not a published schema-only Outbox contract subpath/u,
@@ -972,8 +1174,8 @@ test('recognizes only exact schema-only Outbox package subpaths as cross-vertica
     () =>
       assertPublishedOutboxDependencyUsage({
         dependencyPackageJson: { exports: { '.': './src/index.ts' } },
-        dependencyPackageName: '@app/inventory-stock',
-        moduleSpecifiers: ['@app/inventory-stock'],
+        dependencyPackageName: inventoryPackageName,
+        moduleSpecifiers: [inventoryPackageName],
       }),
     /not a published schema-only Outbox contract dependency/u,
   );
@@ -986,11 +1188,11 @@ test('rejects malformed command contracts and leaves the fixture unchanged', asy
       runScaffold(
         'action',
         [
-          '--vertical',
-          'inventory-stock',
+          scaffoldFlag.vertical,
+          inventorySlug,
           '--action',
-          'create-order',
-          '--authorization',
+          fixtureName.action,
+          scaffoldFlag.authorization,
           'action_execution',
           '--provisioning',
           'tenant_membership_default',
@@ -1001,94 +1203,113 @@ test('rejects malformed command contracts and leaves the fixture unchanged', asy
     );
     assert.deepEqual(await snapshotTree(fixture.root), before);
     const invalidCalls: readonly [ScaffoldCommand, readonly string[], RegExp][] = [
-      ['action', ['--vertical', 'inventory-stock'], /missing required flag --action/u],
+      ['action', [scaffoldFlag.vertical, inventorySlug], /missing required flag --action/u],
       [
         'action',
         [
-          '--vertical',
-          'inventory-stock',
+          scaffoldFlag.vertical,
+          inventorySlug,
           '--action',
-          'create-order',
-          '--legal-entity-scope',
+          fixtureName.action,
+          scaffoldFlag.legalEntityScope,
           'invalid',
         ],
         /must be required, optional, or forbidden/u,
       ],
       [
         'action',
-        ['--vertical', 'inventory-stock', '--action', 'create-order', '--unknown', 'x'],
+        [scaffoldFlag.vertical, inventorySlug, '--action', fixtureName.action, '--unknown', 'x'],
         /unknown flag --unknown/u,
       ],
       [
         'action',
-        ['--vertical', 'inventory-stock', '--action', 'create-order', '--action', 'again'],
+        [scaffoldFlag.vertical, inventorySlug, '--action', fixtureName.action, '--action', 'again'],
         /only once/u,
       ],
-      ['action', ['--vertical', '', '--action', 'create-order'], /non-empty value/u],
-      ['action', ['--vertical', '../billing', '--action', 'create-order'], /lower-kebab-case/u],
-      ['action', ['--vertical', '/tmp/billing', '--action', 'create-order'], /lower-kebab-case/u],
+      ['action', [scaffoldFlag.vertical, '', '--action', fixtureName.action], /non-empty value/u],
+      [
+        'action',
+        [scaffoldFlag.vertical, '../billing', '--action', fixtureName.action],
+        /lower-kebab-case/u,
+      ],
+      [
+        'action',
+        [scaffoldFlag.vertical, '/absolute/billing', '--action', fixtureName.action],
+        /lower-kebab-case/u,
+      ],
       [
         'action',
         [
-          '--vertical',
-          'inventory-stock',
+          scaffoldFlag.vertical,
+          inventorySlug,
           '--scope',
           'core',
           '--module',
-          'core.modules',
+          fixtureName.actionModule,
           '--action',
-          'create-order',
+          fixtureName.action,
         ],
         /mutually exclusive/u,
       ],
-      ['action', ['--scope', 'core', '--action', 'create-order'], /--module is required/u],
+      ['action', ['--scope', 'core', '--action', fixtureName.action], /--module is required/u],
       [
         'action',
-        ['--scope', 'other', '--module', 'core.modules', '--action', 'create-order'],
+        ['--scope', 'other', '--module', fixtureName.actionModule, '--action', fixtureName.action],
         /--scope core is required/u,
       ],
       [
         'action',
-        ['--scope', 'core', '--module', 'billing.modules', '--action', 'create-order'],
+        ['--scope', 'core', '--module', 'billing.modules', '--action', fixtureName.action],
         /stable lowercase core/u,
       ],
       [
         'action',
-        ['--scope', 'core', '--module', 'core.../modules', '--action', 'create-order'],
+        ['--scope', 'core', '--module', 'core.../modules', '--action', fixtureName.action],
         /stable lowercase core/u,
       ],
       [
         'action',
-        ['--vertical', 'missing', '--action', 'create-order'],
+        [scaffoldFlag.vertical, 'missing', '--action', fixtureName.action],
         /package metadata is missing/u,
       ],
       [
-        'microvertical-action-boundary',
-        ['--vertical', 'inventory-stock', '--unknown', 'x'],
+        scaffoldCommand.microverticalActionBoundary,
+        [scaffoldFlag.vertical, inventorySlug, '--unknown', 'x'],
         /unknown flag --unknown/u,
       ],
-      ['microvertical-action-boundary', ['--vertical', '../billing'], /lower-kebab-case/u],
+      [
+        scaffoldCommand.microverticalActionBoundary,
+        [scaffoldFlag.vertical, '../billing'],
+        /lower-kebab-case/u,
+      ],
       [
         'policy',
-        ['--scope', 'global', '--policy', 'tenant-active', '--vertical', 'inventory-stock'],
+        ['--scope', 'global', '--policy', fixtureName.policy, scaffoldFlag.vertical, inventorySlug],
         /forbidden/u,
       ],
-      ['policy', ['--scope', 'microvertical', '--policy', 'tenant-active'], /required/u],
-      ['policy', ['--scope', 'other', '--policy', 'tenant-active'], /global or microvertical/u],
+      ['policy', ['--scope', 'microvertical', '--policy', fixtureName.policy], /required/u],
+      ['policy', ['--scope', 'other', '--policy', fixtureName.policy], /global or microvertical/u],
       [
-        'outbox-message',
-        ['--vertical', 'inventory-stock', '--action', 'create-order', '--topic', 'Not.Safe'],
+        scaffoldCommand.outboxMessage,
+        [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--action',
+          fixtureName.action,
+          '--topic',
+          'Not.Safe',
+        ],
         /dot-separated/u,
       ],
       [
-        'outbox-worker',
+        scaffoldCommand.outboxWorker,
         [
-          '--vertical',
+          scaffoldFlag.vertical,
           'billing',
           '--worker',
-          'orders-logger',
-          '--producer',
-          'inventory-stock',
+          fixtureName.ordersLogger,
+          scaffoldFlag.producer,
+          inventorySlug,
           '--topic',
           '../orders.created',
         ],
@@ -1096,8 +1317,8 @@ test('rejects malformed command contracts and leaves the fixture unchanged', asy
       ],
     ];
     await Promise.all(
-      invalidCalls.map(async ([command, arguments_, expected]) => {
-        await assert.rejects(run(fixture, command, arguments_), expected);
+      invalidCalls.map(async ([command, generatorArguments, expected]) => {
+        await assert.rejects(run(fixture, command, generatorArguments), expected);
         assert.deepEqual(await snapshotTree(fixture.root), before);
       }),
     );
@@ -1106,21 +1327,15 @@ test('rejects malformed command contracts and leaves the fixture unchanged', asy
 
 test('generates one immutable Action identity boundary and exact direct dependencies', async () => {
   await withFixture(async (fixture) => {
-    const shellBefore = await readFixtureFile(fixture.root, 'apps/shell-super-app/src/sentinel.ts');
-    const topologyBefore = await readFixtureFile(fixture.root, 'topology/reference-topology.json');
-    const result = await run(fixture, 'microvertical-action-boundary', [
-      '--vertical',
-      'inventory-stock',
+    const shellBefore = await readFixtureFile(fixture.root, shellSentinelFile);
+    const topologyBefore = await readFixtureFile(fixture.root, topologyFile);
+    const result = await run(fixture, scaffoldCommand.microverticalActionBoundary, [
+      scaffoldFlag.vertical,
+      inventorySlug,
     ]);
     assert.equal(result.kind, 'generated');
-    const server = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/api/auth/action-principal.ts',
-    );
-    const client = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/src/api/action-gateway.ts',
-    );
+    const server = await readFixtureFile(fixture.root, inventoryActionPrincipalFile);
+    const client = await readFixtureFile(fixture.root, inventoryActionGatewayFile);
     const redemption = await readFixtureFile(
       fixture.root,
       'verticals/inventory-stock/api/auth/gateway-assertion-redemption.ts',
@@ -1141,42 +1356,51 @@ test('generates one immutable Action identity boundary and exact direct dependen
     assert.match(server, /options\.redemption/u);
     assert.match(redemption, /GatewayAssertionRedemptionUnavailableError/u);
     const packageJson = decodeFixturePackage(
-      await readFixtureFile(fixture.root, 'verticals/inventory-stock/package.json'),
+      await readFixtureFile(fixture.root, inventoryPackageFile),
     );
     assert.deepEqual(packageJson.dependencies, {
-      '@app/core-runtime': 'workspace:*',
-      '@app/shared-contracts': 'workspace:*',
+      '@app/core-runtime': workspaceVersion,
+      '@app/shared-contracts': workspaceVersion,
       effect: '4.0.0-beta.107',
       jose: '6.2.5',
       zeta: '1.0.0',
     });
-    assert.equal(packageJson.scripts['existing'], 'preserve-me');
-    assert.equal(
-      await readFixtureFile(fixture.root, 'apps/shell-super-app/src/sentinel.ts'),
-      shellBefore,
-    );
-    assert.equal(
-      await readFixtureFile(fixture.root, 'topology/reference-topology.json'),
-      topologyBefore,
-    );
+    assert.equal(packageJson.scripts['existing'], preservedFixtureValue);
+    assert.equal(await readFixtureFile(fixture.root, shellSentinelFile), shellBefore);
+    assert.equal(await readFixtureFile(fixture.root, topologyFile), topologyBefore);
   });
 });
 
 test('Action identity boundary preflight refuses unsafe writes', async () => {
   await withFixture(async (fixture) => {
-    await run(fixture, 'microvertical-action-boundary', ['--vertical', 'inventory-stock']);
+    await run(fixture, scaffoldCommand.microverticalActionBoundary, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+    ]);
     const afterFirstRun = await snapshotTree(fixture.root);
-    await run(fixture, 'microvertical-action-boundary', ['--vertical', 'inventory-stock']);
+    await run(fixture, scaffoldCommand.microverticalActionBoundary, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+    ]);
     assert.deepEqual(await snapshotTree(fixture.root), afterFirstRun);
   });
   await withFixture(async (fixture) => {
-    const packagePath = path.join(fixture.root, 'verticals/inventory-stock/package.json');
+    const packagePath = path.join(fixture.root, inventoryPackageFile);
     const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
-    packageJson.dependencies['jose'] = '^5.0.0';
-    await writeFile(packagePath, json(packageJson), 'utf-8');
+    await writeFile(
+      packagePath,
+      json({
+        ...packageJson,
+        dependencies: { ...packageJson.dependencies, jose: '^5.0.0' },
+      }),
+      'utf-8',
+    );
     const before = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'microvertical-action-boundary', ['--vertical', 'inventory-stock']),
+      run(fixture, scaffoldCommand.microverticalActionBoundary, [
+        scaffoldFlag.vertical,
+        inventorySlug,
+      ]),
       /incompatible jose dependency/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), before);
@@ -1185,7 +1409,10 @@ test('Action identity boundary preflight refuses unsafe writes', async () => {
 
 test('generated verifier executes real Shell assertions and overlapping Ed25519 rotation', async () => {
   await withFixture(async (fixture) => {
-    await run(fixture, 'microvertical-action-boundary', ['--vertical', 'inventory-stock']);
+    await run(fixture, scaffoldCommand.microverticalActionBoundary, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+    ]);
     await mkdir(path.join(fixture.root, 'node_modules', '@app'), { recursive: true });
     await symlink(
       path.join(appRoot, 'packages/core-runtime'),
@@ -1199,7 +1426,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
     );
     await symlink(
       path.join(appRoot, 'packages/core-runtime/node_modules/effect'),
-      path.join(fixture.root, 'node_modules/effect'),
+      path.join(fixture.root, effectNodeModulePath),
       'dir',
     );
     await symlink(
@@ -1213,7 +1440,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
     const edgeBundle = spawnSync(
       esbuildPath,
       [
-        path.join(fixture.root, 'verticals/inventory-stock/api/auth/action-principal.ts'),
+        path.join(fixture.root, inventoryActionPrincipalFile),
         '--bundle',
         '--format=esm',
         `--metafile=${edgeMetafile}`,
@@ -1222,45 +1449,26 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
       ],
       { encoding: 'utf-8' },
     );
-    assert.equal(
-      edgeBundle.status,
-      0,
-      edgeBundle.stderr || edgeBundle.error?.message || 'edge bundle command did not start',
-    );
+    const edgeBundleErrorMessage = edgeBundle.error?.message;
+    let edgeBundleFailureMessage = 'edge bundle command did not start';
+    if (edgeBundle.stderr.length > 0) {
+      edgeBundleFailureMessage = edgeBundle.stderr;
+    } else if (edgeBundleErrorMessage !== undefined && edgeBundleErrorMessage.length > 0) {
+      edgeBundleFailureMessage = edgeBundleErrorMessage;
+    }
+    assert.equal(edgeBundle.status, 0, edgeBundleFailureMessage);
     const edgeInputs = Object.keys(
       Schema.decodeUnknownSync(EsbuildMetafileSchema)(
         JSON.parse(await readFile(edgeMetafile, 'utf-8')),
       ).inputs,
     ).join('\n');
     assert.doesNotMatch(edgeInputs, /core-runtime\/src\/(?:auth|db)|node:(?:crypto|path)|\/pg\//u);
-    // SAFETY: The fixture module was generated and successfully bundled above; TypeScript cannot infer exports from its runtime-only temporary path, and the calls below execute the declared verifier contract.
-    const generated = (await import(
-      pathToFileURL(
-        path.join(fixture.root, 'verticals/inventory-stock/api/auth/action-principal.ts'),
-      ).href
-    )) as {
-      verifyActionPrincipal: (
-        authorization: string | undefined,
-        options: {
-          currentTimeSeconds: Effect.Effect<number>;
-          environment: GeneratedPrincipalEnvironment;
-          redemption: { readonly consume: () => Effect.Effect<void> };
-        },
-      ) => Effect.Effect<TrustedPrincipalContext, { readonly _tag: GeneratedPrincipalErrorTag }>;
-    };
-    // SAFETY: The fixture client module was generated from the tested template at this temporary path; TypeScript cannot statically resolve its exports, and the invocation below verifies the declared gateway contract.
-    const generatedClient = (await import(
-      pathToFileURL(path.join(fixture.root, 'verticals/inventory-stock/src/api/action-gateway.ts'))
-        .href
-    )) as {
-      makeActionGateway: (
-        acquire: (payload: { audience: string }) => Effect.Effect<{ token: string }>,
-      ) => {
-        invoke: <Success>(
-          attempt: (authorization: string) => Effect.Effect<Success>,
-        ) => Effect.Effect<Success>;
-      };
-    };
+    const generatedModule = Schema.decodeUnknownSync(GeneratedPrincipalModuleSchema)(
+      await import(pathToFileURL(path.join(fixture.root, inventoryActionPrincipalFile)).href),
+    );
+    const generatedClientModule = Schema.decodeUnknownSync(GeneratedActionGatewayModuleSchema)(
+      await import(pathToFileURL(path.join(fixture.root, inventoryActionGatewayFile)).href),
+    );
     const current = await makeGatewayKey('current');
     const retiring = await makeGatewayKey('retiring');
     const principal = {
@@ -1270,24 +1478,25 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
       principalId: '40000000-0000-4000-8000-000000000001',
       tenantId: '50000000-0000-4000-8000-000000000001',
     };
-    const issue = (
+    const issue = async (
       configuration: GatewayIssuerConfigValue,
       issuedAt: number,
-      audience = 'inventory-stock',
+      audience = inventorySlug,
     ) =>
-      Effect.runPromise(
-        issueGatewayContextAssertion(
-          { audience, principal },
-          {
-            currentTimeSeconds: Effect.succeed(issuedAt),
-            generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
-            loadAudiences: Effect.succeed(new Set([audience])),
-            loadConfig: Effect.succeed(configuration),
-          },
+      await runEffectTestPromise(
+        issueGatewayContextAssertion({ audience, principal }).pipe(
+          Effect.provide(
+            makeGatewayIssuerLayer({
+              currentTimeSeconds: Effect.succeed(issuedAt),
+              generateJti: Effect.succeed(fixtureGatewayJti),
+              loadAudiences: Effect.succeed(new Set([audience])),
+              loadConfig: Effect.succeed(configuration),
+            }),
+          ),
         ),
       );
     const environment = {
-      ONTOS_GATEWAY_ISSUER: 'https://shell.example.test',
+      ONTOS_GATEWAY_ISSUER: fixtureGatewayIssuer,
       ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
         keys: [current.publicJwk, retiring.publicJwk],
       }),
@@ -1295,9 +1504,9 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
     const currentAssertion = await issue(current.configuration, 1_700_000_000);
     const retiringAssertion = await issue(retiring.configuration, 1_700_000_000);
     const testRedemption = { consume: () => Effect.void };
-    const verify = (token: string, override = environment, now = 1_700_000_001) =>
-      Effect.runPromise(
-        generated.verifyActionPrincipal(`Bearer ${token}`, {
+    const verify = async (token: string, override = environment, now = 1_700_000_001) =>
+      await runEffectTestPromise(
+        generatedModule.verifyActionPrincipal(`Bearer ${token}`, {
           currentTimeSeconds: Effect.succeed(now),
           environment: override,
           redemption: testRedemption,
@@ -1308,7 +1517,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
     assert.deepEqual(await verify(retiringAssertion.token), principal);
     await assert.rejects(
       verify('not-a-jwt'),
-      (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
+      isGeneratedPrincipalError('ActionPrincipalInvalidError'),
     );
     await Promise.all(
       [
@@ -1318,14 +1527,15 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
         { keys: [{ ...current.publicJwk, key_ops: ['sign'] }] },
         { keys: [{ ...current.publicJwk, alg: 'HS256' }] },
         { keys: [{ ...current.publicJwk, x: '' }] },
-      ].map((jwks) =>
-        assert.rejects(
-          verify(currentAssertion.token, {
-            ...environment,
-            ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify(jwks),
-          }),
-          (error: { _tag?: string }) => error._tag === 'ActionPrincipalConfigurationError',
-        ),
+      ].map(
+        async (jwks) =>
+          await assert.rejects(
+            verify(currentAssertion.token, {
+              ...environment,
+              ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify(jwks),
+            }),
+            isGeneratedPrincipalError('ActionPrincipalConfigurationError'),
+          ),
       ),
     );
     await assert.rejects(
@@ -1333,7 +1543,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
         ...environment,
         ONTOS_GATEWAY_ISSUER: 'file:///not-an-http-issuer',
       }),
-      (error: { _tag?: string }) => error._tag === 'ActionPrincipalConfigurationError',
+      isGeneratedPrincipalError('ActionPrincipalConfigurationError'),
     );
     await assert.rejects(
       verify(
@@ -1344,12 +1554,12 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
         },
         1_700_000_000 + GATEWAY_ASSERTION_TTL_SECONDS + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS + 1,
       ),
-      (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
+      isGeneratedPrincipalError('ActionPrincipalInvalidError'),
     );
     const wrongAudience = await issue(current.configuration, 1_700_000_000, 'billing');
     await assert.rejects(
       verify(wrongAudience.token),
-      (error: { _tag?: string }) => error._tag === 'ActionPrincipalScopeError',
+      isGeneratedPrincipalError('ActionPrincipalScopeError'),
     );
     const wrongIssuer = await issue(
       { ...current.configuration, issuer: 'https://other.example.test' },
@@ -1357,7 +1567,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
     );
     await assert.rejects(
       verify(wrongIssuer.token),
-      (error: { _tag?: string }) => error._tag === 'ActionPrincipalScopeError',
+      isGeneratedPrincipalError('ActionPrincipalScopeError'),
     );
     const unknownKid = await issue(
       {
@@ -1368,132 +1578,114 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
     );
     await assert.rejects(
       verify(unknownKid.token),
-      (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
+      isGeneratedPrincipalError('ActionPrincipalInvalidError'),
     );
     const expired = await issue(current.configuration, 1_699_999_000);
     await assert.rejects(
       verify(expired.token),
-      (error: { _tag?: string }) => error._tag === 'ActionPrincipalExpiredError',
+      isGeneratedPrincipalError('ActionPrincipalExpiredError'),
     );
     const future = await issue(current.configuration, 1_700_000_032);
     await assert.rejects(
       verify(future.token),
-      (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
+      isGeneratedPrincipalError('ActionPrincipalInvalidError'),
     );
     const signingKey = await importJWK(current.configuration.privateJwk, 'EdDSA');
     const mismatchedSubject = await new SignJWT({ principal, ver: 1 })
       .setProtectedHeader({ alg: 'EdDSA', kid: 'current', typ: 'JWT' })
-      .setIssuer('https://shell.example.test')
-      .setAudience('inventory-stock')
+      .setIssuer(fixtureGatewayIssuer)
+      .setAudience(inventorySlug)
       .setSubject('70000000-0000-4000-8000-000000000001')
       .setIssuedAt(1_700_000_000)
       .setExpirationTime(1_700_000_300)
-      .setJti('60000000-0000-4000-8000-000000000001')
+      .setJti(fixtureGatewayJti)
       .sign(signingKey);
     await assert.rejects(
       verify(mismatchedSubject),
-      (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
+      isGeneratedPrincipalError('ActionPrincipalInvalidError'),
     );
     const invalidContext = await new SignJWT({
       principal: { ...principal, principalId: 'not-a-uuid' },
       ver: 1,
     })
       .setProtectedHeader({ alg: 'EdDSA', kid: 'current', typ: 'JWT' })
-      .setIssuer('https://shell.example.test')
-      .setAudience('inventory-stock')
+      .setIssuer(fixtureGatewayIssuer)
+      .setAudience(inventorySlug)
       .setSubject('not-a-uuid')
       .setIssuedAt(1_700_000_000)
       .setExpirationTime(1_700_000_300)
-      .setJti('60000000-0000-4000-8000-000000000001')
+      .setJti(fixtureGatewayJti)
       .sign(signingKey);
     await assert.rejects(
       verify(invalidContext),
-      (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
+      isGeneratedPrincipalError('ActionPrincipalInvalidError'),
     );
     const hmacToken = await new SignJWT({ principal, ver: 1 })
       .setProtectedHeader({ alg: 'HS256', kid: 'current', typ: 'JWT' })
-      .setIssuer('https://shell.example.test')
-      .setAudience('inventory-stock')
+      .setIssuer(fixtureGatewayIssuer)
+      .setAudience(inventorySlug)
       .setSubject(principal.principalId)
       .setIssuedAt(1_700_000_000)
       .setExpirationTime(1_700_000_300)
-      .setJti('60000000-0000-4000-8000-000000000001')
+      .setJti(fixtureGatewayJti)
       .sign(await generateSecret('HS256'));
     await assert.rejects(
       verify(hmacToken),
-      (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
+      isGeneratedPrincipalError('ActionPrincipalInvalidError'),
     );
     const tokenParts = currentAssertion.token.split('.');
     const encodedPayload = tokenParts[1] ?? '';
     const tampered = `${tokenParts[0]}.${encodedPayload.startsWith('a') ? 'b' : 'a'}${encodedPayload.slice(1)}.${tokenParts[2]}`;
     await assert.rejects(
       verify(tampered),
-      (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
+      isGeneratedPrincipalError('ActionPrincipalInvalidError'),
     );
     await assert.rejects(
-      Effect.runPromise(
-        generated.verifyActionPrincipal(undefined, {
+      runEffectTestPromise(
+        generatedModule.verifyActionPrincipal(undefined, {
           currentTimeSeconds: Effect.succeed(1_700_000_001),
           environment,
           redemption: testRedemption,
         }),
       ),
-      (error: { _tag?: string }) => error._tag === 'ActionPrincipalMissingError',
+      isGeneratedPrincipalError('ActionPrincipalMissingError'),
     );
     await assert.rejects(
-      Effect.runPromise(
-        generated.verifyActionPrincipal('bearer malformed', {
+      runEffectTestPromise(
+        generatedModule.verifyActionPrincipal('bearer malformed', {
           currentTimeSeconds: Effect.succeed(1_700_000_001),
           environment,
           redemption: testRedemption,
         }),
       ),
-      (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
+      isGeneratedPrincipalError('ActionPrincipalInvalidError'),
     );
     await assert.rejects(
-      Effect.runPromise(
-        generated.verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
+      runEffectTestPromise(
+        generatedModule.verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
           currentTimeSeconds: Effect.succeed(1_700_000_001),
           environment: {},
           redemption: testRedemption,
         }),
       ),
-      (error: { _tag?: string }) => error._tag === 'ActionPrincipalConfigurationError',
+      isGeneratedPrincipalError('ActionPrincipalConfigurationError'),
     );
     let acquisitions = 0;
     const authorizations: string[] = [];
     const idempotencyKey = 'caller-owned-idempotency-key';
-    const actionGateway = generatedClient.makeActionGateway(({ audience }) => {
+    const actionGateway = generatedClientModule.makeActionGateway(({ audience }) => {
       acquisitions += 1;
-      assert.equal(audience, 'inventory-stock');
+      assert.equal(audience, inventorySlug);
       return Effect.succeed({ token: `attempt-${acquisitions}` });
     });
     const attempt = (authorization: string) => {
       authorizations.push(authorization);
       return Effect.succeed(idempotencyKey);
     };
-    assert.equal(await Effect.runPromise(actionGateway.invoke(attempt)), idempotencyKey);
-    assert.equal(await Effect.runPromise(actionGateway.invoke(attempt)), idempotencyKey);
+    assert.equal(await runEffectTestPromise(actionGateway.invoke(attempt)), idempotencyKey);
+    assert.equal(await runEffectTestPromise(actionGateway.invoke(attempt)), idempotencyKey);
     assert.deepEqual(authorizations, ['Bearer attempt-1', 'Bearer attempt-2']);
 
-    const problemFields = {
-      detail: Schema.String,
-      status: Schema.Finite,
-      title: Schema.String,
-      type: Schema.String,
-    };
-    const asProblemDetails = HttpApiSchema.asJson({ contentType: 'application/problem+json' });
-    const ActionAuthenticationProblemSchema = Schema.TaggedStruct(
-      'ActionAuthenticationProblem',
-      problemFields,
-    ).pipe(asProblemDetails, HttpApiSchema.status(401));
-    const ActionVerificationUnavailableProblemSchema = Schema.TaggedStruct(
-      'ActionVerificationUnavailableProblem',
-      { ...problemFields, retryable: Schema.Literal(true) },
-    ).pipe(asProblemDetails, HttpApiSchema.status(503));
-    type EndpointProblem =
-      | Schema.Schema.Type<typeof ActionAuthenticationProblemSchema>
-      | Schema.Schema.Type<typeof ActionVerificationUnavailableProblemSchema>;
     const actionApi = HttpApi.make('generatedActionIdentityFixture').add(
       HttpApiGroup.make('action').add(
         HttpApiEndpoint.post('invoke', '/actions/invoke', {
@@ -1502,56 +1694,20 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
         }),
       ),
     );
-    const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
-      Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
-    );
     let actionReached = false;
     let endpointEnvironment: GeneratedPrincipalEnvironment = environment;
+    const markActionReached = Effect.sync(() => {
+      actionReached = true;
+    });
     const actionGroupLive = HttpApiBuilder.group(actionApi, 'action', (handlers) =>
       handlers.handle('invoke', ({ request }) =>
-        generated
+        generatedModule
           .verifyActionPrincipal(request.headers['authorization'], {
             currentTimeSeconds: Effect.succeed(1_700_000_001),
             environment: endpointEnvironment,
             redemption: testRedemption,
           })
-          .pipe(
-            Effect.tap(() => Effect.sync(() => (actionReached = true))),
-            Effect.catch((error) => {
-              switch (error._tag) {
-                case 'ActionPrincipalExpiredError':
-                case 'ActionPrincipalInvalidError':
-                case 'ActionPrincipalMissingError':
-                case 'ActionPrincipalScopeError': {
-                  return bearerChallenge.pipe(
-                    Effect.andThen(
-                      Effect.fail<EndpointProblem>({
-                        _tag: 'ActionAuthenticationProblem' as const,
-                        detail: 'A valid Bearer assertion is required.',
-                        status: 401 as const,
-                        title: 'Action authentication required',
-                        type: 'https://ontos.dev/problems/action-authentication-required',
-                      }),
-                    ),
-                  );
-                }
-                case 'ActionPrincipalConfigurationError':
-                case 'ActionPrincipalUnavailableError': {
-                  return Effect.fail<EndpointProblem>({
-                    _tag: 'ActionVerificationUnavailableProblem' as const,
-                    detail: 'Action identity verification is temporarily unavailable.',
-                    retryable: true as const,
-                    status: 503 as const,
-                    title: 'Action verification unavailable',
-                    type: 'https://ontos.dev/problems/action-verification-unavailable',
-                  });
-                }
-                default: {
-                  return Effect.die(new Error(`Unexpected generated error ${error._tag}`));
-                }
-              }
-            }),
-          ),
+          .pipe(Effect.tap(markActionReached), Effect.catchTags(generatedPrincipalErrorHandlers)),
       ),
     );
     const actionRuntime = defineEffectBff({
@@ -1561,7 +1717,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
     const actionHandler = actionRuntime.createHandler();
     try {
       const missingResponse = await actionHandler.handler(
-        new Request('https://inventory.example.test/actions/invoke', { method: 'POST' }),
+        new Request(actionInvokeUrl, { method: 'POST' }),
       );
       assert.equal(missingResponse.status, 401);
       assert.equal(missingResponse.headers.get('www-authenticate'), 'Bearer');
@@ -1573,7 +1729,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
 
       endpointEnvironment = {};
       const unavailableResponse = await actionHandler.handler(
-        new Request('https://inventory.example.test/actions/invoke', {
+        new Request(actionInvokeUrl, {
           headers: { authorization: `Bearer ${currentAssertion.token}` },
           method: 'POST',
         }),
@@ -1588,7 +1744,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
 
       endpointEnvironment = environment;
       const successResponse = await actionHandler.handler(
-        new Request('https://inventory.example.test/actions/invoke', {
+        new Request(actionInvokeUrl, {
           headers: { authorization: `Bearer ${currentAssertion.token}` },
           method: 'POST',
         }),
@@ -1604,7 +1760,12 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
 
 test('generates one self-contained typed fail-closed Action and preserves package metadata', async () => {
   await withFixture(async (fixture) => {
-    await run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order2']);
+    await run(fixture, 'action', [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--action',
+      'create-order2',
+    ]);
     const action = await readFixtureFile(
       fixture.root,
       'verticals/inventory-stock/src/actions/create-order2.action.ts',
@@ -1672,16 +1833,16 @@ export const createOrder2Action = defineAction(
 `,
     );
     const packageJson = decodeFixturePackage(
-      await readFixtureFile(fixture.root, 'verticals/inventory-stock/package.json'),
+      await readFixtureFile(fixture.root, inventoryPackageFile),
     );
     assert.deepEqual(packageJson.dependencies, {
-      '@app/core-runtime': 'workspace:*',
+      '@app/core-runtime': workspaceVersion,
       zeta: '1.0.0',
     });
-    assert.equal(packageJson.scripts['existing'], 'preserve-me');
+    assert.equal(packageJson.scripts['existing'], preservedFixtureValue);
     const beforeRerun = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order2']),
+      run(fixture, 'action', [scaffoldFlag.vertical, inventorySlug, '--action', 'create-order2']),
       /refusing to overwrite/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), beforeRerun);
@@ -1690,9 +1851,9 @@ export const createOrder2Action = defineAction(
 
 test('generates an owner-local Action service without overwriting business logic', async () => {
   await withFixture(async (fixture) => {
-    await run(fixture, 'action-service', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.actionService, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--service',
       'inventory-persistence',
     ]);
@@ -1710,9 +1871,9 @@ export const inventoryPersistenceService = () => Effect.succeed({});
     );
     const beforeRerun = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'action-service', [
-        '--vertical',
-        'inventory-stock',
+      run(fixture, scaffoldCommand.actionService, [
+        scaffoldFlag.vertical,
+        inventorySlug,
         '--service',
         'inventory-persistence',
       ]),
@@ -1725,12 +1886,12 @@ export const inventoryPersistenceService = () => Effect.succeed({});
 test('generates exactly one private owner-local external HTTP adapter', async () => {
   await withFixture(async (fixture) => {
     const before = await snapshotTree(fixture.root);
-    const result = await run(fixture, 'external-http-adapter', [
-      '--vertical',
+    const result = await run(fixture, scaffoldCommand.externalHttpAdapter, [
+      scaffoldFlag.vertical,
       'contacts',
-      '--provider',
+      scaffoldFlag.provider,
       'ares',
-      '--operation',
+      scaffoldFlag.operation,
       'subject',
     ]);
     const adapterPath = path.join(
@@ -1801,12 +1962,12 @@ export const AresSubjectServiceLive = Layer.effect(AresSubjectService, makeAresS
 
     const beforeOverwrite = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'external-http-adapter', [
-        '--vertical',
+      run(fixture, scaffoldCommand.externalHttpAdapter, [
+        scaffoldFlag.vertical,
         'contacts',
-        '--provider',
+        scaffoldFlag.provider,
         'ares',
-        '--operation',
+        scaffoldFlag.operation,
         'subject',
       ]),
       /refusing to overwrite/u,
@@ -1819,16 +1980,25 @@ test('rejects unsafe external HTTP adapter command input without writing', async
   await withFixture(async (fixture) => {
     const before = await snapshotTree(fixture.root);
     const invalidCalls: readonly [readonly string[], RegExp][] = [
-      [['--vertical', 'contacts', '--operation', 'subject'], /missing required flag --provider/u],
-      [['--vertical', 'contacts', '--provider', 'ares'], /missing required flag --operation/u],
-      [['--provider', 'ares', '--operation', 'subject'], /missing required flag --vertical/u],
+      [
+        [scaffoldFlag.vertical, 'contacts', scaffoldFlag.operation, 'subject'],
+        /missing required flag --provider/u,
+      ],
+      [
+        [scaffoldFlag.vertical, 'contacts', scaffoldFlag.provider, 'ares'],
+        /missing required flag --operation/u,
+      ],
+      [
+        [scaffoldFlag.provider, 'ares', scaffoldFlag.operation, 'subject'],
+        /missing required flag --vertical/u,
+      ],
       [
         [
-          '--vertical',
+          scaffoldFlag.vertical,
           'contacts',
-          '--provider',
+          scaffoldFlag.provider,
           'ares',
-          '--operation',
+          scaffoldFlag.operation,
           'subject',
           '--unknown',
           'x',
@@ -1837,43 +2007,92 @@ test('rejects unsafe external HTTP adapter command input without writing', async
       ],
       [
         [
-          '--vertical',
+          scaffoldFlag.vertical,
           'contacts',
-          '--provider',
+          scaffoldFlag.provider,
           'ares',
-          '--provider',
+          scaffoldFlag.provider,
           'other',
-          '--operation',
+          scaffoldFlag.operation,
           'subject',
         ],
         /only once/u,
       ],
       [
-        ['--vertical', 'contacts', '--provider', 'Ares', '--operation', 'subject'],
+        [
+          scaffoldFlag.vertical,
+          'contacts',
+          scaffoldFlag.provider,
+          'Ares',
+          scaffoldFlag.operation,
+          'subject',
+        ],
         /provider must be canonical lower-kebab-case/u,
       ],
       [
-        ['--vertical', 'contacts', '--provider', 'ares', '--operation', 'Subject'],
+        [
+          scaffoldFlag.vertical,
+          'contacts',
+          scaffoldFlag.provider,
+          'ares',
+          scaffoldFlag.operation,
+          'Subject',
+        ],
         /operation must be canonical lower-kebab-case/u,
       ],
       [
-        ['--vertical', 'contacts', '--provider', 'src', '--operation', 'subject'],
+        [
+          scaffoldFlag.vertical,
+          'contacts',
+          scaffoldFlag.provider,
+          'src',
+          scaffoldFlag.operation,
+          'subject',
+        ],
         /provider must be canonical lower-kebab-case/u,
       ],
       [
-        ['--vertical', 'contacts', '--provider', 'ares', '--operation', 'node_modules'],
+        [
+          scaffoldFlag.vertical,
+          'contacts',
+          scaffoldFlag.provider,
+          'ares',
+          scaffoldFlag.operation,
+          'node_modules',
+        ],
         /operation must be canonical lower-kebab-case/u,
       ],
       [
-        ['--vertical', 'contacts', '--provider', '../ares', '--operation', 'subject'],
+        [
+          scaffoldFlag.vertical,
+          'contacts',
+          scaffoldFlag.provider,
+          '../ares',
+          scaffoldFlag.operation,
+          'subject',
+        ],
         /provider must be canonical lower-kebab-case/u,
       ],
       [
-        ['--vertical', 'contacts', '--provider', 'ares', '--operation', '../subject'],
+        [
+          scaffoldFlag.vertical,
+          'contacts',
+          scaffoldFlag.provider,
+          'ares',
+          scaffoldFlag.operation,
+          '../subject',
+        ],
         /operation must be canonical lower-kebab-case/u,
       ],
       [
-        ['--vertical', 'missing', '--provider', 'ares', '--operation', 'subject'],
+        [
+          scaffoldFlag.vertical,
+          'missing',
+          scaffoldFlag.provider,
+          'ares',
+          scaffoldFlag.operation,
+          'subject',
+        ],
         /package metadata is missing/u,
       ],
     ];
@@ -1882,8 +2101,11 @@ test('rejects unsafe external HTTP adapter command input without writing', async
       if (invalidCall === undefined) {
         return;
       }
-      const [arguments_, expected] = invalidCall;
-      await assert.rejects(run(fixture, 'external-http-adapter', arguments_), expected);
+      const [generatorArguments, expected] = invalidCall;
+      await assert.rejects(
+        run(fixture, scaffoldCommand.externalHttpAdapter, generatorArguments),
+        expected,
+      );
       assert.deepEqual(await snapshotTree(fixture.root), before);
       await assertInvalidCall(index + 1);
     };
@@ -1905,12 +2127,12 @@ test('external HTTP adapter planner rejects malformed OntOS ownership atomically
     );
     const before = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'external-http-adapter', [
-        '--vertical',
+      run(fixture, scaffoldCommand.externalHttpAdapter, [
+        scaffoldFlag.vertical,
         'contacts',
-        '--provider',
+        scaffoldFlag.provider,
         'ares',
-        '--operation',
+        scaffoldFlag.operation,
         'subject',
       ]),
       /is not a generated module owner/u,
@@ -1926,12 +2148,12 @@ test('external HTTP adapter planner rejects malformed OntOS ownership atomically
     );
     const before = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'external-http-adapter', [
-        '--vertical',
+      run(fixture, scaffoldCommand.externalHttpAdapter, [
+        scaffoldFlag.vertical,
         'contacts',
-        '--provider',
+        scaffoldFlag.provider,
         'ares',
-        '--operation',
+        scaffoldFlag.operation,
         'subject',
       ]),
       /ENOTDIR|not a directory/u,
@@ -1942,7 +2164,7 @@ test('external HTTP adapter planner rejects malformed OntOS ownership atomically
 
 test('Action generation rejects unrelated imports in its governed owner slots', async () => {
   await withFixture(async (fixture) => {
-    const manifestPath = path.join(fixture.root, 'verticals/inventory-stock/vertical.manifest.ts');
+    const manifestPath = path.join(fixture.root, inventoryManifestFile);
     const manifest = await readFile(manifestPath, 'utf-8');
     await writeFile(
       manifestPath,
@@ -1955,7 +2177,7 @@ import { fakeRead } from './src/api/fake.read.ts';`,
     );
     const before = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order3']),
+      run(fixture, 'action', [scaffoldFlag.vertical, inventorySlug, '--action', 'create-order3']),
       /generated owner slot contains unsupported developer content/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), before);
@@ -1968,7 +2190,7 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
       '--scope',
       'core',
       '--module',
-      'core.modules',
+      fixtureName.actionModule,
       '--action',
       'z-last-change',
     ]);
@@ -1976,7 +2198,7 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
       '--scope',
       'core',
       '--module',
-      'core.modules',
+      fixtureName.actionModule,
       '--action',
       'account-change',
     ]);
@@ -1993,7 +2215,7 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
     assert.match(action, /from '\.\.\/\.\.\/actions\/definition\.ts'/u);
     assert.doesNotMatch(action, /verticals|fetch\(/u);
 
-    const coreIndex = await readFixtureFile(fixture.root, 'packages/core-runtime/src/index.ts');
+    const coreIndex = await readFixtureFile(fixture.root, coreRuntimeIndexFile);
     const accountExport =
       "export { accountChangeAction } from './modules/actions/account-change.action.ts';";
     const zExport =
@@ -2003,10 +2225,7 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
     assert.ok(coreIndex.indexOf(accountExport) < coreIndex.indexOf(zExport));
     assert.match(coreIndex, /export const existingCoreSurface = true/u);
 
-    const coreCatalog = await readFixtureFile(
-      fixture.root,
-      'packages/core-runtime/src/modules/actions/catalog.ts',
-    );
+    const coreCatalog = await readFixtureFile(fixture.root, coreActionCatalogFile);
     const accountImport = "import { accountChangeAction } from './account-change.action.ts';";
     const zImport = "import { zLastChangeAction } from './z-last-change.action.ts';";
     assert.ok(coreCatalog.includes(accountImport));
@@ -2026,7 +2245,7 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
         '--scope',
         'core',
         '--module',
-        'core.modules',
+        fixtureName.actionModule,
         '--action',
         'account-change',
       ]),
@@ -2036,7 +2255,7 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
   });
 
   await withFixture(async (fixture) => {
-    const indexPath = path.join(fixture.root, 'packages/core-runtime/src/index.ts');
+    const indexPath = path.join(fixture.root, coreRuntimeIndexFile);
     await writeFile(
       indexPath,
       `export const existingCoreSurface = true;\n\n// <generated-global-policy-exports>\n// </generated-global-policy-exports>\n`,
@@ -2048,9 +2267,9 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
         '--scope',
         'core',
         '--module',
-        'core.modules',
+        fixtureName.actionModule,
         '--action',
-        'create-order',
+        fixtureName.action,
       ]),
       /generated owner file does not contain one valid/u,
     );
@@ -2058,7 +2277,7 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
   });
 
   await withFixture(async (fixture) => {
-    const indexPath = path.join(fixture.root, 'packages/core-runtime/src/index.ts');
+    const indexPath = path.join(fixture.root, coreRuntimeIndexFile);
     const index = await readFile(indexPath, 'utf-8');
     await writeFile(
       indexPath,
@@ -2074,9 +2293,9 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
         '--scope',
         'core',
         '--module',
-        'core.modules',
+        fixtureName.actionModule,
         '--action',
-        'create-order',
+        fixtureName.action,
       ]),
       /unsupported developer content/u,
     );
@@ -2084,10 +2303,7 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
   });
 
   await withFixture(async (fixture) => {
-    const catalogPath = path.join(
-      fixture.root,
-      'packages/core-runtime/src/modules/actions/catalog.ts',
-    );
+    const catalogPath = path.join(fixture.root, coreActionCatalogFile);
     const catalog = await readFile(catalogPath, 'utf-8');
     await writeFile(
       catalogPath,
@@ -2103,9 +2319,9 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
         '--scope',
         'core',
         '--module',
-        'core.modules',
+        fixtureName.actionModule,
         '--action',
-        'create-order',
+        fixtureName.action,
       ]),
       /unsupported developer content/u,
     );
@@ -2115,13 +2331,24 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
 
 test('preflights the Action dependency patch before creating a file', async () => {
   await withFixture(async (fixture) => {
-    const packagePath = path.join(fixture.root, 'verticals/inventory-stock/package.json');
+    const packagePath = path.join(fixture.root, inventoryPackageFile);
     const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
-    packageJson['dependencies'] = { '@app/core-runtime': '^1.0.0', zeta: '1.0.0' };
-    await writeFile(packagePath, json(packageJson), 'utf-8');
+    await writeFile(
+      packagePath,
+      json({
+        ...packageJson,
+        dependencies: { '@app/core-runtime': '^1.0.0', zeta: '1.0.0' },
+      }),
+      'utf-8',
+    );
     const before = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order']),
+      run(fixture, 'action', [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--action',
+        fixtureName.action,
+      ]),
       /incompatible/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), before);
@@ -2132,12 +2359,23 @@ test('rejects Action generation when a vertical app identity is duplicated', asy
   await withFixture(async (fixture) => {
     const billingPackagePath = path.join(fixture.root, 'verticals/billing/package.json');
     const billingPackage = decodeFixturePackage(await readFile(billingPackagePath, 'utf-8'));
-    billingPackage.modernjs['appId'] = inventoryVertical.appId;
-    await writeFile(billingPackagePath, json(billingPackage), 'utf-8');
+    await writeFile(
+      billingPackagePath,
+      json({
+        ...billingPackage,
+        modernjs: { ...billingPackage.modernjs, appId: inventoryVertical.appId },
+      }),
+      'utf-8',
+    );
     const before = await snapshotTree(fixture.root);
 
     await assert.rejects(
-      run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order']),
+      run(fixture, 'action', [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--action',
+        fixtureName.action,
+      ]),
       /duplicate generated appId inventory-stock/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), before);
@@ -2146,14 +2384,25 @@ test('rejects Action generation when a vertical app identity is duplicated', asy
 
 test('rejects Action generation when the target identity is absent from topology', async () => {
   await withFixture(async (fixture) => {
-    const packagePath = path.join(fixture.root, 'verticals/inventory-stock/package.json');
+    const packagePath = path.join(fixture.root, inventoryPackageFile);
     const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
-    packageJson.modernjs['appId'] = 'inventory-shadow';
-    await writeFile(packagePath, json(packageJson), 'utf-8');
+    await writeFile(
+      packagePath,
+      json({
+        ...packageJson,
+        modernjs: { ...packageJson.modernjs, appId: 'inventory-shadow' },
+      }),
+      'utf-8',
+    );
     const before = await snapshotTree(fixture.root);
 
     await assert.rejects(
-      run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order']),
+      run(fixture, 'action', [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--action',
+        fixtureName.action,
+      ]),
       /must have exactly one matching generated topology entry/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), before);
@@ -2162,12 +2411,17 @@ test('rejects Action generation when the target identity is absent from topology
 
 test('preserves owner JSON document style while patching the Core dependency', async () => {
   await withFixture(async (fixture) => {
-    const packagePath = path.join(fixture.root, 'verticals/inventory-stock/package.json');
+    const packagePath = path.join(fixture.root, inventoryPackageFile);
     const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
     const styledPackage = JSON.stringify(packageJson, null, 4).replaceAll('\n', '\r\n');
     await writeFile(packagePath, styledPackage, 'utf-8');
 
-    await run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order']);
+    await run(fixture, 'action', [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--action',
+      fixtureName.action,
+    ]);
 
     const patched = await readFile(packagePath, 'utf-8');
     assert.match(patched, /\r\n {4}"dependencies": \{\r\n/u);
@@ -2179,32 +2433,34 @@ test('preserves owner JSON document style while patching the Core dependency', a
 
 test('generates Action-owned Outbox Messages and sorts only the owned export slot', async () => {
   await withFixture(async (fixture) => {
-    await run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order']);
-    const actionPath = path.join(
-      fixture.root,
-      'verticals/inventory-stock/src/actions/create-order.action.ts',
-    );
+    await run(fixture, 'action', [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--action',
+      fixtureName.action,
+    ]);
+    const actionPath = path.join(fixture.root, inventoryActionFile);
     const generatedAction = await readFile(actionPath, 'utf-8');
     await writeFile(
       actionPath,
       `${generatedAction}\nexport const developerOwned = true;\n`,
       'utf-8',
     );
-    await run(fixture, 'outbox-message', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.outboxMessage, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--action',
-      'create-order',
+      fixtureName.action,
       '--topic',
-      'orders.shipped',
+      fixtureName.ordersShipped,
     ]);
-    await run(fixture, 'outbox-message', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.outboxMessage, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--action',
-      'create-order',
+      fixtureName.action,
       '--topic',
-      'orders.created',
+      fixtureName.ordersCreated,
     ]);
     const message = await readFixtureFile(
       fixture.root,
@@ -2235,10 +2491,7 @@ export const createCreateOrderOrdersCreatedOutboxMessage = (
 `,
     );
     assert.equal(
-      await readFixtureFile(
-        fixture.root,
-        'verticals/inventory-stock/shared/outbox/orders-created.ts',
-      ),
+      await readFixtureFile(fixture.root, inventoryOutboxContractFile),
       `// @generated by OntOS Codesmith Outbox Message Contract v1
 // @ontos-outbox-producer inventory.stock
 // @ontos-outbox-topic orders.created
@@ -2254,12 +2507,9 @@ export const outboxProducerModuleKey = 'inventory.stock' as const;
 `,
     );
     const producerPackage = decodeFixturePackage(
-      await readFixtureFile(fixture.root, 'verticals/inventory-stock/package.json'),
+      await readFixtureFile(fixture.root, inventoryPackageFile),
     );
-    assert.equal(
-      producerPackage.exports['./outbox/orders-created'],
-      './shared/outbox/orders-created.ts',
-    );
+    assert.equal(producerPackage.exports['./outbox/orders-created'], generatedOutboxContractPath);
     const action = await readFile(actionPath, 'utf-8');
     const createdExport =
       "export { CreateOrderOrdersCreatedOutboxPayloadSchema } from './create-order.orders-created.outbox-message.ts';";
@@ -2272,21 +2522,21 @@ export const outboxProducerModuleKey = 'inventory.stock' as const;
       /addDomainEvent|addOutboxMessage|subjectResource|transport|worker/u,
     );
 
-    await run(fixture, 'outbox-message', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.outboxMessage, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--action',
-      'create-order',
+      fixtureName.action,
       '--topic',
       'events.foo-1-bar',
     ]);
     const beforeIdentifierCollision = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'outbox-message', [
-        '--vertical',
-        'inventory-stock',
+      run(fixture, scaffoldCommand.outboxMessage, [
+        scaffoldFlag.vertical,
+        inventorySlug,
         '--action',
-        'create-order',
+        fixtureName.action,
         '--topic',
         'events.foo1-bar',
       ]),
@@ -2300,13 +2550,13 @@ test('rejects missing, handwritten, duplicate, and normalized-collision Outbox t
   await withFixture(async (fixture) => {
     const beforeMissing = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'outbox-message', [
-        '--vertical',
-        'inventory-stock',
+      run(fixture, scaffoldCommand.outboxMessage, [
+        scaffoldFlag.vertical,
+        inventorySlug,
         '--action',
         'missing-action',
         '--topic',
-        'orders.created',
+        fixtureName.ordersCreated,
       ]),
       /requires the generated Action/u,
     );
@@ -2319,20 +2569,25 @@ test('rejects missing, handwritten, duplicate, and normalized-collision Outbox t
     );
     const beforeHandwritten = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'outbox-message', [
-        '--vertical',
-        'inventory-stock',
+      run(fixture, scaffoldCommand.outboxMessage, [
+        scaffoldFlag.vertical,
+        inventorySlug,
         '--action',
         'handwritten',
         '--topic',
-        'orders.created',
+        fixtureName.ordersCreated,
       ]),
       /only the matching generated Action/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), beforeHandwritten);
 
-    await run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order']);
-    const governedActionPath = 'verticals/inventory-stock/src/actions/create-order.action.ts';
+    await run(fixture, 'action', [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--action',
+      fixtureName.action,
+    ]);
+    const governedActionPath = inventoryActionFile;
     const governedAction = await readFixtureFile(fixture.root, governedActionPath);
     await writeFixtureFile(
       fixture.root,
@@ -2341,23 +2596,23 @@ test('rejects missing, handwritten, duplicate, and normalized-collision Outbox t
     );
     const beforeMismatchedEntrypoint = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'outbox-message', [
-        '--vertical',
-        'inventory-stock',
+      run(fixture, scaffoldCommand.outboxMessage, [
+        scaffoldFlag.vertical,
+        inventorySlug,
         '--action',
-        'create-order',
+        fixtureName.action,
         '--topic',
-        'orders.created',
+        fixtureName.ordersCreated,
       ]),
       /matching generated Action with its governed write entrypoint/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), beforeMismatchedEntrypoint);
     await writeFixtureFile(fixture.root, governedActionPath, governedAction);
-    await run(fixture, 'outbox-message', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.outboxMessage, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--action',
-      'create-order',
+      fixtureName.action,
       '--topic',
       'orders.created-v2',
     ]);
@@ -2365,11 +2620,11 @@ test('rejects missing, handwritten, duplicate, and normalized-collision Outbox t
     await Promise.all(
       ['orders.created-v2', 'orders-created.v2'].map(async (topic) => {
         await assert.rejects(
-          run(fixture, 'outbox-message', [
-            '--vertical',
-            'inventory-stock',
+          run(fixture, scaffoldCommand.outboxMessage, [
+            scaffoldFlag.vertical,
+            inventorySlug,
             '--action',
-            'create-order',
+            fixtureName.action,
             '--topic',
             topic,
           ]),
@@ -2383,14 +2638,19 @@ test('rejects missing, handwritten, duplicate, and normalized-collision Outbox t
 
 test('generates isolated Outbox Workers from published contracts and composes a stable registry', async () => {
   await withFixture(async (fixture) => {
-    await run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order']);
-    await run(fixture, 'outbox-message', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, 'action', [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--action',
-      'create-order',
+      fixtureName.action,
+    ]);
+    await run(fixture, scaffoldCommand.outboxMessage, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--action',
+      fixtureName.action,
       '--topic',
-      'orders.created',
+      fixtureName.ordersCreated,
     ]);
     const producerBefore = Object.fromEntries(
       Object.entries(await snapshotTree(fixture.root)).filter(([file]) =>
@@ -2398,15 +2658,15 @@ test('generates isolated Outbox Workers from published contracts and composes a 
       ),
     );
 
-    await run(fixture, 'outbox-worker', [
-      '--vertical',
+    await run(fixture, scaffoldCommand.outboxWorker, [
+      scaffoldFlag.vertical,
       'billing',
       '--worker',
-      'orders-created-logger',
-      '--producer',
-      'inventory-stock',
+      fixtureName.ordersCreatedLogger,
+      scaffoldFlag.producer,
+      inventorySlug,
       '--topic',
-      'orders.created',
+      fixtureName.ordersCreated,
     ]);
     const worker = await readFixtureFile(
       fixture.root,
@@ -2470,7 +2730,7 @@ export const ordersCreatedLoggerWorker = defineOutboxWorker(
 `,
     );
     assert.equal(
-      await readFixtureFile(fixture.root, 'verticals/billing/src/workers/index.ts'),
+      await readFixtureFile(fixture.root, billingWorkersIndexFile),
       `import type { AnyOutboxWorkerRegistration } from '@app/core-runtime';
 
 // <generated-outbox-worker-imports>
@@ -2489,7 +2749,11 @@ export const outboxWorkers = Object.freeze([
       `// @generated by scaffold:outbox-worker worker-host
 // @ontos-outbox-worker-host-owner billing.core
 import { Layer } from 'effect';
-import { OutboxWorkerInfrastructureLive } from '@app/core-runtime';
+import { OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
+
+export { CorePersistenceLive as outboxWorkerCorePersistenceLive } from '@app/core-runtime/outbox/worker';
+export { DatabaseConfigLive as outboxWorkerDatabaseConfigLive } from '@app/core-runtime/outbox/worker';
+export { OutboxRepositoryLive as outboxWorkerRepositoryLive } from '@app/core-runtime/outbox/worker';
 
 /** Add owner-local repositories and services required by worker handlers here. */
 const outboxWorkerHandlerLayer = Layer.empty;
@@ -2504,35 +2768,57 @@ export const outboxWorkerLayer = Layer.merge(
       await readFixtureFile(fixture.root, 'verticals/billing/src/worker-host/main.ts'),
       `// @generated by scaffold:outbox-worker worker-host
 // @ontos-outbox-worker-host-owner billing.core
-import { extractOutboxWorkerSubscriptions, startOutboxWorkerProcess } from '@app/core-runtime';
-import { outboxWorkerLayer } from './layer.ts';
-import { outboxWorkers } from '../workers/index.ts';
+import { startBillingOutboxWorker } from '../../scripts/outbox-worker.ts';
+
+startBillingOutboxWorker();
+`,
+    );
+    assert.equal(
+      await readFixtureFile(fixture.root, 'verticals/billing/scripts/outbox-worker.ts'),
+      `// @generated by scaffold:outbox-worker worker-host
+// @ontos-outbox-worker-host-owner billing.core
+import { Layer } from 'effect';
+import {
+  extractOutboxWorkerSubscriptions,
+  startOutboxWorkerProcess,
+} from '@app/core-runtime/outbox/worker';
+import { outboxWorkers } from '../src/workers/index.ts';
+import {
+  outboxWorkerCorePersistenceLive,
+  outboxWorkerDatabaseConfigLive,
+  outboxWorkerLayer as outboxWorkerDefinitionLayer,
+  outboxWorkerRepositoryLive,
+} from '../src/worker-host/layer.ts';
 
 const outboxSubscriptions = extractOutboxWorkerSubscriptions(outboxWorkers);
+const outboxWorkerProcessLayer = outboxWorkerDefinitionLayer.pipe(
+  Layer.provide(outboxWorkerRepositoryLive),
+  Layer.provide(outboxWorkerCorePersistenceLive),
+  Layer.provide(outboxWorkerDatabaseConfigLive),
+);
 
-startOutboxWorkerProcess({
-  claimOwnerPrefix: 'billing.core-outbox-worker',
-  health: true,
-  layer: outboxWorkerLayer,
-  registrations: outboxWorkers,
-  subscriptions: outboxSubscriptions,
-});
+export const startBillingOutboxWorker = (): void =>
+  startOutboxWorkerProcess({
+    claimOwnerPrefix: 'billing.core-outbox-worker',
+    health: true,
+    layer: outboxWorkerProcessLayer,
+    registrations: outboxWorkers,
+    subscriptions: outboxSubscriptions,
+  });
 `,
+    );
+    assert.equal(
+      await readFixtureFile(fixture.root, billingApiIndexFile),
+      "export const existingApiRuntime = 'billing.core';\n",
     );
     const consumerPackage = decodeFixturePackage(
       await readFixtureFile(fixture.root, 'verticals/billing/package.json'),
     );
-    assert.equal(consumerPackage.dependencies['@app/core-runtime'], 'workspace:*');
-    assert.equal(consumerPackage.dependencies['@app/inventory-stock'], 'workspace:*');
+    assert.equal(consumerPackage.dependencies['@app/core-runtime'], workspaceVersion);
+    assert.equal(consumerPackage.dependencies[inventoryPackageName], workspaceVersion);
     assert.equal(consumerPackage.exports['./workers'], undefined);
-    assert.equal(
-      consumerPackage.scripts['dev:worker'],
-      'node --experimental-strip-types ./src/worker-host/main.ts',
-    );
-    assert.equal(
-      consumerPackage.scripts['worker:start'],
-      'node --experimental-strip-types ./src/worker-host/main.ts',
-    );
+    assert.equal(consumerPackage.scripts['dev:worker'], workerStartScript);
+    assert.equal(consumerPackage.scripts['worker:start'], workerStartScript);
     const consumerTsconfig = Schema.decodeUnknownSync(FixtureTsconfigSchema)(
       JSON.parse(await readFixtureFile(fixture.root, 'verticals/billing/tsconfig.json')),
     );
@@ -2544,40 +2830,40 @@ startOutboxWorkerProcess({
     );
     assert.deepEqual(producerAfter, producerBefore);
 
-    await run(fixture, 'outbox-message', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.outboxMessage, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--action',
-      'create-order',
+      fixtureName.action,
       '--topic',
-      'orders.shipped',
+      fixtureName.ordersShipped,
     ]);
-    await run(fixture, 'outbox-worker', [
-      '--vertical',
+    await run(fixture, scaffoldCommand.outboxWorker, [
+      scaffoldFlag.vertical,
       'billing',
       '--worker',
       'orders-shipped-projector',
-      '--producer',
-      'inventory-stock',
+      scaffoldFlag.producer,
+      inventorySlug,
       '--topic',
-      'orders.shipped',
+      fixtureName.ordersShipped,
     ]);
-    const registry = await readFixtureFile(fixture.root, 'verticals/billing/src/workers/index.ts');
+    const registry = await readFixtureFile(fixture.root, billingWorkersIndexFile);
     assert.ok(
       registry.indexOf('ordersCreatedLoggerWorker') <
         registry.indexOf('ordersShippedProjectorWorker'),
     );
     const beforeRerun = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'outbox-worker', [
-        '--vertical',
+      run(fixture, scaffoldCommand.outboxWorker, [
+        scaffoldFlag.vertical,
         'billing',
         '--worker',
-        'orders-created-logger',
-        '--producer',
-        'inventory-stock',
+        fixtureName.ordersCreatedLogger,
+        scaffoldFlag.producer,
+        inventorySlug,
         '--topic',
-        'orders.created',
+        fixtureName.ordersCreated,
       ]),
       /refusing to overwrite/u,
     );
@@ -2587,34 +2873,33 @@ startOutboxWorkerProcess({
 
 test('generates self-consuming Outbox Workers without circular project or package dependencies', async () => {
   await withFixture(async (fixture) => {
-    await run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order']);
-    await run(fixture, 'outbox-message', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, 'action', [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--action',
-      'create-order',
-      '--topic',
-      'orders.created',
+      fixtureName.action,
     ]);
-    const manifestBefore = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/vertical.manifest.ts',
-    );
-    const tsconfigBefore = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/tsconfig.json',
-    );
+    await run(fixture, scaffoldCommand.outboxMessage, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--action',
+      fixtureName.action,
+      '--topic',
+      fixtureName.ordersCreated,
+    ]);
+    const manifestBefore = await readFixtureFile(fixture.root, inventoryManifestFile);
+    const tsconfigBefore = await readFixtureFile(fixture.root, inventoryTsconfigFile);
     const args = [
-      '--vertical',
-      'inventory-stock',
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--worker',
       'orders-created-projector',
-      '--producer',
-      'inventory-stock',
+      scaffoldFlag.producer,
+      inventorySlug,
       '--topic',
-      'orders.created',
+      fixtureName.ordersCreated,
     ];
-    await run(fixture, 'outbox-worker', args);
+    await run(fixture, scaffoldCommand.outboxWorker, args);
     const worker = await readFixtureFile(
       fixture.root,
       'verticals/inventory-stock/src/workers/orders-created-projector.worker.ts',
@@ -2634,64 +2919,59 @@ test('generates self-consuming Outbox Workers without circular project or packag
       fixture.root,
       'verticals/inventory-stock/src/worker-host/main.ts',
     );
-    assert.ok(registry.includes('ordersCreatedProjectorWorker,'));
-    assert.ok(hostLayer.includes('OutboxWorkerInfrastructureLive'));
-    assert.ok(hostMain.includes('startOutboxWorkerProcess({'));
-    const registration = await readFixtureFile(
+    const hostScript = await readFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/vertical.registration.ts',
+      'verticals/inventory-stock/scripts/outbox-worker.ts',
     );
+    assert.ok(registry.includes(workerRegistryEntry));
+    assert.ok(hostLayer.includes('OutboxWorkerInfrastructureLive'));
+    assert.ok(hostMain.includes('startInventoryStockOutboxWorker();'));
+    assert.ok(hostScript.includes('startOutboxWorkerProcess({'));
+    const registration = await readFixtureFile(fixture.root, inventoryRegistrationFile);
     assert.ok(registration.includes('createOrderAction,'));
-    assert.ok(registration.includes('ordersCreatedProjectorWorker,'));
-    assert.equal(
-      await readFixtureFile(fixture.root, 'verticals/inventory-stock/vertical.manifest.ts'),
-      manifestBefore,
-    );
-    assert.equal(
-      await readFixtureFile(fixture.root, 'verticals/inventory-stock/tsconfig.json'),
-      tsconfigBefore,
-    );
+    assert.ok(registration.includes(workerRegistryEntry));
+    assert.equal(await readFixtureFile(fixture.root, inventoryManifestFile), manifestBefore);
+    assert.equal(await readFixtureFile(fixture.root, inventoryTsconfigFile), tsconfigBefore);
     const ownerPackage = decodeFixturePackage(
-      await readFixtureFile(fixture.root, 'verticals/inventory-stock/package.json'),
+      await readFixtureFile(fixture.root, inventoryPackageFile),
     );
-    assert.equal(ownerPackage.dependencies['@app/core-runtime'], 'workspace:*');
-    assert.equal(ownerPackage.dependencies['@app/inventory-stock'], undefined);
-    assert.equal(
-      ownerPackage.exports['./outbox/orders-created'],
-      './shared/outbox/orders-created.ts',
-    );
+    assert.equal(ownerPackage.dependencies['@app/core-runtime'], workspaceVersion);
+    assert.equal(ownerPackage.dependencies[inventoryPackageName], undefined);
+    assert.equal(ownerPackage.exports['./outbox/orders-created'], generatedOutboxContractPath);
     for (const script of ['dev:worker', 'worker:start']) {
-      assert.equal(
-        ownerPackage.scripts[script],
-        'node --experimental-strip-types ./src/worker-host/main.ts',
-      );
+      assert.equal(ownerPackage.scripts[script], workerStartScript);
     }
     const beforeRerun = await snapshotTree(fixture.root);
-    await assert.rejects(run(fixture, 'outbox-worker', args), /refusing to overwrite/u);
-    assert.deepEqual(await snapshotTree(fixture.root), beforeRerun);
-    await run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'request-rebuild']);
-    const registrationAfterAction = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/vertical.registration.ts',
+    await assert.rejects(
+      run(fixture, scaffoldCommand.outboxWorker, args),
+      /refusing to overwrite/u,
     );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeRerun);
+    await run(fixture, 'action', [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--action',
+      'request-rebuild',
+    ]);
+    const registrationAfterAction = await readFixtureFile(fixture.root, inventoryRegistrationFile);
     assert.ok(registrationAfterAction.includes('requestRebuildAction,'));
-    assert.ok(registrationAfterAction.includes('ordersCreatedProjectorWorker,'));
+    assert.ok(registrationAfterAction.includes(workerRegistryEntry));
     await writeFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/tsconfig.json',
+      inventoryTsconfigFile,
       JSON.stringify({ references: [{ path: '../inventory-stock' }] }),
     );
     const beforeCircularReference = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'outbox-worker', [
-        '--vertical',
-        'inventory-stock',
+      run(fixture, scaffoldCommand.outboxWorker, [
+        scaffoldFlag.vertical,
+        inventorySlug,
         '--worker',
         'orders-created-audit',
-        '--producer',
-        'inventory-stock',
+        scaffoldFlag.producer,
+        inventorySlug,
         '--topic',
-        'orders.created',
+        fixtureName.ordersCreated,
       ]),
       /circular self project reference/u,
     );
@@ -2703,13 +2983,13 @@ test('refuses unpublished or malformed Outbox contracts without partial consumer
   await withFixture(async (fixture) => {
     const beforeUnpublished = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'outbox-worker', [
-        '--vertical',
+      run(fixture, scaffoldCommand.outboxWorker, [
+        scaffoldFlag.vertical,
         'billing',
         '--worker',
-        'orders-logger',
-        '--producer',
-        'inventory-stock',
+        fixtureName.ordersLogger,
+        scaffoldFlag.producer,
+        inventorySlug,
         '--topic',
         'orders.missing',
       ]),
@@ -2717,19 +2997,21 @@ test('refuses unpublished or malformed Outbox contracts without partial consumer
     );
     assert.deepEqual(await snapshotTree(fixture.root), beforeUnpublished);
 
-    await run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order']);
-    await run(fixture, 'outbox-message', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, 'action', [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--action',
-      'create-order',
-      '--topic',
-      'orders.created',
+      fixtureName.action,
     ]);
-    const contractPath = path.join(
-      fixture.root,
-      'verticals/inventory-stock/shared/outbox/orders-created.ts',
-    );
+    await run(fixture, scaffoldCommand.outboxMessage, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--action',
+      fixtureName.action,
+      '--topic',
+      fixtureName.ordersCreated,
+    ]);
+    const contractPath = path.join(fixture.root, inventoryOutboxContractFile);
     const validContract = await readFile(contractPath, 'utf-8');
     await writeFile(
       contractPath,
@@ -2741,15 +3023,15 @@ test('refuses unpublished or malformed Outbox contracts without partial consumer
     );
     const beforeMalformed = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'outbox-worker', [
-        '--vertical',
+      run(fixture, scaffoldCommand.outboxWorker, [
+        scaffoldFlag.vertical,
         'billing',
         '--worker',
-        'orders-logger',
-        '--producer',
-        'inventory-stock',
+        fixtureName.ordersLogger,
+        scaffoldFlag.producer,
+        inventorySlug,
         '--topic',
-        'orders.created',
+        fixtureName.ordersCreated,
       ]),
       /owner\/topic\/schema mismatch/u,
     );
@@ -2759,15 +3041,15 @@ test('refuses unpublished or malformed Outbox contracts without partial consumer
 
 test('generates fail-closed global and owner-local Policies with narrow exports', async () => {
   await withFixture(async (fixture) => {
-    await run(fixture, 'policy', ['--scope', 'global', '--policy', 'tenant-active']);
+    await run(fixture, 'policy', ['--scope', 'global', '--policy', fixtureName.policy]);
     await run(fixture, 'policy', ['--scope', 'global', '--policy', 'account-open']);
     await run(fixture, 'policy', [
       '--scope',
       'microvertical',
       '--policy',
       'stock-available',
-      '--vertical',
-      'inventory-stock',
+      scaffoldFlag.vertical,
+      inventorySlug,
     ]);
 
     assert.equal(
@@ -2805,7 +3087,7 @@ export const stockAvailablePolicy = defineMicroverticalPolicy<unknown, 'inventor
 });
 `,
     );
-    const coreIndex = await readFixtureFile(fixture.root, 'packages/core-runtime/src/index.ts');
+    const coreIndex = await readFixtureFile(fixture.root, coreRuntimeIndexFile);
     assert.equal(
       coreIndex,
       `export const existingCoreSurface = true;
@@ -2821,14 +3103,14 @@ export { tenantActivePolicy } from './policies/tenant-active.policy.ts';
     );
     assert.doesNotMatch(coreIndex, /stockAvailablePolicy/u);
     assert.equal(
-      decodeFixturePackage(
-        await readFixtureFile(fixture.root, 'verticals/inventory-stock/package.json'),
-      ).dependencies['@app/core-runtime'],
-      'workspace:*',
+      decodeFixturePackage(await readFixtureFile(fixture.root, inventoryPackageFile)).dependencies[
+        '@app/core-runtime'
+      ],
+      workspaceVersion,
     );
     const beforeDuplicate = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'policy', ['--scope', 'global', '--policy', 'tenant-active']),
+      run(fixture, 'policy', ['--scope', 'global', '--policy', fixtureName.policy]),
       /refusing to overwrite/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), beforeDuplicate);
@@ -2845,11 +3127,8 @@ export { tenantActivePolicy } from './policies/tenant-active.policy.ts';
 
 test('generates a title-only authenticated page at the default MicroVertical URL', async () => {
   await withFixture(async (fixture) => {
-    const shellBefore = await readFixtureFile(fixture.root, 'apps/shell-super-app/src/sentinel.ts');
-    const englishLocalePath = path.join(
-      fixture.root,
-      'verticals/inventory-stock/locales/en/inventory.json',
-    );
+    const shellBefore = await readFixtureFile(fixture.root, shellSentinelFile);
+    const englishLocalePath = path.join(fixture.root, inventoryEnglishLocaleFile);
     await writeFile(
       englishLocalePath,
       '{\r\n    "inventory": {"existing":"en-preserved"}\r\n}',
@@ -2858,11 +3137,13 @@ test('generates a title-only authenticated page at the default MicroVertical URL
     const refreshes: string[] = [];
     await run(
       fixture,
-      'microvertical-page',
-      ['--vertical', 'inventory-stock', '--page', 'purchase-orders'],
-      (appId) => refreshes.push(appId),
+      scaffoldCommand.microverticalPage,
+      [scaffoldFlag.vertical, inventorySlug, '--page', fixtureName.purchaseOrdersPage],
+      (appId) => {
+        refreshes.push(appId);
+      },
     );
-    assert.deepEqual(refreshes, ['inventory-stock', 'shell-super-app']);
+    assert.deepEqual(refreshes, [inventorySlug, shellAppId]);
     const page = await readFixtureFile(
       fixture.root,
       'verticals/inventory-stock/src/routes/[lang]/inventory-stock/purchase-orders/page.tsx',
@@ -2897,26 +3178,14 @@ export const PurchaseOrdersPage = () => {
 export default PurchaseOrdersPage;
 `,
     );
-    const manifest = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/vertical.manifest.ts',
-    );
-    const registration = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/vertical.registration.ts',
-    );
-    const federation = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/module-federation.config.ts',
-    );
+    const manifest = await readFixtureFile(fixture.root, inventoryManifestFile);
+    const registration = await readFixtureFile(fixture.root, inventoryRegistrationFile);
+    const federation = await readFixtureFile(fixture.root, inventoryFederationConfigFile);
     const federatedPage = await readFixtureFile(
       fixture.root,
       'verticals/inventory-stock/src/federation/page-purchase-orders.tsx',
     );
-    const shellClients = await readFixtureFile(
-      fixture.root,
-      'apps/shell-super-app/src/api/vertical-clients.ts',
-    );
+    const shellClients = await readFixtureFile(fixture.root, shellVerticalClientsFile);
     assert.match(manifest, /inventory\.stock\.navigation\.purchase-orders/u);
     assert.match(manifest, /inventory\.stock\.page\.purchase-orders/u);
     assert.match(manifest, /routePath: '\/inventory-stock\/purchase-orders'/u);
@@ -2999,24 +3268,26 @@ export { routeMeta };
     assert.doesNotMatch(englishContent, /(?<!\r)\n/u);
     assert.equal(englishContent.endsWith('\r\n'), false);
     assert.deepEqual(english.inventory.pages['purchaseOrders'], {
-      description: 'This page is ready for implementation.',
+      description: pagePlaceholder,
       title: 'New Page',
     });
     assert.deepEqual(czech.inventory.pages['purchaseOrders'], {
       description: 'Tato stránka je připravena k implementaci.',
       title: 'Nová stránka',
     });
-    assert.equal(
-      await readFixtureFile(fixture.root, 'apps/shell-super-app/src/sentinel.ts'),
-      shellBefore,
-    );
+    assert.equal(await readFixtureFile(fixture.root, shellSentinelFile), shellBefore);
     assert.doesNotMatch(page, /fetch\(|useState|useEffect|<style|\.css'|\.description|\.empty/u);
   });
 });
 
 test('allows a two-letter MicroVertical slug in a derived default page URL', async () => {
   await withFixture(async (fixture) => {
-    await run(fixture, 'microvertical-page', ['--vertical', 'hr', '--page', 'people']);
+    await run(fixture, scaffoldCommand.microverticalPage, [
+      scaffoldFlag.vertical,
+      'hr',
+      '--page',
+      'people',
+    ]);
     await stat(path.join(fixture.root, 'verticals/hr/src/routes/[lang]/hr/people/page.tsx'));
     assert.match(
       await readFixtureFile(fixture.root, 'verticals/hr/vertical.manifest.ts'),
@@ -3027,20 +3298,21 @@ test('allows a two-letter MicroVertical slug in a derived default page URL', asy
 
 test('renders a newly generated federated page with English and Czech owner resources', async () => {
   await withFixture(async (fixture) => {
-    await run(fixture, 'microvertical-page', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.microverticalPage, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--page',
       'customers',
     ]);
     await mkdir(path.join(fixture.root, 'node_modules', '@modern-js'), { recursive: true });
     await Promise.all(
-      ['react', 'react-dom'].map((packageName) =>
-        symlink(
-          path.join(appRoot, 'apps', 'shell-super-app', 'node_modules', packageName),
-          path.join(fixture.root, 'node_modules', packageName),
-          'dir',
-        ),
+      ['react', 'react-dom'].map(
+        async (packageName) =>
+          await symlink(
+            path.join(appRoot, 'apps', shellAppId, 'node_modules', packageName),
+            path.join(fixture.root, 'node_modules', packageName),
+            'dir',
+          ),
       ),
     );
     await writeFixtureFile(
@@ -3113,7 +3385,7 @@ process.stdout.write(renderToStaticMarkup(<Page />));
       spawnSync(process.execPath, [bundlePath], {
         cwd: fixture.root,
         encoding: 'utf-8',
-        env: { ...process.env, PAGE_LANGUAGE: language },
+        env: { PAGE_LANGUAGE: language },
       });
     const english = renderLanguage('en');
     const czech = renderLanguage('cs');
@@ -3127,9 +3399,9 @@ process.stdout.write(renderToStaticMarkup(<Page />));
 test('adds further pages after generated owner files have been formatted', async () => {
   await withFixture(async (fixture) => {
     const formattedOwnerPaths = [
-      'verticals/inventory-stock/vertical.manifest.ts',
-      'verticals/inventory-stock/vertical.registration.ts',
-      'apps/shell-super-app/src/api/vertical-clients.ts',
+      inventoryManifestFile,
+      inventoryRegistrationFile,
+      shellVerticalClientsFile,
     ] as const;
     const formatOwners = async (): Promise<void> => {
       await Promise.all(
@@ -3146,43 +3418,34 @@ test('adds further pages after generated owner files have been formatted', async
       );
     };
 
-    await run(fixture, 'microvertical-page', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.microverticalPage, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--page',
-      'purchase-orders',
+      fixtureName.purchaseOrdersPage,
     ]);
     await formatOwners();
 
-    await run(fixture, 'microvertical-page', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.microverticalPage, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--page',
       'customers',
     ]);
     await formatOwners();
 
-    await run(fixture, 'microvertical-page', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.microverticalPage, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--page',
       'customer-notes',
     ]);
 
-    const manifest = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/vertical.manifest.ts',
-    );
-    const registration = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/vertical.registration.ts',
-    );
-    const shellClients = await readFixtureFile(
-      fixture.root,
-      'apps/shell-super-app/src/api/vertical-clients.ts',
-    );
+    const manifest = await readFixtureFile(fixture.root, inventoryManifestFile);
+    const registration = await readFixtureFile(fixture.root, inventoryRegistrationFile);
+    const shellClients = await readFixtureFile(fixture.root, shellVerticalClientsFile);
     await Promise.all(
-      ['customer-notes', 'customers', 'purchase-orders'].map(async (page) => {
+      ['customer-notes', 'customers', fixtureName.purchaseOrdersPage].map(async (page) => {
         assert.match(manifest, new RegExp(`inventory\\.stock\\.page\\.${page}`, 'u'));
         assert.match(registration, new RegExp(`'page-${page}'`, 'u'));
         assert.match(shellClients, new RegExp(`inventory\\.stock\\.page-${page}`, 'u'));
@@ -3199,23 +3462,20 @@ test('adds further pages after generated owner files have been formatted', async
 
 test('supports an explicit nested page URL and rejects unsafe URL inputs atomically', async () => {
   await withFixture(async (fixture) => {
-    await run(fixture, 'microvertical-page', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.microverticalPage, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--page',
-      'purchase-orders',
+      fixtureName.purchaseOrdersPage,
       '--url',
-      '/purchasing/orders',
+      purchasingOrdersUrl,
     ]);
     const page = await readFixtureFile(
       fixture.root,
       'verticals/inventory-stock/src/routes/[lang]/purchasing/orders/page.tsx',
     );
     assert.match(page, /from '\.\.\/\.\.\/\.\.\/ultramodern-route-head'/u);
-    const manifest = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/vertical.manifest.ts',
-    );
+    const manifest = await readFixtureFile(fixture.root, inventoryManifestFile);
     assert.match(manifest, /routePath: '\/purchasing\/orders'/u);
     assert.match(
       await readFixtureFile(
@@ -3225,34 +3485,34 @@ test('supports an explicit nested page URL and rejects unsafe URL inputs atomica
       /entrypointKey: 'inventory\.stock\.page\.purchase-orders'/u,
     );
     const beforeRerun = await snapshotTree(fixture.root);
-    await run(fixture, 'microvertical-page', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.microverticalPage, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--page',
-      'purchase-orders',
+      fixtureName.purchaseOrdersPage,
       '--url',
-      '/purchasing/orders',
+      purchasingOrdersUrl,
     ]);
     assert.deepEqual(await snapshotTree(fixture.root), beforeRerun);
     await assert.rejects(
-      run(fixture, 'microvertical-page', [
-        '--vertical',
-        'inventory-stock',
+      run(fixture, scaffoldCommand.microverticalPage, [
+        scaffoldFlag.vertical,
+        inventorySlug,
         '--page',
-        'purchase-orders',
+        fixtureName.purchaseOrdersPage,
         '--url',
         '/different/orders',
       ]),
       /already exists at another URL/u,
     );
     await assert.rejects(
-      run(fixture, 'microvertical-page', [
-        '--vertical',
-        'inventory-stock',
+      run(fixture, scaffoldCommand.microverticalPage, [
+        scaffoldFlag.vertical,
+        inventorySlug,
         '--page',
         'different-page',
         '--url',
-        '/purchasing/orders',
+        purchasingOrdersUrl,
       ]),
       /already exists|collides/u,
     );
@@ -3260,19 +3520,17 @@ test('supports an explicit nested page URL and rejects unsafe URL inputs atomica
   });
 
   await withFixture(async (fixture) => {
-    await run(fixture, 'microvertical-page', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.microverticalPage, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--page',
       'orders',
       '--url',
       '/orders',
     ]);
-    await stat(
-      path.join(fixture.root, 'verticals/inventory-stock/src/routes/[lang]/orders/page.tsx'),
-    );
+    await stat(path.join(fixture.root, inventoryOrdersRouteFile));
     assert.match(
-      await readFixtureFile(fixture.root, 'verticals/inventory-stock/vertical.manifest.ts'),
+      await readFixtureFile(fixture.root, inventoryManifestFile),
       /routePath: '\/orders'/u,
     );
   });
@@ -3288,22 +3546,23 @@ test('supports an explicit nested page URL and rejects unsafe URL inputs atomica
       '/orders#open',
       '/%2e%2e/orders',
       'https://example.test/orders',
-    ].map((url) =>
-      withFixture(async (fixture) => {
-        const before = await snapshotTree(fixture.root);
-        await assert.rejects(
-          run(fixture, 'microvertical-page', [
-            '--vertical',
-            'inventory-stock',
-            '--page',
-            'orders',
-            '--url',
-            url,
-          ]),
-          /--url/u,
-        );
-        assert.deepEqual(await snapshotTree(fixture.root), before);
-      }),
+    ].map(
+      async (url) =>
+        await withFixture(async (fixture) => {
+          const before = await snapshotTree(fixture.root);
+          await assert.rejects(
+            run(fixture, scaffoldCommand.microverticalPage, [
+              scaffoldFlag.vertical,
+              inventorySlug,
+              '--page',
+              'orders',
+              '--url',
+              url,
+            ]),
+            /--url/u,
+          );
+          assert.deepEqual(await snapshotTree(fixture.root), before);
+        }),
     ),
   );
 });
@@ -3312,7 +3571,7 @@ test('generates a non-navigational dynamic page with canonical parameters and ro
   await withFixture(async (fixture) => {
     await writeFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/module-federation.config.ts',
+      inventoryFederationConfigFile,
       `export default {
   exposes: {
     './PageInventoryStock': './src/federation-entry.tsx',
@@ -3323,15 +3582,15 @@ test('generates a non-navigational dynamic page with canonical parameters and ro
 };
 `,
     );
-    const arguments_ = [
-      '--vertical',
-      'inventory-stock',
+    const generatorArguments = [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--page',
-      'customer-edit',
+      fixtureName.customerEditPage,
       '--url',
       '/contacts/customers/:id/edit',
     ];
-    await run(fixture, 'microvertical-page', arguments_);
+    await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
 
     const ownerRoute = 'verticals/inventory-stock/src/routes/[lang]/contacts/customers/[id]/edit';
     const shellRoute = 'apps/shell-super-app/src/routes/[lang]/contacts/customers/[id]/edit';
@@ -3339,28 +3598,25 @@ test('generates a non-navigational dynamic page with canonical parameters and ro
     const ownerMetadata = await readFixtureFile(fixture.root, `${ownerRoute}/route.meta.ts`);
     const shellLoader = await readFixtureFile(fixture.root, `${shellRoute}/page.data.ts`);
     const shellMetadata = await readFixtureFile(fixture.root, `${shellRoute}/route.meta.ts`);
-    const manifest = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/vertical.manifest.ts',
-    );
-    const registration = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/vertical.registration.ts',
-    );
-    const federation = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/module-federation.config.ts',
-    );
+    const manifest = await readFixtureFile(fixture.root, inventoryManifestFile);
+    const registration = await readFixtureFile(fixture.root, inventoryRegistrationFile);
+    const federation = await readFixtureFile(fixture.root, inventoryFederationConfigFile);
     const federatedPage = await readFixtureFile(
       fixture.root,
       'verticals/inventory-stock/src/federation/page-customer-edit.tsx',
     );
-    const shellClients = await readFixtureFile(
-      fixture.root,
-      'apps/shell-super-app/src/api/vertical-clients.ts',
-    );
+    const shellClients = await readFixtureFile(fixture.root, shellVerticalClientsFile);
 
-    assert.match(page, /Readonly<Partial<Record<'id', string>>>/u);
+    assert.match(page, /export const CustomerEditPageRouteParams = Schema\.Struct/u);
+    assert.match(
+      page,
+      /id: Schema\.String\.pipe\(Schema\.brand\('CustomerEditPageIdRouteParameter'\)\)/u,
+    );
+    assert.match(
+      page,
+      /export type CustomerEditPageRouteParams = typeof CustomerEditPageRouteParams\.Type/u,
+    );
+    assert.match(page, /Schema\.toStandardSchemaV1\(\s*CustomerEditPageRouteParams,?\s*\)/u);
     assert.match(page, /CustomerEditPage = \(\{ routeParams \}/u);
     assert.match(page, /void routeParams;/u);
     assert.match(ownerMetadata, /canonicalPath: '\/contacts\/customers\/:id\/edit'/u);
@@ -3371,14 +3627,15 @@ test('generates a non-navigational dynamic page with canonical parameters and ro
     assert.doesNotMatch(manifest, /inventory\.stock\.navigation\.customer-edit/u);
     assert.match(registration, /'page-customer-edit'/u);
     assert.match(federation, /'\.\/PageCustomerEdit'/u);
-    assert.match(federatedPage, /Readonly<Partial<Record<'id', string>>>/u);
+    assert.match(federatedPage, /type CustomerEditPageRouteParams/u);
+    assert.doesNotMatch(federatedPage, /Schema\.Struct/u);
     assert.match(federatedPage, /<CustomerEditPage routeParams=\{routeParams\} \/>/u);
     assert.match(shellClients, /inventory\.stock\.page-customer-edit/u);
     assert.match(shellLoader, /selectRouteParams/u);
     assert.match(shellLoader, /const routeParameterNames = \['id'\] as const;/u);
     assert.match(shellLoader, /routeParams: selectRouteParams\(params, routeParameterNames\)/u);
     assert.match(
-      await readFixtureFile(fixture.root, 'verticals/inventory-stock/locales/en/inventory.json'),
+      await readFixtureFile(fixture.root, inventoryEnglishLocaleFile),
       /"customerEdit"/u,
     );
     assert.match(
@@ -3387,15 +3644,15 @@ test('generates a non-navigational dynamic page with canonical parameters and ro
     );
 
     const afterFirstRun = await snapshotTree(fixture.root);
-    await run(fixture, 'microvertical-page', arguments_);
+    await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
     assert.deepEqual(await snapshotTree(fixture.root), afterFirstRun);
   });
 });
 
 test('generates the Contacts Contact-detail two-parameter page atomically and safely reruns it', async () => {
-  const arguments_ = [
-    '--vertical',
-    'inventory-stock',
+  const generatorArguments = [
+    scaffoldFlag.vertical,
+    inventorySlug,
     '--page',
     'contact-detail',
     '--url',
@@ -3408,18 +3665,28 @@ test('generates the Contacts Contact-detail two-parameter page atomically and sa
     const shellRoute =
       'apps/shell-super-app/src/routes/[lang]/contacts/customers/[id]/contacts/[contactId]';
 
-    await run(fixture, 'microvertical-page', arguments_);
+    await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
 
     const page = await readFixtureFile(fixture.root, `${ownerRoute}/page.tsx`);
     const ownerMetadata = await readFixtureFile(fixture.root, `${ownerRoute}/route.meta.ts`);
     const shellLoader = await readFixtureFile(fixture.root, `${shellRoute}/page.data.ts`);
     const shellMetadata = await readFixtureFile(fixture.root, `${shellRoute}/route.meta.ts`);
-    const manifest = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/vertical.manifest.ts',
-    );
+    const manifest = await readFixtureFile(fixture.root, inventoryManifestFile);
 
-    assert.match(page, /Readonly<Partial<Record<'id' \| 'contactId', string>>>/u);
+    assert.match(page, /export const ContactDetailPageRouteParams = Schema\.Struct/u);
+    assert.match(
+      page,
+      /id: Schema\.String\.pipe\(Schema\.brand\('ContactDetailPageIdRouteParameter'\)\)/u,
+    );
+    assert.match(
+      page,
+      /contactId: Schema\.String\.pipe\(Schema\.brand\('ContactDetailPageContactIdRouteParameter'\)\)/u,
+    );
+    assert.match(
+      page,
+      /export type ContactDetailPageRouteParams = typeof ContactDetailPageRouteParams\.Type/u,
+    );
+    assert.match(page, /Schema\.toStandardSchemaV1\(\s*ContactDetailPageRouteParams,?\s*\)/u);
     assert.match(
       ownerMetadata,
       /canonicalPath: '\/contacts\/customers\/:id\/contacts\/:contactId'/u,
@@ -3437,7 +3704,7 @@ test('generates the Contacts Contact-detail two-parameter page atomically and sa
     await stat(path.join(fixture.root, shellRoute));
 
     const afterFirstRun = await snapshotTree(fixture.root);
-    await run(fixture, 'microvertical-page', arguments_);
+    await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
     assert.deepEqual(await snapshotTree(fixture.root), afterFirstRun);
   });
 
@@ -3450,7 +3717,7 @@ test('generates the Contacts Contact-detail two-parameter page atomically and sa
     const before = await snapshotTree(fixture.root);
 
     await assert.rejects(
-      run(fixture, 'microvertical-page', arguments_),
+      run(fixture, scaffoldCommand.microverticalPage, generatorArguments),
       /refusing to overwrite|already exists/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), before);
@@ -3469,42 +3736,43 @@ test('rejects unsafe dynamic parameters and dynamic route collisions without wri
       '/inventory/customers/:id/edit/:id',
       '/inventory/customers/%2e%2e/:id',
       '/cs/inventory/customers/:id',
-    ].map((url) =>
-      withFixture(async (fixture) => {
-        const before = await snapshotTree(fixture.root);
-        await assert.rejects(
-          run(fixture, 'microvertical-page', [
-            '--vertical',
-            'inventory-stock',
-            '--page',
-            'customer-edit',
-            '--url',
-            url,
-          ]),
-          /--url/u,
-        );
-        assert.deepEqual(await snapshotTree(fixture.root), before);
-      }),
+    ].map(
+      async (url) =>
+        await withFixture(async (fixture) => {
+          const before = await snapshotTree(fixture.root);
+          await assert.rejects(
+            run(fixture, scaffoldCommand.microverticalPage, [
+              scaffoldFlag.vertical,
+              inventorySlug,
+              '--page',
+              fixtureName.customerEditPage,
+              '--url',
+              url,
+            ]),
+            /--url/u,
+          );
+          assert.deepEqual(await snapshotTree(fixture.root), before);
+        }),
     ),
   );
 
   await Promise.all([
     withFixture(async (fixture) => {
-      await run(fixture, 'microvertical-page', [
-        '--vertical',
-        'inventory-stock',
+      await run(fixture, scaffoldCommand.microverticalPage, [
+        scaffoldFlag.vertical,
+        inventorySlug,
         '--page',
         'customer-detail',
         '--url',
-        '/inventory/customers/:id',
+        customerDetailUrl,
       ]);
       const before = await snapshotTree(fixture.root);
       await assert.rejects(
-        run(fixture, 'microvertical-page', [
-          '--vertical',
-          'inventory-stock',
+        run(fixture, scaffoldCommand.microverticalPage, [
+          scaffoldFlag.vertical,
+          inventorySlug,
           '--page',
-          'customer-edit',
+          fixtureName.customerEditPage,
           '--url',
           '/inventory/customers/:customerId',
         ]),
@@ -3513,15 +3781,15 @@ test('rejects unsafe dynamic parameters and dynamic route collisions without wri
       assert.deepEqual(await snapshotTree(fixture.root), before);
     }),
     withFixture(async (fixture) => {
-      const arguments_ = [
-        '--vertical',
-        'inventory-stock',
+      const generatorArguments = [
+        scaffoldFlag.vertical,
+        inventorySlug,
         '--page',
-        'customer-edit',
+        fixtureName.customerEditPage,
         '--url',
-        '/inventory/customers/:id/edit',
+        customerEditUrl,
       ];
-      await run(fixture, 'microvertical-page', arguments_);
+      await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
       const pagePath = path.join(
         fixture.root,
         'verticals/inventory-stock/src/routes/[lang]/inventory/customers/[id]/edit/page.tsx',
@@ -3532,7 +3800,10 @@ test('rejects unsafe dynamic parameters and dynamic route collisions without wri
         'utf-8',
       );
       const before = await snapshotTree(fixture.root);
-      await assert.rejects(run(fixture, 'microvertical-page', arguments_), /collides/u);
+      await assert.rejects(
+        run(fixture, scaffoldCommand.microverticalPage, generatorArguments),
+        /collides/u,
+      );
       assert.deepEqual(await snapshotTree(fixture.root), before);
     }),
     withFixture(async (fixture) => {
@@ -3543,22 +3814,22 @@ test('rejects unsafe dynamic parameters and dynamic route collisions without wri
       );
       const before = await snapshotTree(fixture.root);
       await assert.rejects(
-        run(fixture, 'microvertical-page', [
-          '--vertical',
-          'inventory-stock',
+        run(fixture, scaffoldCommand.microverticalPage, [
+          scaffoldFlag.vertical,
+          inventorySlug,
           '--page',
-          'customer-edit',
+          fixtureName.customerEditPage,
           '--url',
-          '/inventory/customers/:id/edit',
+          customerEditUrl,
         ]),
         /collides with nested content/u,
       );
       assert.deepEqual(await snapshotTree(fixture.root), before);
     }),
     withFixture(async (fixture) => {
-      await run(fixture, 'microvertical-page', [
-        '--vertical',
-        'inventory-stock',
+      await run(fixture, scaffoldCommand.microverticalPage, [
+        scaffoldFlag.vertical,
+        inventorySlug,
         '--page',
         'customer-new',
         '--url',
@@ -3566,24 +3837,24 @@ test('rejects unsafe dynamic parameters and dynamic route collisions without wri
       ]);
       const before = await snapshotTree(fixture.root);
       await assert.rejects(
-        run(fixture, 'microvertical-page', [
-          '--vertical',
-          'inventory-stock',
+        run(fixture, scaffoldCommand.microverticalPage, [
+          scaffoldFlag.vertical,
+          inventorySlug,
           '--page',
-          'customer-edit',
+          fixtureName.customerEditPage,
           '--url',
-          '/inventory/customers/:id',
+          customerDetailUrl,
         ]),
         /static route segment|collides/u,
       );
       assert.deepEqual(await snapshotTree(fixture.root), before);
     }),
     withFixture(async (fixture) => {
-      await run(fixture, 'microvertical-page', [
-        '--vertical',
+      await run(fixture, scaffoldCommand.microverticalPage, [
+        scaffoldFlag.vertical,
         'billing',
         '--page',
-        'customer-edit',
+        fixtureName.customerEditPage,
         '--url',
         '/shared/customers/:id/edit',
       ]);
@@ -3596,11 +3867,11 @@ test('rejects unsafe dynamic parameters and dynamic route collisions without wri
       );
       const before = await snapshotTree(fixture.root);
       await assert.rejects(
-        run(fixture, 'microvertical-page', [
-          '--vertical',
-          'inventory-stock',
+        run(fixture, scaffoldCommand.microverticalPage, [
+          scaffoldFlag.vertical,
+          inventorySlug,
           '--page',
-          'customer-edit',
+          fixtureName.customerEditPage,
           '--url',
           '/shared/customers/:id/edit',
         ]),
@@ -3613,13 +3884,13 @@ test('rejects unsafe dynamic parameters and dynamic route collisions without wri
 
 test('extends an existing dynamic route branch without reclassifying an existing static sibling', async () => {
   await withFixture(async (fixture) => {
-    await run(fixture, 'microvertical-page', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.microverticalPage, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--page',
       'customer-detail',
       '--url',
-      '/inventory/customers/:id',
+      customerDetailUrl,
     ]);
     await writeFixtureFile(
       fixture.root,
@@ -3627,13 +3898,13 @@ test('extends an existing dynamic route branch without reclassifying an existing
       'export default function ExistingStaticSibling() { return null; }\n',
     );
 
-    await run(fixture, 'microvertical-page', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.microverticalPage, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--page',
-      'customer-edit',
+      fixtureName.customerEditPage,
       '--url',
-      '/inventory/customers/:id/edit',
+      customerEditUrl,
     ]);
 
     await stat(
@@ -3655,9 +3926,9 @@ test('rejects reserved, dynamic, and cross-owner page URLs before writing', asyn
       );
       const before = await snapshotTree(fixture.root);
       await assert.rejects(
-        run(fixture, 'microvertical-page', [
-          '--vertical',
-          'inventory-stock',
+        run(fixture, scaffoldCommand.microverticalPage, [
+          scaffoldFlag.vertical,
+          inventorySlug,
           '--page',
           'customers',
           '--url',
@@ -3675,9 +3946,9 @@ test('rejects reserved, dynamic, and cross-owner page URLs before writing', asyn
       );
       const before = await snapshotTree(fixture.root);
       await assert.rejects(
-        run(fixture, 'microvertical-page', [
-          '--vertical',
-          'inventory-stock',
+        run(fixture, scaffoldCommand.microverticalPage, [
+          scaffoldFlag.vertical,
+          inventorySlug,
           '--page',
           'customers',
           '--url',
@@ -3688,8 +3959,8 @@ test('rejects reserved, dynamic, and cross-owner page URLs before writing', asyn
       assert.deepEqual(await snapshotTree(fixture.root), before);
     }),
     withFixture(async (fixture) => {
-      await run(fixture, 'microvertical-page', [
-        '--vertical',
+      await run(fixture, scaffoldCommand.microverticalPage, [
+        scaffoldFlag.vertical,
         'billing',
         '--page',
         'customers',
@@ -3701,9 +3972,9 @@ test('rejects reserved, dynamic, and cross-owner page URLs before writing', asyn
       });
       const before = await snapshotTree(fixture.root);
       await assert.rejects(
-        run(fixture, 'microvertical-page', [
-          '--vertical',
-          'inventory-stock',
+        run(fixture, scaffoldCommand.microverticalPage, [
+          scaffoldFlag.vertical,
+          inventorySlug,
           '--page',
           'customer-list',
           '--url',
@@ -3718,13 +3989,18 @@ test('rejects reserved, dynamic, and cross-owner page URLs before writing', asyn
 
 test('uses exact page identities and rejects edited generated wiring', async () => {
   await withFixture(async (fixture) => {
-    await run(fixture, 'microvertical-page', [
-      '--vertical',
-      'inventory-stock',
+    await run(fixture, scaffoldCommand.microverticalPage, [
+      scaffoldFlag.vertical,
+      inventorySlug,
       '--page',
       'order-lines',
     ]);
-    await run(fixture, 'microvertical-page', ['--vertical', 'inventory-stock', '--page', 'order']);
+    await run(fixture, scaffoldCommand.microverticalPage, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--page',
+      'order',
+    ]);
     await stat(
       path.join(
         fixture.root,
@@ -3735,18 +4011,15 @@ test('uses exact page identities and rejects edited generated wiring', async () 
 
   await Promise.all([
     withFixture(async (fixture) => {
-      await run(fixture, 'microvertical-page', [
-        '--vertical',
-        'inventory-stock',
+      await run(fixture, scaffoldCommand.microverticalPage, [
+        scaffoldFlag.vertical,
+        inventorySlug,
         '--page',
         'orders',
         '--url',
         '/first/orders',
       ]);
-      const manifestPath = path.join(
-        fixture.root,
-        'verticals/inventory-stock/vertical.manifest.ts',
-      );
+      const manifestPath = path.join(fixture.root, inventoryManifestFile);
       const manifest = await readFile(manifestPath, 'utf-8');
       await writeFile(
         manifestPath,
@@ -3757,9 +4030,9 @@ test('uses exact page identities and rejects edited generated wiring', async () 
       );
       const before = await snapshotTree(fixture.root);
       await assert.rejects(
-        run(fixture, 'microvertical-page', [
-          '--vertical',
-          'inventory-stock',
+        run(fixture, scaffoldCommand.microverticalPage, [
+          scaffoldFlag.vertical,
+          inventorySlug,
           '--page',
           'orders',
           '--url',
@@ -3770,28 +4043,22 @@ test('uses exact page identities and rejects edited generated wiring', async () 
       assert.deepEqual(await snapshotTree(fixture.root), before);
     }),
     withFixture(async (fixture) => {
-      const arguments_ = ['--vertical', 'inventory-stock', '--page', 'orders'];
-      await run(fixture, 'microvertical-page', arguments_);
-      const manifestPath = path.join(
-        fixture.root,
-        'verticals/inventory-stock/vertical.manifest.ts',
-      );
+      const generatorArguments = [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'];
+      await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
+      const manifestPath = path.join(fixture.root, inventoryManifestFile);
       const manifest = await readFile(manifestPath, 'utf-8');
       await writeFile(manifestPath, manifest.replace('order: 100', 'order: 101'), 'utf-8');
       const before = await snapshotTree(fixture.root);
       await assert.rejects(
-        run(fixture, 'microvertical-page', arguments_),
+        run(fixture, scaffoldCommand.microverticalPage, generatorArguments),
         /already exists|collides/u,
       );
       assert.deepEqual(await snapshotTree(fixture.root), before);
     }),
     withFixture(async (fixture) => {
-      const arguments_ = ['--vertical', 'inventory-stock', '--page', 'orders'];
-      await run(fixture, 'microvertical-page', arguments_);
-      const manifestPath = path.join(
-        fixture.root,
-        'verticals/inventory-stock/vertical.manifest.ts',
-      );
+      const generatorArguments = [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'];
+      await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
+      const manifestPath = path.join(fixture.root, inventoryManifestFile);
       const manifest = await readFile(manifestPath, 'utf-8');
       await writeFile(
         manifestPath,
@@ -3804,18 +4071,15 @@ test('uses exact page identities and rejects edited generated wiring', async () 
       );
       const before = await snapshotTree(fixture.root);
       await assert.rejects(
-        run(fixture, 'microvertical-page', arguments_),
+        run(fixture, scaffoldCommand.microverticalPage, generatorArguments),
         /already exists|collides/u,
       );
       assert.deepEqual(await snapshotTree(fixture.root), before);
     }),
     withFixture(async (fixture) => {
-      const arguments_ = ['--vertical', 'inventory-stock', '--page', 'orders'];
-      await run(fixture, 'microvertical-page', arguments_);
-      const federationPath = path.join(
-        fixture.root,
-        'verticals/inventory-stock/module-federation.config.ts',
-      );
+      const generatorArguments = [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'];
+      await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
+      const federationPath = path.join(fixture.root, inventoryFederationConfigFile);
       const federation = await readFile(federationPath, 'utf-8');
       await writeFile(
         federationPath,
@@ -3827,14 +4091,14 @@ test('uses exact page identities and rejects edited generated wiring', async () 
       );
       const before = await snapshotTree(fixture.root);
       await assert.rejects(
-        run(fixture, 'microvertical-page', arguments_),
+        run(fixture, scaffoldCommand.microverticalPage, generatorArguments),
         /already exists|collides/u,
       );
       assert.deepEqual(await snapshotTree(fixture.root), before);
     }),
     withFixture(async (fixture) => {
-      const arguments_ = ['--vertical', 'inventory-stock', '--page', 'orders'];
-      await run(fixture, 'microvertical-page', arguments_);
+      const generatorArguments = [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'];
+      await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
       await writeFixtureFile(
         fixture.root,
         'apps/shell-super-app/src/routes/[lang]/inventory-stock/orders/developer-note.ts',
@@ -3842,7 +4106,7 @@ test('uses exact page identities and rejects edited generated wiring', async () 
       );
       const before = await snapshotTree(fixture.root);
       await assert.rejects(
-        run(fixture, 'microvertical-page', arguments_),
+        run(fixture, scaffoldCommand.microverticalPage, generatorArguments),
         /already exists|collides/u,
       );
       assert.deepEqual(await snapshotTree(fixture.root), before);
@@ -3852,11 +4116,18 @@ test('uses exact page identities and rejects edited generated wiring', async () 
 
 test('migrates only exact legacy generated page output and then reruns as a no-op', async () => {
   await withFixture(async (fixture) => {
-    const arguments_ = ['--vertical', 'inventory-stock', '--page', 'orders', '--url', '/orders'];
-    await run(fixture, 'microvertical-page', arguments_);
+    const generatorArguments = [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--page',
+      'orders',
+      '--url',
+      '/orders',
+    ];
+    await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
     await writeFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/src/routes/[lang]/orders/page.tsx',
+      inventoryOrdersRouteFile,
       `import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 
@@ -3915,7 +4186,7 @@ export const loader = ({ request }: ShellPageLoaderArguments) =>
           `verticals/inventory-stock/locales/${locale}/inventory.json`,
         );
         const catalog = decodeInventoryLocale(await readFile(localePath, 'utf-8'));
-        catalog.inventory.pages['orders'] =
+        const ordersPage =
           locale === 'cs'
             ? {
                 description: 'Tato stránka je připravena k implementaci.',
@@ -3923,19 +4194,23 @@ export const loader = ({ request }: ShellPageLoaderArguments) =>
                 title: 'Nová stránka',
               }
             : {
-                description: 'This page is ready for implementation.',
+                description: pagePlaceholder,
                 empty: 'No content has been added yet.',
                 title: 'New Page',
               };
-        await writeFile(localePath, json(catalog), 'utf-8');
+        const nextCatalog = Schema.decodeUnknownSync(Schema.Json)({
+          ...catalog,
+          inventory: {
+            ...catalog.inventory,
+            pages: { ...catalog.inventory.pages, orders: ordersPage },
+          },
+        });
+        await writeFile(localePath, json(nextCatalog), 'utf-8');
       }),
     );
 
-    await run(fixture, 'microvertical-page', arguments_);
-    const migratedPage = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/src/routes/[lang]/orders/page.tsx',
-    );
+    await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
+    const migratedPage = await readFixtureFile(fixture.root, inventoryOrdersRouteFile);
     assert.doesNotMatch(migratedPage, /\.description|\.empty|<main/u);
     assert.match(
       await readFixtureFile(
@@ -3945,24 +4220,30 @@ export const loader = ({ request }: ShellPageLoaderArguments) =>
       /entrypointKey: 'inventory\.stock\.page\.orders'/u,
     );
     const migratedEnglish = decodeInventoryLocale(
-      await readFixtureFile(fixture.root, 'verticals/inventory-stock/locales/en/inventory.json'),
+      await readFixtureFile(fixture.root, inventoryEnglishLocaleFile),
     );
     assert.deepEqual(migratedEnglish.inventory.pages['orders'], {
-      description: 'This page is ready for implementation.',
+      description: pagePlaceholder,
       title: 'New Page',
     });
     const afterMigration = await snapshotTree(fixture.root);
-    await run(fixture, 'microvertical-page', arguments_);
+    await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
     assert.deepEqual(await snapshotTree(fixture.root), afterMigration);
   });
 });
 
 test('rejects page generation when an owning locale has no truthful starter translation', async () => {
   await withFixture(async (fixture) => {
-    const packagePath = path.join(fixture.root, 'verticals/inventory-stock/package.json');
+    const packagePath = path.join(fixture.root, inventoryPackageFile);
     const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
-    packageJson.exports['./locales/de'] = './locales/de/inventory.json';
-    await writeFile(packagePath, json(packageJson), 'utf-8');
+    await writeFile(
+      packagePath,
+      json({
+        ...packageJson,
+        exports: { ...packageJson.exports, './locales/de': './locales/de/inventory.json' },
+      }),
+      'utf-8',
+    );
     await writeFixtureFile(
       fixture.root,
       'verticals/inventory-stock/locales/de/inventory.json',
@@ -3971,11 +4252,11 @@ test('rejects page generation when an owning locale has no truthful starter tran
     const before = await snapshotTree(fixture.root);
 
     await assert.rejects(
-      run(fixture, 'microvertical-page', [
-        '--vertical',
-        'inventory-stock',
+      run(fixture, scaffoldCommand.microverticalPage, [
+        scaffoldFlag.vertical,
+        inventorySlug,
         '--page',
-        'purchase-orders',
+        fixtureName.purchaseOrdersPage,
       ]),
       /no starter translation for locale de/u,
     );
@@ -3990,7 +4271,12 @@ test('page prerequisite and nested-route failures are preflighted, while refresh
     );
     const beforeMissingHead = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'microvertical-page', ['--vertical', 'inventory-stock', '--page', 'orders']),
+      run(fixture, scaffoldCommand.microverticalPage, [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--page',
+        'orders',
+      ]),
       /UltramodernRouteHead is missing/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), beforeMissingHead);
@@ -4004,7 +4290,12 @@ test('page prerequisite and nested-route failures are preflighted, while refresh
     );
     const beforeCollision = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'microvertical-page', ['--vertical', 'inventory-stock', '--page', 'orders']),
+      run(fixture, scaffoldCommand.microverticalPage, [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--page',
+        'orders',
+      ]),
       /collides with nested content/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), beforeCollision);
@@ -4013,13 +4304,13 @@ test('page prerequisite and nested-route failures are preflighted, while refresh
   await withFixture(async (fixture) => {
     await assert.rejects(
       runScaffold(
-        'microvertical-page',
+        scaffoldCommand.microverticalPage,
         [
-          '--vertical',
-          'inventory-stock',
+          scaffoldFlag.vertical,
+          inventorySlug,
           '--page',
           'orders',
-          '--authorization',
+          scaffoldFlag.authorization,
           'context_permission',
           '--permission',
           'module.access',
@@ -4043,84 +4334,99 @@ test('page prerequisite and nested-route failures are preflighted, while refresh
     const refreshes: string[] = [];
     await run(
       fixture,
-      'microvertical-page',
-      ['--vertical', 'inventory-stock', '--page', 'orders'],
-      (appId) => refreshes.push(appId),
+      scaffoldCommand.microverticalPage,
+      [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'],
+      (appId) => {
+        refreshes.push(appId);
+      },
     );
-    assert.deepEqual(refreshes, ['inventory-stock', 'shell-super-app']);
+    assert.deepEqual(refreshes, [inventorySlug, shellAppId]);
     assert.deepEqual(await snapshotTree(fixture.root), afterRefreshFailure);
   });
 });
 
 const runCombinedScenario = async (fixture: Fixture): Promise<Readonly<Record<string, string>>> => {
   await addInventoryItemResourceType(fixture);
-  await run(fixture, 'microvertical-action-boundary', ['--vertical', 'inventory-stock']);
-  await run(fixture, 'external-http-adapter', [
-    '--vertical',
-    'inventory-stock',
-    '--provider',
+  await run(fixture, scaffoldCommand.microverticalActionBoundary, [
+    scaffoldFlag.vertical,
+    inventorySlug,
+  ]);
+  await run(fixture, scaffoldCommand.externalHttpAdapter, [
+    scaffoldFlag.vertical,
+    inventorySlug,
+    scaffoldFlag.provider,
     'warehouse-api',
-    '--operation',
+    scaffoldFlag.operation,
     'stock-level',
   ]);
   await run(fixture, 'action', [
     '--scope',
     'core',
     '--module',
-    'core.modules',
+    fixtureName.actionModule,
     '--action',
     'change-tenant-state',
   ]);
-  await run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order']);
-  await run(fixture, 'outbox-message', [
-    '--vertical',
-    'inventory-stock',
+  await run(fixture, 'action', [
+    scaffoldFlag.vertical,
+    inventorySlug,
     '--action',
-    'create-order',
-    '--topic',
-    'orders.created',
+    fixtureName.action,
   ]);
-  await run(fixture, 'policy', ['--scope', 'global', '--policy', 'tenant-active']);
+  await run(fixture, scaffoldCommand.outboxMessage, [
+    scaffoldFlag.vertical,
+    inventorySlug,
+    '--action',
+    fixtureName.action,
+    '--topic',
+    fixtureName.ordersCreated,
+  ]);
+  await run(fixture, 'policy', ['--scope', 'global', '--policy', fixtureName.policy]);
   await run(fixture, 'policy', [
     '--scope',
     'microvertical',
     '--policy',
     'stock-available',
-    '--vertical',
-    'inventory-stock',
+    scaffoldFlag.vertical,
+    inventorySlug,
   ]);
-  await run(fixture, 'module-api', ['--vertical', 'inventory-stock', '--name', 'resource-detail']);
-  await run(fixture, 'search-provider', [
-    '--vertical',
-    'inventory-stock',
+  await run(fixture, scaffoldCommand.moduleApi, [
+    scaffoldFlag.vertical,
+    inventorySlug,
     '--name',
-    'inventory-items',
-    '--resource',
+    fixtureName.resourceDetail,
+  ]);
+  await run(fixture, scaffoldCommand.searchProvider, [
+    scaffoldFlag.vertical,
+    inventorySlug,
+    '--name',
+    fixtureName.inventoryItems,
+    scaffoldFlag.resource,
     'item',
   ]);
   await run(fixture, 'report', [
-    '--vertical',
-    'inventory-stock',
+    scaffoldFlag.vertical,
+    inventorySlug,
     '--name',
-    'stock-levels',
-    '--resource',
+    fixtureName.stockLevels,
+    scaffoldFlag.resource,
     'item',
   ]);
   await run(
     fixture,
-    'microvertical-page',
-    ['--vertical', 'inventory-stock', '--page', 'orders'],
-    (appId) => assert.ok(['inventory-stock', 'shell-super-app'].includes(appId)),
+    scaffoldCommand.microverticalPage,
+    [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'],
+    (appId) => assert.ok([inventorySlug, shellAppId].includes(appId)),
   );
-  await run(fixture, 'microvertical-page', [
-    '--vertical',
-    'inventory-stock',
+  await run(fixture, scaffoldCommand.microverticalPage, [
+    scaffoldFlag.vertical,
+    inventorySlug,
     '--page',
-    'customer-edit',
+    fixtureName.customerEditPage,
     '--url',
     '/contacts/customers/:id/edit',
   ]);
-  return snapshotTree(fixture.root);
+  return await snapshotTree(fixture.root);
 };
 
 test('all generators compose deterministically without crossing owner boundaries', async () => {
@@ -4132,8 +4438,8 @@ test('all generators compose deterministically without crossing owner boundaries
         file.startsWith('verticals/billing/'),
       ),
     );
-    const shellBefore = await readFixtureFile(first.root, 'apps/shell-super-app/src/sentinel.ts');
-    const topologyBefore = await readFixtureFile(first.root, 'topology/reference-topology.json');
+    const shellBefore = await readFixtureFile(first.root, shellSentinelFile);
+    const topologyBefore = await readFixtureFile(first.root, topologyFile);
     const firstTree = await runCombinedScenario(first);
     const secondTree = await runCombinedScenario(second);
     assert.deepEqual(firstTree, secondTree);
@@ -4141,14 +4447,8 @@ test('all generators compose deterministically without crossing owner boundaries
       Object.entries(firstTree).filter(([file]) => file.startsWith('verticals/billing/')),
     );
     assert.deepEqual(billingAfter, billingBefore);
-    assert.equal(
-      await readFixtureFile(first.root, 'apps/shell-super-app/src/sentinel.ts'),
-      shellBefore,
-    );
-    assert.equal(
-      await readFixtureFile(first.root, 'topology/reference-topology.json'),
-      topologyBefore,
-    );
+    assert.equal(await readFixtureFile(first.root, shellSentinelFile), shellBefore);
+    assert.equal(await readFixtureFile(first.root, topologyFile), topologyBefore);
     const combinedSource = Object.values(firstTree).join('\n');
     assert.doesNotMatch(combinedSource, /from ['"]\.\.\/\.\.\/billing|fetch\(/u);
   } finally {
@@ -4160,39 +4460,41 @@ test('all generators compose deterministically without crossing owner boundaries
 test('every generated TypeScript file is already formatter-stable', async () => {
   await withFixture(async (fixture) => {
     await runCombinedScenario(fixture);
-    await run(fixture, 'outbox-worker', [
-      '--vertical',
+    await run(fixture, scaffoldCommand.outboxWorker, [
+      scaffoldFlag.vertical,
       'billing',
       '--worker',
-      'orders-created-logger',
-      '--producer',
-      'inventory-stock',
+      fixtureName.ordersCreatedLogger,
+      scaffoldFlag.producer,
+      inventorySlug,
       '--topic',
-      'orders.created',
+      fixtureName.ordersCreated,
     ]);
     const generatedFiles = [
       'packages/core-runtime/src/modules/actions/change-tenant-state.action.ts',
       'packages/core-runtime/src/policies/tenant-active.policy.ts',
-      'verticals/inventory-stock/src/actions/create-order.action.ts',
+      inventoryActionFile,
       'verticals/inventory-stock/src/integrations/warehouse-api/warehouse-api-stock-level.service.ts',
       'verticals/inventory-stock/src/actions/create-order.orders-created.outbox-message.ts',
-      'verticals/inventory-stock/shared/outbox/orders-created.ts',
-      'verticals/billing/src/workers/index.ts',
+      inventoryOutboxContractFile,
+      billingWorkersIndexFile,
+      billingApiIndexFile,
       'verticals/billing/src/workers/orders-created-logger.worker.ts',
       'verticals/billing/src/worker-host/layer.ts',
       'verticals/billing/src/worker-host/main.ts',
+      'verticals/billing/scripts/outbox-worker.ts',
       'verticals/inventory-stock/src/policies/stock-available.policy.ts',
       'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/page.tsx',
       'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/route.meta.ts',
       'verticals/inventory-stock/src/federation/page-orders.tsx',
-      'verticals/inventory-stock/api/auth/action-principal.ts',
-      'verticals/inventory-stock/src/api/action-gateway.ts',
+      inventoryActionPrincipalFile,
+      inventoryActionGatewayFile,
       'verticals/inventory-stock/shared/apis/resource-detail.ts',
       'verticals/inventory-stock/src/api/resource-detail.read.ts',
       'verticals/inventory-stock/src/api/resource-detail-client.ts',
       'verticals/inventory-stock/api/resource-detail-read-server.ts',
-      'verticals/inventory-stock/shared/apis/inventory-items-search.ts',
-      'verticals/inventory-stock/src/search/inventory-items.provider.ts',
+      inventorySearchContractFile,
+      inventorySearchProviderFile,
       'verticals/inventory-stock/src/api/inventory-items-search-client.ts',
       'verticals/inventory-stock/api/inventory-items-search-server.ts',
       'verticals/inventory-stock/shared/apis/stock-levels-report.ts',
@@ -4219,15 +4521,15 @@ test('every generated TypeScript file is already formatter-stable', async () => 
 test('all generated files typecheck against the real workspace contracts', async () => {
   await withFixture(async (fixture) => {
     await runCombinedScenario(fixture);
-    await run(fixture, 'outbox-worker', [
-      '--vertical',
+    await run(fixture, scaffoldCommand.outboxWorker, [
+      scaffoldFlag.vertical,
       'billing',
       '--worker',
-      'orders-created-logger',
-      '--producer',
-      'inventory-stock',
+      fixtureName.ordersCreatedLogger,
+      scaffoldFlag.producer,
+      inventorySlug,
       '--topic',
-      'orders.created',
+      fixtureName.ordersCreated,
     ]);
     await mkdir(path.join(fixture.root, 'node_modules', '@authzed'), { recursive: true });
     await mkdir(path.join(fixture.root, 'node_modules', '@effect'), { recursive: true });
@@ -4235,7 +4537,7 @@ test('all generated files typecheck against the real workspace contracts', async
     await mkdir(path.join(fixture.root, 'node_modules', '@types'), { recursive: true });
     await symlink(
       path.join(appRoot, 'packages/core-runtime/node_modules/effect'),
-      path.join(fixture.root, 'node_modules/effect'),
+      path.join(fixture.root, effectNodeModulePath),
       'dir',
     );
     await symlink(
@@ -4275,7 +4577,7 @@ test('all generated files typecheck against the real workspace contracts', async
     );
     await symlink(
       path.join(appRoot, 'apps/shell-super-app/node_modules/@modern-js/plugin-bff'),
-      path.join(fixture.root, 'node_modules/@modern-js/plugin-bff'),
+      path.join(fixture.root, pluginBffNodeModulePath),
       'dir',
     );
     await symlink(
@@ -4336,16 +4638,19 @@ test('all generated files typecheck against the real workspace contracts', async
     await Promise.all(
       [
         'module-entrypoint-gateway.ts',
+        'module-state-check-unavailable-error.ts',
+        'module-state-denied-error.ts',
         'module-state-gate-errors.ts',
         'module-state-gate.ts',
         'tenant-module-state-errors.ts',
         'tenant-module-state-service.ts',
-      ].map((moduleFile) =>
-        symlink(
-          path.join(appRoot, 'packages/core-runtime/src/modules', moduleFile),
-          path.join(fixture.root, 'packages/core-runtime/src/modules', moduleFile),
-          'file',
-        ),
+      ].map(
+        async (moduleFile) =>
+          await symlink(
+            path.join(appRoot, 'packages/core-runtime/src/modules', moduleFile),
+            path.join(fixture.root, 'packages/core-runtime/src/modules', moduleFile),
+            'file',
+          ),
       ),
     );
     const fixtureTsconfig = path.join(fixture.root, 'tsconfig.generated.json');
@@ -4359,9 +4664,12 @@ test('all generated files typecheck against the real workspace contracts', async
           moduleResolution: 'Bundler',
           noEmit: true,
           paths: {
-            '@app/core-runtime': [path.join(appRoot, 'packages/core-runtime/src/index.ts')],
+            '@app/core-runtime': [path.join(appRoot, coreRuntimeIndexFile)],
             '@app/core-runtime/actions/principal-context': [
               path.join(appRoot, 'packages/core-runtime/src/actions/principal-context.ts'),
+            ],
+            '@app/core-runtime/outbox/worker': [
+              path.join(appRoot, 'packages/core-runtime/src/outbox/worker-entrypoint.ts'),
             ],
             '@app/inventory-stock/outbox/*': ['./verticals/inventory-stock/shared/outbox/*.ts'],
             '@app/shared-contracts': [path.join(appRoot, 'packages/shared-contracts/src/index.ts')],
@@ -4375,12 +4683,13 @@ test('all generated files typecheck against the real workspace contracts', async
         include: [
           'packages/core-runtime/src/modules/actions/**/*.ts',
           'packages/core-runtime/src/policies/**/*.ts',
-          'verticals/inventory-stock/vertical.manifest.ts',
+          inventoryManifestFile,
           'verticals/inventory-stock/src/actions/**/*.ts',
           'verticals/inventory-stock/src/integrations/**/*.ts',
           'verticals/inventory-stock/shared/outbox/**/*.ts',
           'verticals/billing/src/workers/**/*.ts',
           'verticals/billing/src/worker-host/**/*.ts',
+          billingApiIndexFile,
           'verticals/inventory-stock/src/policies/**/*.ts',
           'verticals/inventory-stock/src/routes/**/*.ts',
           'verticals/inventory-stock/src/routes/**/*.tsx',

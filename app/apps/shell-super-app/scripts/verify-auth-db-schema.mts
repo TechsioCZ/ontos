@@ -1,4 +1,4 @@
-// @effect-diagnostics globalConsole:off processEnv:off strictEffectProvide:off
+// @effect-diagnostics globalConsole:off processEnv:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { sql } from 'drizzle-orm';
 import { Effect, Layer, Schema } from 'effect';
 import { AuthConfigLive } from '../api/auth/config.ts';
@@ -12,12 +12,6 @@ class AuthDatabaseVerificationError extends Schema.TaggedError<AuthDatabaseVerif
     reason: Schema.String,
   },
 ) {}
-
-type CatalogRow = Readonly<Record<string, string | null>> & {
-  readonly kind: 'migration' | 'table';
-  readonly schema_name: string;
-  readonly table_name: null | string;
-};
 
 const verification = Effect.gen(function* verifyAuthDatabase() {
   const database = yield* AuthDatabase;
@@ -38,7 +32,11 @@ const verification = Effect.gen(function* verifyAuthDatabase() {
         reason: 'Unable to compare the PostgreSQL authentication catalog',
       }),
     try: () =>
-      database.executor.execute<CatalogRow>(sql`
+      database.executor.execute<{
+        readonly kind: 'migration' | 'table';
+        readonly schema_name: string;
+        readonly table_name: string;
+      }>(sql`
         with auth_tables as (
           select
             ${'table'}::text as kind,
@@ -86,8 +84,10 @@ const verification = Effect.gen(function* verifyAuthDatabase() {
   migrationBookkeepingTables.sort();
   const difference = compareAuthCatalog(tableNames);
   if (
-    JSON.stringify(migrationBookkeepingTables) !==
-      JSON.stringify(expectedMigrationBookkeepingTables) ||
+    migrationBookkeepingTables.length !== expectedMigrationBookkeepingTables.length ||
+    migrationBookkeepingTables.some(
+      (tableName, index) => tableName !== expectedMigrationBookkeepingTables[index],
+    ) ||
     difference.missing.length > 0 ||
     difference.unexpected.length > 0
   ) {

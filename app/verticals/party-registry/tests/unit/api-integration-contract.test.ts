@@ -1,4 +1,4 @@
-// @effect-diagnostics asyncFunction:off nodeBuiltinImport:off
+// @effect-diagnostics asyncFunction:off nodeBuiltinImport:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -19,6 +19,8 @@ const apiNames = [
   'counterpartyRoleHistory',
   'duplicateCandidateDetail',
   'foundation',
+  'organizationEngagementMutations',
+  'organizationEngagementProfile',
   'partiesSearch',
   'partyCommandRecovery',
   'partyCommands',
@@ -32,6 +34,8 @@ const apiNames = [
   'partyOfficialIdentifierDetail',
   'partyOfficialIdentifierHistory',
   'partyRelationshipDetail',
+  'personEngagementMutations',
+  'personEngagementProfile',
 ] as const;
 
 const serverFiles = [
@@ -40,6 +44,8 @@ const serverFiles = [
   'counterparty-read-read-server',
   'counterparty-role-history-read-server',
   'duplicate-candidate-detail-read-server',
+  'engagement-profile-server',
+  'organization-engagement-profile-read-server',
   'parties-search-server',
   'party-contact-point-detail-read-server',
   'party-contact-points-read-server',
@@ -51,6 +57,7 @@ const serverFiles = [
   'party-official-identifier-detail-read-server',
   'party-official-identifier-history-read-server',
   'party-relationship-detail-read-server',
+  'person-engagement-profile-read-server',
 ] as const;
 
 test('aggregates every governed read and search API beside readiness', () => {
@@ -96,12 +103,17 @@ test('keeps readiness tied to the immutable build marker', () => {
 });
 
 test('composes generated governed servers through the Core read runtime', async () => {
-  const source = await readFile(new URL('../../api/index.ts', import.meta.url), 'utf-8');
+  const serverSources = await Promise.all([
+    readFile(new URL('../../api/index.ts', import.meta.url), 'utf-8'),
+    readFile(new URL('../../api/engagement-profile-server.ts', import.meta.url), 'utf-8'),
+  ]);
+  const source = serverSources.join('\n');
 
   for (const serverFile of serverFiles) {
     assert.match(source, new RegExp(serverFile.replaceAll('-', '[-]'), 'u'));
   }
-  assert.match(source, /makeReadRuntimeLive\(ContextAccessLive\)/u);
+  assert.match(source, /ReadRuntimeLive/u);
+  assert.match(source, /ContextAccessLive/u);
   assert.match(source, /Layer\.provide\(CorePersistenceLive\)/u);
   assert.doesNotMatch(source, /partyRegistryItems|Wire a real|generated-party-registry/u);
   assert.doesNotMatch(source, /\.handle\(['"]create['"]/u);
@@ -116,15 +128,21 @@ test('re-exports every governed generated client without exposing private execut
   );
 
   for (const client of apiNames.filter(
-    (name) => name !== 'foundation' && name !== 'partyCommands' && name !== 'partyCommandRecovery',
+    (name) =>
+      name !== 'foundation' &&
+      name !== 'organizationEngagementMutations' &&
+      name !== 'partyCommands' &&
+      name !== 'partyCommandRecovery' &&
+      name !== 'personEngagementMutations',
   )) {
     const file = client.replaceAll(/[A-Z]/gu, (value) => `-${value.toLowerCase()}`);
     assert.match(source, new RegExp(`\\./${file}-client\\.ts`, 'u'));
   }
+  assert.match(source, /\.\/engagement-profile-client\.ts/u);
   assert.match(source, /getPartyRegistryReadiness/u);
   assert.match(source, /party-command-client/u);
   assert.match(source, /export const partyRegistryClient =/u);
-  assert.match(source, /makeEffectHttpApiClient\(partyRegistryFoundationApi/u);
+  assert.match(source, /createPartyRegistryHttpClient/u);
   assert.doesNotMatch(source, /createPartyRegistryClient/u);
   assert.doesNotMatch(source, /makeEffectHttpApiClient\(partyRegistryApi/u);
   assert.doesNotMatch(

@@ -3,7 +3,7 @@
 // @ontos-action-slug update-contact-point
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Match, Schema } from 'effect';
 import {
   PartyContactPointSchema,
   assertAddressPurposeRules,
@@ -122,22 +122,66 @@ interface Services {
   ) => Effect.Effect<PartyContactPoint, UpdateError>;
 }
 
-const handleUpdateContactPoint = (
-  payload: UpdateContactPointPayload,
-  context: ActionHandlerContext<
-    Readonly<{ 'party.registry.contact-point-updated.v1': typeof ContactPointUpdatedEventSchema }>,
-    Services
-  >,
-) =>
-  Effect.gen(function* updateContactPoint() {
+const invalidContactPoint = (reason: string, cause: unknown) =>
+  Object.defineProperty(
+    new PartyContactPointInvalid({ code: 'party_contact_point_invalid', reason }),
+    'cause',
+    { configurable: true, value: cause },
+  );
+
+const persistenceUnavailable = (cause: unknown) =>
+  Object.defineProperty(
+    new PartyContactPointPersistenceUnavailable({
+      code: 'party_contact_point_persistence_unavailable',
+      reason: 'The stored Party Contact Point could not be decoded',
+    }),
+    'cause',
+    { configurable: true, value: cause },
+  );
+
+const persistenceChange = (
+  change: UpdateContactPointPayload['change'],
+): UpdateContactPointCommand['change'] =>
+  Match.value(change).pipe(
+    Match.discriminatorsExhaustive('type')({
+      ADD_PROVENANCE: (value) => value,
+      CORRECT_CONTACT_POINT: ({ evidenceReferences, reason, replacement, type }) =>
+        replacement === undefined
+          ? { evidenceReferences, reason, type }
+          : {
+              evidenceReferences,
+              reason,
+              replacement: {
+                ...replacement,
+                validFrom: DateTime.formatIso(DateTime.makeUnsafe(replacement.validFrom)),
+              },
+              type,
+            },
+      END_ADDRESS_PURPOSE: (value) => ({
+        ...value,
+        effectiveEnd: DateTime.formatIso(DateTime.makeUnsafe(value.effectiveEnd)),
+      }),
+      ENRICH_VERIFICATION: (value) => value,
+      SET_ADDRESS_PURPOSE: (value) => value,
+      SET_CHANNEL_PREFERRED: (value) => value,
+    }),
+  );
+
+const handleUpdateContactPoint = Effect.fn('UpdateContactPointAction.handleUpdateContactPoint')(
+  function* updateContactPoint(
+    payload: UpdateContactPointPayload,
+    context: ActionHandlerContext<
+      Readonly<{
+        'party.registry.contact-point-updated.v1': typeof ContactPointUpdatedEventSchema;
+      }>,
+      Services
+    >,
+  ) {
     if (payload.change.type === 'ENRICH_VERIFICATION') {
       const { verification } = payload.change;
       yield* Effect.try({
-        catch: () =>
-          new PartyContactPointInvalid({
-            code: 'party_contact_point_invalid',
-            reason: 'Verification enrichment is missing its required evidence',
-          }),
+        catch: (cause) =>
+          invalidContactPoint('Verification enrichment is missing its required evidence', cause),
         try: () => assertVerificationRules(verification),
       });
     }
@@ -147,11 +191,11 @@ const handleUpdateContactPoint = (
     ) {
       const { replacement } = payload.change;
       yield* Effect.try({
-        catch: () =>
-          new PartyContactPointInvalid({
-            code: 'party_contact_point_invalid',
-            reason: 'The correction replacement does not satisfy Contact Point rules',
-          }),
+        catch: (cause) =>
+          invalidContactPoint(
+            'The correction replacement does not satisfy Contact Point rules',
+            cause,
+          ),
         try: () => {
           assertVerificationRules(replacement.verification);
           if (replacement.contactPoint.type === 'ADDRESS') {
@@ -165,6 +209,7 @@ const handleUpdateContactPoint = (
       ...payload,
       acceptedByActionInvocationId: context.actionInvocationId,
       acceptedByPrincipalId: context.scope.principalId,
+      change: persistenceChange(payload.change),
     });
     const eventContactPointRef =
       payload.change.type === 'CORRECT_CONTACT_POINT'
@@ -194,7 +239,8 @@ const handleUpdateContactPoint = (
       }),
     );
     return contactPoint;
-  });
+  },
+);
 
 export const updateContactPointAction = defineAction(
   {
@@ -226,7 +272,15 @@ export const updateContactPointAction = defineAction(
   (transaction, scope) =>
     Effect.succeed({
       update: (command: UpdateContactPointCommand) =>
-        updateContactPointRecord(transaction, scope, command),
+        updateContactPointRecord(transaction, scope, command).pipe(
+          Effect.flatMap((contactPoint) =>
+            Schema.is(PartyContactPointSchema)(contactPoint)
+              ? Effect.succeed(contactPoint)
+              : Schema.decodeUnknownEffect(PartyContactPointSchema)(contactPoint).pipe(
+                  Effect.mapError(persistenceUnavailable),
+                ),
+          ),
+        ),
     }),
 );
 

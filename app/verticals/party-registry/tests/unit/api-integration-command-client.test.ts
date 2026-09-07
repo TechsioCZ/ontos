@@ -1,4 +1,5 @@
-// @effect-diagnostics asyncFunction:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Result } from 'effect';
@@ -32,7 +33,7 @@ test('fresh assertions and command metadata reach the independent owner deployme
     traceId: 'command-trace',
   };
   const invoke = () =>
-    Effect.runPromise(
+    runEffectTestPromise(
       requestSearchRebuild({}, options).pipe(
         Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
       ),
@@ -78,7 +79,7 @@ test('decodes declared errors without weakening their tag or stable conflict cod
         status: 409,
       }),
     );
-  const outcome = await Effect.runPromise(
+  const outcome = await runEffectTestPromise(
     requestSearchRebuildWithAuthorization({}, 'Bearer test', {
       baseUrl: 'https://party.example/party-registry-api',
       correlationId: 'conflict',
@@ -103,7 +104,7 @@ test('the browser default uses the relative mounted BFF prefix', async () => {
     value: { origin: 'https://shell.example', pathname: '/en' },
   });
   try {
-    await Effect.runPromise(
+    await runEffectTestPromise(
       requestSearchRebuildWithAuthorization({}, 'Bearer test', {
         correlationId: 'relative',
         idempotencyKey: 'rebuild-1',

@@ -1,30 +1,108 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { NodeServices } from '@effect/platform-node';
+import { Config, Effect, ManagedRuntime, Predicate, Schema, Stream } from 'effect';
+import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+
+interface TypecheckResult {
+  readonly status: number;
+  readonly stderr: string;
+  readonly stdout: string;
+}
+
+interface WorkspaceScriptPlan {
+  readonly typecheck: string;
+}
+
+type WorkspaceScriptPlanFactory = (applications: readonly string[]) => WorkspaceScriptPlan;
+
+const callable = <Callable extends (...argumentsList: never[]) => void>() =>
+  Schema.Opaque<Callable>()(Schema.Unknown.pipe(Schema.refine(Predicate.isFunction)));
+
+const PackageJsonSchema = Schema.Struct({
+  scripts: Schema.Struct({ typecheck: Schema.String }),
+});
+const WorkspaceScriptPlanSchema = Schema.Struct({ typecheck: Schema.String });
+const WorkspaceScriptPlanModuleSchema = Schema.Struct({
+  createWorkspaceRootScriptPlan: callable<WorkspaceScriptPlanFactory>(),
+});
 
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
-const packageJson = JSON.parse(readFileSync(path.join(workspaceRoot, 'package.json'), 'utf8'));
+const packageJsonFile = 'package.json';
+const tsconfigFile = 'tsconfig.json';
+const packageJson = Schema.decodeUnknownSync(Schema.fromJsonString(PackageJsonSchema))(
+  readFileSync(path.join(workspaceRoot, packageJsonFile), 'utf-8'),
+);
+const typecheckWrapper = path.join(workspaceRoot, 'scripts/ultramodern-typecheck.mts');
+const executablePath = path.join(workspaceRoot, 'node_modules/.bin');
+const typecheckRuntime = ManagedRuntime.make(NodeServices.layer);
 
-test('installed workspace generator keeps build mode as the root typecheck default', async () => {
-  const generator = await import(
-    pathToFileURL(
-      path.join(
-        workspaceRoot,
-        'node_modules/@modern-js/create/dist/esm-node/ultramodern-workspace/workspace-script-plan.js',
-      ),
-    ).href
+const runTypecheck = async (
+  fixture: string,
+  commandArguments: readonly string[],
+): Promise<TypecheckResult> =>
+  await typecheckRuntime.runPromise(
+    Effect.gen(function* runTypecheckEffect() {
+      const inheritedPath = yield* Config.string('PATH').pipe(Config.withDefault(''));
+      const processSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      return yield* Effect.scoped(
+        Effect.gen(function* collectTypecheckResult() {
+          const handle = yield* processSpawner.spawn(
+            ChildProcess.make(process.execPath, [typecheckWrapper, ...commandArguments], {
+              cwd: fixture,
+              env: {
+                PATH: `${executablePath}${path.delimiter}${inheritedPath}`,
+                ULTRAMODERN_WORKSPACE_ROOT: fixture,
+              },
+              extendEnv: true,
+              stderr: 'pipe',
+              stdin: 'ignore',
+              stdout: 'pipe',
+            }),
+          );
+          const [status, stdout, stderr] = yield* Effect.all(
+            [
+              handle.exitCode.pipe(Effect.map(Number)),
+              handle.stdout.pipe(Stream.decodeText(), Stream.mkString),
+              handle.stderr.pipe(Stream.decodeText(), Stream.mkString),
+            ],
+            { concurrency: 'unbounded' },
+          );
+          return { status, stderr, stdout };
+        }),
+      );
+    }),
+  );
+
+test.after(async () => {
+  await typecheckRuntime.dispose();
+});
+
+void test('installed workspace generator keeps build mode as the root typecheck default', async () => {
+  const generator = Schema.decodeUnknownSync(WorkspaceScriptPlanModuleSchema)(
+    await import(
+      pathToFileURL(
+        path.join(
+          workspaceRoot,
+          'node_modules/@modern-js/create/dist/esm-node/ultramodern-workspace/workspace-script-plan.js',
+        ),
+      ).href
+    ),
+  );
+  const scriptPlan = Schema.decodeUnknownSync(WorkspaceScriptPlanSchema)(
+    generator.createWorkspaceRootScriptPlan([]),
   );
   assert.equal(
-    generator.createWorkspaceRootScriptPlan([]).typecheck,
+    scriptPlan.typecheck,
     'node ./scripts/ultramodern-typecheck.mts --build tsconfig.json',
   );
 });
 
-test('Drizzle consumer surface compiles in both ESM and CommonJS projects', () => {
+void test('Drizzle consumer surface compiles in both ESM and CommonJS projects', async () => {
   const fixture = mkdtempSync(path.join(os.tmpdir(), 'ontos-drizzle-declarations-'));
   try {
     symlinkSync(
@@ -32,9 +110,9 @@ test('Drizzle consumer surface compiles in both ESM and CommonJS projects', () =
       path.join(fixture, 'node_modules'),
       'dir',
     );
-    writeFileSync(path.join(fixture, 'package.json'), '{"private":true,"type":"module"}\n');
+    writeFileSync(path.join(fixture, packageJsonFile), '{"private":true,"type":"module"}\n');
     writeFileSync(
-      path.join(fixture, 'tsconfig.json'),
+      path.join(fixture, tsconfigFile),
       JSON.stringify({
         compilerOptions: {
           exactOptionalPropertyTypes: true,
@@ -56,26 +134,14 @@ test('Drizzle consumer surface compiles in both ESM and CommonJS projects', () =
           'export const fixtureTable = pgTable("declaration_fixture", { id: uuid("id") });\n',
       );
     }
-    const result = spawnSync(
-      process.execPath,
-      [path.join(workspaceRoot, 'scripts/ultramodern-typecheck.mts'), '--project', 'tsconfig.json'],
-      {
-        cwd: fixture,
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          PATH: `${path.join(workspaceRoot, 'node_modules/.bin')}${path.delimiter}${process.env.PATH ?? ''}`,
-          ULTRAMODERN_WORKSPACE_ROOT: fixture,
-        },
-      },
-    );
+    const result = await runTypecheck(fixture, ['--project', tsconfigFile]);
     assert.equal(result.status, 0, result.stdout + result.stderr);
   } finally {
-    rmSync(fixture, { recursive: true, force: true });
+    rmSync(fixture, { force: true, recursive: true });
   }
 });
 
-test('root typecheck checks referenced projects and rejects a newly introduced type error', () => {
+void test('root typecheck checks referenced projects and rejects a newly introduced type error', async () => {
   const fixture = mkdtempSync(path.join(os.tmpdir(), 'ontos-typecheck-references-'));
   try {
     mkdirSync(path.join(fixture, 'referenced'));
@@ -84,9 +150,9 @@ test('root typecheck checks referenced projects and rejects a newly introduced t
       path.join(fixture, 'node_modules'),
       'dir',
     );
-    writeFileSync(path.join(fixture, 'package.json'), '{"private":true,"type":"module"}\n');
+    writeFileSync(path.join(fixture, packageJsonFile), '{"private":true,"type":"module"}\n');
     writeFileSync(
-      path.join(fixture, 'tsconfig.json'),
+      path.join(fixture, tsconfigFile),
       JSON.stringify({ files: [], references: [{ path: './referenced' }] }),
     );
     writeFileSync(
@@ -96,9 +162,9 @@ test('root typecheck checks referenced projects and rejects a newly introduced t
           composite: true,
           declaration: true,
           emitDeclarationOnly: true,
+          outDir: './output',
           strict: true,
           types: [],
-          outDir: './output',
         },
         files: ['./index.ts'],
       }),
@@ -108,29 +174,20 @@ test('root typecheck checks referenced projects and rejects a newly introduced t
     const [runtime, wrapper, ...args] = packageJson.scripts.typecheck.split(' ');
     assert.equal(runtime, 'node');
     assert.equal(wrapper, './scripts/ultramodern-typecheck.mts');
-    const runGate = () =>
-      spawnSync(process.execPath, [path.join(workspaceRoot, wrapper), ...args], {
-        cwd: fixture,
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          PATH: `${path.join(workspaceRoot, 'node_modules/.bin')}${path.delimiter}${process.env.PATH ?? ''}`,
-          ULTRAMODERN_WORKSPACE_ROOT: fixture,
-        },
-      });
-    const initial = runGate();
+    assert.equal(path.join(workspaceRoot, wrapper), typecheckWrapper);
+    const initial = await runTypecheck(fixture, args);
     assert.equal(initial.status, 0, initial.stdout + initial.stderr);
     assert.ok(
-      readFileSync(path.join(fixture, 'referenced/output/index.d.ts'), 'utf8').includes(
+      readFileSync(path.join(fixture, 'referenced/output/index.d.ts'), 'utf-8').includes(
         'referenceGateFixture',
       ),
       'the referenced project must actually be built; a root files:[] project check is a no-op',
     );
     writeFileSync(sourceFile, 'export const referenceGateFixture: number = "invalid";\n');
-    const invalid = runGate();
+    const invalid = await runTypecheck(fixture, args);
     assert.notEqual(invalid.status, 0, 'a referenced source type error must fail the root gate');
     assert.match(invalid.stdout + invalid.stderr, /referenced[/\\]index\.ts.*TS2322/u);
   } finally {
-    rmSync(fixture, { recursive: true, force: true });
+    rmSync(fixture, { force: true, recursive: true });
   }
 });

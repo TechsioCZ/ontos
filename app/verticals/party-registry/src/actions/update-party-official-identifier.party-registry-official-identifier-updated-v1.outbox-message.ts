@@ -1,4 +1,4 @@
-/* eslint-disable unicorn/prefer-export-from -- Codesmith keeps stable action-local aliases for the public outbox contract. */
+/* eslint-disable unicorn/prefer-export-from -- Codesmith keeps stable action-local aliases for the public outbox contract. expires: 2026-12-31. */
 import type { OutboxMessage } from '@app/core-runtime';
 import {
   OutboxPayloadSchema,

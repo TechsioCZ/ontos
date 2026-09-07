@@ -20,7 +20,6 @@ zerops:
         - 'app/pnpm-lock.yaml'
         - 'app/pnpm-workspace.yaml'
         - 'app/scripts'
-        - 'app/verticals/contacts'
         - 'app/verticals/party-registry'
     deploy:
       temporaryShutdown: false
@@ -88,54 +87,6 @@ zerops:
           port: 8443
           path: '/healthz'
       start: sh app/scripts/run-zerops-spicedb.sh
-
-  - setup: 'contacts'
-    build:
-      base: 'alpine@3.23'
-      prepareCommands:
-        - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm
-      buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.5.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '@app/contacts' run build
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize -- --app 'contacts' --package '@app/contacts' --package-dir 'verticals/contacts'
-        - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/contacts/topology.json'
-        - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/contacts/local-overlay.json'
-      deployFiles:
-        - 'app/.zerops/runtime/contacts'
-        - 'app/scripts/install-zerops-node.sh'
-    deploy:
-      temporaryShutdown: false
-      readinessCheck:
-        httpGet:
-          port: 4101
-          path: '/contacts-api/contacts/readiness'
-        failureTimeout: 3m
-        retryPeriod: 10s
-    run:
-      base: 'nodejs@24'
-      initCommands:
-        - ZEROPS_NODE_ROOT=/var/www sh app/scripts/install-zerops-node.sh
-      ports:
-        - port: 4101
-          protocol: tcp
-          httpSupport: true
-      envVariables:
-        NODE_ENV: production
-        PORT: '4101'
-        SPICEDB_ENDPOINT: 'spicedb:50051'
-        SPICEDB_INSECURE: 'true'
-        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
-        ULTRAMODERN_ZEROPS_SERVICE: contacts
-        VERTICAL_CONTACTS_PORT: '4101'
-        ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
-        ONTOS_PARTY_REGISTRY_API_BASE_URL: 'http://party-registry:4102/party-registry-api'
-      healthCheck:
-        httpGet:
-          port: 4101
-          path: '/contacts-api/contacts/readiness'
-      start: sh -c 'cd app/.zerops/runtime/contacts && PATH="/var/www/.local/node-26.5.0/bin:$PATH" exec npm run serve'
 
   - setup: 'party-registry'
     build:

@@ -16,9 +16,9 @@ export interface ApprovedVerticalPageClient {
 export const ultramodernVerticalClients: readonly ApprovedVerticalPageClient[] = [
   // @ontos-codegen-start shell-page-clients
   {
-    appId: 'contacts',
-    componentKey: 'contacts.core.page-contacts',
-    load: () => import('contacts/PageContacts'),
+    appId: 'party-registry',
+    componentKey: 'party.registry.page-contacts',
+    load: () => import('partyRegistry/PageContacts'),
   },
   // @ontos-codegen-end shell-page-clients
 ];

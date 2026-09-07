@@ -13,14 +13,15 @@ import {
   outboxTopic,
 } from '@app/party-registry/outbox/party-registry-party-created-v1';
 
-const handleProjectPartyCreatedToSearch = (
+const handleProjectPartyCreatedToSearch = Effect.fn(
+  'ProjectPartyCreatedToSearchWorker.handleProjectPartyCreatedToSearch',
+)(function* projectCommittedEvent(
   payload: typeof OutboxPayloadSchema.Type,
   context: OutboxWorkerHandlerContext,
-) =>
-  Effect.gen(function* projectCommittedEvent() {
-    const projector = yield* PartySearchProjector;
-    yield* projector.project(context, { partyId: payload.partyRef.resourceId });
-  });
+) {
+  const projector = yield* PartySearchProjector;
+  yield* projector.project(context, { partyId: payload.partyRef.resourceId });
+});
 
 export const projectPartyCreatedToSearchWorker = defineOutboxWorker(
   {

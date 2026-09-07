@@ -1,9 +1,8 @@
-// @effect-diagnostics asyncFunction:off preferSchemaOverJson:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
-import { once } from 'node:events';
-import { createServer } from 'node:http';
 import test from 'node:test';
 import {
+  OntosModuleDeploymentContractSchema,
   defineAction,
   defineOntosModuleManifest,
   defineOutboxWorker,
@@ -13,11 +12,12 @@ import {
   getVerticalRuntimeActions,
   getVerticalRuntimeOutboxWorkers,
 } from '@app/core-runtime';
-import { Effect, Predicate, Schema } from 'effect';
+import { Effect, Function as Fn, Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 import { makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
 import { deriveDeploymentAllowlist } from '../../api/modules/deployment-allowlist.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
+import type { ModuleContractFetch } from '../../api/modules/installed-module-catalog.ts';
 import { matchInstalledOutboxMessagesOnce } from '../../api/modules/installed-outbox-matcher.ts';
 
 const contract = (
@@ -88,6 +88,10 @@ const contract = (
 const PropertyApi = HttpApi.make('PropertyApi').add(
   HttpApiGroup.make('property').add(HttpApiEndpoint.get('listUnits', '/units')),
 );
+const PropertyRegistryUnitIdSchema = Schema.String.pipe(Schema.brand('PropertyRegistryUnitId'));
+const DocumentsCenterDocumentIdSchema = Schema.String.pipe(
+  Schema.brand('DocumentsCenterDocumentId'),
+);
 
 const PropertyAction = defineAction(
   {
@@ -109,7 +113,7 @@ const PropertyAction = defineAction(
     idempotency: 'required',
     legalEntityScope: 'optional',
     owningModuleKey: 'property.registry',
-    payloadSchema: Schema.Struct({ unitId: Schema.String }),
+    payloadSchema: Schema.Struct({ unitId: PropertyRegistryUnitIdSchema }),
     policies: [],
     resultSchema: Schema.Struct({ renamed: Schema.Boolean }),
     schemaVersion: '1',
@@ -128,7 +132,7 @@ const PropertyOutboxWorker = defineOutboxWorker(
       role: 'worker',
     }),
     leaseDurationMs: 30_000,
-    payloadSchema: Schema.Struct({ documentId: Schema.String }),
+    payloadSchema: Schema.Struct({ documentId: DocumentsCenterDocumentIdSchema }),
     producerModuleKey: 'documents.center',
     retryPolicy: {
       initialBackoffMs: 1000,
@@ -187,58 +191,72 @@ const propertyRuntimeRegistration = defineVerticalRuntimeRegistration({
 
 const propertySafeRuntime = extractVerticalRuntimeSafeDescriptors(propertyRuntimeRegistration);
 
-const serve = async <Document>(document: Document) => {
-  let requests = 0;
-  const server = createServer((_request, response) => {
-    requests += 1;
-    response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify(document));
-  });
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const address = server.address();
-  if (address === null || Predicate.isString(address)) {
-    throw new TypeError('Test catalog server did not expose a TCP address');
-  }
-  const { port } = address;
-  return {
-    close: async () => {
-      const closed = once(server, 'close');
-      server.close();
-      await closed;
-    },
-    get requests() {
-      return requests;
-    },
-    url: `http://127.0.0.1:${port}/.well-known/ontos-module-manifest.json`,
-  };
-};
+const ContractDocumentJsonSchema = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
 
-void test('keeps discovered metadata separate from one complete owner-local runtime', async () => {
-  const property = await serve(
-    contract('property-registry', 'property.registry', {
-      actions: propertySafeRuntime.actions,
-      api: [{ key: 'property.registry.api', operationKeys: ['property.listUnits'] }],
-      components: [
-        {
-          expose: './Dashboard',
-          key: 'property.registry.dashboard',
-          mfBoundaryId: 'verticalPropertyRegistry',
-        },
-      ],
-      outboxSubscriptions: propertySafeRuntime.outboxSubscriptions,
-    }),
+type EffectTestCallback = () => Promise<void>;
+
+const runEffectTest = <Failure>(effect: Effect.Effect<void, Failure>): EffectTestCallback =>
+  Fn.flow(Fn.constant(effect), runEffectTestPromise);
+
+const makeContractFetch = (
+  documents: ReadonlyMap<string, unknown>,
+  requests: Map<string, number>,
+): ModuleContractFetch =>
+  Fn.flow(
+    (input: Parameters<ModuleContractFetch>[0]) =>
+      Effect.gen(function* encodeContractResponse() {
+        const { url } = new Request(input);
+        const document = documents.get(url);
+        if (document === undefined) {
+          return new Response(null, { status: 404 });
+        }
+        requests.set(url, (requests.get(url) ?? 0) + 1);
+        const encodedDocument = yield* Schema.encodeUnknownEffect(ContractDocumentJsonSchema)(
+          document,
+        );
+        return new Response(encodedDocument, {
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    runEffectTestPromise,
   );
-  const documents = await serve(contract('documents-center', 'documents.center'));
-  try {
-    const allowlist = await Effect.runPromise(
-      deriveDeploymentAllowlist({
+
+void test(
+  'keeps discovered metadata separate from one complete owner-local runtime',
+  runEffectTest(
+    Effect.gen(function* verifyInstalledModuleCatalogRuntime() {
+      const propertyUrl = 'https://property-registry.test/.well-known/ontos-module-manifest.json';
+      const documentsUrl = 'https://documents-center.test/.well-known/ontos-module-manifest.json';
+      const requests = new Map<string, number>();
+      const contractFetch = makeContractFetch(
+        new Map([
+          [
+            propertyUrl,
+            contract('property-registry', 'property.registry', {
+              actions: propertySafeRuntime.actions,
+              api: [{ key: 'property.registry.api', operationKeys: ['property.listUnits'] }],
+              components: [
+                {
+                  expose: './Dashboard',
+                  key: 'property.registry.dashboard',
+                  mfBoundaryId: 'verticalPropertyRegistry',
+                },
+              ],
+              outboxSubscriptions: propertySafeRuntime.outboxSubscriptions,
+            }),
+          ],
+          [documentsUrl, contract('documents-center', 'documents.center')],
+        ]),
+        requests,
+      );
+
+      const allowlist = yield* deriveDeploymentAllowlist({
         environment: 'development',
         overlay: {
           environment: 'development',
           ontosModuleManifests: {
-            'documents-center': documents.url,
-            'property-registry': property.url,
+            'documents-center': documentsUrl,
+            'property-registry': propertyUrl,
           },
           schemaVersion: 1,
         },
@@ -248,66 +266,69 @@ void test('keeps discovered metadata separate from one complete owner-local runt
             { id: 'documents-center', kind: 'vertical' },
           ],
         },
-      }),
-    );
-    const loader = makeInstalledModuleCatalogLoader(allowlist);
-    const first = await Effect.runPromise(loader);
-    const second = await Effect.runPromise(loader);
+      });
+      const loader = makeInstalledModuleCatalogLoader(allowlist, contractFetch);
+      const first = yield* loader;
+      const second = yield* loader;
 
-    assert.strictEqual(first, second);
-    assert.equal(property.requests, 1);
-    assert.equal(documents.requests, 1);
-    assert.equal(
-      first.getByDeploymentAppId('property-registry')?.manifest.module.id,
-      'property.registry',
-    );
-    assert.equal(first.getByModuleId('property.registry')?.deployment.appId, 'property-registry');
-    assert.deepEqual(first.moduleIds, ['documents.center', 'property.registry']);
-    const tenantStates = [
-      { moduleKey: 'property.registry', state: 'active' },
-      { moduleKey: 'documents.center', state: 'inactive' },
-    ] as const;
-    assert.deepEqual(
-      tenantStates
-        .filter(({ moduleKey, state }) => state === 'active' && first.moduleIds.includes(moduleKey))
-        .map(({ moduleKey }) => moduleKey),
-      ['property.registry'],
-    );
+      assert.strictEqual(first, second);
+      assert.equal(requests.get(propertyUrl), 1);
+      assert.equal(requests.get(documentsUrl), 1);
+      assert.equal(
+        first.getByDeploymentAppId('property-registry')?.manifest.module.id,
+        'property.registry',
+      );
+      assert.equal(first.getByModuleId('property.registry')?.deployment.appId, 'property-registry');
+      assert.deepEqual(first.moduleIds, ['documents.center', 'property.registry']);
+      const tenantStates = [
+        { moduleKey: 'property.registry', state: 'active' },
+        { moduleKey: 'documents.center', state: 'inactive' },
+      ] as const;
+      assert.deepEqual(
+        tenantStates
+          .filter(
+            ({ moduleKey, state }) => state === 'active' && first.moduleIds.includes(moduleKey),
+          )
+          .map(({ moduleKey }) => moduleKey),
+        ['property.registry'],
+      );
 
-    assert.strictEqual(getVerticalRuntimeActions(propertyRuntimeRegistration)[0], PropertyAction);
-    assert.strictEqual(
-      getVerticalRuntimeOutboxWorkers(propertyRuntimeRegistration)[0],
-      PropertyOutboxWorker,
-    );
-    assert.deepEqual(Object.keys(propertyRuntimeRegistration), ['moduleId']);
+      assert.strictEqual(getVerticalRuntimeActions(propertyRuntimeRegistration)[0], PropertyAction);
+      assert.strictEqual(
+        getVerticalRuntimeOutboxWorkers(propertyRuntimeRegistration)[0],
+        PropertyOutboxWorker,
+      );
+      assert.deepEqual(Object.keys(propertyRuntimeRegistration), ['moduleId']);
 
-    let matchedSubscriptions: readonly object[] = [];
-    await Effect.runPromise(
-      matchInstalledOutboxMessagesOnce(first, (input) => {
+      let matchedSubscriptions: readonly object[] = [];
+      yield* matchInstalledOutboxMessagesOnce(first, (input) => {
         matchedSubscriptions = input.subscriptions;
         return Effect.succeed({ deliveriesCreated: 1, messagesMatched: 1 });
-      }),
-    );
-    assert.deepEqual(matchedSubscriptions, propertySafeRuntime.outboxSubscriptions);
+      });
+      assert.deepEqual(matchedSubscriptions, propertySafeRuntime.outboxSubscriptions);
 
-    const propertyClientReference = makeEffectHttpApiClient(PropertyApi, {
-      baseUrl: new URL('/api', property.url),
-    });
-    assert.equal(Effect.isEffect(propertyClientReference), true);
-    assert.deepEqual(first.getByModuleId('property.registry')?.manifest.publicSurface.components, [
-      {
-        expose: './Dashboard',
-        key: 'property.registry.dashboard',
-        mfBoundaryId: 'verticalPropertyRegistry',
-      },
-    ]);
+      const propertyClientReference = makeEffectHttpApiClient(PropertyApi, {
+        baseUrl: new URL('/api', propertyUrl),
+      });
+      assert.equal(Effect.isEffect(propertyClientReference), true);
+      assert.deepEqual(
+        first.getByModuleId('property.registry')?.manifest.publicSurface.components,
+        [
+          {
+            expose: './Dashboard',
+            key: 'property.registry.dashboard',
+            mfBoundaryId: 'verticalPropertyRegistry',
+          },
+        ],
+      );
 
-    const serialized = JSON.stringify(first.getByModuleId('property.registry'));
-    assert.equal(serialized.includes('payloadSchema'), false);
-    assert.equal(serialized.includes('leaseDurationMs'), false);
-    assert.equal(serialized.includes('PropertyDashboard'), false);
-    assert.equal(serialized.includes('handler'), false);
-  } finally {
-    await Promise.all([property.close(), documents.close()]);
-  }
-});
+      const serialized = yield* Schema.encodeUnknownEffect(ContractDocumentJsonSchema)(
+        first.getByModuleId('property.registry'),
+      );
+      assert.equal(serialized.includes('payloadSchema'), false);
+      assert.equal(serialized.includes('leaseDurationMs'), false);
+      assert.equal(serialized.includes('PropertyDashboard'), false);
+      assert.equal(serialized.includes('handler'), false);
+    }),
+  ),
+);

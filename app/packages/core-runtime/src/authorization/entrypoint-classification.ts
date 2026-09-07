@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Result, Schema } from 'effect';
 
 export const ACTION_PROVISIONING_INTENTS = ['tenant_membership_default', 'explicit'] as const;
 
@@ -54,7 +54,9 @@ export type ActionExecutionAuthorization = Schema.Schema.Type<
 
 export const decodeEntrypointAuthorization = <Input>(input: Input): EntrypointAuthorization =>
   Object.freeze(
-    Schema.decodeUnknownSync(EntrypointAuthorizationSchema, {
-      onExcessProperty: 'error',
-    })(input),
+    Result.getOrThrow(
+      Schema.decodeUnknownResult(EntrypointAuthorizationSchema, {
+        onExcessProperty: 'error',
+      })(input),
+    ),
   );

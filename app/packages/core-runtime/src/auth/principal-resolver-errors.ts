@@ -1,37 +1,16 @@
-/* eslint-disable max-classes-per-file -- The resolver error union is one closed failure vocabulary. */
-import { Schema } from 'effect';
+import type { PrincipalBindingAmbiguousError } from './principal-binding-ambiguous-error.ts';
+import type { PrincipalBindingInactiveError } from './principal-binding-inactive-error.ts';
+import type { PrincipalBindingMissingError } from './principal-binding-missing-error.ts';
+import type { PrincipalInactiveError } from './principal-inactive-error.ts';
+import type { PrincipalResolverUnavailableError } from './principal-resolver-unavailable-error.ts';
+import type { TenantInactiveError } from './tenant-inactive-error.ts';
 
-export class PrincipalBindingMissingError extends Schema.TaggedError<PrincipalBindingMissingError>()(
-  'PrincipalBindingMissingError',
-  {},
-) {}
-
-export class PrincipalBindingAmbiguousError extends Schema.TaggedError<PrincipalBindingAmbiguousError>()(
-  'PrincipalBindingAmbiguousError',
-  {},
-) {}
-
-export class PrincipalBindingInactiveError extends Schema.TaggedError<PrincipalBindingInactiveError>()(
-  'PrincipalBindingInactiveError',
-  {},
-) {}
-
-export class PrincipalInactiveError extends Schema.TaggedError<PrincipalInactiveError>()(
-  'PrincipalInactiveError',
-  {},
-) {}
-
-export class TenantInactiveError extends Schema.TaggedError<TenantInactiveError>()(
-  'TenantInactiveError',
-  {},
-) {}
-
-export class PrincipalResolverUnavailableError extends Schema.TaggedError<PrincipalResolverUnavailableError>()(
-  'PrincipalResolverUnavailableError',
-  {
-    reason: Schema.String,
-  },
-) {}
+export { PrincipalBindingAmbiguousError } from './principal-binding-ambiguous-error.ts';
+export { PrincipalBindingInactiveError } from './principal-binding-inactive-error.ts';
+export { PrincipalBindingMissingError } from './principal-binding-missing-error.ts';
+export { PrincipalInactiveError } from './principal-inactive-error.ts';
+export { PrincipalResolverUnavailableError } from './principal-resolver-unavailable-error.ts';
+export { TenantInactiveError } from './tenant-inactive-error.ts';
 
 export type PrincipalResolutionError =
   | PrincipalBindingMissingError

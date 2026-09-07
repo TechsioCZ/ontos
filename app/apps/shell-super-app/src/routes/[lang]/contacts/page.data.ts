@@ -7,8 +7,8 @@ interface ShellPageLoaderArguments {
 export const loader = ({ request }: ShellPageLoaderArguments) =>
   loadModuleTarget({
     params: {
-      entrypointKey: 'contacts.core.page.contacts',
-      moduleId: 'contacts.core',
+      entrypointKey: 'party.registry.page.contacts',
+      moduleId: 'party.registry',
     },
     request,
   });

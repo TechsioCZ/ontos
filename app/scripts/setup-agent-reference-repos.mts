@@ -1,351 +1,526 @@
-import { spawnSync } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
+#!/usr/bin/env node
+import {
+  NodeChildProcessSpawner,
+  NodeFileSystem,
+  NodePath,
+  NodeRuntime,
+  NodeStdio,
+  NodeTerminal,
+} from '@effect/platform-node';
+import {
+  Config,
+  Context,
+  DateTime,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Schema,
+  Stream,
+} from 'effect';
+import { Command, Flag } from 'effect/unstable/cli';
+import { ChildProcess } from 'effect/unstable/process';
 
-const root = process.cwd();
-const args = new Set(process.argv.slice(2));
-const checkOnly = args.has('--check');
-const configPath = path.join(root, '.agents', 'agent-reference-repos.json');
-const manifestPath = path.join(root, '.modernjs', 'agent-reference-repos.json');
+const LOG_PREFIX = '[agent-reference-repos]';
+const REPOSITORY_STRATEGY = 'git-subtree-squash' as const;
+const WORKSPACE_ROOT = '.';
 
-const truthy = (value) => /^(1|true|yes|on)$/i.test(String(value ?? ''));
-const falsy = (value) => /^(0|false|no|off)$/i.test(String(value ?? ''));
+const ReferenceRepositorySchema = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  path: Schema.String,
+  readOnly: Schema.optional(Schema.Boolean),
+  ref: Schema.String,
+  url: Schema.String,
+});
 
-const skipRequested =
-  truthy(process.env.ULTRAMODERN_SKIP_AGENT_REPOS) || falsy(process.env.ULTRAMODERN_AGENT_REPOS);
-const required = truthy(process.env.ULTRAMODERN_AGENT_REPOS_REQUIRED);
-const refresh = truthy(process.env.ULTRAMODERN_AGENT_REPOS_REFRESH);
+const ReferenceRepositoryConfigSchema = Schema.Struct({
+  defaultEnabled: Schema.Boolean,
+  installDir: Schema.Literal('repos'),
+  repositories: Schema.Array(ReferenceRepositorySchema),
+  schemaVersion: Schema.Literal(1),
+  strategy: Schema.Literal(REPOSITORY_STRATEGY),
+});
 
-const gitIdentityEnv = {
-  GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || 'UltraModern Agent Reference Setup',
-  GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || 'ultramodern-agent-refs@local',
-  GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || 'UltraModern Agent Reference Setup',
-  GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || 'ultramodern-agent-refs@local',
+const InstalledRepositorySchema = Schema.Struct({
+  commit: Schema.optional(Schema.String),
+  id: Schema.String,
+  installedAt: Schema.optional(Schema.DateTimeUtc),
+  name: Schema.String,
+  path: Schema.String,
+  readOnly: Schema.Boolean,
+  ref: Schema.String,
+  schemaVersion: Schema.optional(Schema.Literal(1)),
+  status: Schema.Literals(['installed', 'present']),
+  strategy: Schema.Literal(REPOSITORY_STRATEGY),
+  url: Schema.String,
+});
+
+const InstalledManifestSchema = Schema.Struct({
+  generatedAt: Schema.DateTimeUtc,
+  installDir: Schema.Literal('repos'),
+  repositories: Schema.Array(InstalledRepositorySchema),
+  schemaVersion: Schema.Literal(1),
+  strategy: Schema.Literal(REPOSITORY_STRATEGY),
+});
+
+const ReferenceRepositoryConfigJsonSchema = Schema.fromJsonString(ReferenceRepositoryConfigSchema);
+const InstalledManifestJsonSchema = Schema.fromJsonString(InstalledManifestSchema, { space: 2 });
+
+type ReferenceRepository = typeof ReferenceRepositorySchema.Type;
+type InstalledRepository = typeof InstalledRepositorySchema.Type;
+
+class AgentReferenceRepoSetupError extends Schema.TaggedError<AgentReferenceRepoSetupError>()(
+  'AgentReferenceRepoSetupError',
+  { reason: Schema.String },
+) {}
+
+const truthy = (value: string): boolean => /^(?:1|true|yes|on)$/iu.test(value);
+const falsy = (value: string): boolean => /^(?:0|false|no|off)$/iu.test(value);
+const environmentValue = (name: string) => Config.string(name).pipe(Config.withDefault(''));
+const identityValue = (value: string, fallback: string): string =>
+  value.length > 0 ? value : fallback;
+
+const SetupEnvironment = Config.all({
+  agentRepos: environmentValue('ULTRAMODERN_AGENT_REPOS'),
+  authorEmail: environmentValue('GIT_AUTHOR_EMAIL'),
+  authorName: environmentValue('GIT_AUTHOR_NAME'),
+  committerEmail: environmentValue('GIT_COMMITTER_EMAIL'),
+  committerName: environmentValue('GIT_COMMITTER_NAME'),
+  refresh: environmentValue('ULTRAMODERN_AGENT_REPOS_REFRESH'),
+  required: environmentValue('ULTRAMODERN_AGENT_REPOS_REQUIRED'),
+  skipAgentRepos: environmentValue('ULTRAMODERN_SKIP_AGENT_REPOS'),
+});
+
+interface RuntimeSettings {
+  readonly gitIdentity: Readonly<Record<string, string>>;
+  readonly refresh: boolean;
+  readonly required: boolean;
+  readonly skipRequested: boolean;
+}
+
+const loadRuntimeSettings = Effect.fn('loadRuntimeSettings')(function* loadRuntimeSettingsEffect() {
+  const environment = yield* SetupEnvironment;
+  return {
+    gitIdentity: {
+      GIT_AUTHOR_EMAIL: identityValue(environment.authorEmail, 'ultramodern-agent-refs@local'),
+      GIT_AUTHOR_NAME: identityValue(environment.authorName, 'UltraModern Agent Reference Setup'),
+      GIT_COMMITTER_EMAIL: identityValue(
+        environment.committerEmail,
+        'ultramodern-agent-refs@local',
+      ),
+      GIT_COMMITTER_NAME: identityValue(
+        environment.committerName,
+        'UltraModern Agent Reference Setup',
+      ),
+    },
+    refresh: truthy(environment.refresh),
+    required: truthy(environment.required),
+    skipRequested: truthy(environment.skipAgentRepos) || falsy(environment.agentRepos),
+  } satisfies RuntimeSettings;
+});
+
+const RuntimeConfiguration = Context.Service<RuntimeSettings>(
+  'scripts/setup-agent-reference-repos/RuntimeConfiguration',
+);
+
+const setupError = (reason: string) => new AgentReferenceRepoSetupError({ reason });
+
+const commandFailure = (
+  command: string,
+  commandArguments: readonly string[],
+  detail: string,
+): AgentReferenceRepoSetupError => {
+  const invocation = [command, ...commandArguments].join(' ');
+  const detailSuffix = detail.length > 0 ? `: ${detail}` : '';
+  return setupError(`${invocation} failed${detailSuffix}`);
 };
 
-const log = (message) => console.log(`[agent-reference-repos] ${message}`);
-const warn = (message) => console.warn(`[agent-reference-repos] ${message}`);
-
-function fail(message) {
-  if (required || checkOnly) {
-    throw new Error(message);
-  }
-  warn(message);
+interface CommandResult {
+  readonly status: number;
+  readonly stderr: string;
+  readonly stdout: string;
 }
 
-function readJson(filePath) {
-  return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-}
-
-function run(command, commandArgs, options = {}) {
-  const result = spawnSync(command, commandArgs, {
-    cwd: options.cwd ?? root,
-    encoding: 'utf-8',
-    env: {
-      ...process.env,
-      ...gitIdentityEnv,
-      ...(options.env ?? {}),
-    },
-    stdio: options.stdio ?? ['ignore', 'pipe', 'pipe'],
-    timeout: options.timeout ?? 120000,
+const executeCommand = Effect.fn('executeCommand')(function* executeCommandEffect(
+  command: string,
+  commandArguments: readonly string[],
+  timeoutMilliseconds: number,
+) {
+  const settings = yield* RuntimeConfiguration;
+  const invocation = ChildProcess.make(command, commandArguments, {
+    cwd: WORKSPACE_ROOT,
+    env: settings.gitIdentity,
+    extendEnv: true,
+    stderr: 'pipe',
+    stdin: 'ignore',
+    stdout: 'pipe',
   });
 
-  if (result.error) {
-    throw result.error;
-  }
-  if (result.status !== 0) {
-    const stderr = result.stderr?.trim();
-    throw new Error(`${command} ${commandArgs.join(' ')} failed${stderr ? `: ${stderr}` : ''}`);
-  }
-  return result.stdout?.trim() ?? '';
-}
+  return yield* Effect.scoped(
+    Effect.gen(function* collectCommandResultEffect() {
+      const handle = yield* invocation;
+      const [status, stdout, stderr] = yield* Effect.all(
+        [
+          handle.exitCode.pipe(Effect.map(Number)),
+          handle.stdout.pipe(Stream.decodeText(), Stream.mkString),
+          handle.stderr.pipe(Stream.decodeText(), Stream.mkString),
+        ],
+        { concurrency: 'unbounded' },
+      );
+      return { status, stderr: stderr.trim(), stdout: stdout.trim() } satisfies CommandResult;
+    }),
+  ).pipe(
+    Effect.timeout(timeoutMilliseconds),
+    Effect.mapError((error) => commandFailure(command, commandArguments, String(error))),
+  );
+});
 
-function assertSafeRepoPath(relativePath) {
+const runCommand = Effect.fn('runCommand')(function* runCommandEffect(
+  command: string,
+  commandArguments: readonly string[],
+  timeoutMilliseconds: number,
+) {
+  const result = yield* executeCommand(command, commandArguments, timeoutMilliseconds);
+  if (result.status !== 0) {
+    return yield* commandFailure(command, commandArguments, result.stderr);
+  }
+  return result.stdout;
+});
+
+const readConfig = Effect.fn('readConfig')(function* readConfigEffect(configPath: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const contents = yield* fileSystem
+    .readFileString(configPath)
+    .pipe(Effect.mapError(() => setupError(`Unable to read ${configPath}`)));
+  return yield* Schema.decodeUnknownEffect(ReferenceRepositoryConfigJsonSchema)(contents).pipe(
+    Effect.mapError(() =>
+      setupError(`Invalid reference repository configuration at ${configPath}`),
+    ),
+  );
+});
+
+const assertSafeRepoPath = Effect.fn('assertSafeRepoPath')(function* assertSafeRepoPathEffect(
+  relativePath: string,
+) {
+  const path = yield* Path.Path;
   if (
-    typeof relativePath !== 'string' ||
     relativePath.length === 0 ||
     path.isAbsolute(relativePath) ||
-    relativePath.split(/[\\/]+/).includes('..') ||
+    relativePath.split(/[\\/]+/u).includes('..') ||
     !relativePath.startsWith('repos/')
   ) {
-    throw new Error(`Unsafe reference repository path: ${relativePath}`);
+    return yield* setupError(`Unsafe reference repository path: ${relativePath}`);
   }
-}
+  return yield* Effect.void;
+});
 
-function hasGit() {
-  const result = spawnSync('git', ['--version'], {
-    encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+const hasGit = Effect.fn('hasGit')(function* hasGitEffect() {
+  const result = yield* executeCommand('git', ['--version'], 30_000);
   return result.status === 0;
-}
+});
 
-function hasGitSubtree() {
-  const result = spawnSync('git', ['subtree', '-h'], {
-    encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+const hasGitSubtree = Effect.fn('hasGitSubtree')(function* hasGitSubtreeEffect() {
+  const result = yield* executeCommand('git', ['subtree', '-h'], 30_000);
   return (
     (result.status === 0 || result.status === 129) && result.stdout.includes('usage: git subtree')
   );
-}
+});
 
-function isGitWorkTree() {
-  const result = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
-    cwd: root,
-    encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  return result.status === 0 && result.stdout.trim() === 'true';
-}
+const isGitWorkTree = Effect.fn('isGitWorkTree')(function* isGitWorkTreeEffect() {
+  const result = yield* executeCommand('git', ['rev-parse', '--is-inside-work-tree'], 30_000);
+  return result.status === 0 && result.stdout === 'true';
+});
 
-function hasCommits() {
-  const result = spawnSync('git', ['rev-parse', '--verify', 'HEAD'], {
-    cwd: root,
-    encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+const hasCommits = Effect.fn('hasCommits')(function* hasCommitsEffect() {
+  const result = yield* executeCommand('git', ['rev-parse', '--verify', 'HEAD'], 30_000);
   return result.status === 0;
-}
+});
 
-function porcelainStatus() {
-  return run('git', ['status', '--porcelain'], { timeout: 30000 });
-}
+const porcelainStatus = Effect.fn('porcelainStatus')(function* porcelainStatusEffect() {
+  return yield* runCommand('git', ['status', '--porcelain'], 30_000);
+});
 
-function commitInstallerChanges(message) {
-  run('git', ['commit', '--no-verify', '-m', message], {
-    timeout: 120000,
-  });
-}
+const commitInstallerChanges = Effect.fn('commitInstallerChanges')(
+  function* commitInstallerChangesEffect(message: string) {
+    return yield* runCommand('git', ['commit', '--no-verify', '-m', message], 120_000);
+  },
+);
 
-function ensureGitRepository() {
-  if (!isGitWorkTree()) {
+const ensureGitRepository = Effect.fn('ensureGitRepository')(function* ensureGitRepositoryEffect(
+  checkOnly: boolean,
+) {
+  if (!(yield* isGitWorkTree())) {
     if (checkOnly) {
-      fail('workspace is not a git repository');
-      return false;
+      return yield* setupError('workspace is not a git repository');
     }
-    log('initializing git repository for agent reference subtrees');
-    run('git', ['init'], { timeout: 30000 });
+    yield* Effect.logInfo(`${LOG_PREFIX} initializing git repository for agent reference subtrees`);
+    yield* runCommand('git', ['init'], 30_000);
   }
 
-  if (!hasCommits()) {
+  if (!(yield* hasCommits())) {
     if (checkOnly) {
-      fail('workspace has no initial git commit');
-      return false;
+      return yield* setupError('workspace has no initial git commit');
     }
-    log('creating initial workspace commit before adding reference subtrees');
-    run('git', ['add', '-A'], { timeout: 30000 });
-    commitInstallerChanges('Initialize UltraModern workspace');
-    return true;
+    yield* Effect.logInfo(
+      `${LOG_PREFIX} creating initial workspace commit before adding reference subtrees`,
+    );
+    yield* runCommand('git', ['add', '-A'], 30_000);
+    yield* commitInstallerChanges('Initialize UltraModern workspace');
+    return yield* Effect.void;
   }
 
-  const status = porcelainStatus();
-  if (status) {
-    fail(
+  const status = yield* porcelainStatus();
+  if (status.length > 0) {
+    return yield* setupError(
       'workspace has uncommitted changes; commit or stash them before installing reference subtrees',
     );
-    return false;
   }
+  return yield* Effect.void;
+});
 
-  return true;
-}
-
-function remoteCommit(repo) {
-  let output = run('git', ['ls-remote', repo.url, `refs/heads/${repo.ref}`], {
-    timeout: 120000,
-  });
-  if (!output) {
-    output = run('git', ['ls-remote', repo.url, repo.ref], {
-      timeout: 120000,
-    });
-  }
-  const [commit] = output.split(/\s+/);
-  if (!/^[a-f0-9]{40}$/i.test(commit ?? '')) {
-    throw new Error(`Could not resolve ${repo.url}#${repo.ref}`);
+const remoteCommit = Effect.fn('remoteCommit')(function* remoteCommitEffect(
+  repository: ReferenceRepository,
+) {
+  const branchOutput = yield* runCommand(
+    'git',
+    ['ls-remote', repository.url, `refs/heads/${repository.ref}`],
+    120_000,
+  );
+  const output =
+    branchOutput.length > 0
+      ? branchOutput
+      : yield* runCommand('git', ['ls-remote', repository.url, repository.ref], 120_000);
+  const commit = output.split(/\s+/u).at(0) ?? '';
+  if (!/^[a-f\d]{40}$/iu.test(commit)) {
+    return yield* setupError(`Could not resolve ${repository.url}#${repository.ref}`);
   }
   return commit;
-}
+});
 
-function subtreeCommitExists(repo) {
-  const result = spawnSync(
+const subtreeCommitExists = Effect.fn('subtreeCommitExists')(function* subtreeCommitExistsEffect(
+  repository: ReferenceRepository,
+) {
+  const result = yield* executeCommand(
     'git',
-    ['log', '--grep', `git-subtree-dir: ${repo.path}`, '--format=%H', '-n', '1'],
-    {
-      cwd: root,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
+    ['log', '--grep', `git-subtree-dir: ${repository.path}`, '--format=%H', '-n', '1'],
+    30_000,
   );
-  return result.status === 0 && result.stdout.trim().length > 0;
-}
+  return result.status === 0 && result.stdout.length > 0;
+});
 
-function installedManifestEntry(repo) {
-  if (!fs.existsSync(manifestPath)) {
-    return undefined;
-  }
-  try {
-    const manifest = readJson(manifestPath);
-    return manifest.repositories?.find((entry) => entry.id === repo.id);
-  } catch {
-    return undefined;
-  }
-}
-
-function assertSubtreePresent(repo) {
-  assertSafeRepoPath(repo.path);
-  const targetPath = path.join(root, repo.path);
-  if (!fs.existsSync(targetPath)) {
-    fail(`${repo.path} is missing`);
-    return undefined;
-  }
-  if (!subtreeCommitExists(repo)) {
-    fail(`${repo.path} is present but has no git-subtree commit evidence`);
-    return undefined;
-  }
-  return (
-    installedManifestEntry(repo) ?? {
-      id: repo.id,
-      name: repo.name,
-      url: repo.url,
-      ref: repo.ref,
-      path: repo.path,
-      readOnly: repo.readOnly !== false,
-      status: 'present',
-      strategy: 'git-subtree-squash',
+const installedManifestEntry = Effect.fn('installedManifestEntry')(
+  function* installedManifestEntryEffect(manifestPath: string, repository: ReferenceRepository) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    if (!(yield* fileSystem.exists(manifestPath))) {
+      return Option.none<InstalledRepository>();
     }
+    const repositories = yield* fileSystem.readFileString(manifestPath).pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(InstalledManifestJsonSchema)),
+      Effect.map((manifest) => manifest.repositories),
+      Effect.option,
+    );
+    return repositories.pipe(
+      Option.flatMap((entries) =>
+        Option.fromUndefinedOr(entries.find((entry) => entry.id === repository.id)),
+      ),
+    );
+  },
+);
+
+const assertSubtreePresent = Effect.fn('assertSubtreePresent')(function* assertSubtreePresentEffect(
+  manifestPath: string,
+  repository: ReferenceRepository,
+) {
+  yield* assertSafeRepoPath(repository.path);
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const targetPath = path.join(WORKSPACE_ROOT, repository.path);
+  if (!(yield* fileSystem.exists(targetPath))) {
+    return yield* setupError(`${repository.path} is missing`);
+  }
+  if (!(yield* subtreeCommitExists(repository))) {
+    return yield* setupError(
+      `${repository.path} is present but has no git-subtree commit evidence`,
+    );
+  }
+  const installedEntry = yield* installedManifestEntry(manifestPath, repository);
+  return Option.getOrElse(installedEntry, (): InstalledRepository => ({
+    id: repository.id,
+    name: repository.name,
+    path: repository.path,
+    readOnly: repository.readOnly !== false,
+    ref: repository.ref,
+    status: 'present',
+    strategy: REPOSITORY_STRATEGY,
+    url: repository.url,
+  }));
+});
+
+const addSubtree = Effect.fn('addSubtree')(function* addSubtreeEffect(
+  manifestPath: string,
+  repository: ReferenceRepository,
+) {
+  yield* assertSafeRepoPath(repository.path);
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const settings = yield* RuntimeConfiguration;
+  const targetPath = path.join(WORKSPACE_ROOT, repository.path);
+  const existing = yield* fileSystem.exists(targetPath);
+
+  if (existing && !settings.refresh) {
+    return yield* assertSubtreePresent(manifestPath, repository);
+  }
+  if (existing) {
+    return yield* setupError(
+      `${repository.path} already exists; refresh for subtree references is intentionally manual`,
+    );
+  }
+
+  const commit = yield* remoteCommit(repository);
+  yield* Effect.logInfo(
+    `${LOG_PREFIX} adding ${repository.name} as git subtree at ${repository.path} (${commit})`,
   );
-}
-
-function addSubtree(repo) {
-  assertSafeRepoPath(repo.path);
-  const targetPath = path.join(root, repo.path);
-  const existing = fs.existsSync(targetPath);
-
-  if (existing && !refresh) {
-    return assertSubtreePresent(repo);
-  }
-
-  if (existing && refresh) {
-    fail(`${repo.path} already exists; refresh for subtree references is intentionally manual`);
-    return undefined;
-  }
-
-  if (checkOnly) {
-    fail(`${repo.path} is missing`);
-    return undefined;
-  }
-
-  const commit = remoteCommit(repo);
-  log(`adding ${repo.name} as git subtree at ${repo.path} (${commit})`);
-  run('git', ['fetch', '--depth', '1', repo.url, repo.ref], {
-    timeout: 300000,
-  });
-  run(
+  yield* runCommand('git', ['fetch', '--depth', '1', repository.url, repository.ref], 300_000);
+  yield* runCommand(
     'git',
     [
       'subtree',
       'add',
       '--prefix',
-      repo.path,
+      repository.path,
       'FETCH_HEAD',
       '--squash',
       '-m',
-      `Add ${repo.name} agent reference repo`,
+      `Add ${repository.name} agent reference repo`,
     ],
-    { timeout: 600000 },
+    600_000,
   );
-
+  const installedAt = yield* DateTime.now;
   return {
-    schemaVersion: 1,
-    id: repo.id,
-    name: repo.name,
-    url: repo.url,
-    ref: repo.ref,
     commit,
-    path: repo.path,
-    readOnly: repo.readOnly !== false,
-    strategy: 'git-subtree-squash',
+    id: repository.id,
+    installedAt,
+    name: repository.name,
+    path: repository.path,
+    readOnly: repository.readOnly !== false,
+    ref: repository.ref,
+    schemaVersion: 1,
     status: 'installed',
-    installedAt: new Date().toISOString(),
-  };
-}
+    strategy: REPOSITORY_STRATEGY,
+    url: repository.url,
+  } satisfies InstalledRepository;
+});
 
-function writeManifest(entries) {
-  fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
-  fs.writeFileSync(
-    manifestPath,
-    `${JSON.stringify(
-      {
-        schemaVersion: 1,
-        generatedAt: new Date().toISOString(),
-        strategy: 'git-subtree-squash',
-        installDir: 'repos',
-        repositories: entries,
-      },
-      null,
-      2,
-    )}\n`,
-  );
-}
+const writeManifest = Effect.fn('writeManifest')(function* writeManifestEffect(
+  manifestPath: string,
+  entries: readonly InstalledRepository[],
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const generatedAt = yield* DateTime.now;
+  const contents = yield* Schema.encodeEffect(InstalledManifestJsonSchema)({
+    generatedAt,
+    installDir: 'repos',
+    repositories: entries,
+    schemaVersion: 1,
+    strategy: REPOSITORY_STRATEGY,
+  }).pipe(Effect.mapError(() => setupError('Unable to encode the agent reference manifest')));
+  yield* fileSystem
+    .makeDirectory(path.dirname(manifestPath), { recursive: true })
+    .pipe(Effect.mapError(() => setupError(`Unable to create the directory for ${manifestPath}`)));
+  yield* fileSystem
+    .writeFileString(manifestPath, `${contents}\n`)
+    .pipe(Effect.mapError(() => setupError(`Unable to write ${manifestPath}`)));
+});
 
-function commitManifestIfChanged() {
-  const status = run('git', ['status', '--porcelain', '--', manifestPath], {
-    timeout: 30000,
-  });
-  if (!status) {
-    return;
-  }
-  run('git', ['add', manifestPath], { timeout: 30000 });
-  commitInstallerChanges('Record agent reference repo manifest');
-}
-
-function main() {
-  if (!fs.existsSync(configPath)) {
-    fail('Missing .agents/agent-reference-repos.json');
-    return;
-  }
-
-  const config = readJson(configPath);
-  const enabled = config.defaultEnabled !== false && !skipRequested;
-
-  if (!enabled) {
-    log('setup skipped; set ULTRAMODERN_SKIP_AGENT_REPOS=0 to enable it again');
-    return;
-  }
-
-  if (!hasGit()) {
-    fail('git is required to install agent reference repositories');
-    return;
-  }
-  if (!hasGitSubtree()) {
-    fail('git subtree is required to install agent reference repositories');
-    return;
-  }
-  if (!ensureGitRepository()) {
-    return;
-  }
-
-  const entries = [];
-  for (const repo of config.repositories ?? []) {
-    const result = checkOnly ? assertSubtreePresent(repo) : addSubtree(repo);
-    if (result) {
-      entries.push(result);
+const commitManifestIfChanged = Effect.fn('commitManifestIfChanged')(
+  function* commitManifestIfChangedEffect(manifestPath: string) {
+    const status = yield* runCommand('git', ['status', '--porcelain', '--', manifestPath], 30_000);
+    if (status.length === 0) {
+      return yield* Effect.void;
     }
-  }
+    yield* runCommand('git', ['add', manifestPath], 30_000);
+    yield* commitInstallerChanges('Record agent reference repo manifest');
+    return yield* Effect.void;
+  },
+);
 
+const runSetup = Effect.fn('runSetup')(function* runSetupEffect(checkOnly: boolean) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const settings = yield* RuntimeConfiguration;
+  const configPath = path.join(WORKSPACE_ROOT, '.agents', 'agent-reference-repos.json');
+  const manifestPath = path.join(WORKSPACE_ROOT, '.modernjs', 'agent-reference-repos.json');
+
+  if (!(yield* fileSystem.exists(configPath))) {
+    return yield* setupError('Missing .agents/agent-reference-repos.json');
+  }
+  const config = yield* readConfig(configPath);
+  const enabled = config.defaultEnabled && !settings.skipRequested;
+  if (!enabled) {
+    yield* Effect.logInfo(
+      `${LOG_PREFIX} setup skipped; set ULTRAMODERN_SKIP_AGENT_REPOS=0 to enable it again`,
+    );
+    return yield* Effect.void;
+  }
+  if (!(yield* hasGit())) {
+    return yield* setupError('git is required to install agent reference repositories');
+  }
+  if (!(yield* hasGitSubtree())) {
+    return yield* setupError('git subtree is required to install agent reference repositories');
+  }
+  yield* ensureGitRepository(checkOnly);
+
+  const entries = yield* Effect.forEach(
+    config.repositories,
+    (repository) =>
+      checkOnly
+        ? assertSubtreePresent(manifestPath, repository)
+        : addSubtree(manifestPath, repository),
+    { concurrency: 1 },
+  );
   if (!checkOnly) {
-    writeManifest(entries);
-    commitManifestIfChanged();
+    yield* writeManifest(manifestPath, entries);
+    yield* commitManifestIfChanged(manifestPath);
   }
-}
+  return yield* Effect.void;
+});
 
-try {
-  main();
-} catch (error) {
-  if (required || checkOnly) {
-    console.error(`[agent-reference-repos] ${error.message}`);
-    process.exitCode = 1;
-  } else {
-    warn(error.message);
-  }
-}
+const reportSetupFailure = (checkOnly: boolean) => (error: AgentReferenceRepoSetupError) =>
+  Effect.gen(function* reportSetupFailureEffect() {
+    const settings = yield* RuntimeConfiguration;
+    if (settings.required || checkOnly) {
+      yield* Effect.logError(`${LOG_PREFIX} ${error.reason}`);
+      return yield* error;
+    }
+    yield* Effect.logWarning(`${LOG_PREFIX} ${error.reason}`);
+    return yield* Effect.void;
+  });
+
+const setupCommand = Command.make(
+  'setup-agent-reference-repos',
+  { checkOnly: Flag.boolean('check') },
+  ({ checkOnly }) =>
+    runSetup(checkOnly).pipe(
+      Effect.catchTag('AgentReferenceRepoSetupError', reportSetupFailure(checkOnly)),
+    ),
+);
+
+const corePlatformLayer = Layer.merge(NodeFileSystem.layer, NodePath.layer);
+const childProcessLayer = NodeChildProcessSpawner.layer.pipe(Layer.provide(corePlatformLayer));
+const runtimeConfigurationLayer = Layer.effect(RuntimeConfiguration, loadRuntimeSettings());
+const applicationLayer = Layer.mergeAll(
+  corePlatformLayer,
+  childProcessLayer,
+  NodeStdio.layer,
+  NodeTerminal.layer,
+  runtimeConfigurationLayer,
+);
+
+const executableLayer = Layer.effectDiscard(Command.run(setupCommand, { version: '1.0.0' })).pipe(
+  Layer.provide(applicationLayer),
+);
+
+NodeRuntime.runMain(Effect.scoped(Layer.build(executableLayer)));

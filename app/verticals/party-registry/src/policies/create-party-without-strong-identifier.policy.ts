@@ -7,6 +7,7 @@ import {
 import type {
   PartyCandidate,
   PartyEvidenceEvaluation,
+  PartyEvidenceInsufficientError,
 } from '../../shared/domain/identity-contracts.ts';
 
 export const CreateWithoutStrongIdentifierPolicyConfigurationSchema = Schema.Struct({
@@ -79,7 +80,7 @@ export const decideCreateWithoutStrongIdentifier = (
 
 export const requirePartySubjectEvidence = (
   candidate: Pick<PartyCandidate, 'partyType' | 'subjectEvidence'>,
-): Effect.Effect<PartyEvidenceEvaluation, PartyEvidenceInsufficient> => {
+): Effect.Effect<PartyEvidenceEvaluation, PartyEvidenceInsufficientError> => {
   const evaluation = evaluatePartySubjectEvidence(candidate);
   return evaluation.subjectEligible && evaluation.typeSupported
     ? Effect.succeed(evaluation)

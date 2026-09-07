@@ -45,6 +45,8 @@ test('Create recovery distinguishes matching outcome and enforces reference inva
   };
   const decode = Schema.decodeUnknownSync(PartyMatchDecisionRecordSchema);
   assert.equal(decode(record).committedCreateOutcome, 'MATCHED_EXISTING');
+  assert.equal(decode(record).decidedAt, '2026-09-04T00:00:00.000Z');
+  assert.throws(() => decode({ ...record, decidedAt: 'September 4, 2026' }));
   assert.throws(() => decode({ ...record, committedCreateOutcome: 'MATCHED' }));
   assert.throws(() => decode({ ...record, operation: 'MATCH' }));
   assert.throws(() => decode({ ...record, caseRef: makeDuplicateCandidateCaseRef(tenant, id) }));
@@ -61,4 +63,43 @@ test('Create recovery distinguishes matching outcome and enforces reference inva
     }).outcome,
     'NO_MATCH',
   );
+});
+
+test('matching decision JSON keeps nullable and optional wire fields compatible', () => {
+  const record = {
+    caseRef: null,
+    committedCreateOutcome: null,
+    decidedAt: '2026-09-04T00:00:00.000Z',
+    decisionRef: makePartyMatchDecisionRef(tenant, id),
+    evidenceEvaluation: null,
+    evidenceExplanation: [],
+    matchRuleVersion: 'party-exact-claims.v1',
+    operation: 'MATCH' as const,
+    outcome: 'NO_MATCH' as const,
+    partyRef: null,
+  };
+  const decoded = Schema.decodeUnknownSync(PartyMatchDecisionRecordSchema)(record);
+  const encoded = Schema.encodeUnknownSync(Schema.toCodecJson(PartyMatchDecisionRecordSchema))(
+    decoded,
+  );
+  assert.deepEqual(encoded, record);
+
+  const omitted = {
+    caseRef: record.caseRef,
+    decidedAt: record.decidedAt,
+    decisionRef: record.decisionRef,
+    evidenceExplanation: record.evidenceExplanation,
+    matchRuleVersion: record.matchRuleVersion,
+    operation: record.operation,
+    outcome: record.outcome,
+    partyRef: record.partyRef,
+  };
+  const omittedEncoded = Schema.encodeUnknownSync(
+    Schema.toCodecJson(PartyMatchDecisionRecordSchema),
+  )(Schema.decodeUnknownSync(PartyMatchDecisionRecordSchema)(omitted));
+  const omittedEncodedObject = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(
+    omittedEncoded,
+  );
+  assert.equal('committedCreateOutcome' in omittedEncodedObject, false);
+  assert.equal('evidenceEvaluation' in omittedEncodedObject, false);
 });

@@ -1,3 +1,4 @@
+import { DateTime, Option, Schema } from 'effect';
 import type { CounterpartyRef } from '../resources/counterparty.ts';
 import type { PartyRef } from '../resources/party.ts';
 import type {
@@ -10,21 +11,25 @@ import type {
   PartySearchResult,
 } from './search-result.ts';
 
-export interface SearchProjectionViolation {
-  readonly _tag: 'SearchProjectionViolation';
-  readonly reason: string;
-}
+export const SearchProjectionViolationSchema = Schema.TaggedStruct('SearchProjectionViolation', {
+  reason: Schema.String,
+});
+export type SearchProjectionViolation = typeof SearchProjectionViolationSchema.Type;
 
-export interface SearchResults<Result> {
-  readonly _tag: 'SearchResults';
+const SearchResultsTagSchema = Schema.TaggedStruct('SearchResults', {});
+type SearchResultsTag = typeof SearchResultsTagSchema.Type;
+export type SearchResults<Result> = SearchResultsTag & {
   readonly items: readonly Result[];
-}
+};
 
 export type SearchNormalizationResult<Result> = SearchProjectionViolation | SearchResults<Result>;
 
-const violation = (reason: string): SearchProjectionViolation => ({
-  _tag: 'SearchProjectionViolation',
-  reason,
+const violation = (reason: string): SearchProjectionViolation =>
+  SearchProjectionViolationSchema.make({ reason });
+
+const searchResults = <Result>(items: readonly Result[]): SearchResults<Result> => ({
+  ...SearchResultsTagSchema.make({}),
+  items,
 });
 
 const refKey = (ref: PartyRef | CounterpartyRef): string =>
@@ -69,35 +74,32 @@ export const normalizePartySearchHits = (
     }
   }
 
-  return {
-    _tag: 'SearchResults',
-    items: [...byCanonicalParty.values()].filter(
-      ({ archived }) => scope.includeArchived || !archived,
-    ),
-  };
+  return searchResults(
+    [...byCanonicalParty.values()].filter(({ archived }) => scope.includeArchived || !archived),
+  );
 };
 
-const parseInstant = (value: string): number | undefined => {
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-};
+const parseInstant = Schema.decodeUnknownOption(Schema.DateTimeUtcFromString);
 
 const currentRolesAt = (
   periods: CounterpartySearchProjectionHit['rolePeriods'],
-  effectiveAt: number,
-): readonly CurrentCounterpartyRole[] | undefined => {
+  effectiveAt: DateTime.Utc,
+): Option.Option<readonly CurrentCounterpartyRole[]> => {
   const current = new Set<CurrentCounterpartyRole>();
   for (const period of periods) {
     const from = parseInstant(period.validFrom);
-    const to = period.validTo === undefined ? undefined : parseInstant(period.validTo);
-    if (from === undefined || (period.validTo !== undefined && to === undefined)) {
-      return undefined;
+    const to = period.validTo === undefined ? Option.none() : parseInstant(period.validTo);
+    if (Option.isNone(from) || (period.validTo !== undefined && Option.isNone(to))) {
+      return Option.none();
     }
-    if (from <= effectiveAt && (to === undefined || effectiveAt < to)) {
+    if (
+      DateTime.Order(from.value, effectiveAt) <= 0 &&
+      (Option.isNone(to) || DateTime.Order(effectiveAt, to.value) < 0)
+    ) {
       current.add(period.role);
     }
   }
-  return (['CUSTOMER', 'SUPPLIER'] as const).filter((role) => current.has(role));
+  return Option.some((['CUSTOMER', 'SUPPLIER'] as const).filter((role) => current.has(role)));
 };
 
 const sameCurrentProjection = (
@@ -115,7 +117,7 @@ const sameCurrentProjection = (
 
 export const normalizeCounterpartySearchHits = (
   scope: Readonly<{
-    readonly effectiveAt: string;
+    readonly effectiveAt: typeof Schema.DateTimeUtcFromString.Encoded;
     readonly includeArchived: boolean;
     readonly legalEntityId: string;
     readonly role?: CurrentCounterpartyRole;
@@ -124,7 +126,7 @@ export const normalizeCounterpartySearchHits = (
   hits: readonly CounterpartySearchProjectionHit[],
 ): SearchNormalizationResult<CounterpartySearchResult> => {
   const effectiveAt = parseInstant(scope.effectiveAt);
-  if (effectiveAt === undefined) {
+  if (Option.isNone(effectiveAt)) {
     return violation('Counterparty Search effective time is invalid');
   }
 
@@ -142,18 +144,18 @@ export const normalizeCounterpartySearchHits = (
         'Counterparty Search projection returned data outside its trusted tenant or Legal Entity contract',
       );
     }
-    const currentRoles = currentRolesAt(hit.rolePeriods, effectiveAt);
-    if (currentRoles === undefined) {
+    const currentRoles = currentRolesAt(hit.rolePeriods, effectiveAt.value);
+    if (Option.isNone(currentRoles)) {
       return violation('Counterparty Search projection returned an invalid role period');
     }
     const key = refKey(hit.counterpartyRef);
     const existing = byCounterparty.get(key);
-    if (existing !== undefined && !sameCurrentProjection(existing, hit, currentRoles)) {
+    if (existing !== undefined && !sameCurrentProjection(existing, hit, currentRoles.value)) {
       return violation('Counterparty Search projection returned conflicting Counterparty facts');
     }
     if (existing === undefined) {
       byCounterparty.set(key, {
-        currentRoles,
+        currentRoles: currentRoles.value,
         legalEntity: hit.legalEntity,
         party: {
           archived: hit.partyArchived,
@@ -185,9 +187,8 @@ export const normalizeCounterpartySearchHits = (
     byCanonicalParty.set(key, [...(byCanonicalParty.get(key) ?? []), item]);
   }
 
-  return {
-    _tag: 'SearchResults',
-    items: filtered.map((item) => {
+  return searchResults(
+    filtered.map((item) => {
       const colliding = byCanonicalParty.get(refKey(item.party.ref)) ?? [];
       if (colliding.length < 2) {
         return item;
@@ -202,5 +203,5 @@ export const normalizeCounterpartySearchHits = (
         },
       };
     }),
-  };
+  );
 };

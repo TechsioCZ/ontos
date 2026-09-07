@@ -4,11 +4,13 @@
 import { createHash } from 'node:crypto';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Match, Schema } from 'effect';
 import {
+  partyIdFromString,
   PartyLifecycleConflict,
   PartyNotFound,
   PartyPersistenceUnavailable,
+  PartySchema,
 } from '../../shared/domain/identity-contracts.ts';
 import { PartyRefSchema } from '../../shared/resources/party.ts';
 import {
@@ -54,57 +56,96 @@ export interface UnarchivePartyServices {
     actionInvocationId: string,
   ) => ReturnType<typeof unarchivePartyWithReview>;
 }
-const handle = (
+type PersistedParty = typeof PartySchema.Type | typeof PartySchema.Encoded;
+const decodeParty = (party: PersistedParty) =>
+  Schema.is(PartySchema)(party)
+    ? Effect.succeed(party)
+    : Schema.decodeUnknownEffect(PartySchema)(party).pipe(
+        Effect.mapError((cause) =>
+          Object.defineProperty(
+            new PartyPersistenceUnavailable({
+              code: 'party_persistence_unavailable',
+              reason: 'The stored Party could not be decoded',
+            }),
+            'cause',
+            { configurable: true, value: cause },
+          ),
+        ),
+      );
+const handle = Effect.fn('UnarchivePartyAction.handle')(function* unarchiveParty(
   payload: UnarchivePartyPayload,
   context: ActionHandlerContext<typeof domainEvents, UnarchivePartyServices>,
-) =>
-  Effect.gen(function* unarchiveParty() {
-    const result = yield* context.services.unarchive(payload, context.actionInvocationId);
-    if (result._tag === 'not_found') {
-      return yield* new PartyNotFound({
-        code: 'party_not_found',
-        partyId: payload.partyRef.resourceId,
-        reason: 'The Party does not exist',
-      });
-    }
-    if (result._tag === 'conflict') {
-      return yield* new PartyLifecycleConflict({
-        code: 'party_lifecycle_conflict',
-        reason: 'The Party is already active or its revision is stale',
-        requestedState: 'ACTIVE',
-      });
-    }
-    const party = result._tag === 'blocked' ? result.value.party : result.value;
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: createHash('sha256')
-        .update(`party-unarchive-invariants:${party.partyRef.resourceId}`)
-        .digest('hex'),
-      resultCount: 1,
-      servingModuleKey: 'party.registry',
-      targetModuleKey: 'party.registry',
-      targetResourceId: party.partyRef.resourceId,
-      targetResourceType: party.partyRef.resourceType,
-    });
-    if (result._tag === 'blocked') {
-      return result.value;
-    }
+) {
+  const persistenceResult = yield* context.services.unarchive(payload, context.actionInvocationId);
+  const result = yield* Match.value(persistenceResult).pipe(
+    Match.tag('not_found', () =>
+      Effect.fail(
+        new PartyNotFound({
+          code: 'party_not_found',
+          partyId: partyIdFromString(payload.partyRef.resourceId),
+          reason: 'The Party does not exist',
+        }),
+      ),
+    ),
+    Match.tag('conflict', () =>
+      Effect.fail(
+        new PartyLifecycleConflict({
+          code: 'party_lifecycle_conflict',
+          reason: 'The Party is already active or its revision is stale',
+          requestedState: 'ACTIVE',
+        }),
+      ),
+    ),
+    Match.tag('blocked', ({ value }) =>
+      decodeParty(value.party).pipe(
+        Effect.map(
+          (party) => ({ actionResult: { ...value, party }, changed: false, party }) as const,
+        ),
+      ),
+    ),
+    Match.tag('found', ({ value }) =>
+      decodeParty(value).pipe(
+        Effect.map(
+          (party) =>
+            ({
+              actionResult: { outcome: 'UNARCHIVED' as const, party },
+              changed: true,
+              party,
+            }) as const,
+        ),
+      ),
+    ),
+    Match.exhaustive,
+  );
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: createHash('sha256')
+      .update(`party-unarchive-invariants:${result.party.partyRef.resourceId}`)
+      .digest('hex'),
+    resultCount: 1,
+    servingModuleKey: 'party.registry',
+    targetModuleKey: 'party.registry',
+    targetResourceId: result.party.partyRef.resourceId,
+    targetResourceType: result.party.partyRef.resourceType,
+  });
+  if (result.changed) {
     const event = yield* context.addDomainEvent({
       eventType: 'party.registry.party-unarchived.v1',
-      payloadJson: { partyRef: result.value.partyRef },
+      payloadJson: { partyRef: result.party.partyRef },
       producerModuleKey: 'party.registry',
       subjectModuleKey: 'party.registry',
-      subjectResourceId: result.value.partyRef.resourceId,
-      subjectResourceType: result.value.partyRef.resourceType,
+      subjectResourceId: result.party.partyRef.resourceId,
+      subjectResourceType: result.party.partyRef.resourceType,
     });
     yield* context.addOutboxMessage(
       event,
       createUnarchivePartyPartyRegistryPartyUnarchivedV1OutboxMessage({
-        partyRef: result.value.partyRef,
+        partyRef: result.party.partyRef,
       }),
     );
-    return { outcome: 'UNARCHIVED' as const, party: result.value };
-  });
+  }
+  return result.actionResult;
+});
 export const unarchivePartyAction = defineAction(
   {
     accessEvidencePolicy: {

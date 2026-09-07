@@ -1,11 +1,12 @@
-import { spawnSync } from 'node:child_process';
-import { readdir, readFile, rm, stat } from 'node:fs/promises';
-import path from 'node:path';
+import { NodePath } from '@effect/platform-node';
 import type { GeneratorCore } from '@modern-js/codesmith';
-import { Schema } from 'effect';
+import { Effect, FileSystem, flow, Path, Predicate, Result, Schema } from 'effect';
+import { format } from 'oxfmt';
+import ultraciteOxfmt from 'ultracite/oxfmt';
+import { scaffoldingRuntime } from '../scaffolding-runtime.mts';
 import { ONTOS_MODULE_CONTRACT_SCHEMA_VERSION } from '../../packages/core-runtime/src/index.ts';
 
-/* eslint-disable unicorn/prefer-number-coercion -- The schema version is parsed as a base-10 integer by contract. */
+/* eslint-disable unicorn/prefer-number-coercion -- The schema version is parsed as a base-10 integer by contract. expires: 2026-12-31. */
 export const ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION = Number.parseInt(
   ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
   10,
@@ -89,10 +90,10 @@ export interface VerticalActionScaffoldConfig {
   readonly action: string;
   readonly authorization: 'action_execution';
   readonly legalEntityScope: 'forbidden' | 'optional' | 'required';
-  readonly provisioning: 'explicit' | 'tenant_membership_default';
-  readonly vertical: string;
   readonly module?: never;
+  readonly provisioning: 'explicit' | 'tenant_membership_default';
   readonly scope?: never;
+  readonly vertical: string;
 }
 
 export interface CoreActionScaffoldConfig {
@@ -270,19 +271,32 @@ export interface ModuleContractScaffoldResult {
   readonly registrationPath: string;
 }
 
-export type JsonScalar = boolean | null | number | string;
-export type JsonValue = JsonObject | JsonScalar | readonly JsonValue[];
-
-export type JsonObject = Readonly<Record<string, JsonValue>>;
+export type JsonValue = typeof Schema.Json.Type;
+const JsonValueSchema: Schema.Codec<JsonValue, JsonValue> = Schema.suspend(() =>
+  Schema.Union([
+    Schema.Null,
+    Schema.Boolean,
+    Schema.Number,
+    Schema.String,
+    Schema.Array(JsonValueSchema),
+    Schema.Record(Schema.String, JsonValueSchema),
+  ]),
+);
+const JsonObjectSchema = Schema.Record(Schema.String, JsonValueSchema);
+const JsonObjectArraySchema = Schema.Array(JsonObjectSchema);
+export type JsonObject = typeof JsonObjectSchema.Type;
 export type MutableJsonObject = Record<string, JsonValue>;
+const JsonValueFromStringSchema = Schema.fromJsonString(JsonValueSchema);
+const JsonStringSchema = Schema.fromJsonString(JsonValueSchema);
+const StringFromJsonStringSchema = Schema.fromJsonString(Schema.String);
 
 export interface VerticalMetadata {
   readonly appId: string;
   readonly directory: string;
   readonly packageContent: string;
   readonly packageJson: JsonObject;
-  readonly packagePath: string;
   readonly packageName: string;
+  readonly packagePath: string;
   readonly slug: string;
   readonly topologyEntry: JsonObject;
 }
@@ -313,42 +327,83 @@ const reservedSegments = new Set([
   'verticals',
 ]);
 
-const isJsonObject = (value: JsonValue): value is JsonObject =>
-  value instanceof Object && !Array.isArray(value);
+const nodePath = Effect.runSync(Path.Path.pipe(Effect.provide(NodePath.layer)));
 
-export const asJsonObject = (value: JsonValue, label: string): JsonObject => {
+export class ScaffoldFailure extends Schema.TaggedError<ScaffoldFailure>()('ScaffoldFailure', {
+  cause: Schema.optionalKey(Schema.Unknown),
+  message: Schema.String,
+}) {}
+
+export const scaffoldFailure = (message: string, cause?: unknown): ScaffoldFailure =>
+  cause === undefined ? new ScaffoldFailure({ message }) : new ScaffoldFailure({ cause, message });
+
+const isScaffoldFailure = Schema.is(ScaffoldFailure);
+const isScaffoldFailureMessage = Schema.is(Schema.String);
+
+const scaffoldFailureFromUnknown = (cause: unknown, fallback: string): ScaffoldFailure => {
+  if (isScaffoldFailure(cause)) {
+    return cause;
+  }
+  if (Predicate.hasProperty(cause, 'cause') && isScaffoldFailure(cause.cause)) {
+    return cause.cause;
+  }
+  const message =
+    Predicate.hasProperty(cause, 'message') && isScaffoldFailureMessage(cause.message)
+      ? cause.message
+      : fallback;
+  return scaffoldFailure(message, cause);
+};
+
+export const tryScaffold = <Value,>(message: string, evaluate: () => Value) =>
+  Effect.try({ catch: (cause) => scaffoldFailureFromUnknown(cause, message), try: evaluate });
+
+export const raiseScaffoldFailure = (message: string, cause?: unknown): never =>
+  scaffoldingRuntime.runSync(Effect.die(scaffoldFailure(message, cause)));
+
+const decodeResultOrRaise = <Value, ErrorValue>(
+  result: Result.Result<Value, ErrorValue>,
+  message: string,
+): Value => {
+  if (Result.isFailure(result)) {
+    return raiseScaffoldFailure(message, result.failure);
+  }
+  return result.success;
+};
+
+const isJsonObject = Schema.is(JsonObjectSchema);
+const isJsonObjectArray = Schema.is(JsonObjectArraySchema);
+
+export const asJsonObject = (value: JsonValue | undefined, label: string): JsonObject => {
   if (!isJsonObject(value)) {
-    throw new Error(`${label} must be a JSON object`);
+    return raiseScaffoldFailure(`${label} must be a JSON object`);
   }
   return value;
 };
 
-export const isStringValue = (value: JsonValue | undefined): value is string =>
-  value !== undefined &&
-  Object.prototype.toString.call(value) === '[object String]' &&
-  value === String(value);
+export const isStringValue = Schema.is(Schema.String);
 
 export const requiredString = (value: JsonValue | undefined, label: string): string => {
   if (!isStringValue(value) || value.trim().length === 0) {
-    throw new Error(`${label} must be a non-empty string`);
+    return raiseScaffoldFailure(`${label} must be a non-empty string`);
   }
   return value;
 };
 
 export const isMissingFileError = <ErrorValue,>(error: ErrorValue): boolean =>
-  error instanceof Error && 'code' in error && error.code === 'ENOENT';
+  Predicate.hasProperty(error, 'code') && error.code === 'ENOENT';
 
-export const pathExists = async (targetPath: string): Promise<boolean> => {
-  try {
-    await stat(targetPath);
-    return true;
-  } catch (error) {
-    if (isMissingFileError(error)) {
-      return false;
-    }
-    throw error;
-  }
-};
+const pathExistsEffect = (targetPath: string) =>
+  Effect.gen(function* pathExistsProgram() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    return yield* fileSystem
+      .exists(targetPath)
+      .pipe(Effect.mapError((cause) => scaffoldFailure(`failed to inspect ${targetPath}`, cause)));
+  });
+
+export const pathExists: (targetPath: string) => Promise<boolean> = flow(
+  pathExistsEffect,
+  scaffoldingRuntime.runPromise,
+);
 
 const regexMayStartAt = (content: string, index: number): boolean => {
   const prefix = content.slice(0, index).trimEnd();
@@ -363,63 +418,71 @@ const regexMayStartAt = (content: string, index: number): boolean => {
   );
 };
 
-type NonCodeState =
-  | 'block-comment'
-  | 'double-quote'
-  | 'line-comment'
-  | 'regex'
-  | 'single-quote'
-  | 'template';
+const BLOCK_COMMENT_STATE = 'block-comment';
+const DOUBLE_QUOTE_STATE = 'double-quote';
+const LINE_COMMENT_STATE = 'line-comment';
+const REGEX_STATE = 'regex';
+const SINGLE_QUOTE_STATE = 'single-quote';
+const TEMPLATE_STATE = 'template';
+const NonCodeStateSchema = Schema.Literals([
+  BLOCK_COMMENT_STATE,
+  DOUBLE_QUOTE_STATE,
+  LINE_COMMENT_STATE,
+  REGEX_STATE,
+  SINGLE_QUOTE_STATE,
+  TEMPLATE_STATE,
+]);
+type NonCodeState = typeof NonCodeStateSchema.Type;
 
 const nonCodeStateAt = (
   content: string,
   index: number,
   character: string,
-  next: string | undefined,
-): NonCodeState | undefined => {
+  next: null | string,
+): NonCodeState | null => {
   if (character === '/' && next === '/') {
-    return 'line-comment';
+    return LINE_COMMENT_STATE;
   }
   if (character === '/' && next === '*') {
-    return 'block-comment';
+    return BLOCK_COMMENT_STATE;
   }
   if (character === "'") {
-    return 'single-quote';
+    return SINGLE_QUOTE_STATE;
   }
   if (character === '"') {
-    return 'double-quote';
+    return DOUBLE_QUOTE_STATE;
   }
   if (character === '`') {
-    return 'template';
+    return TEMPLATE_STATE;
   }
-  return character === '/' && regexMayStartAt(content, index) ? 'regex' : undefined;
+  return character === '/' && regexMayStartAt(content, index) ? REGEX_STATE : null;
 };
 
 interface NonCodeTransition {
   readonly escaped: boolean;
   readonly regexCharacterClass: boolean;
-  readonly state: NonCodeState | undefined;
+  readonly state: NonCodeState | null;
 }
 
 const advanceNonCodeState = (
   state: NonCodeState,
   character: string,
-  next: string | undefined,
+  next: null | string,
   escaped: boolean,
   regexCharacterClass: boolean,
 ): NonCodeTransition => {
-  if (state === 'line-comment') {
+  if (state === LINE_COMMENT_STATE) {
     return {
       escaped: false,
       regexCharacterClass: false,
-      state: character === '\n' || character === '\r' ? undefined : state,
+      state: character === '\n' || character === '\r' ? null : state,
     };
   }
-  if (state === 'block-comment') {
+  if (state === BLOCK_COMMENT_STATE) {
     return {
       escaped: false,
       regexCharacterClass: false,
-      state: character === '*' && next === '/' ? undefined : state,
+      state: character === '*' && next === '/' ? null : state,
     };
   }
   if (escaped) {
@@ -429,13 +492,13 @@ const advanceNonCodeState = (
     return { escaped: true, regexCharacterClass, state };
   }
   if (
-    (state === 'single-quote' && character === "'") ||
-    (state === 'double-quote' && character === '"') ||
-    (state === 'template' && character === '`')
+    (state === SINGLE_QUOTE_STATE && character === "'") ||
+    (state === DOUBLE_QUOTE_STATE && character === '"') ||
+    (state === TEMPLATE_STATE && character === '`')
   ) {
-    return { escaped: false, regexCharacterClass: false, state: undefined };
+    return { escaped: false, regexCharacterClass: false, state: null };
   }
-  if (state !== 'regex') {
+  if (state !== REGEX_STATE) {
     return { escaped: false, regexCharacterClass, state };
   }
   if (character === '[') {
@@ -447,42 +510,54 @@ const advanceNonCodeState = (
   return {
     escaped: false,
     regexCharacterClass,
-    state: character === '/' && !regexCharacterClass ? undefined : state,
+    state: character === '/' && !regexCharacterClass ? null : state,
   };
 };
 
+const shouldMaskNonCodeState = (state: NonCodeState, preserveStrings: boolean): boolean =>
+  !preserveStrings ||
+  state === BLOCK_COMMENT_STATE ||
+  state === LINE_COMMENT_STATE ||
+  state === REGEX_STATE;
+
+const stringCodeUnits = (content: string): string[] => {
+  const units: string[] = [];
+  let index = 0;
+  while (index < content.length) {
+    units.push(content[index] ?? '');
+    index += 1;
+  }
+  return units;
+};
+
 const maskNonCode = (content: string, preserveStrings = false): string => {
-  const masked = [...content];
-  let state: NonCodeState | undefined;
+  const masked = stringCodeUnits(content);
+  let state: NonCodeState | null = null;
   let escaped = false;
   let regexCharacterClass = false;
   for (let index = 0; index < content.length; index += 1) {
     const character = content[index] ?? '';
-    const next = content[index + 1];
-    if (state === undefined) {
+    const next = content[index + 1] ?? null;
+    if (state === null) {
       state = nonCodeStateAt(content, index, character, next);
-      if (state !== undefined) {
-        if (
-          !preserveStrings ||
-          state === 'block-comment' ||
-          state === 'line-comment' ||
-          state === 'regex'
-        ) {
+      if (state !== null) {
+        if (shouldMaskNonCodeState(state, preserveStrings)) {
           masked[index] = ' ';
         }
-        if (state === 'line-comment' || state === 'block-comment') {
+        if (state === LINE_COMMENT_STATE || state === BLOCK_COMMENT_STATE) {
           masked[index + 1] = ' ';
           index += 1;
         }
       }
       continue;
     }
-    const isString = state === 'double-quote' || state === 'single-quote' || state === 'template';
+    const isString =
+      state === DOUBLE_QUOTE_STATE || state === SINGLE_QUOTE_STATE || state === TEMPLATE_STATE;
     if (!preserveStrings || !isString) {
       masked[index] = character === '\n' || character === '\r' ? character : ' ';
     }
     const transition = advanceNonCodeState(state, character, next, escaped, regexCharacterClass);
-    if (state === 'block-comment' && transition.state === undefined) {
+    if (state === BLOCK_COMMENT_STATE && transition.state === null) {
       masked[index + 1] = ' ';
       index += 1;
     }
@@ -501,7 +576,7 @@ const moduleFederationExposesRange = (content: string): ModuleFederationExposesR
   const code = maskNonCode(content);
   const propertyMatches = [...code.matchAll(/\bexposes\s*:\s*\{/gu)];
   if (propertyMatches.length === 0) {
-    throw new Error('generated Module Federation exposes object is missing');
+    return raiseScaffoldFailure('generated Module Federation exposes object is missing');
   }
   const braceDepthAt = (targetIndex: number) => {
     let depth = 0;
@@ -521,12 +596,12 @@ const moduleFederationExposesRange = (content: string): ModuleFederationExposesR
   const shallowestDepth = Math.min(...matchesWithDepth.map(({ depth }) => depth));
   const shallowestMatches = matchesWithDepth.filter(({ depth }) => depth === shallowestDepth);
   if (shallowestMatches.length > 1) {
-    throw new Error('generated Module Federation exposes object is duplicated');
+    return raiseScaffoldFailure('generated Module Federation exposes object is duplicated');
   }
   const propertyIndex = shallowestMatches[0]?.match.index ?? -1;
   const openIndex = code.indexOf('{', propertyIndex);
   if (openIndex === -1) {
-    throw new Error('generated Module Federation exposes object is malformed');
+    return raiseScaffoldFailure('generated Module Federation exposes object is malformed');
   }
   let depth = 0;
   let closeIndex = -1;
@@ -543,7 +618,7 @@ const moduleFederationExposesRange = (content: string): ModuleFederationExposesR
     }
   }
   if (closeIndex === -1) {
-    throw new Error('generated Module Federation exposes object is malformed');
+    return raiseScaffoldFailure('generated Module Federation exposes object is malformed');
   }
   return { closeIndex, openIndex, propertyIndex };
 };
@@ -555,14 +630,14 @@ export const moduleFederationExposureSource = (
   const { closeIndex, openIndex } = moduleFederationExposesRange(content);
   const body = content.slice(openIndex + 1, closeIndex);
   const searchableBody = maskNonCode(body, true);
-  const escapedKey = exposureKey.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const escapedKey = exposureKey.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
   const keyMatches = [
     ...searchableBody.matchAll(
       new RegExp(`(?:'${escapedKey}'|"${escapedKey}"|\`${escapedKey}\`)\\s*:`, 'gu'),
     ),
   ];
   if (keyMatches.length > 1) {
-    throw new Error(`Module Federation exposure ${exposureKey} is duplicated`);
+    return raiseScaffoldFailure(`Module Federation exposure ${exposureKey} is duplicated`);
   }
   const matches = [
     ...searchableBody.matchAll(
@@ -573,7 +648,7 @@ export const moduleFederationExposureSource = (
     ),
   ];
   if (keyMatches.length === 1 && matches.length !== 1) {
-    throw new Error(`Module Federation exposure ${exposureKey} is malformed`);
+    return raiseScaffoldFailure(`Module Federation exposure ${exposureKey} is malformed`);
   }
   const [match] = matches;
   return match?.groups?.['single'] ?? match?.groups?.['double'] ?? match?.groups?.['template'];
@@ -587,10 +662,10 @@ export const insertModuleFederationExposure = (
   const { closeIndex, openIndex, propertyIndex } = moduleFederationExposesRange(content);
   const body = content.slice(openIndex + 1, closeIndex);
   if (moduleFederationExposureSource(content, exposureKey) !== undefined) {
-    throw new Error(`Module Federation exposure ${exposureKey} already exists`);
+    return raiseScaffoldFailure(`Module Federation exposure ${exposureKey} already exists`);
   }
   const lineStart = content.lastIndexOf('\n', propertyIndex) + 1;
-  const indentation = content.slice(lineStart, propertyIndex).match(/^\s*/u)?.[0] ?? '';
+  const indentation = /^\s*/u.exec(content.slice(lineStart, propertyIndex))?.[0] ?? '';
   const memberIndentation = `${indentation}  `;
   const exposure = `'${exposureKey}': '${sourcePath}'`;
   const nextBody =
@@ -604,21 +679,23 @@ export const resolveContainedPath = (
   workspaceRoot: string,
   ...segments: readonly string[]
 ): string => {
-  const root = path.resolve(workspaceRoot);
-  const target = path.resolve(root, ...segments);
-  const relative = path.relative(root, target);
+  const root = nodePath.resolve(workspaceRoot);
+  const target = nodePath.resolve(root, ...segments);
+  const relative = nodePath.relative(root, target);
   if (
     relative === '' ||
-    (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
+    (!relative.startsWith(`..${nodePath.sep}`) &&
+      relative !== '..' &&
+      !nodePath.isAbsolute(relative))
   ) {
     return target;
   }
-  throw new Error(`Resolved path escapes the workspace: ${segments.join('/')}`);
+  return raiseScaffoldFailure(`Resolved path escapes the workspace: ${segments.join('/')}`);
 };
 
 export const requireCanonicalSlug = (value: string, label: string): string => {
   if (!canonicalSlugPattern.test(value) || reservedSegments.has(value)) {
-    throw new Error(
+    return raiseScaffoldFailure(
       `${label} must be canonical lower-kebab-case without paths, traversal, or reserved segments`,
     );
   }
@@ -627,7 +704,7 @@ export const requireCanonicalSlug = (value: string, label: string): string => {
 
 export const requireTopic = (value: string): string => {
   if (!topicPattern.test(value)) {
-    throw new Error(
+    return raiseScaffoldFailure(
       'topic must be a lowercase dot-separated identifier with optional kebab-case segments',
     );
   }
@@ -636,7 +713,7 @@ export const requireTopic = (value: string): string => {
 
 export const requireCoreModuleKey = (value: string): string => {
   if (!stableCoreModulePattern.test(value)) {
-    throw new Error(
+    return raiseScaffoldFailure(
       'module must be a stable lowercase core.* identifier without paths or traversal',
     );
   }
@@ -645,7 +722,7 @@ export const requireCoreModuleKey = (value: string): string => {
 
 export const requireOntosModuleId = (value: string): string => {
   if (!stableOntosModulePattern.test(value) || value.startsWith('core.')) {
-    throw new Error(
+    return raiseScaffoldFailure(
       'module must be a stable lowercase dotted non-core OntOS module ID without paths or traversal',
     );
   }
@@ -668,27 +745,33 @@ export const isModuleManifestImport = (candidate: string): boolean =>
     candidate,
   );
 
-export const readJson = async (
+export const readJsonEffect = (filePath: string, label: string) =>
+  Effect.gen(function* readJsonProgram() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    if (!(yield* pathExistsEffect(filePath))) {
+      return yield* scaffoldFailure(`${label} is missing at ${filePath}`);
+    }
+    const content = yield* fileSystem
+      .readFileString(filePath)
+      .pipe(
+        Effect.mapError((cause) =>
+          scaffoldFailure(`failed to read ${label} at ${filePath}`, cause),
+        ),
+      );
+    const parsed = Schema.decodeUnknownResult(JsonValueFromStringSchema)(content);
+    if (Result.isFailure(parsed)) {
+      return yield* scaffoldFailure(`${label} is not valid JSON at ${filePath}`, parsed.failure);
+    }
+    return { content, value: asJsonObject(parsed.success, label) };
+  });
+
+export const readJson: (
   filePath: string,
   label: string,
-): Promise<{ content: string; value: JsonObject }> => {
-  let content: string;
-  try {
-    content = await readFile(filePath, 'utf-8');
-  } catch (error) {
-    if (isMissingFileError(error)) {
-      throw new Error(`${label} is missing at ${filePath}`, { cause: error });
-    }
-    throw error;
-  }
-  let parsed: JsonValue;
-  try {
-    parsed = JSON.parse(content);
-  } catch {
-    throw new Error(`${label} is not valid JSON at ${filePath}`);
-  }
-  return { content, value: asJsonObject(parsed, label) };
-};
+) => Promise<{ content: string; value: JsonObject }> = flow(
+  readJsonEffect,
+  scaffoldingRuntime.runPromise,
+);
 
 interface JsonPropertySpan {
   readonly key: string;
@@ -723,7 +806,7 @@ const scanJsonString = (source: string, start: number): number => {
       return cursor + 1;
     }
   }
-  throw new Error('unterminated JSON string while planning an owner-file patch');
+  return raiseScaffoldFailure('unterminated JSON string while planning an owner-file patch');
 };
 
 const scanJsonValue = (source: string, start: number): number => {
@@ -735,8 +818,10 @@ const scanJsonValue = (source: string, start: number): number => {
     const closing = first === '{' ? '}' : ']';
     let depth = 0;
     let stringEnd = -1;
-    for (let cursor = start; cursor < source.length; cursor += 1) {
+    let cursor = start;
+    while (cursor < source.length) {
       if (cursor < stringEnd) {
+        cursor += 1;
         continue;
       }
       const character = source[cursor];
@@ -751,8 +836,9 @@ const scanJsonValue = (source: string, start: number): number => {
           return cursor + 1;
         }
       }
+      cursor += 1;
     }
-    throw new Error('unterminated JSON collection while planning an owner-file patch');
+    return raiseScaffoldFailure('unterminated JSON collection while planning an owner-file patch');
   }
   let cursor = start;
   while (cursor < source.length && !/[\s,}\]]/u.test(source[cursor] ?? '')) {
@@ -763,17 +849,20 @@ const scanJsonValue = (source: string, start: number): number => {
 
 const scanJsonObject = (source: string, start: number): JsonObjectSpan => {
   if (source[start] !== '{') {
-    throw new Error('owner-file JSON path does not reference an object');
+    return raiseScaffoldFailure('owner-file JSON path does not reference an object');
   }
   const properties: JsonPropertySpan[] = [];
   let cursor = skipJsonWhitespace(source, start + 1);
   while (source[cursor] !== '}') {
     const keyStart = cursor;
     const keyEnd = scanJsonString(source, keyStart);
-    const key = Schema.decodeUnknownSync(Schema.String)(JSON.parse(source.slice(keyStart, keyEnd)));
+    const key = decodeResultOrRaise(
+      Schema.decodeUnknownResult(StringFromJsonStringSchema)(source.slice(keyStart, keyEnd)),
+      'invalid JSON property while planning an owner-file patch',
+    );
     cursor = skipJsonWhitespace(source, keyEnd);
     if (source[cursor] !== ':') {
-      throw new Error('invalid JSON property while planning an owner-file patch');
+      return raiseScaffoldFailure('invalid JSON property while planning an owner-file patch');
     }
     const valueStart = skipJsonWhitespace(source, cursor + 1);
     const valueEnd = scanJsonValue(source, valueStart);
@@ -782,7 +871,7 @@ const scanJsonObject = (source: string, start: number): JsonObjectSpan => {
     if (source[cursor] === ',') {
       cursor = skipJsonWhitespace(source, cursor + 1);
     } else if (source[cursor] !== '}') {
-      throw new Error('invalid JSON object while planning an owner-file patch');
+      return raiseScaffoldFailure('invalid JSON object while planning an owner-file patch');
     }
   }
   return { end: cursor + 1, properties, start };
@@ -790,7 +879,7 @@ const scanJsonObject = (source: string, start: number): JsonObjectSpan => {
 
 const lineIndentAt = (source: string, offset: number): string => {
   const lineStart = Math.max(source.lastIndexOf('\n', offset - 1) + 1, 0);
-  return source.slice(lineStart, offset).match(/^[ \t]*/u)?.[0] ?? '';
+  return /^[ \t]*/u.exec(source.slice(lineStart, offset))?.[0] ?? '';
 };
 
 const renderJsonPropertyValue = (
@@ -799,13 +888,27 @@ const renderJsonPropertyValue = (
   propertyIndent: string,
   multiline: boolean,
 ): string => {
+  const codec = multiline
+    ? Schema.fromJsonString(Schema.Json, {
+        space: /(?:^|\r?\n)(?<indent>[ \t]+)"/u.exec(source)?.groups?.['indent'] ?? '  ',
+      })
+    : JsonStringSchema;
+  const rendered = decodeResultOrRaise(
+    Schema.encodeResult(codec)(value),
+    'failed to serialize an owner-file JSON property',
+  );
   if (!multiline) {
-    return JSON.stringify(value);
+    return rendered;
   }
   const endOfLine = source.includes('\r\n') ? '\r\n' : '\n';
-  const indentation = source.match(/(?:^|\r?\n)(?<indent>[ \t]+)"/u)?.groups?.['indent'] ?? '  ';
-  return JSON.stringify(value, null, indentation).replaceAll('\n', `${endOfLine}${propertyIndent}`);
+  return rendered.replaceAll('\n', `${endOfLine}${propertyIndent}`);
 };
+
+const renderJsonPropertyName = (propertyName: string): string =>
+  decodeResultOrRaise(
+    Schema.encodeResult(StringFromJsonStringSchema)(propertyName),
+    'failed to serialize an owner-file JSON property name',
+  );
 
 export const patchJsonObjectProperty = (
   source: string,
@@ -817,7 +920,7 @@ export const patchJsonObjectProperty = (
   for (const segment of objectPath) {
     const property = object.properties.find((candidate) => candidate.key === segment);
     if (property === undefined) {
-      throw new Error(`owner-file JSON path ${objectPath.join('.')} is missing`);
+      return raiseScaffoldFailure(`owner-file JSON path ${objectPath.join('.')} is missing`);
     }
     object = scanJsonObject(source, property.valueStart);
   }
@@ -831,258 +934,311 @@ export const patchJsonObjectProperty = (
   const endOfLine = source.includes('\r\n') ? '\r\n' : '\n';
   const closingBrace = object.end - 1;
   const closingIndent = lineIndentAt(source, closingBrace);
-  const indentation = source.match(/(?:^|\r?\n)(?<indent>[ \t]+)"/u)?.groups?.['indent'] ?? '  ';
+  const indentation = /(?:^|\r?\n)(?<indent>[ \t]+)"/u.exec(source)?.groups?.['indent'] ?? '  ';
   const propertyIndent = `${closingIndent}${indentation}`;
   const rendered = renderJsonPropertyValue(value, source, propertyIndent, multiline);
   const lastProperty = object.properties.at(-1);
   if (lastProperty !== undefined) {
     const separator = multiline ? `,${endOfLine}${propertyIndent}` : ', ';
-    return `${source.slice(0, lastProperty.valueEnd)}${separator}${JSON.stringify(propertyName)}: ${rendered}${source.slice(lastProperty.valueEnd)}`;
+    return `${source.slice(0, lastProperty.valueEnd)}${separator}${renderJsonPropertyName(propertyName)}: ${rendered}${source.slice(lastProperty.valueEnd)}`;
   }
   const insertion = multiline
-    ? `${endOfLine}${propertyIndent}${JSON.stringify(propertyName)}: ${rendered}${endOfLine}${closingIndent}`
-    : `${JSON.stringify(propertyName)}: ${rendered}`;
+    ? `${endOfLine}${propertyIndent}${renderJsonPropertyName(propertyName)}: ${rendered}${endOfLine}${closingIndent}`
+    : `${renderJsonPropertyName(propertyName)}: ${rendered}`;
   return `${source.slice(0, object.start + 1)}${insertion}${source.slice(closingBrace)}`;
 };
 
 const topologyEntries = (topology: JsonObject): readonly JsonObject[] => {
   const candidates = topology['verticals'] ?? topology['apps'];
-  if (!Array.isArray(candidates) || !candidates.every(isJsonObject)) {
-    throw new Error('generated topology must contain a verticals or apps array');
+  if (!isJsonObjectArray(candidates)) {
+    return raiseScaffoldFailure('generated topology must contain a verticals or apps array');
   }
   return candidates;
 };
 
-const assertUniqueGeneratedVerticalAppIds = async (workspaceRoot: string): Promise<void> => {
-  const verticalRoot = resolveContainedPath(workspaceRoot, 'verticals');
-  const entries = await readdir(verticalRoot, { withFileTypes: true });
-  const identities = await Promise.all(
-    entries
-      .filter((entry) => entry.isDirectory())
-      .map(async (entry) => {
-        const packagePath = resolveContainedPath(verticalRoot, entry.name, 'package.json');
-        if (!(await pathExists(packagePath))) {
-          return null;
-        }
-        const { value } = await readJson(packagePath, `vertical ${entry.name} package metadata`);
-        const modernjs = asJsonObject(
-          value['modernjs'],
-          `vertical ${entry.name} modernjs metadata`,
-        );
-        if (modernjs['role'] !== 'module-federation-remote') {
-          return null;
-        }
-        return {
-          appId: requiredString(modernjs['appId'], `vertical ${entry.name} appId`),
-          slug: entry.name,
-        };
-      }),
-  );
-  const owners = new Map<string, string>();
-  for (const identity of identities) {
-    if (identity === null) {
-      continue;
-    }
-    const existingOwner = owners.get(identity.appId);
-    if (existingOwner !== undefined) {
-      throw new Error(
-        `duplicate generated appId ${identity.appId} in verticals ${existingOwner} and ${identity.slug}`,
+const assertUniqueGeneratedVerticalAppIdsEffect = (workspaceRoot: string) =>
+  Effect.gen(function* assertUniqueGeneratedVerticalAppIdsProgram() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const verticalRoot = resolveContainedPath(workspaceRoot, 'verticals');
+    const entries = yield* fileSystem
+      .readDirectory(verticalRoot)
+      .pipe(
+        Effect.mapError((cause) =>
+          scaffoldFailure(`failed to inspect generated verticals at ${verticalRoot}`, cause),
+        ),
       );
+    const identities = yield* Effect.forEach(
+      entries,
+      (entryName) =>
+        Effect.gen(function* readVerticalIdentity() {
+          const packagePath = resolveContainedPath(verticalRoot, entryName, 'package.json');
+          if (!(yield* pathExistsEffect(packagePath))) {
+            return null;
+          }
+          const { value } = yield* readJsonEffect(
+            packagePath,
+            `vertical ${entryName} package metadata`,
+          );
+          const modernjs = asJsonObject(
+            value['modernjs'],
+            `vertical ${entryName} modernjs metadata`,
+          );
+          if (modernjs['role'] !== 'module-federation-remote') {
+            return null;
+          }
+          return {
+            appId: requiredString(modernjs['appId'], `vertical ${entryName} appId`),
+            slug: entryName,
+          };
+        }),
+      { concurrency: 'unbounded' },
+    );
+    const owners = new Map<string, string>();
+    for (const identity of identities) {
+      if (identity === null) {
+        continue;
+      }
+      const existingOwner = owners.get(identity.appId);
+      if (existingOwner !== undefined) {
+        return yield* scaffoldFailure(
+          `duplicate generated appId ${identity.appId} in verticals ${existingOwner} and ${identity.slug}`,
+        );
+      }
+      owners.set(identity.appId, identity.slug);
     }
-    owners.set(identity.appId, identity.slug);
-  }
-};
+    return yield* Effect.void;
+  });
 
-const resolveVerticalTopologyEntry = async (
+const resolveVerticalTopologyEntryEffect = (
   workspaceRoot: string,
   vertical: Omit<VerticalMetadata, 'topologyEntry'>,
   modernjs: JsonObject,
-): Promise<JsonObject> => {
-  const topologyReference = requiredString(
-    modernjs['topology'],
-    `vertical ${vertical.slug} topology reference`,
-  );
-  if (path.isAbsolute(topologyReference)) {
-    throw new Error(`vertical ${vertical.slug} topology reference must be workspace-relative`);
-  }
-  const topologyPath = path.resolve(vertical.directory, topologyReference);
-  const canonicalTopologyPath = resolveContainedPath(
-    workspaceRoot,
-    'topology',
-    'reference-topology.json',
-  );
-  if (topologyPath !== canonicalTopologyPath) {
-    throw new Error(`vertical ${vertical.slug} must reference topology/reference-topology.json`);
-  }
-  const { value: topology } = await readJson(topologyPath, 'generated workspace topology');
-  const entries = topologyEntries(topology);
-  const topologyOwners = new Map<string, number>();
-  for (const entry of entries) {
-    const appId = requiredString(entry['id'], 'generated topology app id');
-    topologyOwners.set(appId, (topologyOwners.get(appId) ?? 0) + 1);
-  }
-  const duplicateTopologyAppId = [...topologyOwners].find(([, count]) => count > 1)?.[0];
-  if (duplicateTopologyAppId !== undefined) {
-    throw new Error(`duplicate generated topology appId ${duplicateTopologyAppId}`);
-  }
-  const expectedPath = `verticals/${vertical.slug}`;
-  const matches = entries.filter(
-    (entry) =>
-      entry['id'] === vertical.appId &&
-      entry['kind'] === 'vertical' &&
-      entry['package'] === vertical.packageName &&
-      entry['path'] === expectedPath,
-  );
-  if (matches.length !== 1) {
-    throw new Error(
-      `vertical ${vertical.slug} must have exactly one matching generated topology entry`,
+): Effect.Effect<JsonObject, ScaffoldFailure, FileSystem.FileSystem> =>
+  Effect.gen(function* resolveVerticalTopologyEntryProgram() {
+    const topologyReference = requiredString(
+      modernjs['topology'],
+      `vertical ${vertical.slug} topology reference`,
     );
-  }
-  const [topologyEntry] = matches;
-  if (topologyEntry === undefined) {
-    throw new Error(`vertical ${vertical.slug} topology entry is missing`);
-  }
-  return topologyEntry;
-};
+    if (nodePath.isAbsolute(topologyReference)) {
+      return yield* scaffoldFailure(
+        `vertical ${vertical.slug} topology reference must be workspace-relative`,
+      );
+    }
+    const topologyPath = nodePath.resolve(vertical.directory, topologyReference);
+    const canonicalTopologyPath = resolveContainedPath(
+      workspaceRoot,
+      'topology',
+      'reference-topology.json',
+    );
+    if (topologyPath !== canonicalTopologyPath) {
+      return yield* scaffoldFailure(
+        `vertical ${vertical.slug} must reference topology/reference-topology.json`,
+      );
+    }
+    const { value: topology } = yield* readJsonEffect(topologyPath, 'generated workspace topology');
+    const entries = topologyEntries(topology);
+    const topologyOwners = new Map<string, number>();
+    for (const entry of entries) {
+      const appId = requiredString(entry['id'], 'generated topology app id');
+      topologyOwners.set(appId, (topologyOwners.get(appId) ?? 0) + 1);
+    }
+    const duplicateTopologyAppId = [...topologyOwners].find(([, count]) => count > 1)?.[0];
+    if (duplicateTopologyAppId !== undefined) {
+      return yield* scaffoldFailure(`duplicate generated topology appId ${duplicateTopologyAppId}`);
+    }
+    const expectedPath = `verticals/${vertical.slug}`;
+    const matches = entries.filter(
+      (entry) =>
+        entry['id'] === vertical.appId &&
+        entry['kind'] === 'vertical' &&
+        entry['package'] === vertical.packageName &&
+        entry['path'] === expectedPath,
+    );
+    if (matches.length !== 1) {
+      return yield* scaffoldFailure(
+        `vertical ${vertical.slug} must have exactly one matching generated topology entry`,
+      );
+    }
+    const [topologyEntry] = matches;
+    if (topologyEntry === undefined) {
+      return yield* scaffoldFailure(`vertical ${vertical.slug} topology entry is missing`);
+    }
+    return topologyEntry;
+  });
 
-export const discoverVertical = async (
+export const discoverVerticalEffect = (
   workspaceRoot: string,
   requestedVertical: string,
-): Promise<VerticalMetadata> => {
-  const slug = requireCanonicalSlug(requestedVertical, 'vertical');
-  const directory = resolveContainedPath(workspaceRoot, 'verticals', slug);
-  const packagePath = resolveContainedPath(workspaceRoot, 'verticals', slug, 'package.json');
-  const { content: packageContent, value: packageJson } = await readJson(
-    packagePath,
-    `vertical ${slug} package metadata`,
-  );
-  const packageName = requiredString(packageJson['name'], `vertical ${slug} package name`);
-  const modernjs = asJsonObject(packageJson['modernjs'], `vertical ${slug} modernjs metadata`);
-  if (modernjs['role'] !== 'module-federation-remote') {
-    throw new Error(`vertical ${slug} is not a generated Module Federation remote package`);
-  }
-  const appId = requiredString(modernjs['appId'], `vertical ${slug} appId`);
-  if (!stableAppIdPattern.test(appId)) {
-    throw new Error(`vertical ${slug} appId is not a stable generated identifier`);
-  }
-  if (packageName !== `@app/${slug}`) {
-    throw new Error(`vertical ${slug} package name must be @app/${slug}`);
-  }
-  await assertUniqueGeneratedVerticalAppIds(workspaceRoot);
-  const vertical = {
-    appId,
-    directory,
-    packageContent,
-    packageJson,
-    packageName,
-    packagePath,
-    slug,
-  };
-  const topologyEntry = await resolveVerticalTopologyEntry(workspaceRoot, vertical, modernjs);
-  return { ...vertical, topologyEntry };
-};
+): Effect.Effect<VerticalMetadata, ScaffoldFailure, FileSystem.FileSystem> =>
+  Effect.gen(function* discoverVerticalProgram() {
+    const slug = requireCanonicalSlug(requestedVertical, 'vertical');
+    const directory = resolveContainedPath(workspaceRoot, 'verticals', slug);
+    const packagePath = resolveContainedPath(workspaceRoot, 'verticals', slug, 'package.json');
+    const { content: packageContent, value: packageJson } = yield* readJsonEffect(
+      packagePath,
+      `vertical ${slug} package metadata`,
+    );
+    const packageName = requiredString(packageJson['name'], `vertical ${slug} package name`);
+    const modernjs = asJsonObject(packageJson['modernjs'], `vertical ${slug} modernjs metadata`);
+    if (modernjs['role'] !== 'module-federation-remote') {
+      return yield* scaffoldFailure(
+        `vertical ${slug} is not a generated Module Federation remote package`,
+      );
+    }
+    const appId = requiredString(modernjs['appId'], `vertical ${slug} appId`);
+    if (!stableAppIdPattern.test(appId)) {
+      return yield* scaffoldFailure(`vertical ${slug} appId is not a stable generated identifier`);
+    }
+    if (packageName !== `@app/${slug}`) {
+      return yield* scaffoldFailure(`vertical ${slug} package name must be @app/${slug}`);
+    }
+    yield* assertUniqueGeneratedVerticalAppIdsEffect(workspaceRoot);
+    const vertical = {
+      appId,
+      directory,
+      packageContent,
+      packageJson,
+      packageName,
+      packagePath,
+      slug,
+    };
+    const topologyEntry = yield* resolveVerticalTopologyEntryEffect(
+      workspaceRoot,
+      vertical,
+      modernjs,
+    );
+    return { ...vertical, topologyEntry };
+  });
 
-const readGeneratedModuleOwner = async (
+export const discoverVertical: (
+  workspaceRoot: string,
+  requestedVertical: string,
+) => Promise<VerticalMetadata> = flow(discoverVerticalEffect, scaffoldingRuntime.runPromise);
+
+const readGeneratedModuleOwnerEffect = (
   filePath: string,
   vertical: VerticalMetadata,
   label: string,
-): Promise<{ readonly content: string; readonly moduleId: string }> => {
-  let content: string;
-  try {
-    content = await readFile(filePath, 'utf-8');
-  } catch (error) {
-    if (isMissingFileError(error)) {
-      throw new Error(
+): Effect.Effect<
+  { readonly content: string; readonly moduleId: string },
+  ScaffoldFailure,
+  FileSystem.FileSystem
+> =>
+  Effect.gen(function* readGeneratedModuleOwnerProgram() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    if (!(yield* pathExistsEffect(filePath))) {
+      return yield* scaffoldFailure(
         `vertical ${vertical.slug} requires scaffold:module-contract before ${label}`,
-        { cause: error },
       );
     }
-    throw error;
-  }
-  if (!content.startsWith(`${MODULE_CONTRACT_GENERATOR_HEADER}\n`)) {
-    throw new Error(`vertical ${vertical.slug} ${label} is not a generated module owner`);
-  }
-  const deploymentAppId = content.match(/^\/\/ @ontos-deployment-app-id (?<appId>[^\s]+)$/mu)
-    ?.groups?.['appId'];
-  const moduleId = content.match(/^\/\/ @ontos-module-id (?<moduleId>[^\s]+)$/mu)?.groups?.[
-    'moduleId'
-  ];
-  if (deploymentAppId !== vertical.appId || moduleId === undefined) {
-    throw new Error(`vertical ${vertical.slug} ${label} identity markers are inconsistent`);
-  }
-  requireOntosModuleId(moduleId);
-  return { content, moduleId };
-};
+    const content = yield* fileSystem
+      .readFileString(filePath)
+      .pipe(
+        Effect.mapError((cause) =>
+          scaffoldFailure(`failed to read vertical ${vertical.slug} ${label}`, cause),
+        ),
+      );
+    if (!content.startsWith(`${MODULE_CONTRACT_GENERATOR_HEADER}\n`)) {
+      return yield* scaffoldFailure(
+        `vertical ${vertical.slug} ${label} is not a generated module owner`,
+      );
+    }
+    const deploymentAppId = /^\/\/ @ontos-deployment-app-id (?<appId>[^\s]+)$/mu.exec(content)
+      ?.groups?.['appId'];
+    const moduleId = /^\/\/ @ontos-module-id (?<moduleId>[^\s]+)$/mu.exec(content)?.groups?.[
+      'moduleId'
+    ];
+    if (deploymentAppId !== vertical.appId || moduleId === undefined) {
+      return yield* scaffoldFailure(
+        `vertical ${vertical.slug} ${label} identity markers are inconsistent`,
+      );
+    }
+    requireOntosModuleId(moduleId);
+    return { content, moduleId };
+  });
 
 /** Discovers a topology deployment paired with its generated OntOS business owner files. */
-export const discoverOntosModule = async (
+export const discoverOntosModuleEffect = (
   workspaceRoot: string,
   requestedVertical: string,
-): Promise<OntosVerticalMetadata> => {
-  const vertical = await discoverVertical(workspaceRoot, requestedVertical);
-  const manifestPath = resolveContainedPath(vertical.directory, 'vertical.manifest.ts');
-  const registrationPath = resolveContainedPath(vertical.directory, 'vertical.registration.ts');
-  const [manifest, registration] = await Promise.all([
-    readGeneratedModuleOwner(manifestPath, vertical, 'manifest'),
-    readGeneratedModuleOwner(registrationPath, vertical, 'registration'),
-  ]);
-  const modernjs = asJsonObject(
-    vertical.packageJson['modernjs'],
-    `vertical ${vertical.slug} modernjs metadata`,
-  );
-  const ontosModule = asJsonObject(
-    modernjs['ontosModule'],
-    `vertical ${vertical.slug} generated OntOS module metadata`,
-  );
-  if (
-    manifest.moduleId !== registration.moduleId ||
-    ontosModule['moduleId'] !== manifest.moduleId ||
-    ontosModule['manifest'] !== './vertical.manifest.ts' ||
-    ontosModule['registration'] !== './vertical.registration.ts' ||
-    ontosModule['schemaVersion'] !== ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION ||
-    ontosModule['contractPath'] !== '/.well-known/ontos-module-manifest.json'
-  ) {
-    throw new Error(
-      `vertical ${vertical.slug} package, topology, manifest, and registration identities disagree`,
+): Effect.Effect<OntosVerticalMetadata, ScaffoldFailure, FileSystem.FileSystem> =>
+  Effect.gen(function* discoverOntosModuleProgram() {
+    const vertical = yield* discoverVerticalEffect(workspaceRoot, requestedVertical);
+    const manifestPath = resolveContainedPath(vertical.directory, 'vertical.manifest.ts');
+    const registrationPath = resolveContainedPath(vertical.directory, 'vertical.registration.ts');
+    const [manifest, registration] = yield* Effect.all([
+      readGeneratedModuleOwnerEffect(manifestPath, vertical, 'manifest'),
+      readGeneratedModuleOwnerEffect(registrationPath, vertical, 'registration'),
+    ]);
+    const modernjs = asJsonObject(
+      vertical.packageJson['modernjs'],
+      `vertical ${vertical.slug} modernjs metadata`,
     );
-  }
-  return {
-    ...vertical,
-    manifestContent: manifest.content,
-    manifestPath,
-    moduleId: manifest.moduleId,
-    registrationContent: registration.content,
-    registrationPath,
-  };
-};
-
-export const createMutation = async (filePath: string, content: string): Promise<Mutation> => {
-  if (await pathExists(filePath)) {
-    throw new Error(`refusing to overwrite existing business file: ${filePath}`);
-  }
-  const extension = path.extname(filePath);
-  if (extension !== '.ts' && extension !== '.tsx') {
-    return { content, kind: 'create', path: filePath };
-  }
-  const appRoot = path.resolve(import.meta.dirname, '..', '..');
-  const formatterPath = path.join(
-    appRoot,
-    'node_modules',
-    '.bin',
-    process.platform === 'win32' ? 'oxfmt.cmd' : 'oxfmt',
-  );
-  const formatted = spawnSync(formatterPath, [`--stdin-filepath=${filePath}`], {
-    cwd: appRoot,
-    encoding: 'utf-8',
-    input: content,
+    const ontosModule = asJsonObject(
+      modernjs['ontosModule'],
+      `vertical ${vertical.slug} generated OntOS module metadata`,
+    );
+    if (
+      manifest.moduleId !== registration.moduleId ||
+      ontosModule['moduleId'] !== manifest.moduleId ||
+      ontosModule['manifest'] !== './vertical.manifest.ts' ||
+      ontosModule['registration'] !== './vertical.registration.ts' ||
+      ontosModule['schemaVersion'] !== ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION ||
+      ontosModule['contractPath'] !== '/.well-known/ontos-module-manifest.json'
+    ) {
+      return yield* scaffoldFailure(
+        `vertical ${vertical.slug} package, topology, manifest, and registration identities disagree`,
+      );
+    }
+    return {
+      ...vertical,
+      manifestContent: manifest.content,
+      manifestPath,
+      moduleId: manifest.moduleId,
+      registrationContent: registration.content,
+      registrationPath,
+    };
   });
-  if (formatted.error !== undefined || formatted.status !== 0) {
-    throw new Error(
-      `failed to format generated source ${filePath}: ${formatted.error?.message ?? formatted.stderr.trim()}`,
-    );
-  }
-  return { content: formatted.stdout, kind: 'create', path: filePath };
-};
+
+export const discoverOntosModule: (
+  workspaceRoot: string,
+  requestedVertical: string,
+) => Promise<OntosVerticalMetadata> = flow(
+  discoverOntosModuleEffect,
+  scaffoldingRuntime.runPromise,
+);
+
+export const createMutationEffect = (
+  filePath: string,
+  content: string,
+): Effect.Effect<Mutation, ScaffoldFailure, FileSystem.FileSystem> =>
+  Effect.gen(function* createMutationProgram() {
+    if (yield* pathExistsEffect(filePath)) {
+      return yield* scaffoldFailure(`refusing to overwrite existing business file: ${filePath}`);
+    }
+    const extension = nodePath.extname(filePath);
+    if (extension !== '.ts' && extension !== '.tsx') {
+      return { content, kind: 'create', path: filePath };
+    }
+    const formatted = yield* Effect.tryPromise({
+      catch: (cause) => scaffoldFailure(`failed to format generated source ${filePath}`, cause),
+      try: async () =>
+        await format(filePath, content, { extends: [ultraciteOxfmt], singleQuote: true }),
+    });
+    if (formatted.errors.length > 0) {
+      return yield* scaffoldFailure(
+        `failed to format generated source ${filePath}: ${formatted.errors
+          .map((error) => error.message)
+          .join('; ')}`,
+      );
+    }
+    return { content: formatted.code, kind: 'create', path: filePath };
+  });
+
+export const createMutation: (filePath: string, content: string) => Promise<Mutation> = flow(
+  createMutationEffect,
+  scaffoldingRuntime.runPromise,
+);
 
 export const updateMutation = (
   filePath: string,
@@ -1091,12 +1247,23 @@ export const updateMutation = (
 ): Mutation | undefined =>
   previous === content ? undefined : { content, kind: 'update', path: filePath };
 
-export const deleteMutation = async (filePath: string): Promise<DeleteMutation> => {
-  if (!(await pathExists(filePath))) {
-    throw new Error(`generated business artifact is missing: ${filePath}`);
-  }
-  return { kind: 'delete', path: filePath };
-};
+export const deleteMutationEffect = (
+  filePath: string,
+): Effect.Effect<DeleteMutation, ScaffoldFailure, FileSystem.FileSystem> =>
+  Effect.gen(function* deleteMutationProgram() {
+    if (!(yield* pathExistsEffect(filePath))) {
+      return yield* scaffoldFailure(`generated business artifact is missing: ${filePath}`);
+    }
+    return { kind: 'delete', path: filePath };
+  });
+
+export const deleteMutation: (filePath: string) => Promise<DeleteMutation> = flow(
+  deleteMutationEffect,
+  scaffoldingRuntime.runPromise,
+);
+
+const CORE_RUNTIME_PACKAGE = '@app/core-runtime';
+const WORKSPACE_DEPENDENCY_VERSION = 'workspace:*';
 
 export const withCoreDependency = (vertical: VerticalMetadata): Mutation | undefined => {
   const dependenciesValue = vertical.packageJson['dependencies'];
@@ -1104,14 +1271,16 @@ export const withCoreDependency = (vertical: VerticalMetadata): Mutation | undef
     dependenciesValue === undefined
       ? {}
       : { ...asJsonObject(dependenciesValue, `vertical ${vertical.slug} dependencies`) };
-  const current = dependencies['@app/core-runtime'];
-  if (current !== undefined && current !== 'workspace:*') {
-    throw new Error(`vertical ${vertical.slug} has an incompatible @app/core-runtime dependency`);
+  const current = dependencies[CORE_RUNTIME_PACKAGE];
+  if (current !== undefined && current !== WORKSPACE_DEPENDENCY_VERSION) {
+    return raiseScaffoldFailure(
+      `vertical ${vertical.slug} has an incompatible ${CORE_RUNTIME_PACKAGE} dependency`,
+    );
   }
-  if (current === 'workspace:*') {
+  if (current === WORKSPACE_DEPENDENCY_VERSION) {
     return undefined;
   }
-  dependencies['@app/core-runtime'] = 'workspace:*';
+  dependencies[CORE_RUNTIME_PACKAGE] = WORKSPACE_DEPENDENCY_VERSION;
   const sortedDependencies = Object.fromEntries(
     Object.entries(dependencies).toSorted(([left], [right]) => left.localeCompare(right)),
   );
@@ -1135,7 +1304,9 @@ export const withExactDependencies = (
   for (const [name, version] of Object.entries(required)) {
     const current = dependencies[name];
     if (current !== undefined && current !== version) {
-      throw new Error(`vertical ${vertical.slug} has an incompatible ${name} dependency`);
+      return raiseScaffoldFailure(
+        `vertical ${vertical.slug} has an incompatible ${name} dependency`,
+      );
     }
     if (current === undefined) {
       dependencies[name] = version;
@@ -1159,37 +1330,69 @@ export const ensureUniqueMutationPaths = (mutations: readonly Mutation[]): void 
   const paths = new Set<string>();
   for (const mutation of mutations) {
     if (paths.has(mutation.path)) {
-      throw new Error(`scaffold planned the same path more than once: ${mutation.path}`);
+      return raiseScaffoldFailure(
+        `scaffold planned the same path more than once: ${mutation.path}`,
+      );
     }
     paths.add(mutation.path);
   }
 };
 
-export const applyMutationPlan = async <Result,>(
+export const applyMutationPlanEffect = <Result,>(
   core: GeneratorCore,
   plan: ScaffoldPlan<Result>,
-): Promise<Result> => {
-  ensureUniqueMutationPaths(plan.mutations);
-  for (const mutation of plan.mutations) {
-    const relative = path.relative(core.outputPath, mutation.path);
-    if (relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) {
-      throw new Error(`Codesmith mutation escapes its output root: ${mutation.path}`);
+): Effect.Effect<Result, ScaffoldFailure, FileSystem.FileSystem> =>
+  Effect.gen(function* applyMutationPlanProgram() {
+    ensureUniqueMutationPaths(plan.mutations);
+    for (const mutation of plan.mutations) {
+      const relative = nodePath.relative(core.outputPath, mutation.path);
+      if (
+        relative.startsWith(`..${nodePath.sep}`) ||
+        relative === '..' ||
+        nodePath.isAbsolute(relative)
+      ) {
+        return yield* scaffoldFailure(
+          `Codesmith mutation escapes its output root: ${mutation.path}`,
+        );
+      }
     }
-  }
-  const writes = plan.mutations.filter(
-    (mutation): mutation is WriteMutation => mutation.kind !== 'delete',
-  );
-  const deletions = plan.mutations.filter(
-    (mutation): mutation is DeleteMutation => mutation.kind === 'delete',
-  );
-  await Promise.all(
-    writes.map((mutation) =>
-      core.output.fs(path.relative(core.outputPath, mutation.path), mutation.content, 'utf-8'),
-    ),
-  );
-  await Promise.all(deletions.map((mutation) => rm(mutation.path)));
-  return plan.result;
-};
+    const writes = plan.mutations.filter(
+      (mutation): mutation is WriteMutation => mutation.kind !== 'delete',
+    );
+    const deletions = plan.mutations.filter(
+      (mutation): mutation is DeleteMutation => mutation.kind === 'delete',
+    );
+    yield* Effect.forEach(
+      writes,
+      (mutation) =>
+        Effect.tryPromise({
+          catch: (cause) => scaffoldFailure(`Codesmith failed to write ${mutation.path}`, cause),
+          try: async () =>
+            await core.output.fs(
+              nodePath.relative(core.outputPath, mutation.path),
+              mutation.content,
+              'utf-8',
+            ),
+        }),
+      { concurrency: 'unbounded', discard: true },
+    );
+    const fileSystem = yield* FileSystem.FileSystem;
+    yield* Effect.forEach(deletions, (mutation) => fileSystem.remove(mutation.path), {
+      concurrency: 'unbounded',
+      discard: true,
+    }).pipe(
+      Effect.mapError((cause) => scaffoldFailure('Codesmith failed to delete an artifact', cause)),
+    );
+    return plan.result;
+  });
+
+const makeApplyMutationPlanEffect = <Result,>(core: GeneratorCore, plan: ScaffoldPlan<Result>) =>
+  applyMutationPlanEffect(core, plan);
+
+export const applyMutationPlan: <Result>(
+  core: GeneratorCore,
+  plan: ScaffoldPlan<Result>,
+) => Promise<Result> = flow(makeApplyMutationPlanEffect, scaffoldingRuntime.runPromise);
 
 const dedentGeneratedSlotBody = (slotBody: string): string => {
   const lines = slotBody.split('\n');
@@ -1205,7 +1408,7 @@ const dedentGeneratedSlotBody = (slotBody: string): string => {
   const indentation = Math.min(
     ...lines
       .filter((line) => line.trim().length > 0)
-      .map((line) => line.match(/^[ \t]*/u)?.[0].length ?? 0),
+      .map((line) => /^[ \t]*/u.exec(line)?.[0].length ?? 0),
   );
   return lines.map((line) => line.slice(indentation)).join('\n');
 };
@@ -1217,7 +1420,7 @@ interface GeneratedSlotScanState {
   escaped: boolean;
   lineComment: boolean;
   parentheses: number;
-  quote: '"' | "'" | '`' | undefined;
+  quote: '"' | "'" | '`' | null;
 }
 
 const consumeGeneratedSlotProtectedCharacter = (
@@ -1238,13 +1441,13 @@ const consumeGeneratedSlotProtectedCharacter = (
     }
     return true;
   }
-  if (state.quote !== undefined) {
+  if (state.quote !== null) {
     if (state.escaped) {
       state.escaped = false;
     } else if (character === '\\') {
       state.escaped = true;
     } else if (character === state.quote) {
-      state.quote = undefined;
+      state.quote = null;
     }
     return true;
   }
@@ -1296,7 +1499,7 @@ const splitGeneratedSlotEntries = (slotBody: string): readonly string[] => {
     escaped: false,
     lineComment: false,
     parentheses: 0,
-    quote: undefined,
+    quote: null,
   };
   for (let index = 0; index < body.length; index += 1) {
     const character = body[index] ?? '';
@@ -1310,7 +1513,7 @@ const splitGeneratedSlotEntries = (slotBody: string): readonly string[] => {
     }
     updateGeneratedSlotDepth(state, character);
     if (state.braces < 0 || state.brackets < 0 || state.parentheses < 0) {
-      throw new Error('generated owner slot contains unbalanced syntax');
+      return raiseScaffoldFailure('generated owner slot contains unbalanced syntax');
     }
     if (generatedSlotDepthIsZero(state) && (character === ',' || character === ';')) {
       entries.push(current.trim());
@@ -1319,19 +1522,19 @@ const splitGeneratedSlotEntries = (slotBody: string): readonly string[] => {
   }
   if (
     current.trim().length > 0 ||
-    state.quote !== undefined ||
+    state.quote !== null ||
     state.lineComment ||
     state.blockComment ||
     !generatedSlotDepthIsZero(state)
   ) {
-    throw new Error('generated owner slot contains incomplete syntax');
+    return raiseScaffoldFailure('generated owner slot contains incomplete syntax');
   }
   return entries;
 };
 
 const normalizeGeneratedSlotEntry = (entry: string): string =>
   entry
-    .replaceAll(/,\s*(?<closing>[}\]])/gu, '$<closing>')
+    .replaceAll(/,\s*(?<closing>[\]})])/gu, '$<closing>')
     .replaceAll(/\s+/gu, ' ')
     .replaceAll(/\s+(?<closing>[}\]])/gu, '$<closing>')
     .trim();
@@ -1355,13 +1558,20 @@ export const readGeneratedSlotEntries = (
     content.includes(startMarker, start + startMarker.length) ||
     content.includes(endMarker, end + endMarker.length)
   ) {
-    throw new Error(`generated owner file does not contain one valid ${startMarker} slot`);
+    return raiseScaffoldFailure(
+      `generated owner file does not contain one valid ${startMarker} slot`,
+    );
   }
-  try {
-    return splitGeneratedSlotEntries(content.slice(start + startMarker.length, end));
-  } catch {
-    throw new Error(`generated owner slot contains unsupported developer content: ${startMarker}`);
+  const entries = Result.try(() =>
+    splitGeneratedSlotEntries(content.slice(start + startMarker.length, end)),
+  );
+  if (Result.isFailure(entries)) {
+    return raiseScaffoldFailure(
+      `generated owner slot contains unsupported developer content: ${startMarker}`,
+      entries.failure,
+    );
   }
+  return entries.success;
 };
 
 export const removeGeneratedSlotEntry = (
@@ -1374,14 +1584,16 @@ export const removeGeneratedSlotEntry = (
   const entries = readGeneratedSlotEntries(content, startMarker, endMarker);
   const matching = entries.filter(matches);
   if (matching.length !== 1) {
-    throw new Error(`expected exactly one generated ${label}; found ${matching.length}`);
+    return raiseScaffoldFailure(
+      `expected exactly one generated ${label}; found ${matching.length}`,
+    );
   }
   const remaining = entries.filter((entry) => !matches(entry));
   const start = content.indexOf(startMarker);
   const end = content.indexOf(endMarker);
   const bodyStart = start + startMarker.length;
   const endLineStart = Math.max(content.lastIndexOf('\n', end - 1) + 1, 0);
-  const indentation = content.slice(endLineStart, end).match(/^[ \t]*/u)?.[0] ?? '';
+  const indentation = /^[ \t]*/u.exec(content.slice(endLineStart, end))?.[0] ?? '';
   const rendered = remaining
     .map((entry) =>
       entry
@@ -1423,24 +1635,28 @@ export const insertSortedSlot = (
     content.includes(startMarker, start + startMarker.length) ||
     content.includes(endMarker, end + endMarker.length)
   ) {
-    throw new Error(`generated owner file does not contain one valid ${startMarker} slot`);
+    return raiseScaffoldFailure(
+      `generated owner file does not contain one valid ${startMarker} slot`,
+    );
   }
   const bodyStart = start + startMarker.length;
   const existing = readGeneratedSlotEntries(content, startMarker, endMarker);
   if (existing.some((line) => !validateEntry(line))) {
-    throw new Error(`generated owner slot contains unsupported developer content: ${startMarker}`);
+    return raiseScaffoldFailure(
+      `generated owner slot contains unsupported developer content: ${startMarker}`,
+    );
   }
   const existingNormalized = new Set(existing.map(normalizeGeneratedSlotEntry));
   for (const entry of additions) {
     if (existingNormalized.has(normalizeGeneratedSlotEntry(entry))) {
-      throw new Error(`generated export already exists: ${entry}`);
+      return raiseScaffoldFailure(`generated export already exists: ${entry}`);
     }
   }
   const entries = [...existing, ...additions].toSorted((left, right) =>
     generatedSlotSortKey(left).localeCompare(generatedSlotSortKey(right)),
   );
   const endLineStart = Math.max(content.lastIndexOf('\n', end - 1) + 1, 0);
-  const indentation = content.slice(endLineStart, end).match(/^[ \t]*/u)?.[0] ?? '';
+  const indentation = /^[ \t]*/u.exec(content.slice(endLineStart, end))?.[0] ?? '';
   const renderedEntries = entries
     .map((entry) =>
       entry

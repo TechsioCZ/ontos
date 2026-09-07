@@ -1,9 +1,11 @@
-// @effect-diagnostics asyncFunction:off globalDate:off
-/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type, unicorn/no-thenable -- Focused harness implements only the owner service's Drizzle seam. */
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off globalDate:off -- Existing compatibility boundary; expires: 2026-12-31.
+/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type, unicorn/no-thenable -- Focused harness implements only the owner service's Drizzle seam. expires: 2026-12-31. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { SQL } from 'drizzle-orm';
-import { DateTime, Effect } from 'effect';
+import { DateTime, Match, Schema } from 'effect';
+import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
 import { parties, partyIdentifierClaims, partyOfficialIdentifiers } from '../../src/db/schema.ts';
 import type { partyAliases } from '../../src/db/schema.ts';
 import {
@@ -149,7 +151,7 @@ const harness = (
 
 test('Add reuses a current same-Party identifier instead of duplicating an assertion', async () => {
   const db = harness();
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     addOfficialIdentifierRecord(db.transaction, tenantId, partyId, identifier, {
       actionInvocationId: 'invocation',
       matchRuleVersion: 'party-exact-claims.v1',
@@ -165,7 +167,7 @@ test('Add reuses a current same-Party identifier instead of duplicating an asser
 });
 
 test('Add retains ARES evidence separately from the accepting actor and only claims eligible Party types', async () => {
-  const externalEvidence = {
+  const externalEvidenceWire = {
     authorityPolicyKey: 'party_registry.ares_enrichment',
     authorityPolicyVersion: '1',
     cacheAgeSeconds: 0,
@@ -181,10 +183,12 @@ test('Add retains ARES evidence separately from the accepting actor and only cla
     reasonCode: 'authoritative_ico',
     servedAt: '2026-01-01T00:00:00.000Z',
   } as const;
+  const externalEvidence =
+    Schema.decodeUnknownSync(AresAppliedEvidenceSchema)(externalEvidenceWire);
   await Promise.all(
     (['ORGANIZATION', 'PERSON'] as const).map(async (partyType) => {
       const db = harness({ absent: true });
-      await Effect.runPromise(
+      await runEffectTestPromise(
         addOfficialIdentifierRecord(db.transaction, tenantId, partyId, identifier, {
           actionInvocationId: 'invocation',
           externalEvidence,
@@ -196,7 +200,12 @@ test('Add retains ARES evidence separately from the accepting actor and only cla
           validFrom: '2026-01-01T00:00:00.000Z',
         }),
       );
-      assert.deepEqual(db.inserts[0]?.values['externalEvidence'], externalEvidence);
+      const storedEvidence = db.inserts[0]?.values['externalEvidence'];
+      assert.deepEqual(storedEvidence, externalEvidenceWire);
+      assert.deepEqual(
+        Schema.decodeUnknownSync(AresAppliedEvidenceSchema)(storedEvidence),
+        externalEvidence,
+      );
       assert.equal(db.inserts[0]?.values['acceptedByPrincipalId'], principalId);
       assert.equal(
         db.inserts.filter((entry) => entry.table === partyIdentifierClaims).length,
@@ -211,7 +220,7 @@ test('ending an identifier preserves its fact and releases its current claim', a
     claimOwner: partyId,
     current: row({ verificationState: 'VERIFIED', verifiedAt: date('2026-01-01T00:00:00.000Z') }),
   });
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     endOfficialIdentifierRecord(
       db.transaction,
       tenantId,
@@ -228,7 +237,7 @@ test('ending an identifier preserves its fact and releases its current claim', a
 
 test('a future end does not release a presently valid claim', async () => {
   const db = harness();
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     endOfficialIdentifierRecord(
       db.transaction,
       tenantId,
@@ -250,7 +259,7 @@ const verificationCommand = {
 
 test('verification collision changes neither metadata nor claim ownership', async () => {
   const db = harness({ claimOwner: 'another-party' });
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     updateOfficialIdentifierVerificationRecord(
       db.transaction,
       tenantId,
@@ -265,7 +274,7 @@ test('verification collision changes neither metadata nor claim ownership', asyn
 
 test('verification preserves before-state and immutable identity/provenance while acquiring an eligible claim', async () => {
   const db = harness();
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     updateOfficialIdentifierVerificationRecord(
       db.transaction,
       tenantId,
@@ -274,12 +283,13 @@ test('verification preserves before-state and immutable identity/provenance whil
     ),
   );
   assert.equal(result._tag, 'found');
-  if (result._tag !== 'found') {
-    return;
-  }
-  assert.equal(result.previous.verificationState, 'UNVERIFIED');
-  assert.equal(result.value.verificationState, 'VERIFIED');
-  assert.equal(result.value.provenanceSource, 'USER_ASSERTION');
+  const found = Match.value(result).pipe(
+    Match.tag('found', (value) => value),
+    Match.orElse(() => assert.fail('Expected the identifier verification update to succeed')),
+  );
+  assert.equal(found.previous.verificationState, 'UNVERIFIED');
+  assert.equal(found.value.verificationState, 'VERIFIED');
+  assert.equal(found.value.provenanceSource, 'USER_ASSERTION');
   assert.deepEqual(Object.keys(db.updates[0] ?? {}).toSorted(), [
     'verificationState',
     'verifiedAt',
@@ -290,7 +300,7 @@ test('verification preserves before-state and immutable identity/provenance whil
 
 test('PERSON verification cannot acquire an implicit strong identifier claim', async () => {
   const db = harness({ partyType: 'PERSON' });
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     updateOfficialIdentifierVerificationRecord(
       db.transaction,
       tenantId,
@@ -308,7 +318,7 @@ test('verification downgrade releases its claim without erasing the previous ver
     claimOwner: partyId,
     current: row({ verificationState: 'VERIFIED', verifiedAt, verifiedByPrincipalId: principalId }),
   });
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     updateOfficialIdentifierVerificationRecord(db.transaction, tenantId, officialIdentifierId, {
       ...verificationCommand,
       expectedVerification: 'VERIFIED',
@@ -316,12 +326,13 @@ test('verification downgrade releases its claim without erasing the previous ver
     }),
   );
   assert.equal(result._tag, 'found');
-  if (result._tag !== 'found') {
-    return;
-  }
-  assert.equal(result.previous.verifiedAt, verifiedAt);
-  assert.equal(result.previous.verifiedByPrincipalId, principalId);
-  assert.equal(result.value.verifiedAt, null);
+  const found = Match.value(result).pipe(
+    Match.tag('found', (value) => value),
+    Match.orElse(() => assert.fail('Expected the identifier verification downgrade to succeed')),
+  );
+  assert.equal(found.previous.verifiedAt, verifiedAt);
+  assert.equal(found.previous.verifiedByPrincipalId, principalId);
+  assert.equal(found.value.verifiedAt, null);
   assert.equal(db.deleted(), 1);
 });
 
@@ -329,7 +340,7 @@ test('archived Party and stale verification updates are rejected before mutation
   await Promise.all(
     [harness({ archived: true }), harness({ current: row({ verificationState: 'REJECTED' }) })].map(
       async (db) => {
-        const result = await Effect.runPromise(
+        const result = await runEffectTestPromise(
           updateOfficialIdentifierVerificationRecord(
             db.transaction,
             tenantId,

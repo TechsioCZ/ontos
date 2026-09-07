@@ -1,4 +1,5 @@
-// @effect-diagnostics asyncFunction:off lazyEffect:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off lazyEffect:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Tracer, Predicate } from 'effect';
@@ -203,7 +204,7 @@ void test('deduplicates one batch, reuses an immutable snapshot, and fails undec
       role: 'search',
     }),
   ] as const;
-  const snapshot = await Effect.runPromise(
+  const snapshot = await runEffectTestPromise(
     prepareModuleStateSnapshot(service, 'tenant-1', descriptors),
   );
   assert.deepEqual(observedKeys, ['billing.invoice', 'inventory.stock']);
@@ -211,8 +212,8 @@ void test('deduplicates one batch, reuses an immutable snapshot, and fails undec
   assert.equal(Object.isFrozen(snapshot), true);
   assert.equal(Object.isFrozen(snapshot.entrypointKeys), true);
   assert.equal(Object.isFrozen(snapshot.moduleKeys), true);
-  await Effect.runPromise(checkModuleEntrypoint(snapshot, descriptors[0]));
-  await Effect.runPromise(checkModuleEntrypoint(snapshot, descriptors[0]));
+  await runEffectTestPromise(checkModuleEntrypoint(snapshot, descriptors[0]));
+  await runEffectTestPromise(checkModuleEntrypoint(snapshot, descriptors[0]));
   assert.equal(reads, 1);
 
   const undeclared = defineTenantModuleEntrypoint({
@@ -222,7 +223,9 @@ void test('deduplicates one batch, reuses an immutable snapshot, and fails undec
     moduleKey: 'people.directory',
     role: 'page',
   });
-  const failure = await Effect.runPromise(Effect.flip(checkModuleEntrypoint(snapshot, undeclared)));
+  const failure = await runEffectTestPromise(
+    Effect.flip(checkModuleEntrypoint(snapshot, undeclared)),
+  );
   assert.equal(failure._tag, 'ModuleStateCheckUnavailableError');
   const undeclaredSameModule = defineTenantModuleEntrypoint({
     access: 'write',
@@ -231,7 +234,7 @@ void test('deduplicates one batch, reuses an immutable snapshot, and fails undec
     moduleKey: 'inventory.stock',
     role: 'action',
   });
-  const sameModuleFailure = await Effect.runPromise(
+  const sameModuleFailure = await runEffectTestPromise(
     Effect.flip(checkModuleEntrypoint(snapshot, undeclaredSameModule)),
   );
   assert.equal(sameModuleFailure._tag, 'ModuleStateCheckUnavailableError');
@@ -255,7 +258,7 @@ void test('records safe acquisition and evaluation telemetry including snapshot 
     listTenantModuleStates: () => Effect.succeed([]),
   };
 
-  await Effect.runPromise(
+  await runEffectTestPromise(
     Effect.gen(function* telemetryEffect() {
       const snapshot = yield* prepareModuleStateSnapshot(service, 'tenant-1', [descriptor]);
       yield* checkModuleEntrypoint(snapshot, descriptor);
@@ -302,11 +305,11 @@ void test('empty and system-only compositions perform zero reads', async () => {
     moduleKey: 'core.audit',
     role: 'page',
   });
-  const empty = await Effect.runPromise(prepareModuleStateSnapshot(service, 'tenant-1', []));
-  const systemOnly = await Effect.runPromise(
+  const empty = await runEffectTestPromise(prepareModuleStateSnapshot(service, 'tenant-1', []));
+  const systemOnly = await runEffectTestPromise(
     prepareModuleStateSnapshot(service, 'tenant-1', [system]),
   );
-  await Effect.runPromise(checkModuleEntrypoint(systemOnly, system));
+  await runEffectTestPromise(checkModuleEntrypoint(systemOnly, system));
   assert.deepEqual(empty.moduleKeys, []);
   assert.equal(reads, 0);
 });
@@ -328,7 +331,7 @@ void test('the gateway rejects missing trusted principal context before state ac
     listActiveTenantModules: () => Effect.succeed([]),
     listTenantModuleStates: () => Effect.succeed([]),
   });
-  const failure = await Effect.runPromise(
+  const failure = await runEffectTestPromise(
     Effect.flip(makeModuleEntrypointGateway(gate).prepareSnapshotInput({}, [descriptor])),
   );
   assert.equal(failure._tag, 'ModuleStateCheckUnavailableError');
@@ -452,7 +455,7 @@ void test('gates every future entrypoint category before its fake implementation
       role: 'report',
     }),
   ] as const;
-  const snapshot = await Effect.runPromise(
+  const snapshot = await runEffectTestPromise(
     gateway.prepareSnapshot(trustedContext(), [...allowed, ...denied]),
   );
   assert.equal(reads, 1);
@@ -463,15 +466,14 @@ void test('gates every future entrypoint category before its fake implementation
         authorizationCalls += 1;
       }),
       entrypoint,
-      load: () =>
-        Effect.sync(() => {
-          loadCalls += 1;
-        }),
+      load: Effect.sync(() => {
+        loadCalls += 1;
+      }),
       snapshot,
     });
-  await Promise.all(allowed.map(async (entrypoint) => await Effect.runPromise(run(entrypoint))));
+  await Promise.all(allowed.map(async (entrypoint) => await runEffectTestPromise(run(entrypoint))));
   const deniedFailures = await Promise.all(
-    denied.map(async (entrypoint) => await Effect.runPromise(Effect.flip(run(entrypoint)))),
+    denied.map(async (entrypoint) => await runEffectTestPromise(Effect.flip(run(entrypoint)))),
   );
   for (const failure of deniedFailures) {
     assert.equal(failure._tag, 'ModuleStateDeniedError');
@@ -496,24 +498,26 @@ void test('the gateway never evaluates authorization or lazy implementation on d
     moduleKey: 'inventory.stock',
     role: 'action',
   });
-  const snapshot = await Effect.runPromise(gateway.prepareSnapshot(trustedContext(), [descriptor]));
+  const snapshot = await runEffectTestPromise(
+    gateway.prepareSnapshot(trustedContext(), [descriptor]),
+  );
   let authorizationCalls = 0;
   let loadFactoryCalls = 0;
   let loadCalls = 0;
-  const failure = await Effect.runPromise(
+  const failure = await runEffectTestPromise(
     Effect.flip(
       gateway.run({
         authorize: Effect.sync(() => {
           authorizationCalls += 1;
         }),
         entrypoint: descriptor,
-        load: () => {
+        load: Effect.suspend(() => {
           loadFactoryCalls += 1;
           return Effect.sync(() => {
             loadCalls += 1;
             return 'loaded';
           });
-        },
+        }),
         snapshot,
       }),
     ),
@@ -533,6 +537,8 @@ void test('a missing row is a definite denial rather than an unavailable read', 
     role: 'page',
   });
   const snapshot = makeModuleStateSnapshot('tenant-1', [descriptor], []);
-  const failure = await Effect.runPromise(Effect.flip(checkModuleEntrypoint(snapshot, descriptor)));
+  const failure = await runEffectTestPromise(
+    Effect.flip(checkModuleEntrypoint(snapshot, descriptor)),
+  );
   assert.equal(failure._tag, 'ModuleStateDeniedError');
 });

@@ -6,7 +6,7 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, Match } from 'effect';
 import {
   PartyCorrectionRequestSchema,
   PartyCorrectionResponseSchema,
@@ -25,6 +25,15 @@ interface Services {
 }
 export const partyCorrectionPermissionTarget = () =>
   ({ kind: 'tenant', permission: 'review_party_identity' }) as const;
+const unavailable = (cause: unknown) =>
+  Object.defineProperty(
+    new ReadHandlerUnavailable({
+      code: 'read_handler_unavailable',
+      reason: 'Party Correction persistence is unavailable',
+    }),
+    'cause',
+    { value: cause },
+  );
 export const partyCorrectionRead = defineRead(
   {
     accessKind: 'detail',
@@ -44,22 +53,22 @@ export const partyCorrectionRead = defineRead(
   },
   (input, context: ReadHandlerContext<Services>) =>
     context.services.find(input.correctionRef.resourceId).pipe(
-      Effect.mapError(
-        () =>
-          new ReadHandlerUnavailable({
-            code: 'read_handler_unavailable',
-            reason: 'Party Correction persistence is unavailable',
-          }),
-      ),
+      Effect.mapError(unavailable),
       Effect.flatMap((found) =>
-        found._tag === 'found'
-          ? Effect.succeed({ evidence: { resultCount: 1 }, result: found.value })
-          : Effect.fail(
+        Match.value(found).pipe(
+          Match.tag('found', ({ value }) =>
+            Effect.succeed({ evidence: { resultCount: 1 }, result: value }),
+          ),
+          Match.tag('not_found', () =>
+            Effect.fail(
               new ReadHandlerNotFound({
                 code: 'read_handler_not_found',
                 reason: 'The Party Correction does not exist',
               }),
             ),
+          ),
+          Match.exhaustive,
+        ),
       ),
     ),
   (transaction, scope) =>

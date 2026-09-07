@@ -1,10 +1,11 @@
-/* eslint-disable oxc/no-barrel-file -- The published Effect API entrypoint composes and exports all governed owner contracts. */
+/* eslint-disable oxc/no-barrel-file -- The published Effect API entrypoint composes and exports all governed owner contracts. expires: 2026-12-31. */
 import {
   HttpApi,
   HttpApiEndpoint,
   HttpApiGroup,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
+import { Brand } from 'effect';
 
 import { AresLookupApi } from './apis/ares-lookup.ts';
 import { CounterpartiesSearchApi } from './apis/counterparties-search.ts';
@@ -23,8 +24,15 @@ import { PartyOfficialIdentifierDetailApi } from './apis/party-official-identifi
 import { PartyOfficialIdentifierHistoryApi } from './apis/party-official-identifier-history.ts';
 import { PartyRelationshipDetailApi } from './apis/party-relationship-detail.ts';
 import { partyRegistryCommandRecoveryApi, partyRegistryCommandsApi } from './command-api.ts';
+import {
+  organizationEngagementMutationApi,
+  personEngagementMutationApi,
+} from './engagement-profile-api.ts';
+import { OrganizationEngagementProfileApi } from './apis/organization-engagement-profile.ts';
+import { PersonEngagementProfileApi } from './apis/person-engagement-profile.ts';
 
 export * from './command-api.ts';
+export * from './engagement-profile-api.ts';
 
 export * from './apis/ares-lookup.ts';
 export * from './apis/counterparties-search.ts';
@@ -43,34 +51,16 @@ export * from './apis/party-official-identifier-detail.ts';
 export * from './apis/party-official-identifier-history.ts';
 export * from './apis/party-relationship-detail.ts';
 
-export interface PartyRegistryMarker {
-  readonly appId: string;
-  readonly build: string;
-  readonly buildMarker: string;
-  readonly deployProfile: string;
-  readonly kind: 'microvertical-delivery-unit';
-  readonly packageName: string;
-  readonly schemaVersion: 1;
-  readonly sourceRevision: string;
-  readonly surface: string;
-  readonly unitId: string;
-  readonly version: string;
-}
+const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
+const UnitIdSchema = Schema.String.pipe(Schema.brand('UnitId'));
+type AppId = typeof AppIdSchema.Type;
+type UnitId = typeof UnitIdSchema.Type;
 
-export interface PartyRegistryReadiness {
-  readonly checks: {
-    readonly api: 'ready';
-    readonly moduleFederation: 'ready';
-    readonly ssr: 'ready';
-    readonly translations: 'ready';
-  };
-  readonly marker: PartyRegistryMarker;
-  readonly status: 'ready';
-  readonly versionSkew: 'none';
-}
+export const partyRegistryAppIdFromString = Brand.nominal<AppId>();
+export const partyRegistryUnitIdFromString = Brand.nominal<UnitId>();
 
-export const partyRegistryMarkerSchema: Schema.Codec<PartyRegistryMarker> = Schema.Struct({
-  appId: Schema.String,
+export const partyRegistryMarkerSchema = Schema.Struct({
+  appId: AppIdSchema,
   build: Schema.String,
   buildMarker: Schema.String,
   deployProfile: Schema.String,
@@ -79,11 +69,13 @@ export const partyRegistryMarkerSchema: Schema.Codec<PartyRegistryMarker> = Sche
   schemaVersion: Schema.Literal(1),
   sourceRevision: Schema.String,
   surface: Schema.String,
-  unitId: Schema.String,
+  unitId: UnitIdSchema,
   version: Schema.String,
 });
 
-export const partyRegistryReadinessSchema: Schema.Codec<PartyRegistryReadiness> = Schema.Struct({
+export type PartyRegistryMarker = typeof partyRegistryMarkerSchema.Type;
+
+export const partyRegistryReadinessSchema = Schema.Struct({
   checks: Schema.Struct({
     api: Schema.Literal('ready'),
     moduleFederation: Schema.Literal('ready'),
@@ -94,6 +86,8 @@ export const partyRegistryReadinessSchema: Schema.Codec<PartyRegistryReadiness> 
   status: Schema.Literal('ready'),
   versionSkew: Schema.Literal('none'),
 });
+
+export type PartyRegistryReadiness = typeof partyRegistryReadinessSchema.Type;
 
 export interface OperationContext {
   readonly method: string;
@@ -106,7 +100,6 @@ export interface OperationContext {
     | 'effect-adapter'
     | 'data-platform'
     | 'unknown';
-  readonly traceId?: string;
 }
 
 export const partyRegistryFoundationApi = HttpApi.make('PartyRegistryFoundationApi').add(
@@ -121,6 +114,10 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(partyRegistryFoundationApi)
   .addHttpApi(partyRegistryCommandsApi)
   .addHttpApi(partyRegistryCommandRecoveryApi)
+  .addHttpApi(organizationEngagementMutationApi)
+  .addHttpApi(personEngagementMutationApi)
+  .addHttpApi(OrganizationEngagementProfileApi)
+  .addHttpApi(PersonEngagementProfileApi)
   .addHttpApi(PartyDetailApi)
   // Read-only UX preview; durable matching is the explicit matchParty command.
   .addHttpApi(PartyMatchApi)

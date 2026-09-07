@@ -1,6 +1,6 @@
-// @effect-diagnostics lazyEffect:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { expect, test } from '@rstest/core';
-import { Effect, Predicate, Schema } from 'effect';
+import { Effect, Function as Fn, Match, Predicate, Schema } from 'effect';
 import {
   ModuleStateCheckUnavailableError,
   ModuleStateDeniedError,
@@ -91,7 +91,7 @@ const makeFakeGateway = (options: FakeGatewayOptions = {}): ModuleEntrypointGate
     run: (input) =>
       check(input.snapshot, input.entrypoint).pipe(
         Effect.andThen(input.authorize),
-        Effect.andThen(Effect.suspend(input.load)),
+        Effect.andThen(input.load),
       ),
   };
   return gateway;
@@ -115,218 +115,235 @@ const component = defineTenantModuleEntrypoint({
 const compatibleRemoteModule = (value: { readonly default: unknown }) =>
   Predicate.isFunction(value.default);
 
-test('prepares one complete trusted composition and invokes allowed lazy loaders', async () => {
-  let batches = 0;
-  let loads = 0;
-  const gateway = makeFakeGateway({
-    onPrepare: (entrypoints) => {
-      batches += 1;
-      expect(entrypoints).toEqual([page, component]);
-    },
-  });
-  const result = await Effect.runPromise(
-    loadModuleEntrypointComposition(
-      gateway,
-      trustedContext,
-      [page, component].map((entrypoint) => ({
-        authorize: Effect.void,
-        entrypoint,
-        load: () =>
-          Effect.sync(() => {
-            loads += 1;
-            return `loaded-${loads}`;
-          }),
-      })),
-    ),
-  );
-  expect(result).toEqual(['loaded-1', 'loaded-2']);
-  expect(batches).toBe(1);
-});
+type EffectTestCallback = () => Promise<void>;
 
-test('checks the complete composition before authorizing or invoking any loader', async () => {
-  let authorizations = 0;
-  let loads = 0;
-  const gateway = makeFakeGateway({
-    deniedEntrypointKeys: new Set([component.entrypointKey]),
-  });
-  await expect(
-    Effect.runPromise(
-      loadModuleEntrypointComposition(
+const runEffectTest = <Failure>(effect: Effect.Effect<void, Failure>): EffectTestCallback =>
+  Fn.flow(Fn.constant(effect), runEffectTestPromise);
+
+test(
+  'prepares one complete trusted composition and invokes allowed lazy loaders',
+  runEffectTest(
+    Effect.gen(function* verifyCompleteComposition() {
+      let batches = 0;
+      let loads = 0;
+      const gateway = makeFakeGateway({
+        onPrepare: (entrypoints) => {
+          batches += 1;
+          expect(entrypoints).toEqual([page, component]);
+        },
+      });
+      const result = yield* loadModuleEntrypointComposition(
         gateway,
         trustedContext,
         [page, component].map((entrypoint) => ({
-          authorize: Effect.sync(() => {
-            authorizations += 1;
-          }),
+          authorize: Effect.void,
           entrypoint,
-          load: () =>
-            Effect.sync(() => {
+          load: Effect.sync(() => {
+            loads += 1;
+            return `loaded-${loads}`;
+          }),
+        })),
+      );
+      expect(result).toEqual(['loaded-1', 'loaded-2']);
+      expect(batches).toBe(1);
+    }),
+  ),
+);
+
+test(
+  'checks the complete composition before authorizing or invoking any loader',
+  runEffectTest(
+    Effect.gen(function* verifyDeniedComposition() {
+      let authorizations = 0;
+      let loads = 0;
+      const gateway = makeFakeGateway({
+        deniedEntrypointKeys: new Set([component.entrypointKey]),
+      });
+      const error = yield* Effect.flip(
+        loadModuleEntrypointComposition(
+          gateway,
+          trustedContext,
+          [page, component].map((entrypoint) => ({
+            authorize: Effect.sync(() => {
+              authorizations += 1;
+            }),
+            entrypoint,
+            load: Effect.sync(() => {
               loads += 1;
               return loads;
             }),
-        })),
-      ),
-    ),
-  ).rejects.toMatchObject({ _tag: 'ModuleStateDeniedError' });
-  expect(authorizations).toBe(0);
-  expect(loads).toBe(0);
-});
+          })),
+        ),
+      );
+      expect(error).toMatchObject({ _tag: 'ModuleStateDeniedError' });
+      expect(authorizations).toBe(0);
+      expect(loads).toBe(0);
+    }),
+  ),
+);
 
-type RemoteLoadUnavailable = Readonly<{ readonly _tag: 'RemoteLoadUnavailable' }>;
-type FakeUnavailableUiState = 'forbidden' | 'unavailable';
+class RemoteLoadUnavailable extends Schema.TaggedError<RemoteLoadUnavailable>()(
+  'RemoteLoadUnavailable',
+  {},
+) {}
+const FakeUnavailableUiStateSchema = Schema.Literals(['forbidden', 'unavailable']);
+type FakeUnavailableUiState = typeof FakeUnavailableUiStateSchema.Type;
 
 const mapFakeUnavailableUiState = (
   error: ModuleStateGateError | RemoteLoadUnavailable,
-): FakeUnavailableUiState => {
-  switch (error._tag) {
-    case 'ModuleStateDeniedError': {
-      return 'forbidden';
-    }
-    case 'ModuleStateCheckUnavailableError':
-    case 'RemoteLoadUnavailable': {
-      return 'unavailable';
-    }
-    default: {
-      return error;
-    }
-  }
-};
-
-test('preserves typed gate and remote-load failures for exhaustive UI mapping', async () => {
-  const gateFailure = await Effect.runPromise(
-    Effect.flip(
-      loadModuleEntrypointComposition(makeFakeGateway({ unavailable: true }), trustedContext, [
-        { authorize: Effect.void, entrypoint: page, load: () => Effect.succeed('unreachable') },
-      ]),
+): FakeUnavailableUiState =>
+  Match.value(error).pipe(
+    Match.tag('ModuleStateDeniedError', () => 'forbidden' as const),
+    Match.tag(
+      'ModuleStateCheckUnavailableError',
+      'RemoteLoadUnavailable',
+      () => 'unavailable' as const,
     ),
+    Match.exhaustive,
   );
-  expect(mapFakeUnavailableUiState(gateFailure)).toBe('unavailable');
 
-  const remoteFailure = await Effect.runPromise(
-    Effect.flip(
-      loadModuleEntrypointComposition(makeFakeGateway(), trustedContext, [
+test(
+  'preserves typed gate and remote-load failures for exhaustive UI mapping',
+  runEffectTest(
+    Effect.gen(function* verifyTypedFailures() {
+      const gateFailure = yield* Effect.flip(
+        loadModuleEntrypointComposition(makeFakeGateway({ unavailable: true }), trustedContext, [
+          { authorize: Effect.void, entrypoint: page, load: Effect.succeed('unreachable') },
+        ]),
+      );
+      expect(mapFakeUnavailableUiState(gateFailure)).toBe('unavailable');
+
+      const remoteFailure = yield* Effect.flip(
+        loadModuleEntrypointComposition(makeFakeGateway(), trustedContext, [
+          {
+            authorize: Effect.void,
+            entrypoint: page,
+            load: Effect.fail(new RemoteLoadUnavailable()),
+          },
+        ]),
+      );
+      expect(remoteFailure).toEqual(new RemoteLoadUnavailable());
+      expect(mapFakeUnavailableUiState(remoteFailure)).toBe('unavailable');
+    }),
+  ),
+);
+
+test(
+  'settles browser entrypoint success, rejection, incompatibility, and timeout independently',
+  runEffectTest(
+    Effect.gen(function* verifySettledLoads() {
+      const pending = Promise.withResolvers<{ readonly default: () => null }>();
+      const [ready, unavailable, incompatible, timedOut] = yield* Effect.all(
+        [
+          settleModuleEntrypointLoad(
+            Fn.constant(Promise.resolve({ default: () => null })),
+            compatibleRemoteModule,
+            50,
+          ),
+          settleModuleEntrypointLoad(
+            Fn.constant(Promise.reject(new Error('remote unavailable'))),
+            compatibleRemoteModule,
+            50,
+          ),
+          settleModuleEntrypointLoad(
+            Fn.constant(Promise.resolve({ default: 'not a component' })),
+            compatibleRemoteModule,
+            50,
+          ),
+          settleModuleEntrypointLoad(Fn.constant(pending.promise), compatibleRemoteModule, 1),
+        ],
+        { concurrency: 'unbounded' },
+      );
+
+      expect(ready.state).toBe('ready');
+      expect(unavailable).toEqual({ reason: 'unavailable', state: 'unavailable' });
+      expect(incompatible).toEqual({ reason: 'incompatible', state: 'unavailable' });
+      expect(timedOut).toEqual({ reason: 'timeout', state: 'unavailable' });
+    }),
+  ),
+);
+
+test(
+  'settles several browser entrypoints without one failure hiding healthy loads',
+  runEffectTest(
+    Effect.gen(function* verifySettledLoadCollection() {
+      const results = yield* settleModuleEntrypointLoads([
         {
-          authorize: Effect.void,
-          entrypoint: page,
-          load: () => Effect.fail<RemoteLoadUnavailable>({ _tag: 'RemoteLoadUnavailable' }),
+          identity: 'documents-center/page',
+          isCompatible: compatibleRemoteModule,
+          load: Fn.constant(Promise.resolve({ default: () => null })),
+          timeoutMs: 50,
         },
-      ]),
-    ),
-  );
-  expect(remoteFailure).toEqual({ _tag: 'RemoteLoadUnavailable' });
-  expect(mapFakeUnavailableUiState(remoteFailure)).toBe('unavailable');
-});
-
-test('settles browser entrypoint success, rejection, incompatibility, and timeout independently', async () => {
-  const pending = Promise.withResolvers<{ readonly default: () => null }>();
-
-  const [ready, unavailable, incompatible, timedOut] = await Promise.all([
-    Effect.runPromise(
-      settleModuleEntrypointLoad(async () => ({ default: () => null }), compatibleRemoteModule, 50),
-    ),
-    Effect.runPromise(
-      settleModuleEntrypointLoad(
-        async () => {
-          throw new Error('remote unavailable');
+        {
+          identity: 'property-registry/page',
+          isCompatible: compatibleRemoteModule,
+          load: Fn.constant(Promise.reject(new Error('remote unavailable'))),
+          timeoutMs: 50,
         },
-        compatibleRemoteModule,
-        50,
-      ),
-    ),
-    Effect.runPromise(
-      settleModuleEntrypointLoad(
-        async () => ({ default: 'not a component' }),
-        compatibleRemoteModule,
-        50,
-      ),
-    ),
-    Effect.runPromise(
-      settleModuleEntrypointLoad(async () => await pending.promise, compatibleRemoteModule, 1),
-    ),
-  ]);
-
-  expect(ready.state).toBe('ready');
-  expect(unavailable).toEqual({ reason: 'unavailable', state: 'unavailable' });
-  expect(incompatible).toEqual({ reason: 'incompatible', state: 'unavailable' });
-  expect(timedOut).toEqual({ reason: 'timeout', state: 'unavailable' });
-});
-
-test('settles several browser entrypoints without one failure hiding healthy loads', async () => {
-  const results = await Effect.runPromise(
-    settleModuleEntrypointLoads([
-      {
-        identity: 'documents-center/page',
-        isCompatible: compatibleRemoteModule,
-        load: async () => ({ default: () => null }),
-        timeoutMs: 50,
-      },
-      {
-        identity: 'property-registry/page',
-        isCompatible: compatibleRemoteModule,
-        load: async () => {
-          throw new Error('remote unavailable');
+        {
+          identity: 'throwing-validator/page',
+          isCompatible: () => {
+            throw new TypeError('malformed runtime value');
+          },
+          load: Fn.constant(Promise.resolve({ default: () => null })),
+          timeoutMs: 50,
         },
-        timeoutMs: 50,
-      },
-      {
-        identity: 'throwing-validator/page',
-        isCompatible: () => {
-          throw new TypeError('malformed runtime value');
-        },
-        load: async () => ({ default: () => null }),
-        timeoutMs: 50,
-      },
-    ]),
-  );
+      ]);
 
-  expect(results).toEqual([
-    {
-      identity: 'documents-center/page',
-      state: 'ready',
-      value: expect.objectContaining({ default: expect.any(Function) }),
-    },
-    {
-      identity: 'property-registry/page',
-      reason: 'unavailable',
-      state: 'unavailable',
-    },
-    {
-      identity: 'throwing-validator/page',
-      reason: 'incompatible',
-      state: 'unavailable',
-    },
-  ]);
-});
+      expect(results).toEqual([
+        {
+          identity: 'documents-center/page',
+          state: 'ready',
+          value: expect.objectContaining({ default: expect.any(Function) }),
+        },
+        {
+          identity: 'property-registry/page',
+          reason: 'unavailable',
+          state: 'unavailable',
+        },
+        {
+          identity: 'throwing-validator/page',
+          reason: 'incompatible',
+          state: 'unavailable',
+        },
+      ]);
+    }),
+  ),
+);
 
 test.each(['selection_required', 'not_found', 'forbidden', 'unavailable'] as const)(
   'never invokes a remote loader after a %s target resolution',
-  async (outcome) => {
+  Fn.flow((outcome) => {
     let loads = 0;
-    await expect(
-      Effect.runPromise(
+    return Effect.gen(function* verifyRejectedTargetResolution() {
+      const failure = yield* Effect.flip(
         resolveThenLoadModuleTarget(Effect.fail({ outcome }), () =>
           Effect.sync(() => {
             loads += 1;
             return 'unreachable';
           }),
         ),
-      ),
-    ).rejects.toEqual({ outcome });
-    expect(loads).toBe(0);
-  },
+      );
+      expect(failure).toEqual({ outcome });
+      expect(loads).toBe(0);
+    });
+  }, runEffectTestPromise),
 );
 
-test('invokes the lazy registry only after receiving an approved target', async () => {
-  let loads = 0;
-  const target = { appId: 'inventory-app', componentKey: 'inventory.stock.page' };
-  const result = await Effect.runPromise(
-    resolveThenLoadModuleTarget(Effect.succeed(target), (approved) =>
-      Effect.sync(() => {
-        loads += 1;
-        return approved.componentKey;
-      }),
-    ),
-  );
-  expect(result).toBe('inventory.stock.page');
-  expect(loads).toBe(1);
-});
+test(
+  'invokes the lazy registry only after receiving an approved target',
+  runEffectTest(
+    Effect.gen(function* verifyApprovedTargetResolution() {
+      let loads = 0;
+      const target = { appId: 'inventory-app', componentKey: 'inventory.stock.page' };
+      const result = yield* resolveThenLoadModuleTarget(Effect.succeed(target), (approved) =>
+        Effect.sync(() => {
+          loads += 1;
+          return approved.componentKey;
+        }),
+      );
+      expect(result).toBe('inventory.stock.page');
+      expect(loads).toBe(1);
+    }),
+  ),
+);

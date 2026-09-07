@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Schema } from 'effect';
+import { DateTime, Option, Result, Schema } from 'effect';
 import {
   AresAppliedEvidenceSchema,
   aresRegisteredAddressMatches,
@@ -10,9 +10,9 @@ import {
   makeAresAppliedEvidence,
 } from '../../shared/domain/ares-application.ts';
 import type { AresCanonicalSnapshot } from '../../shared/domain/ares-application.ts';
-import type { AresSubjectEvidence } from '../../shared/domain/ares-evidence.ts';
+import type { AresSubjectEvidenceSchema } from '../../shared/domain/ares-evidence.ts';
 
-const evidence: AresSubjectEvidence = {
+const evidence: typeof AresSubjectEvidenceSchema.Encoded = {
   cacheAgeSeconds: 0,
   observedAt: '2026-09-03T08:00:00.000Z',
   provider: 'ares',
@@ -164,20 +164,36 @@ test('#246 durable evidence retains observation and authority metadata without r
   const [decision] = application.factDecisions;
   assert.ok(decision);
   const durable = makeAresAppliedEvidence(application, decision);
-  assert.equal(durable.observedAt, evidence.observedAt);
-  assert.equal(durable.decidedAt, application.decidedAt);
-  assert.equal(durable.providerChangedOn, '2026-09-01');
+  assert.equal(DateTime.formatIso(durable.observedAt), evidence.observedAt);
+  assert.equal(DateTime.formatIso(durable.decidedAt), DateTime.formatIso(application.decidedAt));
+  assert.equal(
+    Option.match(durable.providerChangedOn, {
+      onNone: () => null,
+      onSome: DateTime.formatIsoDateUtc,
+    }),
+    evidence.providerChangedOn,
+  );
   assert.equal(durable.fact, 'BUSINESS_NAME');
   assert.ok(durable.evidenceRef.startsWith('ares:01234567:'));
   assert.equal(Object.hasOwn(durable, 'subject'), false);
-  assert.deepEqual(Schema.decodeUnknownSync(AresAppliedEvidenceSchema)(durable), durable);
+  const encoded = Result.getOrThrow(Schema.encodeUnknownResult(AresAppliedEvidenceSchema)(durable));
+  assert.equal(encoded.observedAt, evidence.observedAt);
+  assert.equal(encoded.providerChangedOn, evidence.providerChangedOn);
+  assert.deepEqual(
+    Result.getOrThrow(Schema.decodeUnknownResult(AresAppliedEvidenceSchema)(encoded)),
+    durable,
+  );
 });
 
 const acceptedEvidence = (fact: 'BUSINESS_NAME' | 'ICO') => {
   const result = derive();
   const decision = result.factDecisions.find((item) => item.fact === fact);
   assert.ok(decision);
-  return makeAresAppliedEvidence(result, decision);
+  return Result.getOrThrow(
+    Schema.encodeUnknownResult(AresAppliedEvidenceSchema)(
+      makeAresAppliedEvidence(result, decision),
+    ),
+  );
 };
 const conflictingName: AresCanonicalSnapshot = {
   ...canonical,
@@ -214,8 +230,7 @@ test('unchanged provider revision nominates an exact conflicting accepted assert
 test('ordinary change, missing provenance, ambiguous assertions and temporal mismatch are not historical proof', () => {
   const assertion = conflictingName.factEvidence?.[0];
   assert.ok(assertion);
-  const prior = assertion.externalEvidence;
-  assert.ok(prior);
+  const prior = acceptedEvidence('BUSINESS_NAME');
   for (const snapshot of [
     { ...conflictingName, factEvidence: [] },
     { ...conflictingName, factEvidence: [assertion, { ...assertion, assertionId: 'other' }] },

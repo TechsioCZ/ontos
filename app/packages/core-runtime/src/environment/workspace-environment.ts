@@ -1,17 +1,24 @@
-/* oxlint-disable sonarjs/no-built-in-override, typescript/consistent-return */
-import { NodeFileSystem, NodePath } from '@effect/platform-node';
-import { Effect, FileSystem, Layer, Path } from 'effect';
+import { Effect, FileSystem, Option, Path } from 'effect';
 import bootstrapEnvironment from './workspace-environment-bootstrap.cjs';
 
-const isAppWorkspace = (candidate: string) =>
-  Effect.gen(function* isAppWorkspaceEffect() {
+const isAppWorkspace = Effect.fn('WorkspaceEnvironment.isAppWorkspace')(
+  function* isAppWorkspaceEffect(candidate: string) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return (
       (yield* fileSystem.exists(path.join(candidate, 'pnpm-workspace.yaml'))) &&
       (yield* fileSystem.exists(path.join(candidate, 'packages/core-runtime/package.json')))
     );
-  });
+  },
+);
+
+const workspaceCandidates = (path: Path.Path, candidate: string): readonly string[] => {
+  const nestedApp = path.join(candidate, 'app');
+  const parent = path.dirname(candidate);
+  return parent === candidate
+    ? [candidate, nestedApp]
+    : [candidate, nestedApp, ...workspaceCandidates(path, parent)];
+};
 
 /**
  * Finds the application workspace without relying on import.meta.dirname.
@@ -19,41 +26,13 @@ const isAppWorkspace = (candidate: string) =>
  * Modern.js bundles server modules into a cache directory, so module-relative
  * paths do not identify the source workspace at runtime.
  */
-const resolveAppWorkspaceRootWithServices = (startDirectory: string) =>
-  Effect.gen(function* resolveAppWorkspaceRootEffect() {
-    const path = yield* Path.Path;
-    let candidate = path.resolve(startDirectory);
-
-    while (true) {
-      if (yield* isAppWorkspace(candidate)) {
-        return candidate;
-      }
-
-      const nestedApp = path.join(candidate, 'app');
-      if (yield* isAppWorkspace(nestedApp)) {
-        return nestedApp;
-      }
-
-      const parent = path.dirname(candidate);
-      if (parent === candidate) {
-        return;
-      }
-
-      candidate = parent;
-    }
-  });
-
-const withNodeServices = <Value, Error>(
-  effect: Effect.Effect<Value, Error, FileSystem.FileSystem | Path.Path>,
-) =>
-  Effect.scoped(
-    Layer.build(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)).pipe(
-      Effect.flatMap((services) => Effect.provide(effect, services)),
-    ),
-  );
-
-export const resolveAppWorkspaceRootEffect = (startDirectory: string) =>
-  withNodeServices(resolveAppWorkspaceRootWithServices(startDirectory));
+export const resolveAppWorkspaceRootEffect = Effect.fn(
+  'WorkspaceEnvironment.resolveAppWorkspaceRootEffect',
+)(function* resolveAppWorkspaceRootEffect(startDirectory: string) {
+  const path = yield* Path.Path;
+  const candidates = workspaceCandidates(path, path.resolve(startDirectory));
+  return Option.getOrUndefined(yield* Effect.findFirst(candidates, isAppWorkspace));
+});
 
 export const resolveAppWorkspaceRoot: (startDirectory: string) => string | undefined =
   bootstrapEnvironment.resolveAppWorkspaceRootSync;

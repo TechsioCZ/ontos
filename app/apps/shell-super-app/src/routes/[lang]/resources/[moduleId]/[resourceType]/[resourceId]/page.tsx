@@ -1,10 +1,12 @@
-/* eslint-disable no-negated-condition, unicorn/no-negated-condition -- Closed route states read most clearly as error-versus-ready branches. */
+/* eslint-disable no-negated-condition, unicorn/no-negated-condition -- Closed route states read most clearly as error-versus-ready branches. expires: 2026-12-31. */
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { DateTime, Effect } from 'effect';
 import { useState } from 'react';
-import { attachResourceMedia, runEffectRequest } from '../../../../../../api/auth-client.ts';
+import { attachResourceMedia } from '../../../../../../api/auth-client.ts';
+import { runBrowserEffect } from '../../../../../../runtime/browser-effect-runtime.ts';
 import { AuthenticatedDashboardLayout } from '../../../../../shell-frame.tsx';
 import { useShellControls } from '../../../../../use-shell-controls.ts';
 
@@ -22,9 +24,17 @@ const ResourcePage = () => {
       return Promise.resolve();
     }
     setMediaState('pending');
-    return runEffectRequest(attachResourceMedia(model.resource.ref)).then(
-      () => setMediaState('success'),
-      () => setMediaState('failed'),
+    return runBrowserEffect(
+      attachResourceMedia(model.resource.ref).pipe(
+        Effect.matchEffect({
+          onFailure: (error) =>
+            Effect.sync(() => {
+              void error;
+              setMediaState('failed');
+            }),
+          onSuccess: () => Effect.sync(() => setMediaState('success')),
+        }),
+      ),
     );
   };
   if (model.shell.state !== 'authenticated') {
@@ -103,11 +113,14 @@ const ResourcePage = () => {
             <StatusText status="default">{t('shell.resource.timeline.empty')}</StatusText>
           ) : (
             <ol className="shell:grid shell:gap-3">
-              {model.resource.timeline.map((entry) => (
-                <li key={entry.timelineEntryId}>
-                  <time dateTime={entry.occurredAt}>{entry.occurredAt}</time> — {entry.summary}
-                </li>
-              ))}
+              {model.resource.timeline.map((entry) => {
+                const occurredAt = DateTime.formatIso(entry.occurredAt);
+                return (
+                  <li key={entry.timelineEntryId}>
+                    <time dateTime={occurredAt}>{occurredAt}</time> — {entry.summary}
+                  </li>
+                );
+              })}
             </ol>
           )}
         </section>

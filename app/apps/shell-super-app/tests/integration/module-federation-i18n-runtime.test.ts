@@ -5,13 +5,13 @@ import test from 'node:test';
 import * as Schema from 'effect/Schema';
 
 const shellConfigUrl = new URL('../../module-federation.config.ts', import.meta.url);
-const contactsConfigUrl = new URL(
-  '../../../../verticals/contacts/module-federation.config.ts',
+const partyRegistryConfigUrl = new URL(
+  '../../../../verticals/party-registry/module-federation.config.ts',
   import.meta.url,
 );
 const applicationPackageJsonUrls = new Set([
   new URL('../../package.json', import.meta.url).href,
-  new URL('../../../../verticals/contacts/package.json', import.meta.url).href,
+  new URL('../../../../verticals/party-registry/package.json', import.meta.url).href,
 ]);
 
 registerHooks({
@@ -29,10 +29,10 @@ registerHooks({
   },
 });
 
-test('Shell and Contacts share the i18n runtime that owns the federated provider context', async () => {
-  const [{ default: shellConfig }, { default: contactsConfig }] = await Promise.all([
+test('Shell and Party Registry share the i18n runtime that owns the federated provider context', async () => {
+  const [{ default: shellConfig }, { default: partyRegistryConfig }] = await Promise.all([
     import(shellConfigUrl.href),
-    import(contactsConfigUrl.href),
+    import(partyRegistryConfigUrl.href),
   ]);
   const require = createRequire(shellConfigUrl);
   const { version: i18nVersion } = Schema.decodeUnknownSync(
@@ -48,7 +48,7 @@ test('Shell and Contacts share the i18n runtime that owns the federated provider
 
   assert.deepEqual(shellConfig.shared?.['@modern-js/plugin-i18n/runtime'], expectedSharedRuntime);
   assert.deepEqual(
-    contactsConfig.shared?.['@modern-js/plugin-i18n/runtime'],
+    partyRegistryConfig.shared?.['@modern-js/plugin-i18n/runtime'],
     expectedSharedRuntime,
   );
 });

@@ -1,8 +1,10 @@
-// @effect-diagnostics asyncFunction:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect } from 'effect';
+import { Effect, Option } from 'effect';
 import {
+  OperationalScopeTransaction,
   installOperationalScopeFromTransactionService,
   tenantLegalEntityRlsPolicies,
   tenantRlsPolicies,
@@ -28,23 +30,24 @@ const transactionService = (
 void test('installs and verifies transaction-local scope and exposes no transaction controls', async () => {
   let calls = 0;
   const transaction = transactionService(
-    async () => {
+    () =>
+      Effect.sync(() => {
+        calls += 1;
+      }),
+    Effect.sync(() => {
       calls += 1;
-    },
-    async () => {
-      calls += 1;
-      return { legal_entity_id: 'entity', tenant_id: 'tenant' };
-    },
+      return Option.some({ legal_entity_id: 'entity', tenant_id: 'tenant' });
+    }),
   );
-  const capability = await Effect.runPromise(
-    installOperationalScopeFromTransactionService(transaction, {
+  const capability = await runEffectTestPromise(
+    installOperationalScopeFromTransactionService({
       authContextRef: 'job:test:run:scoped-transaction',
       authMethod: 'system',
       correlationId: 'c-1',
       legalEntityId: 'entity',
       principalId: 'principal',
       tenantId: 'tenant',
-    }),
+    }).pipe(Effect.provideService(OperationalScopeTransaction, transaction)),
   );
   assert.equal(calls, 2);
   assert.equal('commit' in capability, false);
@@ -55,18 +58,18 @@ void test('installs and verifies transaction-local scope and exposes no transact
 
 void test('fails closed when transaction settings do not match', async () => {
   const transaction = transactionService(
-    async () => {},
-    async () => ({ legal_entity_id: '', tenant_id: 'foreign' }),
+    () => Effect.void,
+    Effect.succeed(Option.some({ legal_entity_id: '', tenant_id: 'foreign' })),
   );
-  const error = await Effect.runPromise(
+  const error = await runEffectTestPromise(
     Effect.flip(
-      installOperationalScopeFromTransactionService(transaction, {
+      installOperationalScopeFromTransactionService({
         authContextRef: 'job:test:run:scoped-transaction',
         authMethod: 'system',
         correlationId: 'c-1',
         principalId: 'principal',
         tenantId: 'tenant',
-      }),
+      }).pipe(Effect.provideService(OperationalScopeTransaction, transaction)),
     ),
   );
   assert.equal(error._tag, 'OperationContextUnavailable');

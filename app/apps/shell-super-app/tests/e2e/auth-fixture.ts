@@ -1,8 +1,8 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { APP_ENV_PATH } from '@app/core-runtime/workspace-environment';
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
-import { config as loadDotenv } from 'dotenv';
 import { eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -15,6 +15,7 @@ import {
   tenantModuleStates,
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
+import { loadAuthConfig } from '../../api/auth/config.ts';
 import {
   account,
   authDatabaseSchema,
@@ -44,17 +45,11 @@ export const e2eTenants = {
 } as const;
 
 export const createAuthenticationFixture = async () => {
-  loadDotenv({
-    path: APP_ENV_PATH,
-    quiet: true,
-  });
-  const connectionString = process.env['DATABASE_URL'];
-  const secret = process.env['BETTER_AUTH_SECRET'];
-  const baseURL = process.env['BETTER_AUTH_URL'];
-
-  if (connectionString === undefined || secret === undefined || baseURL === undefined) {
-    throw new Error('The E2E authentication fixture requires the root development environment');
-  }
+  const {
+    baseUrl: baseURL,
+    connectionString,
+    secret,
+  } = await runEffectTestPromise(loadAuthConfig({ envPath: APP_ENV_PATH }));
 
   const corePool = new Pool({ connectionString });
   const authPool = new Pool({ connectionString });
@@ -223,8 +218,8 @@ export const createAuthenticationFixture = async () => {
     },
   ]);
   await coreDatabase.insert(tenantModuleStates).values([
-    { moduleKey: 'contacts.core', state: 'active', tenantId: e2eTenants.first.tenantId },
-    { moduleKey: 'contacts.core', state: 'active', tenantId: e2eTenants.second.tenantId },
+    { moduleKey: 'party.registry', state: 'active', tenantId: e2eTenants.first.tenantId },
+    { moduleKey: 'party.registry', state: 'active', tenantId: e2eTenants.second.tenantId },
     { moduleKey: 'e2e-first-module', state: 'active', tenantId: e2eTenants.first.tenantId },
     { moduleKey: 'e2e-second-module', state: 'active', tenantId: e2eTenants.second.tenantId },
   ]);

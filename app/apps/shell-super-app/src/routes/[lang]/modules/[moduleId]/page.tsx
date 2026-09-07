@@ -1,12 +1,11 @@
-/* eslint-disable promise/prefer-await-to-then -- React effects keep remote loading promise-based without async functions. */
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Effect, Predicate } from 'effect';
 import { useEffect, useState } from 'react';
-import { runEffectRequest } from '../../../../api/auth-client.ts';
 import type { ApprovedVerticalPageComponent } from '../../../../api/vertical-clients.ts';
 import { findApprovedVerticalPageClient } from '../../../../api/vertical-clients.ts';
+import { runBrowserEffect } from '../../../../runtime/browser-effect-runtime.ts';
 import {
   resolveThenLoadModuleTarget,
   settleModuleEntrypointLoad,
@@ -39,27 +38,31 @@ const ResolvedTarget = ({
       return;
     }
     let current = true;
-    const load = () =>
-      runEffectRequest(
-        resolveThenLoadModuleTarget(Effect.succeed(model.target), () =>
-          settleModuleEntrypointLoad(
-            client.load,
-            (loaded) =>
-              Predicate.isObjectKeyword(loaded) &&
-              loaded !== null &&
-              'default' in loaded &&
-              Predicate.isFunction(loaded.default),
-          ),
+    void runBrowserEffect(
+      resolveThenLoadModuleTarget(Effect.succeed(model.target), () =>
+        settleModuleEntrypointLoad(
+          client.load,
+          (loaded) =>
+            Predicate.isObjectKeyword(loaded) &&
+            loaded !== null &&
+            'default' in loaded &&
+            Predicate.isFunction(loaded.default),
         ),
-      ).then((result) => {
-        if (!current) {
-          return;
-        }
-        setRemote(
-          result.state === 'ready' ? { Component: result.value.default, state: 'ready' } : result,
-        );
-      });
-    void load();
+      ).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            if (!current) {
+              return;
+            }
+            setRemote(
+              result.state === 'ready'
+                ? { Component: result.value.default, state: 'ready' }
+                : result,
+            );
+          }),
+        ),
+      ),
+    );
     return () => {
       current = false;
     };
@@ -79,9 +82,13 @@ const ResolvedTarget = ({
   );
 };
 
-const ModuleTargetPage = () => {
+interface ModuleTargetViewProps {
+  readonly initialModel: ModuleTargetPageModel;
+}
+
+export const ModuleTargetView = ({ initialModel }: ModuleTargetViewProps) => {
   const { t } = useModernI18n();
-  const model: ModuleTargetPageModel = useLoaderData({ strict: false });
+  const model = initialModel;
   const controls = useShellControls(
     model.shell.state === 'authenticated' ? model.shell : undefined,
   );
@@ -139,6 +146,14 @@ const ModuleTargetPage = () => {
       {content}
     </AuthenticatedDashboardLayout>
   );
+};
+
+const ModuleTargetPage = () => {
+  const initialModel: ModuleTargetPageModel = useLoaderData({
+    from: '/$lang/modules/$moduleId',
+    structuralSharing: false,
+  });
+  return <ModuleTargetView initialModel={initialModel} />;
 };
 
 export default ModuleTargetPage;

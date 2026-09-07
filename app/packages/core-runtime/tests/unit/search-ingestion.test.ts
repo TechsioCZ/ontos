@@ -1,5 +1,4 @@
-// @effect-diagnostics asyncFunction:off
-/* eslint-disable no-await-in-loop -- Each invalid observation is evaluated independently against one store. */
+import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect } from 'effect';
@@ -12,6 +11,12 @@ import {
   makeCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
 } from '../../src/search/projection.ts';
+
+const effectTest = <A, E>(name: string, body: () => Effect.Effect<A, E>): void => {
+  void test(name, () => {
+    void runEffectTestSync(body());
+  });
+};
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const ref = {
@@ -41,7 +46,7 @@ const observation = (projectionVersion: string, title: string) => ({
   workerKey: 'party.registry.project-party-updated-to-search',
 });
 
-test('declares one immutable Core registration for every closed Party lifecycle topic', () => {
+void test('declares one immutable Core registration for every closed Party lifecycle topic', () => {
   assert.deepEqual(
     CORE_SEARCH_INGESTION_REGISTRATIONS.map(({ topic }) => topic),
     CORE_SEARCH_PARTY_LIFECYCLE_TOPICS,
@@ -58,31 +63,31 @@ test('declares one immutable Core registration for every closed Party lifecycle 
   );
 });
 
-test('ingests duplicate and out-of-order post-commit observations idempotently', async () => {
+effectTest('ingests duplicate and out-of-order post-commit observations idempotently', () => {
   const store = makeInMemoryCoreSearchProjectionStore();
   const ingestion = makeCoreSearchIngestion(store);
   const runtime = makeCoreSearchQueryRuntime(store);
 
-  await Effect.runPromise(ingestion.ingest(observation('2', 'Current title')));
-  await Effect.runPromise(ingestion.ingest(observation('2', 'Current title')));
-  await Effect.runPromise(ingestion.ingest(observation('1', 'Stale title')));
+  return Effect.gen(function* ingestObservationsIdempotently() {
+    yield* ingestion.ingest(observation('2', 'Current title'));
+    yield* ingestion.ingest(observation('2', 'Current title'));
+    yield* ingestion.ingest(observation('1', 'Stale title'));
 
-  const hits = await Effect.runPromise(
-    runtime.search({
+    const hits = yield* runtime.search({
       includeArchived: false,
       moduleId: 'party.registry',
       query: 'current',
       resourceType: 'party.registry.party',
       tenantId,
-    }),
-  );
-  assert.deepEqual(
-    hits.map(({ title }) => title),
-    ['Current title'],
-  );
+    });
+    assert.deepEqual(
+      hits.map(({ title }) => title),
+      ['Current title'],
+    );
+  });
 });
 
-test('identifier updates accept only their generated self-consumer worker', async () => {
+effectTest('identifier updates accept only their generated self-consumer worker', () => {
   const store = makeInMemoryCoreSearchProjectionStore();
   const ingestion = makeCoreSearchIngestion(store);
   const update = {
@@ -90,22 +95,22 @@ test('identifier updates accept only their generated self-consumer worker', asyn
     topic: 'party.registry.official-identifier-updated.v1',
     workerKey: 'party.registry.project-official-identifier-updated-to-search',
   };
-  await Effect.runPromise(ingestion.ingest(update));
-  await Effect.runPromise(ingestion.ingest(update));
-  const denied = await Effect.runPromise(
-    Effect.flip(
+  return Effect.gen(function* acceptOnlyGeneratedWorker() {
+    yield* ingestion.ingest(update);
+    yield* ingestion.ingest(update);
+    const denied = yield* Effect.flip(
       ingestion.ingest({
         ...update,
         workerKey: 'party.registry.project-official-identifier-added-to-search',
       }),
-    ),
-  );
-  assert.equal(denied._tag, 'CoreSearchProjectionInvalid');
+    );
+    assert.equal(denied._tag, 'CoreSearchProjectionInvalid');
+  });
 });
 
-test('rejects undeclared topics and sequence/document identity mismatches', async () => {
+effectTest('rejects undeclared topics and sequence/document identity mismatches', () => {
   const ingestion = makeCoreSearchIngestion(makeInMemoryCoreSearchProjectionStore());
-  for (const invalid of [
+  const invalidObservations = [
     { ...observation('1', 'Party'), topic: 'party.registry.undeclared.v1' },
     { ...observation('1', 'Party'), producerModuleKey: 'foreign.module' },
     {
@@ -123,8 +128,19 @@ test('rejects undeclared topics and sequence/document identity mismatches', asyn
         kind: 'upsert',
       },
     },
-  ]) {
-    const failure = await Effect.runPromise(Effect.flip(ingestion.ingest(invalid)));
-    assert.equal(failure._tag, 'CoreSearchProjectionInvalid');
-  }
+  ];
+  return Effect.all(
+    invalidObservations.map((invalidObservation) =>
+      Effect.flip(ingestion.ingest(invalidObservation)),
+    ),
+    { concurrency: 'unbounded' },
+  ).pipe(
+    Effect.tap((failures) =>
+      Effect.sync(() => {
+        for (const failure of failures) {
+          assert.equal(failure._tag, 'CoreSearchProjectionInvalid');
+        }
+      }),
+    ),
+  );
 });

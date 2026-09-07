@@ -1,6 +1,7 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import {
   makeCoreSearchIngestion,
   makeCoreSearchQueryRuntime,
@@ -184,7 +185,7 @@ const assertAttachedIdentifierDelivery = (
   });
 
 test('CreateParty MATCHED_EXISTING publishes an attached identifier and indexes it after delivery only', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* matchedExistingCreateScenario() {
       const search = makeSearchFixture([]);
       yield* search.seed;
@@ -228,7 +229,7 @@ test('CreateParty MATCHED_EXISTING publishes an attached identifier and indexes 
   ));
 
 test('reviewed MATCH_EXISTING publishes an attached identifier and indexes it after delivery only', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* reviewedMatchScenario() {
       const search = makeSearchFixture([]);
       yield* search.seed;
@@ -277,7 +278,7 @@ test('reviewed MATCH_EXISTING publishes an attached identifier and indexes it af
   ));
 
 test('END_VALIDITY refreshes search only after its committed identifier message and remains replay-safe', () =>
-  Effect.runPromise(
+  runEffectTestPromise(
     Effect.gen(function* endIdentifierSearchScenario() {
       const search = makeSearchFixture([identifier]);
       yield* search.seed;
@@ -303,7 +304,7 @@ test('END_VALIDITY refreshes search only after its committed identifier message 
                     officialIdentifierRef,
                     partyRef,
                     state: 'ENDED',
-                    validTo,
+                    validTo: Option.some(DateTime.makeUnsafe(validTo)),
                     verification: 'VERIFIED',
                   },
                 }),

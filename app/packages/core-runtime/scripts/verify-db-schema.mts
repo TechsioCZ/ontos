@@ -1,5 +1,4 @@
-// @effect-diagnostics processEnv:off globalConsole:off strictEffectProvide:off
-/* eslint-disable complexity -- One verifier keeps the full fail-closed Core catalog gate visible and auditable. */
+// @effect-diagnostics processEnv:off globalConsole:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { sql } from 'drizzle-orm';
 import { Effect, Layer, Schema } from 'effect';
 import { CoreDatabase, CoreDatabaseLive } from '../src/db/client.ts';
@@ -37,11 +36,21 @@ class DatabaseVerificationError extends Schema.TaggedError<DatabaseVerificationE
   },
 ) {}
 
-type CatalogRow = Readonly<Record<string, string | null>> & {
-  readonly kind: 'migration' | 'table';
-  readonly schema_name: string;
-  readonly table_name: null | string;
-};
+const CatalogRowSchema = Schema.Struct({
+  kind: Schema.Literals(['migration', 'table']),
+  schema_name: Schema.String,
+  table_name: Schema.Union([Schema.Null, Schema.String]),
+});
+type CatalogRow = typeof CatalogRowSchema.Type;
+
+const RuntimeRoleRowSchema = Schema.Struct({
+  rolbypassrls: Schema.Boolean,
+  rolsuper: Schema.Boolean,
+});
+type RuntimeRoleRow = typeof RuntimeRoleRowSchema.Type;
+
+const isUnsafeRuntimeRole = (role: RuntimeRoleRow | undefined): boolean =>
+  role === undefined || role.rolsuper || role.rolbypassrls;
 
 const verifyTypedQuery = <Result,>(
   tableName: string,
@@ -61,17 +70,14 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
     catch: () =>
       new DatabaseVerificationError({ reason: 'Unable to verify the PostgreSQL runtime role' }),
     try: () =>
-      database.executor.execute<{
-        rolbypassrls: boolean;
-        rolsuper: boolean;
-      }>(sql`
+      database.executor.execute<RuntimeRoleRow>(sql`
         select role.rolsuper, role.rolbypassrls
         from pg_catalog.pg_roles as role
         where role.rolname = current_user
       `),
   });
   const [role] = runtimeRole.rows;
-  if (role === undefined || role.rolsuper || role.rolbypassrls) {
+  if (isUnsafeRuntimeRole(role)) {
     return yield* new DatabaseVerificationError({
       reason: 'The application runtime role must be non-superuser and must not bypass RLS',
     });

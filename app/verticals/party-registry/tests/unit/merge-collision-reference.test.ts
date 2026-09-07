@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { DateTime, Match } from 'effect';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import { analyzeMergeCollisions } from '../../src/merge/merge-collision-analysis.ts';
 import { planReferencePreservation } from '../../src/merge/reference-preservation-plan.ts';
@@ -164,7 +165,7 @@ test('plans canonical resolution for supported refs without rewriting historical
     aliases: [
       {
         aliasPartyRef: party('party-b'),
-        createdAt: '2026-01-01T00:00:00.000Z',
+        createdAt: DateTime.makeUnsafe('2026-01-01T00:00:00.000Z'),
         mergeRef: {
           moduleId: 'party.registry',
           resourceId: 'merge-1',
@@ -208,16 +209,18 @@ test('plans canonical resolution for supported refs without rewriting historical
     ],
   });
 
-  assert.equal(result._tag, 'ReferencePreservationPlanned');
-  if (result._tag === 'ReferencePreservationPlanned') {
-    assert.ok(
-      result.references.every(
-        ({ canonicalPartyRef }) => canonicalPartyRef.resourceId === 'party-a',
-      ),
-    );
-    assert.deepEqual(result.references.at(-1)?.historicalSnapshot, snapshot);
-    assert.equal(result.requiresPhysicalRewrite, false);
-  }
+  const planned = Match.value(result).pipe(
+    Match.tag('ReferencePreservationPlanned', (value) => value),
+    Match.tag('ReferencePreservationBlocked', ({ blockers }) =>
+      assert.fail(`Expected a reference plan, but planning was blocked: ${String(blockers)}`),
+    ),
+    Match.exhaustive,
+  );
+  assert.ok(
+    planned.references.every(({ canonicalPartyRef }) => canonicalPartyRef.resourceId === 'party-a'),
+  );
+  assert.deepEqual(planned.references.at(-1)?.historicalSnapshot, snapshot);
+  assert.equal(planned.requiresPhysicalRewrite, false);
 });
 
 test('detects overlapping resolved relationship periods but permits adjacent role periods', () => {

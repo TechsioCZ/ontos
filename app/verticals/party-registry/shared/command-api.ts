@@ -1,4 +1,4 @@
-/* eslint-disable import/no-duplicates, no-duplicate-imports -- Canonical public command contracts re-export schema-only Action payloads and results. */
+/* eslint-disable import/no-duplicates, no-duplicate-imports -- Canonical public command contracts re-export schema-only Action payloads and results. expires: 2026-12-31. */
 import {
   HttpApi,
   HttpApiEndpoint,
@@ -8,6 +8,7 @@ import {
 } from '@modern-js/plugin-bff/effect-client';
 import { HttpApiMiddleware } from 'effect/unstable/httpapi';
 import { PartyRefSchema } from './resources/party.ts';
+import { ActionInvocationIdSchema } from './domain/correction-contracts.ts';
 import {
   AddContactPointPayloadSchema,
   AddContactPointResultSchema,
@@ -41,7 +42,8 @@ import {
   CreatePartyRelationshipPayloadSchema,
   CreatePartyRelationshipResultSchema,
 } from './domain/relationship-contract.ts';
-import { CreatePartyPayloadSchema, CreatePartyResultSchema } from './actions/create-party.ts';
+import { CreatePartyPayloadJsonSchema, CreatePartyResultSchema } from './actions/create-party.ts';
+import type { CreatePartyPayloadSchema } from './actions/create-party.ts';
 import {
   DismissDuplicateCandidatePayloadSchema,
   DismissDuplicateCandidateResultSchema,
@@ -144,7 +146,11 @@ export {
 } from './domain/relationship-contract.ts';
 export type CreatePartyRelationshipPayload = typeof CreatePartyRelationshipPayloadSchema.Type;
 export type CreatePartyRelationshipResult = typeof CreatePartyRelationshipResultSchema.Type;
-export { CreatePartyPayloadSchema, CreatePartyResultSchema } from './actions/create-party.ts';
+export {
+  CreatePartyPayloadJsonSchema,
+  CreatePartyPayloadSchema,
+  CreatePartyResultSchema,
+} from './actions/create-party.ts';
 export type CreatePartyPayload = typeof CreatePartyPayloadSchema.Type;
 export type CreatePartyResult = typeof CreatePartyResultSchema.Type;
 export {
@@ -347,7 +353,7 @@ export const PartyCommandUnavailableProblemSchema = Schema.TaggedStruct(
   },
 ).pipe(asProblemDetails, HttpApiSchema.status(503));
 
-const PartyCommandInvocationIdSchema = Schema.String.check(Schema.isUUID());
+const PartyCommandInvocationIdSchema = ActionInvocationIdSchema;
 
 export const PartyCommandAlreadyCommittedProblemSchema = Schema.TaggedStruct(
   'PartyCommandAlreadyCommittedProblem',
@@ -443,7 +449,7 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
       HttpApiEndpoint.post('addContactPoint', '/party-registry/actions/add-contact-point', {
         error: commandErrors,
         headers: PartyCommandHeadersSchema,
-        payload: AddContactPointPayloadSchema,
+        payload: Schema.toEncoded(AddContactPointPayloadSchema),
         success: AddContactPointResultSchema,
       }),
     )
@@ -454,7 +460,7 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
         {
           error: commandErrors,
           headers: PartyCommandHeadersSchema,
-          payload: AddPartyOfficialIdentifierPayloadSchema,
+          payload: Schema.toEncoded(AddPartyOfficialIdentifierPayloadSchema),
           success: AddPartyOfficialIdentifierResultSchema,
         },
       ),
@@ -527,7 +533,7 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
       HttpApiEndpoint.post('createParty', '/party-registry/actions/create-party', {
         error: commandErrors,
         headers: PartyCommandHeadersSchema,
-        payload: CreatePartyPayloadSchema,
+        payload: CreatePartyPayloadJsonSchema,
         success: CreatePartyResultSchema,
       }),
     )
@@ -675,7 +681,7 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
       HttpApiEndpoint.post('updateParty', '/party-registry/actions/update-party', {
         error: commandErrors,
         headers: PartyCommandHeadersSchema,
-        payload: UpdatePartyPayloadSchema,
+        payload: Schema.toEncoded(UpdatePartyPayloadSchema),
         success: UpdatePartyResultSchema,
       }),
     )

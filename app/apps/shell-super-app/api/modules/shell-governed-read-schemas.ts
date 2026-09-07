@@ -1,24 +1,23 @@
 import { Schema } from 'effect';
-import type { ResolvedModuleTarget, ResolveModuleTargetPayload } from '../../shared/api.ts';
 
-const stableEntrypointKeySchema = Schema.String.check(
+const EntrypointKeySchema = Schema.String.check(
   Schema.isMinLength(3),
   Schema.isMaxLength(200),
   Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
-);
+).pipe(Schema.brand('EntrypointKey'));
+const ModuleIdSchema = Schema.String.check(Schema.isMinLength(3)).pipe(Schema.brand('ModuleId'));
+const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
+const ComponentKeySchema = Schema.String.pipe(Schema.brand('ComponentKey'));
 
-export const GovernedResolveModuleTargetPayloadSchema: Schema.Codec<ResolveModuleTargetPayload> =
-  Schema.Struct({
-    entrypointKey: Schema.optionalKey(stableEntrypointKeySchema),
-    moduleId: Schema.String.check(Schema.isMinLength(3)),
-  });
+export const GovernedResolveModuleTargetPayloadSchema = Schema.Struct({
+  entrypointKey: Schema.optionalKey(EntrypointKeySchema),
+  moduleId: ModuleIdSchema,
+});
 
-export const GovernedResolvedModuleTargetSchema: Schema.Codec<ResolvedModuleTarget> = Schema.Struct(
-  {
-    appId: Schema.String,
-    componentKey: Schema.String,
-    entrypointKey: Schema.String,
-    moduleId: Schema.String,
-    writable: Schema.Boolean,
-  },
-);
+export const GovernedResolvedModuleTargetSchema = Schema.Struct({
+  appId: AppIdSchema,
+  componentKey: ComponentKeySchema,
+  entrypointKey: EntrypointKeySchema,
+  moduleId: ModuleIdSchema,
+  writable: Schema.Boolean,
+});

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { builtinModules, createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +10,7 @@ import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
+import { Config, Option, Result, Schema } from 'effect';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
@@ -17,7 +19,32 @@ const localisedUrls = ultramodernLocalisedUrls;
 
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
 
-const cloudflareDeployEnabled = getBuildConfigEnvironment('MODERNJS_DEPLOY') === 'cloudflare';
+const resolveDevelopmentModuleContractPath = () =>
+  fileURLToPath(new URL('.dev-public/.well-known/ontos-module-manifest.json', import.meta.url));
+
+const nonEmptyBuildStringSchema = Schema.Trim.pipe(Schema.check(Schema.isMinLength(1)));
+const getOptionalBuildConfig = (name: string): string | undefined => {
+  const decoded = Schema.decodeUnknownResult(
+    Schema.OptionFromUndefinedOr(nonEmptyBuildStringSchema),
+  )(getBuildConfigEnvironment(name));
+  return Result.isSuccess(decoded) ? Option.getOrUndefined(decoded.success) : undefined;
+};
+const envValue = getOptionalBuildConfig;
+const getBuildBoolean = (name: string): boolean =>
+  Option.getOrElse(
+    Result.getOrThrow(
+      Schema.decodeUnknownResult(Schema.OptionFromUndefinedOr(Config.Boolean))(
+        getBuildConfigEnvironment(name),
+      ),
+    ),
+    () => false,
+  );
+const cloudflareDeployMode = Result.getOrThrow(
+  Schema.decodeUnknownResult(Schema.OptionFromUndefinedOr(Schema.Literals(['cloudflare', 'node'])))(
+    getBuildConfigEnvironment('MODERNJS_DEPLOY'),
+  ),
+);
+const cloudflareDeployEnabled = Option.contains(cloudflareDeployMode, 'cloudflare');
 const resolvePostgresProtocolCommonJsEntry = () =>
   fileURLToPath(new URL('../pg-protocol/dist/index.js', import.meta.resolve('pg/package.json')));
 const resolvePostgresPoolCommonJsEntry = () =>
@@ -26,7 +53,7 @@ const resolveEffectApiSourceDirectory = () => fileURLToPath(new URL('api/', impo
 const nodeBuiltinRequests = new Set(
   cloudflareDeployEnabled ? builtinModules.flatMap((name) => [name, `node:${name}`]) : [],
 );
-/* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. */
+/* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. expires: 2026-12-31. */
 const cloudflareRuntimeExternal = (
   { dependencyType, request }: { dependencyType?: string; request?: string },
   callback: (error?: Error, result?: string | string[], type?: 'module-import') => void,
@@ -63,7 +90,7 @@ const zephyrRspackPlugin = (): CliPlugin<AppTools> => ({
     // (this gate keys on Zephyr's native deploy token, not any UltraModern
     // opt-out). When deploying, ZE_FAIL_BUILD=true makes an upload failure a
     // hard build failure.
-    const zephyrCiDeploy = (getBuildConfigEnvironment('ZE_CI_TOKEN') ?? '').length > 0;
+    const zephyrCiDeploy = envValue('ZE_CI_TOKEN') !== undefined;
     if (!zephyrCiDeploy) {
       return;
     }
@@ -73,11 +100,18 @@ const zephyrRspackPlugin = (): CliPlugin<AppTools> => ({
 
 const appId = 'party-registry';
 const cloudflareWorkerName = 'app-party-registry';
-const port = Number(getBuildConfigEnvironment('VERTICAL_PARTY_REGISTRY_PORT') ?? 4102);
-const envValue = (name: string) => {
-  const value = getBuildConfigEnvironment(name)?.trim();
-  return value !== undefined && value.length > 0 ? value : undefined;
-};
+const port = Option.getOrElse(
+  Result.getOrThrow(
+    Schema.decodeUnknownResult(
+      Schema.OptionFromUndefinedOr(
+        Schema.NumberFromString.pipe(
+          Schema.check(Schema.isInt(), Schema.isBetween({ maximum: 65_535, minimum: 1 })),
+        ),
+      ),
+    )(getBuildConfigEnvironment('VERTICAL_PARTY_REGISTRY_PORT')),
+  ),
+  () => 4102,
+);
 const configuredSiteUrl = envValue('MODERN_PUBLIC_SITE_URL');
 const configuredCloudflareUrl = envValue('ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY');
 const configuredUltramodernAssetPrefix = envValue('ULTRAMODERN_ASSET_PREFIX');
@@ -120,7 +154,7 @@ const buildCacheDirectory = `node_modules/.cache/rspack-${appId}-${buildTarget}`
 
 if (
   cloudflareDeployEnabled &&
-  getBuildConfigEnvironment('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') === 'true' &&
+  getBuildBoolean('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') &&
   configuredCloudflareUrl === undefined &&
   configuredSiteUrl === undefined &&
   inferredCloudflareUrl === undefined
@@ -214,6 +248,21 @@ export default defineConfig(
         server: {
           headers: appDevServerHeaders,
         },
+        setupMiddlewares: [
+          ({ unshift }) => {
+            unshift((request, response, next) => {
+              if (request.url?.split('?', 1)[0] !== '/.well-known/ontos-module-manifest.json') {
+                next();
+                return;
+              }
+              const contract = readFileSync(resolveDevelopmentModuleContractPath());
+              response.setHeader('Cache-Control', 'no-cache');
+              response.setHeader('Content-Type', 'application/json');
+              response.setHeader('Content-Length', String(contract.byteLength));
+              response.end(contract);
+            });
+          },
+        ],
       },
       html: {
         outputStructure: 'flat',
@@ -236,7 +285,7 @@ export default defineConfig(
         },
         rsdoctor: {
           disableClientServer: true,
-          enabled: getBuildConfigEnvironment('ULTRAMODERN_RSDOCTOR') === 'true',
+          enabled: getBuildBoolean('ULTRAMODERN_RSDOCTOR'),
         },
       },
       plugins: [
@@ -250,6 +299,7 @@ export default defineConfig(
           localeDetection: {
             fallbackLanguage: 'en',
             ignoreRedirectRoutes: [
+              '/.well-known',
               '/@mf-types',
               '/assets',
               '/bundles',
@@ -276,7 +326,7 @@ export default defineConfig(
       ],
       server: {
         port,
-        publicDir: ['./locales', './assets'],
+        publicDir: ['./locales', './assets', './.dev-public'],
       },
       source: {
         alias: {

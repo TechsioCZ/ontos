@@ -3,15 +3,16 @@
 // @ontos-resource-slug party-match-decision
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
-
-const ResourceIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const TenantIdSchema = Schema.String.check(Schema.isUUID());
+import {
+  PartyRegistryResourceIdJsonSchema,
+  PartyRegistryTenantIdJsonSchema,
+} from './resource-ref-identifiers.ts';
 
 export const PartyMatchDecisionRefSchema = Schema.Struct({
   moduleId: Schema.Literal('party.registry'),
-  resourceId: ResourceIdSchema,
+  resourceId: PartyRegistryResourceIdJsonSchema,
   resourceType: Schema.Literal('party.registry.party-match-decision'),
-  tenantId: TenantIdSchema,
+  tenantId: PartyRegistryTenantIdJsonSchema,
 });
 export type PartyMatchDecisionRef = typeof PartyMatchDecisionRefSchema.Type;
 export const makePartyMatchDecisionRef = (

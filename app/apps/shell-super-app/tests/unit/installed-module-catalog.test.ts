@@ -1,5 +1,5 @@
-/* eslint-disable promise/avoid-new -- The timeout fixture must wait for the injected AbortSignal. */
-// @effect-diagnostics asyncFunction:off preferSchemaOverJson:off
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off preferSchemaOverJson:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { expect, test } from '@rstest/core';
 import { Effect, Predicate } from 'effect';
 import type { DeploymentAllowlist } from '../../api/modules/deployment-allowlist.ts';
@@ -96,9 +96,9 @@ test('loads two independent deployment contracts once and preserves both identit
     },
   );
   const [first, concurrent, cached] = await Promise.all([
-    Effect.runPromise(loader),
-    Effect.runPromise(loader),
-    Effect.runPromise(loader),
+    runEffectTestPromise(loader),
+    runEffectTestPromise(loader),
+    runEffectTestPromise(loader),
   ]);
   expect(first).toBe(concurrent);
   expect(first).toBe(cached);
@@ -133,7 +133,7 @@ test('keeps a healthy deployment available on cold start when another is unreach
     },
   );
 
-  const catalog = await Effect.runPromise(loader);
+  const catalog = await runEffectTestPromise(loader);
 
   expect(catalog.moduleIds).toEqual(['documents.center']);
   expect(catalog.deploymentStatuses).toEqual([
@@ -175,7 +175,7 @@ test.each([
       ]),
       fetcher,
     );
-    const catalog = await Effect.runPromise(loader);
+    const catalog = await runEffectTestPromise(loader);
     expect(catalog.moduleIds).toEqual([]);
     expect(catalog.deploymentStatuses).toEqual([
       { appId: 'property-registry', reason: expectedReason, status: 'unavailable' },
@@ -194,7 +194,7 @@ test('classifies oversized, timed-out, and duplicate-module deployments without 
     async () => response('x'.repeat(64)),
     { maxBytes: 32 },
   );
-  await expect(Effect.runPromise(oversized)).resolves.toMatchObject({
+  await expect(runEffectTestPromise(oversized)).resolves.toMatchObject({
     deploymentStatuses: [
       { appId: 'property-registry', reason: 'unavailable', status: 'unavailable' },
     ],
@@ -202,13 +202,16 @@ test('classifies oversized, timed-out, and duplicate-module deployments without 
 
   const timedOut = makeInstalledModuleCatalogLoader(
     allowlist([one]),
-    async (_url, init) =>
-      await new Promise((_resolve, reject) => {
-        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
-      }),
+    async (_url, init) => {
+      const pending = Promise.withResolvers<Response>();
+      init?.signal?.addEventListener('abort', () => pending.reject(new Error('aborted')), {
+        once: true,
+      });
+      return await pending.promise;
+    },
     { timeoutMs: 10 },
   );
-  await expect(Effect.runPromise(timedOut)).resolves.toMatchObject({
+  await expect(runEffectTestPromise(timedOut)).resolves.toMatchObject({
     deploymentStatuses: [{ appId: 'property-registry', reason: 'timeout', status: 'unavailable' }],
   });
 
@@ -227,13 +230,13 @@ test('classifies oversized, timed-out, and duplicate-module deployments without 
         : response(contract('documents-center', 'shared.module'));
     },
   );
-  await expect(Effect.runPromise(duplicate)).resolves.toMatchObject({
+  await expect(runEffectTestPromise(duplicate)).resolves.toMatchObject({
     deploymentStatuses: [
       { appId: 'documents-center', reason: 'incompatible', status: 'unavailable' },
       { appId: 'property-registry', reason: 'incompatible', status: 'unavailable' },
     ],
   });
-  await Effect.runPromise(duplicate);
+  await runEffectTestPromise(duplicate);
   expect(attempts).toBe(4);
 });
 
@@ -255,9 +258,9 @@ test('recovers a deployment on a later read and caches only the fully healthy re
     },
   );
 
-  const degraded = await Effect.runPromise(loader);
-  const recovered = await Effect.runPromise(loader);
-  const cached = await Effect.runPromise(loader);
+  const degraded = await runEffectTestPromise(loader);
+  const recovered = await runEffectTestPromise(loader);
+  const cached = await runEffectTestPromise(loader);
 
   expect(degraded.deploymentStatuses).toEqual([
     { appId: 'property-registry', reason: 'unavailable', status: 'unavailable' },
@@ -297,8 +300,8 @@ test('recreates the complete cache by constructing a new deployment-revision Lay
     fetcher,
   );
 
-  await Effect.runPromise(installedModuleCatalog.pipe(Effect.provide(firstRevision)));
-  await Effect.runPromise(installedModuleCatalog.pipe(Effect.provide(firstRevision)));
-  await Effect.runPromise(installedModuleCatalog.pipe(Effect.provide(secondRevision)));
+  await runEffectTestPromise(installedModuleCatalog.pipe(Effect.provide(firstRevision)));
+  await runEffectTestPromise(installedModuleCatalog.pipe(Effect.provide(firstRevision)));
+  await runEffectTestPromise(installedModuleCatalog.pipe(Effect.provide(secondRevision)));
   expect(requests).toBe(2);
 });

@@ -1,20 +1,11 @@
-/* eslint-disable max-classes-per-file -- Identity lifecycle uses one closed typed failure vocabulary. */
 import { Schema } from 'effect';
+import { IdentityLifecycleConflictError } from './identity-lifecycle-conflict-error.ts';
+import { IdentityPersistenceUnavailableError } from './identity-persistence-unavailable-error.ts';
+import { IdentityTargetInvalidError } from './identity-target-invalid-error.ts';
 
-export class IdentityLifecycleConflictError extends Schema.TaggedError<IdentityLifecycleConflictError>()(
-  'IdentityLifecycleConflictError',
-  { code: Schema.Literal('identity_lifecycle_conflict'), reason: Schema.String },
-) {}
-
-export class IdentityTargetInvalidError extends Schema.TaggedError<IdentityTargetInvalidError>()(
-  'IdentityTargetInvalidError',
-  { code: Schema.Literal('identity_target_invalid'), reason: Schema.String },
-) {}
-
-export class IdentityPersistenceUnavailableError extends Schema.TaggedError<IdentityPersistenceUnavailableError>()(
-  'IdentityPersistenceUnavailableError',
-  { code: Schema.Literal('identity_persistence_unavailable'), reason: Schema.String },
-) {}
+export { IdentityLifecycleConflictError } from './identity-lifecycle-conflict-error.ts';
+export { IdentityPersistenceUnavailableError } from './identity-persistence-unavailable-error.ts';
+export { IdentityTargetInvalidError } from './identity-target-invalid-error.ts';
 
 export const PrincipalManagementErrorSchema = Schema.Union([
   IdentityLifecycleConflictError,
