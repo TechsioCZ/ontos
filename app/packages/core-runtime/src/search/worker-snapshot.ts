@@ -3,6 +3,7 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { Context, Duration, Effect, Exit, Layer, Option, Schema } from 'effect';
 import { CoreDatabase } from '../db/client.ts';
+import { CoreTransactionBridgeFailure, runCoreTransaction } from '../db/transaction-bridge.ts';
 import { domainEvents, legalEntities, searchProjectionGenerations } from '../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import {
@@ -223,7 +224,6 @@ export const makePostgresCoreSearchSnapshotBackend = (
         ) => Effect.Effect<void, CoreSearchProjectionUnavailableError>,
       ) => Effect.Effect<Value, Error>,
     ) {
-      const runTransactionProgram = Effect.runPromiseWith(yield* Effect.context());
       const transactionProgram = Effect.fn('CoreSearchSnapshotBackend.transaction')(
         function* runCoreSearchSnapshotTransaction(transaction: CoreTransaction) {
           const installScope = Effect.fn('CoreSearchSnapshotBackend.installScope')(
@@ -324,15 +324,17 @@ export const makePostgresCoreSearchSnapshotBackend = (
           );
         },
       );
-      const execute = async () =>
-        await database.executor.transaction(
-          async (transaction: CoreTransaction) =>
-            await runTransactionProgram(transactionProgram(transaction)),
-          { isolationLevel: 'repeatable read' },
-        );
-      const snapshotExit = yield* retryCoreSearchSnapshot(tryDriverPromise(execute)).pipe(
-        Effect.mapError(unavailable),
-      );
+      const snapshotExit = yield* retryCoreSearchSnapshot(
+        runCoreTransaction(database.executor, transactionProgram, {
+          isolationLevel: 'repeatable read',
+        }).pipe(
+          Effect.mapError((failure) =>
+            Schema.is(CoreTransactionBridgeFailure)(failure)
+              ? snapshotDriverError(failure.original)
+              : failure,
+          ),
+        ),
+      ).pipe(Effect.mapError(unavailable));
       return yield* Exit.isSuccess(snapshotExit)
         ? Effect.succeed(snapshotExit.value)
         : Effect.failCause(snapshotExit.cause);

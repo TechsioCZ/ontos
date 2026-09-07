@@ -1,8 +1,8 @@
 /* oxlint-disable sonarjs/no-duplicate-string -- Existing compatibility boundary; expires: 2026-12-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-import { Context, Duration, Effect, Exit, Layer, Schema } from 'effect';
-import type { Cause } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
 import { CoreDatabase } from '../db/client.ts';
+import { CoreTransactionBridgeFailure, runCoreTransaction } from '../db/transaction-bridge.ts';
 import {
   decodeTrustedPrincipalContext,
   isTrustedSupportRecoveryPrincipalContext,
@@ -407,7 +407,6 @@ const readRuntimeFromDependencies = <
     >;
     readonly transport: unknown;
   }) {
-    const requirements = yield* Effect.context<Requirements>();
     const decodedInput = yield* Schema.decodeUnknownEffect(
       input.registration.descriptor.inputSchema,
     )(input.input).pipe(
@@ -625,134 +624,110 @@ const readRuntimeFromDependencies = <
     );
     stage('policies_checked');
 
-    let transactionFailure: Cause.Cause<ReadCoreError> | undefined;
-    const transactionAttempt = yield* Effect.exit(
-      Effect.tryPromise({
-        catch: (transactionDefect) =>
-          preserveFailureCause(
-            new ReadHandlerExecutionError({
-              code: 'read_handler_execution_failed',
-              reason: 'The governed read transaction failed',
+    const transactionResult = runCoreTransaction(
+      database.executor,
+      Effect.fn('ReadRuntime.readTransactionBody')(function* readTransactionBody(
+        transaction: CoreTransaction,
+      ) {
+        const scoped = yield* installOperationalScope(transaction, scope);
+        stage('scope_installed');
+        const services = yield* getReadServiceFactory(input.registration)(scoped, scope);
+        const handlerResult = yield* Effect.suspend(() =>
+          getReadHandler(input.registration)(
+            decodedInput,
+            Object.freeze({
+              readKey: input.registration.descriptor.readKey,
+              scope,
+              services,
             }),
-            transactionDefect,
           ),
-        try: async () =>
-          await database.executor.transaction(async (transaction: CoreTransaction) => {
-            const body = Effect.gen(function* readTransactionBody() {
-              const scoped = yield* installOperationalScope(transaction, scope);
-              stage('scope_installed');
-              const services = yield* getReadServiceFactory(input.registration)(scoped, scope);
-              const handlerResult = yield* Effect.suspend(() =>
-                getReadHandler(input.registration)(
-                  decodedInput,
-                  Object.freeze({
-                    readKey: input.registration.descriptor.readKey,
-                    scope,
-                    services,
-                  }),
-                ),
-              ).pipe(Effect.mapError(sanitizeReadHandlerFailure));
-              stage('handler_executed');
-              const result = yield* Schema.decodeUnknownEffect(
-                Schema.toType(input.registration.descriptor.resultSchema),
-              )(handlerResult.result).pipe(
-                Effect.mapError((parseIssue) =>
-                  preserveFailureCause(
-                    new ReadResultValidationError({
-                      code: 'read_result_invalid',
-                      reason: 'The read result does not match its declared schema',
-                    }),
-                    parseIssue,
-                  ),
-                ),
-              );
-              stage('result_decoded');
-              const resultPermissionResolver = getReadResultPermissionTargetResolver(
-                input.registration,
-              );
-              if (resultPermissionResolver !== undefined) {
-                yield* checkResultPermissions(
-                  contextAccess,
-                  result,
-                  scope,
-                  permissionTarget,
-                  resultPermissionResolver,
-                );
-              }
-              const evidence = yield* validateReadEvidenceMetadata(
-                input.registration.descriptor.evidencePolicy.captureMode,
-                handlerResult.evidence,
-              );
-              yield* persistReadEvidence(
-                transaction,
-                withOptionalProperty(
-                  withOptionalProperty(
-                    withOptionalProperty(
-                      {
-                        accessKind: input.registration.descriptor.accessKind,
-                        captureMode: input.registration.descriptor.evidencePolicy.captureMode,
-                        outcome: 'allowed',
-                        outcomeCode: 'read_allowed',
-                        outcomeStage: 'evidence',
-                        policyKey: input.registration.descriptor.evidencePolicy.policyKey,
-                      },
-                      queryHash !== undefined,
-                      'queryHash',
-                      queryHash,
-                      {
-                        readKey: input.registration.descriptor.readKey,
-                        resultCount: evidence.resultCount,
-                      },
-                    ),
-                    evidence.resultFingerprintHash !== undefined,
-                    'resultFingerprintHash',
-                    evidence.resultFingerprintHash,
-                    {},
-                  ),
-                  evidence.resultFingerprintSchema !== undefined,
-                  'resultFingerprintSchema',
-                  evidence.resultFingerprintSchema,
-                  {
-                    scope,
-                    servingModuleKey: input.registration.descriptor.owningModuleKey,
-                    ...permissionTargetMetadata,
-                  },
-                ),
-              );
-              stage('evidence_persisted');
-              return result;
-            });
-            const bodyExit = await Effect.runPromiseExitWith(requirements)(body);
-            if (Exit.isFailure(bodyExit)) {
-              transactionFailure = bodyExit.cause;
-              return transaction.rollback();
-            }
-            return bodyExit.value;
-          }),
-      }).pipe(
-        Effect.timeoutOrElse({
-          duration: Duration.infinity,
-          orElse: () =>
-            Effect.fail(
+        ).pipe(Effect.mapError(sanitizeReadHandlerFailure));
+        stage('handler_executed');
+        const result = yield* Schema.decodeUnknownEffect(
+          Schema.toType(input.registration.descriptor.resultSchema),
+        )(handlerResult.result).pipe(
+          Effect.mapError((parseIssue) =>
+            preserveFailureCause(
+              new ReadResultValidationError({
+                code: 'read_result_invalid',
+                reason: 'The read result does not match its declared schema',
+              }),
+              parseIssue,
+            ),
+          ),
+        );
+        stage('result_decoded');
+        const resultPermissionResolver = getReadResultPermissionTargetResolver(input.registration);
+        if (resultPermissionResolver !== undefined) {
+          yield* checkResultPermissions(
+            contextAccess,
+            result,
+            scope,
+            permissionTarget,
+            resultPermissionResolver,
+          );
+        }
+        const evidence = yield* validateReadEvidenceMetadata(
+          input.registration.descriptor.evidencePolicy.captureMode,
+          handlerResult.evidence,
+        );
+        yield* persistReadEvidence(
+          transaction,
+          withOptionalProperty(
+            withOptionalProperty(
+              withOptionalProperty(
+                {
+                  accessKind: input.registration.descriptor.accessKind,
+                  captureMode: input.registration.descriptor.evidencePolicy.captureMode,
+                  outcome: 'allowed',
+                  outcomeCode: 'read_allowed',
+                  outcomeStage: 'evidence',
+                  policyKey: input.registration.descriptor.evidencePolicy.policyKey,
+                },
+                queryHash !== undefined,
+                'queryHash',
+                queryHash,
+                {
+                  readKey: input.registration.descriptor.readKey,
+                  resultCount: evidence.resultCount,
+                },
+              ),
+              evidence.resultFingerprintHash !== undefined,
+              'resultFingerprintHash',
+              evidence.resultFingerprintHash,
+              {},
+            ),
+            evidence.resultFingerprintSchema !== undefined,
+            'resultFingerprintSchema',
+            evidence.resultFingerprintSchema,
+            {
+              scope,
+              servingModuleKey: input.registration.descriptor.owningModuleKey,
+              ...permissionTargetMetadata,
+            },
+          ),
+        );
+        stage('evidence_persisted');
+        return result;
+      }),
+    ).pipe(
+      Effect.tapError((failure) =>
+        Schema.is(CoreTransactionBridgeFailure)(failure)
+          ? Effect.logError('Unexpected governed read transaction failure', failure.original)
+          : Effect.void,
+      ),
+      Effect.mapError((transactionFailure) =>
+        Schema.is(CoreTransactionBridgeFailure)(transactionFailure)
+          ? preserveFailureCause(
               new ReadHandlerExecutionError({
                 code: 'read_handler_execution_failed',
-                reason: 'The governed read transaction timed out',
+                reason: 'The governed read transaction failed',
               }),
-            ),
-        }),
+              transactionFailure.original,
+            )
+          : transactionFailure,
       ),
     );
-    let transactionResult: Effect.Effect<ResultSchema['Type'], ReadCoreError>;
-    if (transactionFailure !== undefined) {
-      transactionResult = Effect.failCause(transactionFailure);
-    } else if (Exit.isFailure(transactionAttempt)) {
-      transactionResult = Effect.logError(
-        'Unexpected governed read transaction failure',
-        transactionAttempt.cause,
-      ).pipe(Effect.andThen(Effect.failCause(transactionAttempt.cause)));
-    } else {
-      transactionResult = Effect.succeed(transactionAttempt.value);
-    }
     return yield* transactionResult.pipe(
       Effect.tapErrorTag('ReadPermissionDenied', () =>
         persistReadEvidence(

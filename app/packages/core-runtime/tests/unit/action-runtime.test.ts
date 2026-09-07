@@ -4,11 +4,12 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
+import { Cause, DateTime, Effect, Exit, Fiber, Option, Schema, Predicate } from 'effect';
 import { Pool } from 'pg';
 import type { PrincipalManagementRepositoryService } from '../../src/auth/principal-management.ts';
 import { PrincipalManagementRepository } from '../../src/auth/principal-management.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
+import { CoreTransactionBridgeFailure } from '../../src/db/transaction-bridge.ts';
 import type {
   ActionInvocationRecord,
   ActionRepositoryService,
@@ -114,6 +115,7 @@ const providePrincipalManagementRepository = Effect.provideService(
 );
 
 interface HarnessOptions {
+  readonly commit?: () => Promise<{ rows: [] }>;
   readonly commitFailureCode?: string;
   readonly createRecord?: ActionInvocationRecord;
   readonly legalEntityPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
@@ -242,7 +244,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
   let installedTenantId: string = principal.tenantId;
   let installedLegalEntityId: string = principal.legalEntityId;
   const query = async <Query, Values>(queryInput: Query, values?: Values) =>
-    await Promise.resolve().then(() => {
+    await Promise.resolve().then(async () => {
       const { text } = Schema.decodeUnknownSync(QueryConfigSchema)(queryInput);
       if (text.includes('set_config') && Array.isArray(values)) {
         const [tenantId, legalEntityId] = values;
@@ -270,6 +272,9 @@ const makeHarness = (options: HarnessOptions = {}) => {
         }
         if (options.transactionMode === 'commit-definite') {
           throw Object.assign(new Error('serialization failure'), { code: '40001' });
+        }
+        if (options.commit !== undefined) {
+          return await options.commit();
         }
       }
       if (text.includes('current_setting')) {
@@ -2160,6 +2165,51 @@ test('handles committed, conflict, definite rollback, and indeterminate commit b
     acknowledgementErrors.map((error) => error._tag),
     acknowledgementFailureCodes.map(() => 'ActionCommitIndeterminate'),
   );
+});
+
+test('preserves interruption and a committed defect after the Action commit settles', async () => {
+  const commitStarted = Promise.withResolvers<null>();
+  const commitSettlement = Promise.withResolvers<{ rows: [] }>();
+  const harness = makeHarness({
+    commit: async () => {
+      commitStarted.resolve(null);
+      return await commitSettlement.promise;
+    },
+  });
+  const { exit, pendingBeforeSettlement } = await runEffectTestPromise(
+    Effect.gen(function* interruptCommittedAction() {
+      const actionFiber = yield* harness.runtime
+        .runAction({
+          payload: { amount: 1 },
+          principal,
+          registration: registration(),
+          transport: transport('interrupted-commit'),
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(async () => await commitStarted.promise);
+      const interruption = yield* Fiber.interrupt(actionFiber).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      const pending = actionFiber.pollUnsafe() === undefined;
+      commitSettlement.resolve({ rows: [] });
+      yield* Fiber.join(interruption);
+      const actionExit = yield* Fiber.await(actionFiber);
+      return { exit: actionExit, pendingBeforeSettlement: pending };
+    }),
+  );
+  assert.equal(pendingBeforeSettlement, true);
+  assert.equal(Exit.isFailure(exit), true);
+  if (Exit.isFailure(exit)) {
+    assert.equal(Cause.hasInterrupts(exit.cause), true);
+    const defects = exit.cause.reasons.filter(Cause.isDieReason);
+    assert.equal(defects.length, 1, Cause.pretty(exit.cause));
+    const [defect] = defects;
+    assert.ok(defect !== undefined);
+    assert.equal(Schema.is(CoreTransactionBridgeFailure)(defect.defect), true);
+    if (Schema.is(CoreTransactionBridgeFailure)(defect.defect)) {
+      assert.equal(defect.defect.outcome, 'committed');
+    }
+    assert.equal(exit.cause.reasons.filter(Cause.isFailReason).length, 0);
+  }
 });
 
 test('resolves commit state explicitly and keeps unavailable outcomes indeterminate', async () => {

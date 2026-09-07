@@ -6,7 +6,6 @@ import {
   DateTime,
   Duration,
   Effect,
-  Function as EffectFunction,
   Layer,
   Predicate,
   Result,
@@ -21,6 +20,7 @@ import {
   tenants,
 } from '../db/schema.ts';
 import type { ActionInvocationStatus } from '../db/schema.ts';
+import { runCoreTransaction } from '../db/transaction-bridge.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import type { ActionAuditProfile } from './definition.ts';
 import type { ActionEvidenceSnapshot } from './events.ts';
@@ -351,12 +351,6 @@ const tryDatabasePromise = <Value, Failure>(
     }),
   );
 
-const keepPersistenceFailure = (
-  cause: unknown,
-  reason: string,
-): ActionInvocationPersistenceError =>
-  Schema.is(ActionInvocationPersistenceError)(cause) ? cause : persistenceFailure(reason, cause);
-
 const tryPersistenceQuery = <Value>(
   reason: string,
   evaluate: () => PromiseLike<Value>,
@@ -624,20 +618,11 @@ export const makeActionRepository = (): ActionRepositoryService => {
       },
     );
 
-    const runTransactionBody = EffectFunction.flow(
-      transactionBody,
-      Effect.runPromiseWith(yield* Effect.context()),
+    yield* runCoreTransaction(executor, transactionBody).pipe(
+      Effect.catchTag('CoreTransactionBridgeFailure', (failure) =>
+        Effect.fail(transactionFailure(failureReason, failure.original)),
+      ),
     );
-    yield* tryDatabasePromise(executor.transaction.bind(executor, runTransactionBody), (cause) => {
-      if (
-        Schema.is(ActionInvocationPersistenceError)(cause) ||
-        Schema.is(ActionInvocationStateError)(cause) ||
-        Schema.is(ActionTransactionError)(cause)
-      ) {
-        return cause;
-      }
-      return transactionFailure(failureReason, cause);
-    });
     return yield* Effect.void;
   });
 
@@ -755,12 +740,10 @@ export const makeActionRepository = (): ActionRepositoryService => {
       },
     );
 
-    const runTransactionBody = EffectFunction.flow(
-      transactionBody,
-      Effect.runPromiseWith(yield* Effect.context()),
-    );
-    yield* tryDatabasePromise(executor.transaction.bind(executor, runTransactionBody), (cause) =>
-      keepPersistenceFailure(cause, failureReason),
+    yield* runCoreTransaction(executor, transactionBody).pipe(
+      Effect.catchTag('CoreTransactionBridgeFailure', (failure) =>
+        Effect.fail(persistenceFailure(failureReason, failure.original)),
+      ),
     );
     return yield* Effect.void;
   });

@@ -85,6 +85,24 @@ test('preserves caller services and invokes the body once with the transaction',
   assert.deepEqual(h.events, ['begin', 'commit-start', 'commit-end']);
 });
 
+test('forwards the transaction config to the driver unchanged', async () => {
+  const h = harness();
+  const configs: unknown[] = [];
+  const executor: Executor = {
+    transaction: async (body, config) => {
+      configs.push(config);
+      return await h.executor.transaction(body);
+    },
+  };
+  const value = await runEffectTestPromise(
+    runCoreTransaction(executor, () => Effect.succeed('committed'), {
+      isolationLevel: 'repeatable read',
+    }),
+  );
+  assert.equal(value, 'committed');
+  assert.deepEqual(configs, [{ isolationLevel: 'repeatable read' }]);
+});
+
 for (const [name, cause] of [
   ['typed failure', Cause.fail({ _tag: 'ExpectedFailure', identity: {} })],
   ['defect', Cause.die(new Error('body defect'))],
@@ -135,7 +153,10 @@ test(
       assert.ok(Exit.isFailure(exit));
       assert.deepEqual(
         exit.cause,
-        Cause.combine(cause, Cause.fail(new CoreTransactionBridgeFailure({ original: rejection }))),
+        Cause.combine(
+          cause,
+          Cause.fail(new CoreTransactionBridgeFailure({ original: rejection, outcome: 'unknown' })),
+        ),
       );
       assert.equal(exit.cause.reasons[0], cause.reasons[0]);
       assert.equal(exit.cause.reasons[1], cause.reasons[1]);
@@ -175,7 +196,9 @@ test('concurrent runs do not share a failed body Exit', { timeout: 2000 }, async
     assert.ok(Exit.isFailure(second));
     assert.deepEqual(
       second.cause,
-      Cause.fail(new CoreTransactionBridgeFailure({ original: commitRejection })),
+      Cause.fail(
+        new CoreTransactionBridgeFailure({ original: commitRejection, outcome: 'unknown' }),
+      ),
     );
     releaseRollback.resolve();
     const exit = await first;
@@ -184,7 +207,9 @@ test('concurrent runs do not share a failed body Exit', { timeout: 2000 }, async
       exit.cause,
       Cause.combine(
         cause,
-        Cause.fail(new CoreTransactionBridgeFailure({ original: rollbackRejection })),
+        Cause.fail(
+          new CoreTransactionBridgeFailure({ original: rollbackRejection, outcome: 'unknown' }),
+        ),
       ),
     );
     assert.equal(calls, 2);
@@ -220,6 +245,7 @@ test('commit rejection cannot report the body value as success', async () => {
     Effect.flip(runCoreTransaction(h.executor, () => Effect.succeed(42))),
   );
   assert.ok(Schema.is(CoreTransactionBridgeFailure)(failure));
+  assert.equal(failure.outcome, 'unknown');
   assert.equal(failure.original, rejection);
   assert.deepEqual(h.events, ['begin', 'commit-start']);
 });
@@ -285,41 +311,96 @@ test(
   },
 );
 
-test('interruption during commit waits for driver settlement', { timeout: 2000 }, async () => {
-  const committing = gate();
-  const releaseCommit = gate();
-  const h = harness({
-    commit: async () => {
-      committing.resolve();
-      await releaseCommit.promise;
-    },
-  });
-  let settled = false;
-  const fiber = runEffectTestSync(
-    Effect.forkDetach(runCoreTransaction(h.executor, () => Effect.succeed(42))),
-  );
-  const result = runEffectTestPromise(Fiber.await(fiber)).then((exit) => {
-    settled = true;
-    return exit;
-  });
-  try {
-    await committing.promise;
-    fiber.interruptUnsafe();
-    await runEffectTestPromise(Effect.yieldNow);
-    assert.equal(settled, false);
-    releaseCommit.resolve();
-    const exit = await result;
-    assert.ok(Exit.isFailure(exit));
-    assert.deepEqual(
-      exit.cause.reasons.map((reason) => reason._tag),
-      ['Interrupt'],
+test(
+  'interruption during commit waits for driver settlement and reports committed outcome',
+  { timeout: 2000 },
+  async () => {
+    const committing = gate();
+    const releaseCommit = gate();
+    const h = harness({
+      commit: async () => {
+        committing.resolve();
+        await releaseCommit.promise;
+      },
+    });
+    let settled = false;
+    const fiber = runEffectTestSync(
+      Effect.forkDetach(runCoreTransaction(h.executor, () => Effect.succeed(42))),
     );
-    assert.deepEqual(h.events, ['begin', 'commit-start', 'commit-end']);
-  } finally {
-    releaseCommit.resolve();
-    await result;
-  }
-});
+    const result = runEffectTestPromise(Fiber.await(fiber)).then((exit) => {
+      settled = true;
+      return exit;
+    });
+    try {
+      await committing.promise;
+      fiber.interruptUnsafe();
+      await runEffectTestPromise(Effect.yieldNow);
+      assert.equal(settled, false);
+      releaseCommit.resolve();
+      const exit = await result;
+      assert.ok(Exit.isFailure(exit));
+      assert.deepEqual(
+        exit.cause.reasons.map((reason) => reason._tag),
+        ['Interrupt', 'Fail'],
+      );
+      const [, failure] = exit.cause.reasons;
+      assert.ok(failure !== undefined && Cause.isFailReason(failure));
+      assert.ok(Schema.is(CoreTransactionBridgeFailure)(failure.error));
+      assert.equal(failure.error.outcome, 'committed');
+      assert.equal(failure.error.original, undefined);
+      assert.deepEqual(h.events, ['begin', 'commit-start', 'commit-end']);
+    } finally {
+      releaseCommit.resolve();
+      await result;
+    }
+  },
+);
+
+test(
+  'interruption during rollback retains the original body defect',
+  { timeout: 2000 },
+  async () => {
+    const defect = new Error('body defect before interruption');
+    const rollingBack = gate();
+    const releaseRollback = gate();
+    const h = harness({
+      rollback: async () => {
+        rollingBack.resolve();
+        await releaseRollback.promise;
+      },
+    });
+    let settled = false;
+    const fiber = runEffectTestSync(
+      Effect.forkDetach(runCoreTransaction(h.executor, () => Effect.die(defect))),
+    );
+    const result = runEffectTestPromise(Fiber.await(fiber)).then((exit) => {
+      settled = true;
+      return exit;
+    });
+    try {
+      await rollingBack.promise;
+      fiber.interruptUnsafe();
+      await runEffectTestPromise(Effect.yieldNow);
+      assert.equal(settled, false);
+      assert.deepEqual(h.events, ['begin', 'rollback-start']);
+      releaseRollback.resolve();
+      const exit = await result;
+      assert.ok(Exit.isFailure(exit));
+      assert.deepEqual(
+        exit.cause.reasons.map((reason) => reason._tag),
+        ['Interrupt', 'Die'],
+      );
+      const [, bodyDefect] = exit.cause.reasons;
+      assert.ok(bodyDefect !== undefined && Cause.isDieReason(bodyDefect));
+      assert.equal(bodyDefect.defect, defect);
+      assert.deepEqual(h.events, ['begin', 'rollback-start', 'rollback-end']);
+    } finally {
+      fiber.interruptUnsafe();
+      releaseRollback.resolve();
+      await result;
+    }
+  },
+);
 
 for (const phase of ['commit', 'rollback'] as const) {
   test(
@@ -359,11 +440,17 @@ for (const phase of ['commit', 'rollback'] as const) {
         assert.ok(Exit.isFailure(exit));
         assert.deepEqual(
           exit.cause.reasons.map((reason) => reason._tag),
-          ['Interrupt', 'Fail'],
+          phase === 'commit' ? ['Interrupt', 'Fail'] : ['Interrupt', 'Fail', 'Fail'],
         );
-        const [, failure] = exit.cause.reasons;
+        if (phase === 'rollback') {
+          const [, bodyFailure] = exit.cause.reasons;
+          assert.ok(bodyFailure !== undefined && Cause.isFailReason(bodyFailure));
+          assert.equal(bodyFailure.error, 'body failed');
+        }
+        const failure = exit.cause.reasons.at(-1);
         assert.ok(failure !== undefined && Cause.isFailReason(failure));
         assert.ok(Schema.is(CoreTransactionBridgeFailure)(failure.error));
+        assert.equal(failure.error.outcome, 'unknown');
         assert.equal(failure.error.original, rejection);
         assert.deepEqual(h.events, ['begin', `${phase}-start`]);
       } finally {

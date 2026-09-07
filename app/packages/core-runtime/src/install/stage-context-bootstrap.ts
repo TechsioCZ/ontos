@@ -2,17 +2,10 @@ import { v1 } from '@authzed/authzed-node';
 import { and, eq, or } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type { NodePgDatabase, NodePgTransaction } from 'drizzle-orm/node-postgres';
-import {
-  Config,
-  Duration,
-  Effect,
-  Function as EffectFunction,
-  Option,
-  Redacted,
-  Schema,
-} from 'effect';
+import { Config, Duration, Effect, Option, Redacted, Schema } from 'effect';
 import { Pool } from 'pg';
 import { parseDatabaseConfig } from '../db/config.ts';
+import { runCoreTransaction } from '../db/transaction-bridge.ts';
 import {
   coreRelations,
   legalEntities,
@@ -407,13 +400,13 @@ const reconcilePostgresContext = Effect.fn('StageContextBootstrap.reconcilePostg
     context: StageContext,
     authUserId: string,
   ): Effect.fn.Return<void, StageContextBootstrapError> {
-    const effectContext = yield* Effect.context();
-    const runTransaction = EffectFunction.flow(
-      (transaction: NodePgTransaction<typeof coreRelations>) =>
-        reconcilePostgresTransaction(transaction, context, authUserId),
-      Effect.runPromiseWith(effectContext),
+    const transactionBody = (transaction: NodePgTransaction<typeof coreRelations>) =>
+      reconcilePostgresTransaction(transaction, context, authUserId);
+    yield* runCoreTransaction(database, transactionBody).pipe(
+      Effect.catchTag('CoreTransactionBridgeFailure', (bridgeFailure) =>
+        Effect.fail(bootstrapFailureFromCause(bridgeFailure.original)),
+      ),
     );
-    yield* tryBootstrapPromise(database.transaction.bind(database, runTransaction));
   },
 );
 
