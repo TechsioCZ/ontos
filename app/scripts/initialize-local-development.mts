@@ -4,7 +4,6 @@ import { pathToFileURL } from 'node:url';
 import { NodeFileSystem, NodePath } from '@effect/platform-node';
 import { v1 } from '@authzed/authzed-node';
 import { betterAuth } from 'better-auth';
-import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { verifyPassword } from 'better-auth/crypto';
 import { admin } from 'better-auth/plugins';
 import { and, eq, or } from 'drizzle-orm';
@@ -22,10 +21,9 @@ import {
 import { isSqlError } from 'effect/unstable/sql/SqlError';
 import { AuthConfig } from '../apps/shell-super-app/api/auth/config.ts';
 import { AuthDatabase, AuthDatabaseLive } from '../apps/shell-super-app/api/auth/db/client.ts';
-import type { AuthDatabaseExecutor } from '../apps/shell-super-app/api/auth/db/types.ts';
 import { CoreDatabase, CoreDatabaseLive } from '../packages/core-runtime/src/db/client.ts';
 import type { CoreDatabaseExecutor } from '../packages/core-runtime/src/db/types.ts';
-import { account, authDatabaseSchema, user } from '../apps/shell-super-app/api/auth/db/schema.ts';
+import { account, user } from '../apps/shell-super-app/api/auth/db/schema.ts';
 import {
   DatabaseConfig,
   parseDatabaseConfig,
@@ -445,18 +443,18 @@ export const buildLocalDevelopmentRelationships = Effect.fn('LocalDevelopment.bu
 
 const ensureAuthUser = Effect.fn('LocalDevelopment.ensureAuthUser')(function* ensureAuthUserEffect(
   configuration: LocalDevelopmentConfiguration,
-  database: AuthDatabaseExecutor,
 ) {
-  const existingUsers = yield* Effect.tryPromise({
-    catch: () =>
-      failure('local_persistence_failed', 'The local Better Auth user could not be loaded'),
-    try: async () =>
-      await database
-        .select({ email: user.email, id: user.id, name: user.name })
-        .from(user)
-        .where(eq(user.email, configuration.email))
-        .limit(2),
-  });
+  const { adapter, executor: database } = yield* AuthDatabase;
+  const existingUsers = yield* database
+    .select({ email: user.email, id: user.id, name: user.name })
+    .from(user)
+    .where(eq(user.email, configuration.email))
+    .limit(2)
+    .pipe(
+      Effect.mapError(() =>
+        failure('local_persistence_failed', 'The local Better Auth user could not be loaded'),
+      ),
+    );
   if (existingUsers.length > 1) {
     return yield* failure('local_conflict', 'Multiple Better Auth users use the local email');
   }
@@ -466,19 +464,19 @@ const ensureAuthUser = Effect.fn('LocalDevelopment.ensureAuthUser')(function* en
       email: configuration.email,
       name: configuration.principalDisplayName,
     });
-    const credentials = yield* Effect.tryPromise({
-      catch: () =>
-        failure(
-          'local_persistence_failed',
-          'The local Better Auth credentials could not be loaded',
+    const credentials = yield* database
+      .select({ password: account.password })
+      .from(account)
+      .where(and(eq(account.userId, existingUser.id), eq(account.providerId, 'credential')))
+      .limit(2)
+      .pipe(
+        Effect.mapError(() =>
+          failure(
+            'local_persistence_failed',
+            'The local Better Auth credentials could not be loaded',
+          ),
         ),
-      try: async () =>
-        await database
-          .select({ password: account.password })
-          .from(account)
-          .where(and(eq(account.userId, existingUser.id), eq(account.providerId, 'credential')))
-          .limit(2),
-    });
+      );
     const [credential] = credentials.length === 1 ? credentials : [];
     if (credential?.password === null || credential?.password === undefined) {
       return yield* failure(
@@ -510,11 +508,7 @@ const ensureAuthUser = Effect.fn('LocalDevelopment.ensureAuthUser')(function* en
     try: async () => {
       const authentication = betterAuth({
         baseURL: configuration.authBaseUrl,
-        database: drizzleAdapter(database, {
-          provider: 'pg',
-          schema: authDatabaseSchema,
-          transaction: true,
-        }),
+        database: adapter,
         emailAndPassword: { autoSignIn: false, disableSignUp: true, enabled: true },
         logger: { disabled: true },
         plugins: [admin()],
@@ -835,10 +829,7 @@ export const initializeLocalDevelopment = (
       LOCAL_DEVELOPMENT_VERTICALS,
     );
     const relationships = yield* buildLocalDevelopmentRelationships(moduleIds);
-    const authUser = yield* Effect.gen(function* initializeAuth() {
-      const database = yield* AuthDatabase;
-      return yield* ensureAuthUser(configuration, database.executor);
-    }).pipe(
+    const authUser = yield* ensureAuthUser(configuration).pipe(
       Effect.provide(
         AuthDatabaseLive.pipe(
           Layer.provide(

@@ -1,22 +1,7 @@
-import {
-  ActionRuntimeLive,
-  ContextAccessLive,
-  CorePersistenceLive,
-  CoreSearchQueryRuntimeLive,
-  DatabaseConfigLive,
-  ReadRuntimeLive,
-  TenantModuleStateServiceLive,
-} from '@app/core-runtime';
-import {
-  ActionPermissionLive,
-  ActionRepositoryLive,
-  ModuleEntrypointGatewayLive,
-  ModuleStateGateLive,
-  OperationalScopeResolverLive,
-} from '@app/core-runtime/actions/runtime-wiring';
+import { DatabaseConfigLive } from '@app/core-runtime';
+import type { ActionRuntime, ReadRuntime } from '@app/core-runtime';
 import {
   defineEffectBff,
-  Effect,
   HttpApiBuilder,
   HttpRouter,
   Layer,
@@ -26,18 +11,11 @@ import type {
   EffectBffRuntime,
   EffectRuntimeLayer,
 } from '@modern-js/plugin-bff/effect-edge';
-import { FetchHttpClient } from 'effect/unstable/http';
 import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
 
-import {
-  partyRegistryApi,
-  partyRegistryAppIdFromString,
-  partyRegistryOperationContexts,
-  partyRegistryUnitIdFromString,
-} from '../shared/api.ts';
-import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
-import { AresSubjectServiceLive } from '../src/integrations/ares/ares-subject.service.ts';
-import { PartySearchProjectionGatewayLive } from '../src/search/parties.provider.ts';
+import { partyRegistryApi } from '../shared/api.ts';
+import type { PartySearchProjectionGateway } from '../shared/domain/search-projection-gateway.ts';
+import type { AresSubjectService } from '../src/integrations/ares/ares-subject.service.ts';
 import { ActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
@@ -69,42 +47,20 @@ import {
   partyRegistryCommandsLive,
 } from './party-command-server.ts';
 import {
-  operationAttributes,
   partyRegistryCorsAllowedHeaders,
   partyRegistryCorsAllowedMethods,
   partyRegistryCorsAllowedOrigins,
   resolvePartyRegistryShellOrigin,
 } from './read-server-support.ts';
+import { partyRegistryFoundationLive } from './party-registry-foundation.ts';
+import {
+  partyRegistryActionRuntimeLive,
+  partyRegistryAresSubjectServiceLive,
+  partyRegistryReadRuntimeLive,
+  partyRegistrySearchProjectionGatewayLive,
+} from './party-registry-production-layers.ts';
 
-export const partyRegistryFoundationLive = HttpApiBuilder.group(
-  partyRegistryApi,
-  'foundation',
-  (handlers) =>
-    handlers.handle('readiness', () =>
-      Effect.withSpan(
-        Effect.succeed({
-          checks: {
-            api: 'ready' as const,
-            moduleFederation: 'ready' as const,
-            ssr: 'ready' as const,
-            translations: 'ready' as const,
-          },
-          marker: {
-            ...ultramodernApiMarker,
-            appId: partyRegistryAppIdFromString(ultramodernApiMarker.appId),
-            unitId: partyRegistryUnitIdFromString(ultramodernApiMarker.unitId),
-          },
-          status: 'ready' as const,
-          versionSkew: 'none' as const,
-        }),
-        'ultramodern.api.partyRegistry.readiness',
-        {
-          attributes: { ...operationAttributes(partyRegistryOperationContexts.readiness) },
-          kind: 'server',
-        },
-      ),
-    ),
-);
+export { partyRegistryFoundationLive } from './party-registry-foundation.ts';
 
 declare const ULTRAMODERN_SHELL_ORIGIN: unknown;
 
@@ -121,41 +77,9 @@ const readShellOrigin = () => {
 };
 const shellOrigin = readShellOrigin();
 
-const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(
-  Layer.provide(CorePersistenceLive),
-);
-const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
-const readRuntimeDependenciesLive = Layer.mergeAll(
-  CorePersistenceLive,
-  ContextAccessLive,
-  ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive)),
-  OperationalScopeResolverLive.pipe(
-    Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
-  ),
-);
-const readRuntimeLive = ReadRuntimeLive.pipe(Layer.provide(readRuntimeDependenciesLive));
-const governedReadRuntimeLive = readRuntimeLive;
-const actionRuntimeDependenciesLive = Layer.mergeAll(
-  CorePersistenceLive,
-  ActionRepositoryLive,
-  ActionPermissionLive,
-  ContextAccessLive,
-  moduleStateGateLive,
-  ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive)),
-  OperationalScopeResolverLive.pipe(
-    Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
-  ),
-);
-const actionRuntimeLive = ActionRuntimeLive.pipe(Layer.provide(actionRuntimeDependenciesLive));
-const aresSubjectServiceLive = AresSubjectServiceLive.pipe(Layer.provide(FetchHttpClient.layer));
-const coreSearchQueryRuntimeLive = CoreSearchQueryRuntimeLive.pipe(
-  Layer.provide(CorePersistenceLive),
-);
-const searchProjectionGatewayLive = PartySearchProjectionGatewayLive.pipe(
-  Layer.provide(coreSearchQueryRuntimeLive),
-);
 const gatewayAssertionRedemptionLive = GatewayAssertionRedemptionLive.pipe(
   Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+  Layer.provide(DatabaseConfigLive),
 );
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
@@ -163,13 +87,40 @@ const runtimeObservabilityLive = Layer.mergeAll(
   Layer.succeed(References.MinimumLogLevel, 'Info'),
 );
 
-export const makePartyRegistryApiRuntime = (): EffectBffDefinition<typeof partyRegistryApi> &
-  EffectBffRuntime<typeof partyRegistryApi> => {
+const productionReadRuntimeLive = partyRegistryReadRuntimeLive.pipe(
+  Layer.provide(DatabaseConfigLive),
+);
+const productionSearchProjectionGatewayLive = partyRegistrySearchProjectionGatewayLive.pipe(
+  Layer.provide(DatabaseConfigLive),
+);
+const productionActionRuntimeLive = partyRegistryActionRuntimeLive.pipe(
+  Layer.provide(DatabaseConfigLive),
+);
+
+type PartyRegistryApiRuntimeArguments = readonly [
+  readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
+  aresSubjectService: Layer.Layer<
+    AresSubjectService,
+    Layer.Error<typeof partyRegistryAresSubjectServiceLive>
+  >,
+  searchProjectionGateway: Layer.Layer<
+    PartySearchProjectionGateway,
+    Layer.Error<typeof productionSearchProjectionGatewayLive>
+  >,
+  actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof productionActionRuntimeLive>>,
+];
+
+export const makePartyRegistryApiRuntime = (
+  ...args: PartyRegistryApiRuntimeArguments
+): EffectBffDefinition<typeof partyRegistryApi, EffectRuntimeLayer> &
+  EffectBffRuntime<typeof partyRegistryApi, EffectRuntimeLayer> => {
+  const [governedReadRuntimeLive, aresSubjectService, searchProjectionGateway, actionRuntime] =
+    args;
   const apiHandlersLive = Layer.mergeAll(
     partyRegistryFoundationLive,
-    partyRegistryCommandsLive.pipe(Layer.provide(actionRuntimeLive)),
-    partyRegistryCommandRecoveryLive.pipe(Layer.provide(actionRuntimeLive)),
-    engagementProfileApiHandlersLive.pipe(Layer.provide(actionRuntimeLive)),
+    partyRegistryCommandsLive.pipe(Layer.provide(actionRuntime)),
+    partyRegistryCommandRecoveryLive.pipe(Layer.provide(actionRuntime)),
+    engagementProfileApiHandlersLive.pipe(Layer.provide(actionRuntime)),
     // <generated-governed-http-handler-layers>
     counterpartyReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     counterpartyRoleHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -194,15 +145,15 @@ export const makePartyRegistryApiRuntime = (): EffectBffDefinition<typeof partyR
     personEngagementProfileReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     aresLookupReadApiLive.pipe(
       GovernedReadLayer.provide(governedReadRuntimeLive),
-      Layer.provide(aresSubjectServiceLive),
+      Layer.provide(aresSubjectService),
     ),
     partiesReadApiLive.pipe(
       GovernedReadLayer.provide(governedReadRuntimeLive),
-      Layer.provide(searchProjectionGatewayLive),
+      Layer.provide(searchProjectionGateway),
     ),
     counterpartiesReadApiLive.pipe(
       GovernedReadLayer.provide(governedReadRuntimeLive),
-      Layer.provide(searchProjectionGatewayLive),
+      Layer.provide(searchProjectionGateway),
     ),
     // </generated-governed-http-handler-layers>
   ).pipe(
@@ -210,7 +161,6 @@ export const makePartyRegistryApiRuntime = (): EffectBffDefinition<typeof partyR
   );
   const layer = HttpApiBuilder.layer(partyRegistryApi).pipe(
     Layer.provide(apiHandlersLive),
-    Layer.provide(DatabaseConfigLive),
     Layer.provide(runtimeObservabilityLive),
     Layer.merge(
       HttpRouter.cors({
@@ -225,6 +175,11 @@ export const makePartyRegistryApiRuntime = (): EffectBffDefinition<typeof partyR
   return defineEffectBff({ api: partyRegistryApi, layer });
 };
 
-const apiRuntime = makePartyRegistryApiRuntime();
+const apiRuntime = makePartyRegistryApiRuntime(
+  productionReadRuntimeLive,
+  partyRegistryAresSubjectServiceLive,
+  productionSearchProjectionGatewayLive,
+  productionActionRuntimeLive,
+);
 
 export default apiRuntime;
