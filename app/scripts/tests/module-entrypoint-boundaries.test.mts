@@ -80,12 +80,31 @@ const governedClientFixture = (options: {
   readonly generatedHeader: string;
   readonly invocationKind: 'module-api' | 'provider';
   readonly publicOperation: string;
-}): string => `${options.generatedHeader}import { makeEffectBffClient } from '@app/shared-contracts/client-runtime';
+}): string => {
+  const apiStem = options.apiValue.replace(/Api$/u, '');
+  const operationStem =
+    options.invocationKind === MODULE_API_KIND
+      ? apiStem
+      : apiStem.replace(/(?:Report|Search)$/u, '');
+  const requestType =
+    options.invocationKind === MODULE_API_KIND
+      ? `${apiStem}Request`
+      : `${operationStem}ProviderRequest`;
+  return `${options.generatedHeader}import { makeEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted } from 'effect';
 import { ${options.apiValue} } from '${options.contractImport}';
-import type { GovernedRequest } from '${options.contractImport}';
+import type { ${requestType} } from '${options.contractImport}';
 ${GATEWAY_IMPORT}
-const ${options.clientHelper} = (credential, requestCorrelation, options) => {
+export interface ${operationStem}ClientOptions {
+  readonly baseUrl?: string | URL;
+}
+type ${apiStem}AuthorizedInvocation = readonly [credential: string, requestCorrelation: string, options?: ${operationStem}ClientOptions];
+type ${apiStem}OperationInvocation = readonly [requestCorrelation: string, options?: ${operationStem}ClientOptions];
+const ${options.clientHelper} = (
+  credential: Redacted.Redacted<string>,
+  requestCorrelation: string,
+  options: ${operationStem}ClientOptions,
+) => {
   const clientConfig = {
     api: ${options.apiValue},
     defaultApiPrefix: '/inventory-stock-api',
@@ -98,7 +117,10 @@ const ${options.clientHelper} = (credential, requestCorrelation, options) => {
     options.baseUrl === undefined ? clientConfig : { ...clientConfig, baseUrl: options.baseUrl },
   );
 };
-export const ${options.authorizedOperation} = (payload, credential, requestCorrelation, options) =>
+export const ${options.authorizedOperation} = (
+  payload: ${requestType},
+  ...[credential, requestCorrelation, options = {}]: ${apiStem}AuthorizedInvocation
+) =>
   ${options.clientHelper}(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) => client.${options.endpointGroup}.execute(${
       options.invocationKind === MODULE_API_KIND
@@ -106,24 +128,29 @@ export const ${options.authorizedOperation} = (payload, credential, requestCorre
         : '{ payload }'
     })),
   );
-export const ${options.publicOperation} = (payload, requestCorrelation, options) =>
+export const ${options.publicOperation} = (
+  payload: ${requestType},
+  ...[requestCorrelation, options = {}]: ${apiStem}OperationInvocation
+) =>
   operationGateway.invoke((credential) =>
     ${options.authorizedOperation}(payload, credential, requestCorrelation, options),
   );`;
+};
 
 const assertRejectedSources = async (
   root: string,
   file: string,
   sources: readonly string[],
   expected: RegExp,
+  index = 0,
 ): Promise<void> => {
   const [source, ...remaining] = sources;
   if (source === undefined) {
     return;
   }
   await write(root, file, source);
-  await assert.rejects(checkModuleEntrypointBoundaries(root), expected);
-  await assertRejectedSources(root, file, remaining, expected);
+  await assert.rejects(checkModuleEntrypointBoundaries(root), expected, `invalid source ${index}`);
+  await assertRejectedSources(root, file, remaining, expected, index + 1);
 };
 
 const makeFixture = async (): Promise<string> => {
@@ -554,8 +581,8 @@ export const executeStockListWithAuthorization = (payload, credential, requestCo
 export const executeStockList = (payload, requestCorrelation, options) =>
   executeStockListWithAuthorization(payload, 'Bearer bypass', requestCorrelation, options);`;
     const shadowedGatewayClient = validClient.replace(
-      'export const executeStockList = (payload, requestCorrelation, options) =>',
-      'export const executeStockList = (operationGateway, payload, requestCorrelation, options) =>',
+      'export const executeStockList = (\n  payload:',
+      'export const executeStockList = (\n  operationGateway: unknown,\n  payload:',
     );
     const bypassedEndpointClient = validClient.replace(
       'Effect.flatMap((client) => client.stockList.execute({ headers: {}, params: {}, payload, query: {} }))',
@@ -617,6 +644,18 @@ ${GATEWAY_IMPORT}`,
         GATEWAY_IMPORT,
         `import '../db/repository.ts';
 ${GATEWAY_IMPORT}`,
+      ),
+      validClient.replace(
+        "import { Effect, Redacted } from 'effect';",
+        "import { Effect, Redacted, runSync } from 'effect';",
+      ),
+      validClient.replace(
+        '  options: StockListClientOptions,\n)',
+        "  options: StockListClientOptions,\n  unused = fetch('/bypass'),\n)",
+      ),
+      validClient.replace(
+        '  ...[credential, requestCorrelation, options = {}]: StockListAuthorizedInvocation\n)',
+        "  ...[credential, requestCorrelation, options = {}]: StockListAuthorizedInvocation,\n  unused = fetch('/bypass'),\n)",
       ),
       `${validClient}
 export const executeStockListBypass = () => Effect.tryPromise(() => fetch('/bypass'));`,
@@ -695,6 +734,21 @@ ${validContract}`,
       /module APIs require an approved Codesmith generator/u,
     );
     await write(root, contractPath, validContract);
+    await assertRejectedSources(
+      root,
+      contractPath,
+      [
+        "HttpApi.make('StockListApi').add(OtherGroup).add(HttpApiGroup.make('stockList'))",
+        "HttpApi.make('StockListApi').pipe(() => DecoyApi).add(HttpApiGroup.make('stockList'))",
+      ].map((bypass) =>
+        validContract.replace(
+          "HttpApi.make('StockListApi').add(HttpApiGroup.make('stockList'))",
+          bypass,
+        ),
+      ),
+      /module APIs require an approved Codesmith generator/u,
+    );
+    await write(root, contractPath, validContract);
     await write(root, clientPath, validClient);
     await write(
       root,
@@ -728,6 +782,7 @@ ${validContract}`,
 `;
     const providerContractPath = 'verticals/inventory-stock/shared/apis/inventory-items-search.ts';
     const providerClientPath = 'verticals/inventory-stock/src/api/inventory-items-search-client.ts';
+    const validProviderContract = `${providerHeader}export const InventoryItemsSearchApi = HttpApi.make('InventoryItemsSearchApi').add(HttpApiGroup.make('search').add(HttpApiEndpoint.post('execute', '/inventory.stock/search/inventory-items', {})));`;
     const providerClient = governedClientFixture({
       apiValue: 'InventoryItemsSearchApi',
       authorizedOperation: 'loadInventoryItemsClientWithAuthorization',
@@ -738,22 +793,18 @@ ${validContract}`,
       invocationKind: 'provider',
       publicOperation: 'loadInventoryItemsClient',
     });
-    await write(
-      root,
-      providerContractPath,
-      `${providerHeader}export const InventoryItemsSearchApi = HttpApi.make('InventoryItemsSearchApi').add(HttpApiGroup.make('search'));`,
-    );
+    await write(root, providerContractPath, validProviderContract);
     await write(root, providerClientPath, providerClient);
     await write(
       root,
       'verticals/inventory-stock/src/search/inventory-items.provider.ts',
-      `${providerHeader}export const inventoryItemsEntrypoint = defineTenantModuleEntrypoint({});
-export const inventoryItemsRead = defineRead({});`,
+      `${providerHeader}export const inventoryItemsEntrypoint = defineTenantModuleEntrypoint({ access: 'read', entrypointKey: 'inventory.stock.search.inventory-items', moduleKey: 'inventory.stock', role: 'search' });
+export const inventoryItemsRead = defineRead({ accessKind: 'search', entrypoint: inventoryItemsEntrypoint, legalEntityScope: 'required', owningModuleKey: 'inventory.stock', readKey: 'inventory.stock.search.inventory-items', schemaVersion: '1' });`,
     );
     await write(
       root,
       'verticals/inventory-stock/api/inventory-items-search-server.ts',
-      `${providerHeader}export const inventoryItemsReadApiLive = HttpApiBuilder.group(api, 'search', (handlers) => handlers.handle('execute', Effect.fn(function* () { const principal = yield* verifyOperationPrincipal(); const runtime = yield* ReadRuntime; return yield* runtime.runRead({ principal }); })));`,
+      `${providerHeader}export const inventoryItemsReadApiLive = HttpApiBuilder.group(api, 'search', (handlers) => handlers.handle('execute', Effect.fn(function* () { const principal = yield* verifyOperationPrincipal(); const runtime = yield* ReadRuntime; return yield* runtime.runRead({ principal, registration: inventoryItemsRead }); })));`,
     );
     const providerManifestPath = 'verticals/inventory-stock/vertical.manifest.ts';
     const providerRegistrationPath = INVENTORY_REGISTRATION_PATH;
@@ -801,6 +852,19 @@ export const inventoryItemsRead = defineRead({});`,
       /generated search and report clients require the shared client runtime/u,
     );
     await write(root, providerManifestPath, validProviderManifest);
+    await write(
+      root,
+      providerManifestPath,
+      validProviderManifest.replace(
+        "{ key: 'inventory.stock.inventory-items', owningModuleId: 'inventory.stock' }",
+        "{ decoy: { owningModuleId: 'inventory.stock' }, key: 'inventory.stock.inventory-items', owningModuleId: 'wrong.owner' }",
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /generated search and report clients require the shared client runtime/u,
+    );
+    await write(root, providerManifestPath, validProviderManifest);
 
     const providerServerPath = 'verticals/inventory-stock/api/inventory-items-search-server.ts';
     const validProviderServer = await readFile(path.join(root, providerServerPath), 'utf-8');
@@ -814,6 +878,23 @@ export const inventoryItemsRead = defineRead({});`,
     );
     await assert.rejects(
       checkModuleEntrypointBoundaries(root),
+      /generated search and report clients require the shared client runtime/u,
+    );
+    await write(root, providerServerPath, validProviderServer);
+    await assertRejectedSources(
+      root,
+      providerServerPath,
+      [
+        validProviderServer.replace(
+          'principal, registration:',
+          'principal: forgedPrincipal, registration:',
+        ),
+        validProviderServer.replace('registration: inventoryItemsRead', 'registration: otherRead'),
+        validProviderServer.replace(
+          "handlers.handle('execute', Effect.fn(function* () {",
+          "(true ? handlers.handle('execute', Effect.fn(function* () => bypass())) : handlers.handle('decoy', Effect.fn(function* () {",
+        ),
+      ],
       /generated search and report clients require the shared client runtime/u,
     );
     await write(root, providerServerPath, validProviderServer);
@@ -834,6 +915,19 @@ export const inventoryItemsRead = defineRead({});`,
       validProviderRegistration.replace(
         './src/api/inventory-items-search-client.ts',
         './src/api/other-search-client.ts',
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /generated search and report clients require the shared client runtime/u,
+    );
+    await write(root, providerRegistrationPath, validProviderRegistration);
+    await write(
+      root,
+      providerRegistrationPath,
+      validProviderRegistration.replace(
+        "'inventory-items': () => import('./src/api/inventory-items-search-client.ts'),",
+        "'decoy': () => ({ 'inventory-items': () => import('./src/api/inventory-items-search-client.ts') }),",
       ),
     );
     await assert.rejects(
@@ -866,11 +960,33 @@ export const inventoryItemsRead = defineRead({});`,
       checkModuleEntrypointBoundaries(root),
       /generated search and report clients require the shared client runtime/u,
     );
+    await write(root, providerContractPath, validProviderContract);
+    const providerSourcePath = 'verticals/inventory-stock/src/search/inventory-items.provider.ts';
+    const validProviderSource = await readFile(path.join(root, providerSourcePath), 'utf-8');
     await write(
       root,
-      providerContractPath,
-      `${providerHeader}export const InventoryItemsSearchApi = HttpApi.make('InventoryItemsSearchApi').add(HttpApiGroup.make('search'));`,
+      providerSourcePath,
+      validProviderSource.replace("access: 'read'", "access: 'historical_read'"),
     );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /generated search and report clients require the shared client runtime/u,
+    );
+    await write(root, providerSourcePath, validProviderSource);
+
+    await Promise.all(
+      [providerContractPath, providerClientPath, providerSourcePath, providerServerPath].map(
+        async (artifact) => await rm(path.join(root, artifact)),
+      ),
+    );
+    await assert.rejects(
+      checkModuleEntrypointBoundaries(root),
+      /generated search and report clients require the shared client runtime/u,
+    );
+    await write(root, providerContractPath, validProviderContract);
+    await write(root, providerClientPath, providerClient);
+    await write(root, providerSourcePath, validProviderSource);
+    await write(root, providerServerPath, validProviderServer);
 
     await assertRejectedSources(
       root,
@@ -918,19 +1034,19 @@ export const inventoryItemsRead = defineRead({});`,
     await write(
       root,
       'verticals/inventory-stock/shared/apis/stock-levels-report.ts',
-      `${reportHeader}export const StockLevelsReportApi = HttpApi.make('StockLevelsReportApi').add(HttpApiGroup.make('reports'));`,
+      `${reportHeader}export const StockLevelsReportApi = HttpApi.make('StockLevelsReportApi').add(HttpApiGroup.make('reports').add(HttpApiEndpoint.post('execute', '/inventory.stock/reports/stock-levels', {})));`,
     );
     await write(root, reportClientPath, reportClient);
     await write(
       root,
       'verticals/inventory-stock/src/reports/stock-levels.provider.ts',
-      `${reportHeader}export const stockLevelsEntrypoint = defineTenantModuleEntrypoint({});
-export const stockLevelsRead = defineRead({});`,
+      `${reportHeader}export const stockLevelsEntrypoint = defineTenantModuleEntrypoint({ access: 'read', entrypointKey: 'inventory.stock.report.stock-levels', moduleKey: 'inventory.stock', role: 'report' });
+export const stockLevelsRead = defineRead({ accessKind: 'report', entrypoint: stockLevelsEntrypoint, legalEntityScope: 'required', owningModuleKey: 'inventory.stock', readKey: 'inventory.stock.report.stock-levels', schemaVersion: '1' });`,
     );
     await write(
       root,
       'verticals/inventory-stock/api/stock-levels-report-server.ts',
-      `${reportHeader}export const stockLevelsReadApiLive = HttpApiBuilder.group(api, 'reports', (handlers) => handlers.handle('execute', Effect.fn(function* () { const principal = yield* verifyOperationPrincipal(); const runtime = yield* ReadRuntime; return yield* runtime.runRead({ principal }); })));`,
+      `${reportHeader}export const stockLevelsReadApiLive = HttpApiBuilder.group(api, 'reports', (handlers) => handlers.handle('execute', Effect.fn(function* () { const principal = yield* verifyOperationPrincipal(); const runtime = yield* ReadRuntime; return yield* runtime.runRead({ principal, registration: stockLevelsRead }); })));`,
     );
     const reportManifest = await readFile(path.join(root, providerManifestPath), 'utf-8');
     const reportRegistration = await readFile(path.join(root, providerRegistrationPath), 'utf-8');

@@ -739,6 +739,17 @@ test('search-provider access updates only generated access metadata and fails at
     assert.match(provider, /kind: 'tenant', permission: 'read_party_identity'/u);
     assert.match(contract, /includeArchived: Schema\.optionalKey\(Schema\.Boolean\)/u);
 
+    const beforeProviderRerun = await snapshotTree(fixture.root);
+    await run(fixture, scaffoldCommand.searchProvider, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--name',
+      fixtureName.inventoryItems,
+      scaffoldFlag.resource,
+      'item',
+    ]);
+    assert.deepEqual(await snapshotTree(fixture.root), beforeProviderRerun);
+
     const providerPath = path.join(fixture.root, inventorySearchProviderFile);
     await writeFile(
       providerPath,

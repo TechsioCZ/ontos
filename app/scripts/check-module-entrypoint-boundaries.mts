@@ -20,12 +20,14 @@ import type {
 } from './authorization/protected-entrypoint-inventory.mts';
 import {
   generatedApiGroup,
+  generatedProviderIdentities,
   hasCompleteGeneratedModuleApiSeam,
   hasGeneratedGovernedClientContract,
   hasGeneratedGovernedServerContract,
+  hasGeneratedProviderApiContract,
   hasGeneratedProviderManifest,
+  hasGeneratedProviderReadContract,
   hasGeneratedProviderRegistration,
-  hasTopLevelExportedConst,
 } from './generated-module-api-boundary.mts';
 
 const SOURCE_EXTENSIONS = new Set(['.js', '.jsx', '.mjs', '.mts', '.ts', '.tsx']);
@@ -615,9 +617,13 @@ const validateGeneratedProviderClient = (
   sourceMap: ReadonlyMap<string, string>,
   file: string,
   deploymentAppId: string,
+  discoveredProvider?: Omit<GeneratedProviderLocation, 'isClient'>,
 ) =>
   Effect.gen(function* validateGeneratedProviderClientEffect() {
-    const provider = generatedProviderLocation(file);
+    const provider =
+      discoveredProvider === undefined
+        ? generatedProviderLocation(file)
+        : { ...discoveredProvider, isClient: false };
     if (provider === undefined) {
       return;
     }
@@ -661,8 +667,8 @@ const validateGeneratedProviderClient = (
       providerSource.startsWith(generatedHeader),
       serverSource.startsWith(generatedHeader),
       expectedGroups.has(endpointGroup),
-      hasTopLevelExportedConst(providerSource, `${camel}Entrypoint`),
-      hasTopLevelExportedConst(providerSource, `${camel}Read`),
+      hasGeneratedProviderApiContract(contractSource, ownerApiValue, moduleId, name, kind),
+      hasGeneratedProviderReadContract(providerSource, moduleId, name, kind),
       hasGeneratedGovernedServerContract(serverSource, `${camel}ReadApiLive`),
       hasGeneratedProviderManifest(manifest, moduleId, name, kind),
       hasGeneratedProviderRegistration(registration, name, kind),
@@ -682,6 +688,33 @@ const validateGeneratedProviderClient = (
         provider.isClient ? clientPath : file,
         'generated search and report clients require the shared client runtime, owner-local contract, operation gateway, authorization, and correlation metadata',
       );
+    }
+  });
+
+const validatePublishedProviderIdentities = (
+  state: BoundaryCheckState,
+  file: string,
+  verticalPath: string | undefined,
+) =>
+  Effect.gen(function* validatePublishedProviderIdentitiesEffect() {
+    if (
+      verticalPath === undefined ||
+      (file !== `${verticalPath}/vertical.manifest.ts` &&
+        file !== `${verticalPath}/vertical.registration.ts`)
+    ) {
+      return;
+    }
+    const manifest = state.sourceMap.get(`${verticalPath}/vertical.manifest.ts`) ?? '';
+    const registration = state.sourceMap.get(`${verticalPath}/vertical.registration.ts`) ?? '';
+    const moduleId =
+      /@ontos-module-id (?<moduleId>[a-z0-9]+(?:\.[a-z0-9]+)*)/u.exec(manifest)?.groups?.moduleId ??
+      '';
+    const deploymentAppId = state.owners.get(verticalPath) ?? file.split('/')[1] ?? '';
+    for (const provider of generatedProviderIdentities(manifest, registration, moduleId)) {
+      yield* validateGeneratedProviderClient(state.sourceMap, file, deploymentAppId, {
+        ...provider,
+        vertical: verticalPath,
+      });
     }
   });
 
@@ -721,6 +754,7 @@ const validateVerticalSource = (
       yield* fail(file, 'module APIs must be created with scaffold:module-api');
     }
     const verticalPath = /^verticals\/[^/]+/u.exec(file)?.[0];
+    yield* validatePublishedProviderIdentities(state, file, verticalPath);
     yield* validateGeneratedProviderClient(
       sourceMap,
       file,
