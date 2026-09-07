@@ -1,12 +1,19 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import {
+  makeEffectTestCallback as nativeTestCallback,
+  runEffectTestPromise,
+} from '@app/core-runtime/testing/effect-runtime';
+
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
+import { getTableConfig } from 'drizzle-orm/pg-core';
+import { Effect, Exit as NativeExit, Scope as NativeScope, Schema } from 'effect';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import test from 'node:test';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { getTableConfig } from 'drizzle-orm/pg-core';
-import { Effect, Schema } from 'effect';
+import test, { after as afterNativeDatabase } from 'node:test';
 import { Pool } from 'pg';
+import {
+  makeSystemPrincipalContextResolver,
+  registerSystemWorkload,
+} from '../../src/auth/system-principal-context.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations, dataAccessEvents } from '../../src/db/schema.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -16,11 +23,14 @@ import {
 } from '../../src/operations/context.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
-import {
-  makeSystemPrincipalContextResolver,
-  registerSystemWorkload,
-} from '../../src/auth/system-principal-context.ts';
+import { makeTestDatabaseFromPool } from '../support/database.ts';
+import { runEffectTestSync as runNativeSync } from '../support/effect-runtime.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
+
+const nativeDatabaseScope = runNativeSync(NativeScope.make());
+afterNativeDatabase(
+  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
+);
 
 void test('standalone governed-read evidence permits no Action invocation and requires outcome fields', () => {
   const config = getTableConfig(dataAccessEvents);
@@ -35,7 +45,11 @@ void test('commits live allowed evidence before releasing a governed read result
   const connections = await runEffectTestPromise(loadDatabaseConnectionPair());
   const admin = new Pool({ connectionString: connections.admin.connectionString });
   const runtimePool = new Pool({ connectionString: connections.runtime.connectionString });
-  const runtimeDatabase = drizzle({ client: runtimePool, relations: coreRelations });
+  const runtimeDatabase = await runEffectTestPromise(
+    makeTestDatabaseFromPool(runtimePool, coreRelations).pipe(
+      NativeScope.provide(nativeDatabaseScope),
+    ),
+  );
   const tenantId = randomUUID();
   const principalId = randomUUID();
   const readKey = `core.shell.integration.${randomUUID()}`;

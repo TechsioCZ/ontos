@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import * as publicSurface from '../../src/index.ts';
-import type { ResolvedReadPermissionTarget } from '../../src/index.ts';
 import {
   computeActionRequestHash,
   computeCanonicalValueHash,
 } from '../../src/actions/repository.ts';
+import type { ResolvedReadPermissionTarget } from '../../src/index.ts';
+import * as publicSurface from '../../src/index.ts';
 
 const principal = {
   authMethod: 'session',
@@ -106,6 +106,10 @@ void test('publishes only the narrow server Action surface', () => {
   assert.equal('createPermissionCheckClient' in publicSurface, false);
   assert.equal('makeActionPermissionService' in publicSurface, false);
   assert.equal('Pool' in publicSurface, false);
+});
+
+void test('publishes the sanitized PostgreSQL classifier on the server surface', () => {
+  assert.equal('findPostgresFailure' in publicSurface, true);
 });
 
 test('publishes the typed governed Read alternative-target composition', () => {

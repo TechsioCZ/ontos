@@ -1,20 +1,20 @@
-/* oxlint-disable sonarjs/no-built-in-override, sonarjs/no-nested-functions -- Existing compatibility boundary; expires: 2026-12-31. */
-// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
+import { SqlError, isSqlError } from 'effect/unstable/sql/SqlError';
+/* oxlint-disable sonarjs/no-built-in-override -- Existing compatibility boundary; expires: 2026-12-31. */
 import { and, eq, sql } from 'drizzle-orm';
-import { Context, Duration, Effect, Exit, Layer, Option, Schema } from 'effect';
-import { CoreDatabase } from '../db/client.ts';
-import { domainEvents, legalEntities, searchProjectionGenerations } from '../db/schema.ts';
-import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
+import { Context, Effect, Exit, Layer, Option, Schema } from 'effect';
+import type { DatabaseDriverFailure } from '../database/driver-failure.ts';
 import {
   DatabaseTransactionFailure,
   decodeDatabaseDriverFailure,
 } from '../database/driver-failure.ts';
-import type { DatabaseDriverFailure } from '../database/driver-failure.ts';
-import { isVerifiedOutboxWorkerHandlerContext } from '../outbox/definition.ts';
+import { CoreDatabase } from '../db/client.ts';
+import { domainEvents, legalEntities, searchProjectionGenerations } from '../db/schema.ts';
+import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
+import { isVerifiedOutboxWorkerHandlerContext } from '../outbox/definition.ts';
 import { CORE_SEARCH_INGESTION_REGISTRATIONS } from './ingestion.ts';
-import { CoreSearchProjectionInvalid, CoreSearchProjectionUnavailable } from './projection.ts';
 import type { CoreSearchProjectionUnavailableError } from './projection.ts';
+import { CoreSearchProjectionInvalid, CoreSearchProjectionUnavailable } from './projection.ts';
 
 export interface CoreSearchSnapshotReadExecutor {
   readonly select: CoreTransaction['select'];
@@ -177,16 +177,6 @@ type CoreSearchSnapshotDriverError = DatabaseDriverFailure | CoreSearchProjectio
 const snapshotDriverError = (cause: unknown): CoreSearchSnapshotDriverError =>
   Option.getOrElse(decodeDatabaseDriverFailure(cause), () => unavailable(cause));
 
-const tryDriverPromise = <Value>(
-  evaluate: () => PromiseLike<Value>,
-): Effect.Effect<Value, CoreSearchSnapshotDriverError> =>
-  Effect.tryPromise({ catch: snapshotDriverError, try: evaluate }).pipe(
-    Effect.timeoutOrElse({
-      duration: Duration.infinity,
-      orElse: () => Effect.fail(unavailable()),
-    }),
-  );
-
 const serializationFailure = (cause: unknown): boolean =>
   Option.exists(
     decodeDatabaseDriverFailure(cause),
@@ -223,22 +213,24 @@ export const makePostgresCoreSearchSnapshotBackend = (
         ) => Effect.Effect<void, CoreSearchProjectionUnavailableError>,
       ) => Effect.Effect<Value, Error>,
     ) {
-      const runTransactionProgram = Effect.runPromiseWith(yield* Effect.context());
       const transactionProgram = Effect.fn('CoreSearchSnapshotBackend.transaction')(
         function* runCoreSearchSnapshotTransaction(transaction: CoreTransaction) {
           const installScope = Effect.fn('CoreSearchSnapshotBackend.installScope')(
             function* installCoreSearchSnapshotScope(legalEntityId?: string) {
-              const result = yield* tryDriverPromise(() =>
-                transaction.execute<{
+              const result = yield* transaction
+                .execute<{
                   legal_entity_id: string;
                   tenant_id: string;
-                }>(sql`
+                }>(
+                  sql`
                 select
                   set_config('ontos.tenant_id', ${context.tenantId}, true) as tenant_id,
                   set_config('ontos.legal_entity_id', ${legalEntityId ?? ''}, true) as legal_entity_id
-              `),
-              );
-              const [setting] = result.rows;
+              `,
+                  'objects',
+                )
+                .pipe(Effect.mapError(snapshotDriverError));
+              const [setting] = result;
               if (
                 setting?.tenant_id !== context.tenantId ||
                 setting.legal_entity_id !== (legalEntityId ?? '')
@@ -255,35 +247,33 @@ export const makePostgresCoreSearchSnapshotBackend = (
           // RR rejects a waiter whose snapshot predates the preceding generation commit.
           // Retrying the whole transaction makes increasing generations imply fresh snapshots,
           // even when business event sequences commit out of their allocation order.
-          const [generation] = yield* tryDriverPromise(() =>
-            transaction
-              .insert(searchProjectionGenerations)
-              .values({
-                generation: 1n,
-                sourceModuleKey: context.producerModuleKey,
-                tenantId: context.tenantId,
-              })
-              .onConflictDoUpdate({
-                set: {
-                  generation: sql`${searchProjectionGenerations.generation} + 1`,
-                  updatedAt: sql`now()`,
-                },
-                target: [
-                  searchProjectionGenerations.tenantId,
-                  searchProjectionGenerations.sourceModuleKey,
-                ],
-              })
-              .returning({ version: searchProjectionGenerations.generation }),
-          );
+          const [generation] = yield* transaction
+            .insert(searchProjectionGenerations)
+            .values({
+              generation: 1n,
+              sourceModuleKey: context.producerModuleKey,
+              tenantId: context.tenantId,
+            })
+            .onConflictDoUpdate({
+              set: {
+                generation: sql`${searchProjectionGenerations.generation} + 1`,
+                updatedAt: sql`now()`,
+              },
+              target: [
+                searchProjectionGenerations.tenantId,
+                searchProjectionGenerations.sourceModuleKey,
+              ],
+            })
+            .returning({ version: searchProjectionGenerations.generation })
+            .pipe(Effect.mapError(snapshotDriverError));
           if (generation === undefined) {
             return yield* unavailable();
           }
-          const [watermark] = yield* tryDriverPromise(() =>
-            transaction
-              .select({ version: sql<string>`max(${domainEvents.tenantSequenceNo})::text` })
-              .from(domainEvents)
-              .where(eq(domainEvents.tenantId, context.tenantId)),
-          );
+          const [watermark] = yield* transaction
+            .select({ version: sql<string>`max(${domainEvents.tenantSequenceNo})::text` })
+            .from(domainEvents)
+            .where(eq(domainEvents.tenantId, context.tenantId))
+            .pipe(Effect.mapError(snapshotDriverError));
           if (
             watermark?.version === null ||
             watermark?.version === undefined ||
@@ -291,25 +281,23 @@ export const makePostgresCoreSearchSnapshotBackend = (
           ) {
             return yield* unavailable();
           }
-          yield* tryDriverPromise(() =>
-            transaction
-              .update(searchProjectionGenerations)
-              .set({
-                eventWatermark: BigInt(watermark.version),
-              })
-              .where(
-                and(
-                  eq(searchProjectionGenerations.tenantId, context.tenantId),
-                  eq(searchProjectionGenerations.sourceModuleKey, context.producerModuleKey),
-                ),
+          yield* transaction
+            .update(searchProjectionGenerations)
+            .set({
+              eventWatermark: BigInt(watermark.version),
+            })
+            .where(
+              and(
+                eq(searchProjectionGenerations.tenantId, context.tenantId),
+                eq(searchProjectionGenerations.sourceModuleKey, context.producerModuleKey),
               ),
-          );
-          const entities = yield* tryDriverPromise(() =>
-            transaction
-              .select({ legalEntityId: legalEntities.legalEntityId })
-              .from(legalEntities)
-              .where(eq(legalEntities.tenantId, context.tenantId)),
-          );
+            )
+            .pipe(Effect.mapError(snapshotDriverError));
+          const entities = yield* transaction
+            .select({ legalEntityId: legalEntities.legalEntityId })
+            .from(legalEntities)
+            .where(eq(legalEntities.tenantId, context.tenantId))
+            .pipe(Effect.mapError(snapshotDriverError));
           return yield* Effect.exit(
             readSnapshot(
               {
@@ -324,15 +312,27 @@ export const makePostgresCoreSearchSnapshotBackend = (
           );
         },
       );
-      const execute = async () =>
-        await database.executor.transaction(
-          async (transaction: CoreTransaction) =>
-            await runTransactionProgram(transactionProgram(transaction)),
-          { isolationLevel: 'repeatable read' },
-        );
-      const snapshotExit = yield* retryCoreSearchSnapshot(tryDriverPromise(execute)).pipe(
-        Effect.mapError(unavailable),
-      );
+      const snapshotExit = yield* retryCoreSearchSnapshot(
+        database.executor
+          .transaction(
+            Effect.fn('snapshotTransactionEffect')(function* snapshotTransactionEffect(
+              transaction: CoreTransaction,
+            ) {
+              yield* transaction.setTransaction({
+                isolationLevel: 'repeatable read',
+              });
+              return yield* transactionProgram(transaction);
+            }),
+          )
+          .pipe(
+            Effect.catchDefect((defect) =>
+              isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
+            ),
+            Effect.mapError((failure) =>
+              Schema.is(SqlError)(failure) ? snapshotDriverError(failure) : failure,
+            ),
+          ),
+      ).pipe(Effect.mapError(unavailable));
       return yield* Exit.isSuccess(snapshotExit)
         ? Effect.succeed(snapshotExit.value)
         : Effect.failCause(snapshotExit.cause);

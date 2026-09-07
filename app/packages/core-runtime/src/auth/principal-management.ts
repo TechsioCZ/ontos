@@ -1,15 +1,14 @@
-// @effect-diagnostics asyncFunction:off globalDate:off globalDateInEffect:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { and, eq, isNull } from 'drizzle-orm';
 import { Context, DateTime, Effect, Option } from 'effect';
-import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
-import { principalAuthBindings, principals } from '../db/schema.ts';
 import type { BindingStatus, PrincipalKind, PrincipalStatus } from '../db/schema.ts';
+import { principalAuthBindings, principals } from '../db/schema.ts';
+import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
+import type { PrincipalManagementError } from './principal-management-errors.ts';
 import {
   IdentityLifecycleConflictError,
   IdentityPersistenceUnavailableError,
   IdentityTargetInvalidError,
 } from './principal-management-errors.ts';
-import type { PrincipalManagementError } from './principal-management-errors.ts';
 
 const persistenceFailure = <FailureCause>(cause?: FailureCause) => {
   const failure = new IdentityPersistenceUnavailableError({
@@ -25,16 +24,6 @@ const conflict = (reason: string) =>
   new IdentityLifecycleConflictError({ code: 'identity_lifecycle_conflict', reason });
 const invalid = (reason: string) =>
   new IdentityTargetInvalidError({ code: 'identity_target_invalid', reason });
-
-const PERSISTENCE_TIMEOUT = '30 seconds';
-
-const persistenceEffect = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: persistenceFailure, try: operation }).pipe(
-    Effect.timeoutOrElse({
-      duration: PERSISTENCE_TIMEOUT,
-      orElse: () => Effect.fail(persistenceFailure()),
-    }),
-  );
 
 type PrincipalRecord = Readonly<{ readonly kind: PrincipalKind; readonly status: PrincipalStatus }>;
 type ApiKeyBindingRecord = Readonly<{
@@ -123,135 +112,146 @@ const principalManagementPersistenceFromTransaction = (
   transaction: Pick<ScopedTransactionExecutor, 'insert' | 'select' | 'update'>,
 ): PrincipalManagementPersistence => ({
   createPrincipal: (input) =>
-    persistenceEffect(() =>
-      transaction
-        .insert(principals)
-        .values({
-          displayName: input.displayName,
-          kind: input.kind,
-          status: 'active',
-          tenantId: input.tenantId,
-        })
-        .returning({ principalId: principals.principalId }),
-    ).pipe(Effect.map(([created]) => Option.fromNullishOr(created))),
+    transaction
+      .insert(principals)
+      .values({
+        displayName: input.displayName,
+        kind: input.kind,
+        status: 'active',
+        tenantId: input.tenantId,
+      })
+      .returning({ principalId: principals.principalId })
+      .pipe(
+        Effect.mapError(persistenceFailure),
+        Effect.map(([created]) => Option.fromNullishOr(created)),
+      ),
   insertApiKeyBinding: (input) =>
-    persistenceEffect(() =>
-      transaction
-        .insert(principalAuthBindings)
-        .values({
-          principalId: input.principalId,
-          provider: 'better_auth',
-          providerSubjectId: input.providerSubjectId,
-          status: 'active',
-          subjectType: 'api_key',
-          tenantId: input.tenantId,
-        })
-        .onConflictDoNothing()
-        .returning({ authBindingId: principalAuthBindings.principalAuthBindingId }),
-    ).pipe(Effect.map(([created]) => Option.fromNullishOr(created))),
+    transaction
+      .insert(principalAuthBindings)
+      .values({
+        principalId: input.principalId,
+        provider: 'better_auth',
+        providerSubjectId: input.providerSubjectId,
+        status: 'active',
+        subjectType: 'api_key',
+        tenantId: input.tenantId,
+      })
+      .onConflictDoNothing()
+      .returning({ authBindingId: principalAuthBindings.principalAuthBindingId })
+      .pipe(
+        Effect.mapError(persistenceFailure),
+        Effect.map(([created]) => Option.fromNullishOr(created)),
+      ),
   loadApiKeyBinding: (input) =>
-    persistenceEffect(() =>
-      transaction
-        .select({
-          bindingStatus: principalAuthBindings.status,
-          principalKind: principals.kind,
-          principalStatus: principals.status,
-        })
-        .from(principalAuthBindings)
-        .innerJoin(
-          principals,
-          and(
-            eq(principals.tenantId, principalAuthBindings.tenantId),
-            eq(principals.principalId, principalAuthBindings.principalId),
-          ),
-        )
-        .where(
-          and(
-            eq(principalAuthBindings.tenantId, input.tenantId),
-            eq(principalAuthBindings.principalAuthBindingId, input.authBindingId),
-            eq(principalAuthBindings.principalId, input.principalId),
-            eq(principalAuthBindings.subjectType, 'api_key'),
-          ),
-        )
-        .limit(1),
-    ).pipe(Effect.map(([record]) => Option.fromNullishOr(record))),
+    transaction
+      .select({
+        bindingStatus: principalAuthBindings.status,
+        principalKind: principals.kind,
+        principalStatus: principals.status,
+      })
+      .from(principalAuthBindings)
+      .innerJoin(
+        principals,
+        and(
+          eq(principals.tenantId, principalAuthBindings.tenantId),
+          eq(principals.principalId, principalAuthBindings.principalId),
+        ),
+      )
+      .where(
+        and(
+          eq(principalAuthBindings.tenantId, input.tenantId),
+          eq(principalAuthBindings.principalAuthBindingId, input.authBindingId),
+          eq(principalAuthBindings.principalId, input.principalId),
+          eq(principalAuthBindings.subjectType, 'api_key'),
+        ),
+      )
+      .limit(1)
+      .pipe(
+        Effect.mapError(persistenceFailure),
+        Effect.map(([record]) => Option.fromNullishOr(record)),
+      ),
   loadPrincipal: (tenantId, principalId) =>
-    persistenceEffect(() =>
-      transaction
-        .select({ kind: principals.kind, status: principals.status })
-        .from(principals)
-        .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, principalId)))
-        .limit(1),
-    ).pipe(Effect.map(([record]) => Option.fromNullishOr(record))),
+    transaction
+      .select({ kind: principals.kind, status: principals.status })
+      .from(principals)
+      .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, principalId)))
+      .limit(1)
+      .pipe(
+        Effect.mapError(persistenceFailure),
+        Effect.map(([record]) => Option.fromNullishOr(record)),
+      ),
   loadSupportBindings: (input) =>
-    persistenceEffect(() =>
-      transaction
-        .select({ authBindingId: principalAuthBindings.principalAuthBindingId })
-        .from(principalAuthBindings)
-        .innerJoin(
-          principals,
-          and(
-            eq(principals.tenantId, principalAuthBindings.tenantId),
-            eq(principals.principalId, principalAuthBindings.principalId),
-          ),
-        )
-        .where(
-          and(
-            eq(principalAuthBindings.tenantId, input.tenantId),
-            eq(principalAuthBindings.principalId, input.principalId),
-            eq(principalAuthBindings.subjectType, 'user'),
-            eq(principals.kind, 'human'),
-            ...(input.activeOnly
-              ? [
-                  eq(principalAuthBindings.status, 'active'),
-                  isNull(principalAuthBindings.revokedAt),
-                  eq(principals.status, 'active'),
-                ]
-              : []),
-            ...(input.authBindingId === undefined
-              ? []
-              : [eq(principalAuthBindings.principalAuthBindingId, input.authBindingId)]),
-          ),
-        )
-        .limit(2),
-    ),
+    transaction
+      .select({ authBindingId: principalAuthBindings.principalAuthBindingId })
+      .from(principalAuthBindings)
+      .innerJoin(
+        principals,
+        and(
+          eq(principals.tenantId, principalAuthBindings.tenantId),
+          eq(principals.principalId, principalAuthBindings.principalId),
+        ),
+      )
+      .where(
+        and(
+          eq(principalAuthBindings.tenantId, input.tenantId),
+          eq(principalAuthBindings.principalId, input.principalId),
+          eq(principalAuthBindings.subjectType, 'user'),
+          eq(principals.kind, 'human'),
+          ...(input.activeOnly
+            ? [
+                eq(principalAuthBindings.status, 'active'),
+                isNull(principalAuthBindings.revokedAt),
+                eq(principals.status, 'active'),
+              ]
+            : []),
+          ...(input.authBindingId === undefined
+            ? []
+            : [eq(principalAuthBindings.principalAuthBindingId, input.authBindingId)]),
+        ),
+      )
+      .limit(2)
+      .pipe(Effect.mapError(persistenceFailure)),
   updateApiKeyBindingStatus: (input) => {
     const updatedAt = DateTime.toDateUtc(DateTime.nowUnsafe());
-    return persistenceEffect(() =>
-      transaction
-        .update(principalAuthBindings)
-        .set({
-          revokedAt: input.newStatus === 'revoked' ? updatedAt : null,
-          status: input.newStatus,
-          updatedAt,
-        })
-        .where(
-          and(
-            eq(principalAuthBindings.principalAuthBindingId, input.authBindingId),
-            eq(principalAuthBindings.status, input.expectedStatus),
-          ),
-        )
-        .returning({ status: principalAuthBindings.status }),
-    ).pipe(Effect.map(([updated]) => Option.fromNullishOr(updated)));
+    return transaction
+      .update(principalAuthBindings)
+      .set({
+        revokedAt: input.newStatus === 'revoked' ? updatedAt : null,
+        status: input.newStatus,
+        updatedAt,
+      })
+      .where(
+        and(
+          eq(principalAuthBindings.principalAuthBindingId, input.authBindingId),
+          eq(principalAuthBindings.status, input.expectedStatus),
+        ),
+      )
+      .returning({ status: principalAuthBindings.status })
+      .pipe(
+        Effect.mapError(persistenceFailure),
+        Effect.map(([updated]) => Option.fromNullishOr(updated)),
+      );
   },
   updatePrincipalStatus: (input) =>
-    persistenceEffect(() =>
-      transaction
-        .update(principals)
-        .set({
-          disabledAt:
-            input.newStatus === 'disabled' ? DateTime.toDateUtc(DateTime.nowUnsafe()) : null,
-          status: input.newStatus,
-        })
-        .where(
-          and(
-            eq(principals.tenantId, input.tenantId),
-            eq(principals.principalId, input.principalId),
-            eq(principals.status, input.expectedStatus),
-          ),
-        )
-        .returning({ status: principals.status }),
-    ).pipe(Effect.map(([updated]) => Option.fromNullishOr(updated))),
+    transaction
+      .update(principals)
+      .set({
+        disabledAt:
+          input.newStatus === 'disabled' ? DateTime.toDateUtc(DateTime.nowUnsafe()) : null,
+        status: input.newStatus,
+      })
+      .where(
+        and(
+          eq(principals.tenantId, input.tenantId),
+          eq(principals.principalId, input.principalId),
+          eq(principals.status, input.expectedStatus),
+        ),
+      )
+      .returning({ status: principals.status })
+      .pipe(
+        Effect.mapError(persistenceFailure),
+        Effect.map(([updated]) => Option.fromNullishOr(updated)),
+      ),
 });
 
 export interface CreateNonHumanPrincipalInput {

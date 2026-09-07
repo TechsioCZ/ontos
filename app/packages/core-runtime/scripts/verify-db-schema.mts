@@ -1,9 +1,10 @@
+import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 // @effect-diagnostics processEnv:off globalConsole:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { sql } from 'drizzle-orm';
 import { Effect, Layer, Schema } from 'effect';
-import { CoreDatabase, CoreDatabaseLive } from '../src/db/client.ts';
-import { compareApplicationCatalog } from '../src/db/catalog.ts';
 import type { CatalogEntry } from '../src/db/catalog.ts';
+import { compareApplicationCatalog } from '../src/db/catalog.ts';
+import { CoreDatabase, CoreDatabaseLive } from '../src/db/client.ts';
 import { DatabaseConfigLive } from '../src/db/config.ts';
 import {
   CORE_SCHEMA_NAME,
@@ -54,29 +55,36 @@ const isUnsafeRuntimeRole = (role: RuntimeRoleRow | undefined): boolean =>
 
 const verifyTypedQuery = <Result,>(
   tableName: string,
-  query: () => PromiseLike<Result>,
+  query: () => Effect.Effect<Result, EffectDrizzleQueryError>,
 ): Effect.Effect<void, DatabaseVerificationError> =>
-  Effect.tryPromise({
-    catch: () =>
-      new DatabaseVerificationError({
-        reason: `Typed verification failed for ${CORE_SCHEMA_NAME}.${tableName}`,
-      }),
-    try: query,
-  }).pipe(Effect.asVoid);
+  query().pipe(
+    Effect.mapError(
+      () =>
+        new DatabaseVerificationError({
+          reason: `Typed verification failed for ${CORE_SCHEMA_NAME}.${tableName}`,
+        }),
+    ),
+    Effect.asVoid,
+  );
 
 const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
   const database = yield* CoreDatabase;
-  const runtimeRole = yield* Effect.tryPromise({
-    catch: () =>
-      new DatabaseVerificationError({ reason: 'Unable to verify the PostgreSQL runtime role' }),
-    try: () =>
-      database.executor.execute<RuntimeRoleRow>(sql`
+  const runtimeRole = yield* database.executor
+    .execute<RuntimeRoleRow>(
+      sql`
         select role.rolsuper, role.rolbypassrls
         from pg_catalog.pg_roles as role
         where role.rolname = current_user
-      `),
-  });
-  const [role] = runtimeRole.rows;
+      `,
+      'objects',
+    )
+    .pipe(
+      Effect.mapError(
+        () =>
+          new DatabaseVerificationError({ reason: 'Unable to verify the PostgreSQL runtime role' }),
+      ),
+    );
+  const [role] = runtimeRole;
   if (isUnsafeRuntimeRole(role)) {
     return yield* new DatabaseVerificationError({
       reason: 'The application runtime role must be non-superuser and must not bypass RLS',
@@ -88,15 +96,13 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
     ['search_projection_generations', ['insert', 'select', 'update']],
     ['search_projection_rebuilds', ['insert', 'select', 'update']],
   ] as const) {
-    const searchIsolation = yield* Effect.tryPromise({
-      catch: () =>
-        new DatabaseVerificationError({ reason: 'Unable to verify Core Search tenant isolation' }),
-      try: () =>
-        database.executor.execute<{
-          policy_names: string[];
-          relforcerowsecurity: boolean;
-          relrowsecurity: boolean;
-        }>(sql`
+    const searchIsolation = yield* database.executor
+      .execute<{
+        policy_names: string[];
+        relforcerowsecurity: boolean;
+        relrowsecurity: boolean;
+      }>(
+        sql`
         select
           relation.relrowsecurity,
           relation.relforcerowsecurity,
@@ -109,9 +115,18 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
         where namespace.nspname = ${CORE_SCHEMA_NAME}
           and relation.relname = ${tableName}
         group by relation.relrowsecurity, relation.relforcerowsecurity
-      `),
-    });
-    const [searchIsolationRow] = searchIsolation.rows;
+      `,
+        'objects',
+      )
+      .pipe(
+        Effect.mapError(
+          () =>
+            new DatabaseVerificationError({
+              reason: 'Unable to verify Core Search tenant isolation',
+            }),
+        ),
+      );
+    const [searchIsolationRow] = searchIsolation;
     const expectedSearchPolicies = operations.map(
       (operation) => `core_${tableName}_tenant_${operation}`,
     );
@@ -164,20 +179,24 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
     'core_outbox_messages_tenant_domain_event_fk',
     'core_search_index_entries_tenant_legal_entity_fk',
   ].toSorted();
-  const constraintRows = yield* Effect.tryPromise({
-    catch: () =>
-      new DatabaseVerificationError({ reason: 'Unable to verify same-tenant constraints' }),
-    try: () =>
-      database.executor.execute<{ conname: string }>(sql`
+  const constraintRows = yield* database.executor
+    .execute<{ conname: string }>(
+      sql`
         select constraint_record.conname
         from pg_catalog.pg_constraint as constraint_record
         inner join pg_catalog.pg_namespace as namespace
           on namespace.oid = constraint_record.connamespace
         where namespace.nspname = ${CORE_SCHEMA_NAME}
         order by constraint_record.conname
-      `),
-  });
-  const presentCompositeConstraints = constraintRows.rows
+      `,
+      'objects',
+    )
+    .pipe(
+      Effect.mapError(
+        () => new DatabaseVerificationError({ reason: 'Unable to verify same-tenant constraints' }),
+      ),
+    );
+  const presentCompositeConstraints = constraintRows
     .map((row) => row.conname)
     .filter((name) => requiredCompositeConstraints.includes(name))
     .toSorted();
@@ -247,13 +266,9 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
   // Necessary migration-verification exception: Drizzle has no typed builder
   // for PostgreSQL catalog metadata. Values stay parameterized and the query is
   // covered by exact-set mismatch tests.
-  const catalogResult = yield* Effect.tryPromise({
-    catch: () =>
-      new DatabaseVerificationError({
-        reason: 'Unable to compare the PostgreSQL application catalog',
-      }),
-    try: () =>
-      database.executor.execute<CatalogRow>(sql`
+  const catalogResult = yield* database.executor
+    .execute<CatalogRow>(
+      sql`
         with application_tables as (
           select
             ${'table'}::text as kind,
@@ -281,13 +296,22 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
         union all
         select kind, schema_name, table_name from migration_bookkeeping
         order by kind, schema_name, table_name
-      `),
-  });
+      `,
+      'objects',
+    )
+    .pipe(
+      Effect.mapError(
+        () =>
+          new DatabaseVerificationError({
+            reason: 'Unable to compare the PostgreSQL application catalog',
+          }),
+      ),
+    );
 
   const entries: CatalogEntry[] = [];
   const migrationBookkeepingTables: string[] = [];
 
-  for (const row of catalogResult.rows) {
+  for (const row of catalogResult) {
     if (row.kind === 'migration') {
       if (row.table_name !== null) {
         migrationBookkeepingTables.push(row.table_name);
