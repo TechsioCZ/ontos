@@ -1,5 +1,6 @@
+import { isAPIError } from 'better-auth/api';
 import { apiKey } from '@better-auth/api-key';
-import { APIError, betterAuth } from 'better-auth';
+import { betterAuth } from 'better-auth';
 import { and, asc, eq, lte, sql } from 'drizzle-orm';
 import {
   Brand,
@@ -152,14 +153,14 @@ const inconsistent = () =>
     reason: 'The API key lifecycle state is inconsistent',
   });
 const mapProviderError = <Failure>(error: Failure): ApiKeyProviderError => {
-  if (error instanceof APIError && error.statusCode === 429) {
+  if (isAPIError(error) && error.statusCode === 429) {
     return new ApiKeyRateLimitedError({
       code: 'api_key_rate_limited',
       reason: 'The API key rate limit was exceeded',
       retryAfterSeconds: 60,
     });
   }
-  if (error instanceof APIError && error.statusCode < 500) {
+  if (isAPIError(error) && error.statusCode < 500) {
     return invalid();
   }
   return unavailable(error);

@@ -1,3 +1,4 @@
+import { isAPIError } from 'better-auth/api';
 import type {
   ActionRuntimeService,
   PrincipalResolutionError,
@@ -12,7 +13,7 @@ import {
   recordSupportImpersonationAction,
   SupportRecoveryPrincipalContextResolver,
 } from '@app/core-runtime';
-import { APIError, betterAuth } from 'better-auth';
+import { betterAuth } from 'better-auth';
 import { parseCookies, SECURE_COOKIE_PREFIX } from 'better-auth/cookies';
 import { constantTimeEqual, makeSignature } from 'better-auth/crypto';
 import { admin } from 'better-auth/plugins';
@@ -108,7 +109,7 @@ const mapAuthenticationError = (error: AuthenticationRuntimeError) =>
 const mapResolverError = (error: PrincipalResolutionError) =>
   isResolverUnavailable(error) ? unavailable(error) : denied();
 const mapProviderError = <Failure>(error: Failure) =>
-  error instanceof APIError && error.statusCode < 500 ? denied() : unavailable(error);
+  isAPIError(error) && error.statusCode < 500 ? denied() : unavailable(error);
 
 const IMPERSONATION_IO_TIMEOUT = '10 seconds';
 const timeoutFailure = () => unavailable('Support impersonation dependency timed out');

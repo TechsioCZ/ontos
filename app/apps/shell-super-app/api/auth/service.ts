@@ -1,3 +1,4 @@
+import { isAPIError } from 'better-auth/api';
 import type {
   AvailableTenant,
   PrincipalResolutionError,
@@ -312,7 +313,7 @@ const toSafeIdentity = (
 });
 
 const mapKnownRuntimeError = <Failure>(error: Failure): AuthenticationRuntimeError | undefined => {
-  if (error instanceof APIError) {
+  if (isAPIError(error)) {
     const code =
       Predicate.isObjectKeyword(error.body) && error.body !== null && 'code' in error.body
         ? error.body.code
@@ -344,7 +345,7 @@ const mapRuntimeError = <Failure>(error: Failure): AuthenticationRuntimeError =>
     return knownError;
   }
 
-  if (error instanceof APIError && error.statusCode >= 500) {
+  if (isAPIError(error) && error.statusCode >= 500) {
     return new AuthenticationUnavailableError();
   }
 
