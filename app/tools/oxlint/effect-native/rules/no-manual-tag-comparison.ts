@@ -352,6 +352,10 @@ function assertionCall(
       return null;
     if (specifier.type === 'ImportDefaultSpecifier' && source === 'expect')
       members.unshift('expect');
+    if (subject === null && members.length === 2 && members[0] === 'assert') {
+      const method = members[1];
+      return method === undefined ? null : { method, subject: null };
+    }
     if (subject === null || members.shift() !== 'expect') return null;
     const method = members.pop();
     if (
