@@ -19,3 +19,7 @@ function shadowedAssertion(assert: typeof import('node:assert/strict')) {
 function shadowedExpectation(expect: (value: unknown) => { toBe: (expected: unknown) => void }) {
   expect(error._tag).toBe('Missing');
 }
+
+const readTag = () => error._tag;
+assert.strictEqual(readTag, readTag);
+assert.equal(log(error._tag), undefined);
