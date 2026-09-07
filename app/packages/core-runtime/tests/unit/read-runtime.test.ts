@@ -1,13 +1,14 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 /* oxlint-disable sonarjs/use-type-alias, typescript/no-unsafe-type-assertion -- Existing compatibility boundary; expires: 2026-12-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
+import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect, Option, Predicate, Schema } from 'effect';
-import { Pool } from 'pg';
-import { defineRead } from '../../src/reads/definition.ts';
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
+import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { OperationContextUnavailable } from '../../src/operations/errors.ts';
+import { defineRead } from '../../src/reads/definition.ts';
 import {
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
@@ -15,9 +16,7 @@ import {
   ReadPolicyDenied,
 } from '../../src/reads/errors.ts';
 import { makeReadRuntime, READ_RUNTIME_STAGES } from '../../src/reads/runtime.ts';
-import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import { OperationContextUnavailable } from '../../src/operations/errors.ts';
-import { coreRelations } from '../../src/db/schema.ts';
+import { makeTestDatabase } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
 const scope = Object.freeze({
@@ -57,43 +56,46 @@ const makeHarness = (
     readonly resultPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly resultTenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly tenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
+    readonly transactionEvents?: string[];
   } = {},
 ) => {
   let evidence = 0;
   let tenantPermissionChecks = 0;
   const evidenceRows: EvidenceRow[] = [];
-  const QueryConfigSchema = Schema.Struct({ text: Schema.String });
-  const query = async <Query, Values>(queryInput: Query, values?: Values) => {
-    const { text } = Schema.decodeUnknownSync(QueryConfigSchema)(queryInput);
-    if (text.includes('data_access_events')) {
-      if (options.failEvidence === true) {
-        throw new Error('private persistence detail');
+  const query = (text: string, values: readonly unknown[]) =>
+    Effect.gen(function* executeReadQuery() {
+      if (text.includes('data_access_events')) {
+        if (options.failEvidence === true) {
+          return yield* new SqlError({
+            reason: new ConnectionError({ cause: new Error('private persistence detail') }),
+          });
+        }
+        const queryHash = values
+          .filter(Predicate.isString)
+          .find((value) => /^[\da-f]{64}$/u.test(value));
+        evidenceRows.push(queryHash === undefined ? {} : { queryHash });
+        evidence += 1;
       }
-      const queryHash = Array.isArray(values)
-        ? values.find((value) => Predicate.isString(value) && /^[\da-f]{64}$/u.test(value))
-        : undefined;
-      evidenceRows.push(queryHash === undefined ? {} : { queryHash });
-      evidence += 1;
-    }
-    return text.includes('current_setting')
-      ? {
-          rows: [
+      return text.includes('current_setting')
+        ? [
             {
               legal_entity_id: options.resolvedScope?.legalEntityId ?? '',
               tenant_id: scope.tenantId,
             },
-          ],
-        }
-      : { rows: [] };
-  };
-  const pool = new Pool();
-  Object.defineProperty(pool, 'connect', {
-    value: async () => ({ query, release: () => {} }),
-  });
-  Object.defineProperty(pool, 'query', { value: query });
-  const database = {
-    executor: drizzle({ client: pool, relations: coreRelations }),
-  };
+          ]
+        : [];
+    });
+  const database = { executor: makeTestDatabase(query) };
+  const transact = database.executor.transaction.bind(database.executor);
+  const transaction: typeof database.executor.transaction = (body) =>
+    transact(body).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          options.transactionEvents?.push('transaction_settled');
+        }),
+      ),
+    );
+  Object.defineProperty(database.executor, 'transaction', { value: transaction });
   const stages: string[] = [];
   const runtime = makeReadRuntime(
     database,
@@ -1008,4 +1010,72 @@ test('preserves declared owner read availability and not-found failures but sani
       assert.equal(harness.evidence(), 0);
     }),
   );
+});
+
+void test('keeps read interruption and waits for transaction settlement', async () => {
+  const events: string[] = [];
+  const harness = makeHarness({ transactionEvents: events });
+  const exit = await runEffectTestPromise(
+    Effect.gen(function* interruptReadTest() {
+      const entered = yield* Deferred.make<boolean>();
+      const blocked = yield* Deferred.make<boolean>();
+      const governed = defineRead(
+        registration().descriptor,
+        () =>
+          Effect.gen(function* blockedReadHandler() {
+            yield* Deferred.succeed(entered, true);
+            yield* Deferred.await(blocked);
+            return { evidence: { resultCount: 0 }, result: [] };
+          }),
+        () => Effect.succeed({}),
+        () => ({ kind: 'module', moduleId: 'core.shell' }),
+      );
+      const fiber = yield* harness.runtime
+        .runRead({
+          input: {},
+          principal: scope,
+          registration: governed,
+          transport: { correlationId: scope.correlationId },
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(entered);
+      yield* Fiber.interrupt(fiber);
+      events.push('read_completed');
+      return yield* Fiber.await(fiber);
+    }),
+  );
+  assert.ok(Exit.isFailure(exit));
+  assert.ok(Cause.hasInterruptsOnly(exit.cause));
+  assert.deepEqual(events, ['transaction_settled', 'read_completed']);
+  assert.equal(harness.evidence(), 0);
+});
+
+void test('prioritizes failed denial evidence while retaining permission denial in the cause', async () => {
+  const harness = makeHarness({ failEvidence: true });
+  const denied = new ReadPermissionDenied({
+    code: 'read_permission_denied',
+    reason: 'Denied by read handler',
+  });
+  const governed = defineRead(
+    registration().descriptor,
+    () => Effect.fail(denied),
+    () => Effect.succeed({}),
+    () => ({ kind: 'module', moduleId: 'core.shell' }),
+  );
+  const exit = await runEffectTestPromise(
+    Effect.exit(
+      harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: governed,
+        transport: { correlationId: scope.correlationId },
+      }),
+    ),
+  );
+  assert.ok(Exit.isFailure(exit));
+  const failures = exit.cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error);
+  assert.equal(failures.length, 2);
+  assert.equal(failures[0]?._tag, 'ReadEvidencePersistenceError');
+  assert.equal(failures[1], denied);
+  assert.equal(failures[1]._tag, 'ReadPermissionDenied');
 });

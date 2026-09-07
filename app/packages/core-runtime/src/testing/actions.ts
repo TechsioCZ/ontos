@@ -1,21 +1,22 @@
+import { PgClient } from '@effect/sql-pg';
+import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
+import { DateTime, Deferred, Effect, Layer, Schema, Stream } from 'effect';
+import { Reactivity } from 'effect/unstable/reactivity';
+import type { Connection } from 'effect/unstable/sql/SqlConnection';
+import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 import { randomUUID } from 'node:crypto';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { DateTime, Deferred, Effect, Layer, Schema } from 'effect';
-import { Pool } from 'pg';
-import { ActionRuntime, makeActionRuntime } from '../actions/runtime.ts';
-import type { ActionRuntimeStage } from '../actions/runtime.ts';
-import { getActionServiceFactory } from '../actions/definition.ts';
 import type {
   ActionRegistration,
   ActionServiceFactory,
   AnyActionRegistration,
 } from '../actions/definition.ts';
-import type { DomainEventContractMap } from '../actions/events.ts';
+import { getActionServiceFactory } from '../actions/definition.ts';
 import {
   ActionInvocationNotFound,
   ActionInvocationPersistenceError,
   ActionPermissionCheckError,
 } from '../actions/errors.ts';
+import type { DomainEventContractMap } from '../actions/events.ts';
 import type {
   ActionInvocationRecord,
   ActionRepositoryService,
@@ -24,16 +25,18 @@ import type {
   PrepareActionInvocationInput,
   RejectPermissionDeniedInput,
 } from '../actions/repository.ts';
+import type { ActionRuntimeStage } from '../actions/runtime.ts';
+import { ActionRuntime, makeActionRuntime } from '../actions/runtime.ts';
 import { DatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
 import { coreRelations } from '../db/schema.ts';
+import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
+import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
+import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../modules/module-state-gate.ts';
+import type { TenantModuleState } from '../modules/tenant-module-state-service.ts';
 import { makeOperationalScopeResolver } from '../operations/context.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
-import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
-import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../modules/module-state-gate.ts';
-import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
-import type { TenantModuleState } from '../modules/tenant-module-state-service.ts';
 import type { ContextAccessDecision, ContextAccessService } from '../permissions/context-access.ts';
-import { runEffectTestPromise } from './effect-runtime.ts';
+import { runEffectTestSync } from './effect-runtime.ts';
 
 const actionTestServiceBinding: unique symbol = Symbol('test-action-service-binding');
 const querySchema = Schema.Union([Schema.String, Schema.Struct({ text: Schema.String })]);
@@ -47,14 +50,6 @@ const idempotencyScopeSchema = Schema.Tuple([
 const encodeIdempotencyScope = Schema.encodeEffect(Schema.fromJsonString(idempotencyScopeSchema));
 const testCommitAcknowledgementSqlState = ['0', '8007'].join('');
 const completionTime = () => DateTime.toDateUtc(DateTime.makeUnsafe(0));
-
-interface PgDriverInteropResult {
-  readonly [Symbol.toStringTag]: string;
-}
-
-const runPgDriverEffect = <Value, Failure>(
-  effect: Effect.Effect<Value, Failure>,
-): PgDriverInteropResult => runEffectTestPromise(effect);
 
 /** Test-only service substitution; the registration's real private handler remains unchanged. */
 export interface ActionTestServiceBinding {
@@ -148,6 +143,9 @@ const persistenceFailure = () =>
  * SQL: bind typed owner services explicitly. This proves lifecycle behavior, not database/RLS.
  * Authorization defaults to denied; only the test scope's ordinary LE access defaults allowed.
  */
+const queryRows = (result: { readonly rows: readonly object[] }) => result.rows;
+const sqlFailure = (cause: unknown) => new SqlError({ reason: new ConnectionError({ cause }) });
+
 const actionTestHarness = (options: ActionTestHarnessOptions = {}) => {
   const invocations = new Map<string, ActionTestInvocation>();
   const idempotency = new Map<string, string>();
@@ -308,29 +306,49 @@ const actionTestHarness = (options: ActionTestHarnessOptions = {}) => {
     },
   );
 
-  const pool = new Pool();
   const acquireConnection = Effect.suspend(() => {
     const previous = connectionQueue;
     const released = Deferred.makeUnsafe<null>();
     connectionQueue = Deferred.await(released).pipe(Effect.asVoid);
     return Effect.gen(function* acquireTestConnection() {
       yield* previous;
+      yield* Effect.addFinalizer(() => Deferred.succeed(released, null));
       const scope: ActionTestConnectionScope = { legalEntityId: '', tenantId: '' };
       pendingCommit = [];
-      const query = <Query, Values>(queryInput: Query, values?: Values) =>
-        runPgDriverEffect(executeTestQuery(scope, queryInput, values));
+      const execute = (query: string, values: readonly unknown[]) =>
+        executeTestQuery(scope, query.toLowerCase(), values).pipe(
+          Effect.map(queryRows),
+          Effect.mapError(sqlFailure),
+        );
+      const unsupported = Effect.die('Owner SQL is unavailable in the Action test harness');
       return {
-        query,
-        release: () => {
-          Deferred.doneUnsafe(released, Effect.succeed(null));
-        },
-      };
+        execute,
+        executeRaw: execute,
+        executeStream: () => Stream.fromEffect(unsupported),
+        executeUnprepared: execute,
+        executeValues: () => unsupported,
+        executeValuesUnprepared: () => unsupported,
+      } satisfies Connection;
     });
   });
-  Object.defineProperty(pool, 'connect', {
-    value: runEffectTestPromise.bind(null, acquireConnection),
-  });
-  const database = { executor: drizzle({ client: pool, relations: coreRelations }) };
+  const database = runEffectTestSync(
+    Effect.scoped(
+      Effect.gen(function* makeTestDatabase() {
+        const reactivity = yield* Reactivity.make;
+        const client = yield* PgClient.makeWith({
+          acquirer: acquireConnection,
+          config: {},
+          listenAcquirer: Effect.die('Notifications are unavailable in the Action test harness'),
+          transactionAcquirer: acquireConnection,
+        }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity), Effect.orDie);
+        return {
+          executor: yield* makeWithDefaults({ relations: coreRelations }).pipe(
+            Effect.provideService(PgClient.PgClient, client),
+          ),
+        };
+      }),
+    ),
+  );
   const contextAccess: ContextAccessService = {
     legalEntities: ({ legalEntityIds, permission }) =>
       Effect.succeed(

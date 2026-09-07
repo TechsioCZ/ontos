@@ -41,11 +41,10 @@ interface SupportRecoveryPrincipalContextRepositoryInput {
   readonly tenantId: string;
 }
 
-type SupportRecoveryPrincipalContextPromiseLoadResult<Value> = PromiseLike<Value>;
-type SupportRecoveryPrincipalContextRepositoryLoadResult =
-  SupportRecoveryPrincipalContextPromiseLoadResult<
-    SupportRecoveryPrincipalContextRecord | undefined
-  >;
+type SupportRecoveryPrincipalContextRepositoryLoadResult = Effect.Effect<
+  Option.Option<SupportRecoveryPrincipalContextRecord>,
+  SupportRecoveryPrincipalContextUnavailableError
+>;
 
 interface SupportRecoveryPrincipalContextRecordReader<
   Result extends SupportRecoveryPrincipalContextRepositoryLoadResult,
@@ -54,9 +53,7 @@ interface SupportRecoveryPrincipalContextRecordReader<
 }
 
 export type SupportRecoveryPrincipalContextRepositoryService =
-  SupportRecoveryPrincipalContextRecordReader<
-    Promise<SupportRecoveryPrincipalContextRecord | undefined>
-  >;
+  SupportRecoveryPrincipalContextRecordReader<SupportRecoveryPrincipalContextRepositoryLoadResult>;
 
 interface SupportRecoveryPrincipalContextEffectRecordReader {
   readonly load: (
@@ -81,63 +78,45 @@ const unavailable = (cause?: unknown): SupportRecoveryPrincipalContextUnavailabl
 
 const DATABASE_OPERATION_TIMEOUT = Duration.seconds(30);
 
-const supportRecoveryPrincipalContextEffectRecordReaderFromPromise = (
-  repository: SupportRecoveryPrincipalContextRecordReader<SupportRecoveryPrincipalContextRepositoryLoadResult>,
-): SupportRecoveryPrincipalContextEffectRecordReader => ({
-  load: (input) =>
-    Effect.tryPromise({
-      catch: unavailable,
-      try: () => repository.load(input),
-    }).pipe(
-      Effect.map(Option.fromNullishOr),
-      Effect.timeoutOrElse({
-        duration: DATABASE_OPERATION_TIMEOUT,
-        orElse: () => Effect.fail(unavailable()),
-      }),
-    ),
-});
-
 const supportRecoveryPrincipalContextRepositoryFromDatabase = (database: {
   readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
 }): SupportRecoveryPrincipalContextEffectRecordReader => ({
   load: (input: SupportRecoveryPrincipalContextRepositoryInput) =>
-    Effect.tryPromise({
-      catch: unavailable,
-      try: () =>
-        database.executor
-          .select({
-            bindingPrincipalId: principalAuthBindings.principalId,
-            bindingTenantId: principalAuthBindings.tenantId,
-            principalKind: principals.kind,
-            principalTenantId: principals.tenantId,
-            tenantId: tenants.tenantId,
-          })
-          .from(principalAuthBindings)
-          .innerJoin(
-            principals,
-            and(
-              eq(principals.tenantId, principalAuthBindings.tenantId),
-              eq(principals.principalId, principalAuthBindings.principalId),
-            ),
-          )
-          .innerJoin(tenants, eq(tenants.tenantId, principalAuthBindings.tenantId))
-          .where(
-            and(
-              eq(principalAuthBindings.principalAuthBindingId, input.originalAuthBindingId),
-              eq(principalAuthBindings.tenantId, input.tenantId),
-              eq(principalAuthBindings.principalId, input.originalPrincipalId),
-              eq(principalAuthBindings.provider, 'better_auth'),
-              eq(principalAuthBindings.subjectType, 'user'),
-            ),
-          )
-          .limit(1),
-    }).pipe(
-      Effect.map(([loaded]) => Option.fromNullishOr(loaded)),
-      Effect.timeoutOrElse({
-        duration: DATABASE_OPERATION_TIMEOUT,
-        orElse: () => Effect.fail(unavailable()),
-      }),
-    ),
+    database.executor
+      .select({
+        bindingPrincipalId: principalAuthBindings.principalId,
+        bindingTenantId: principalAuthBindings.tenantId,
+        principalKind: principals.kind,
+        principalTenantId: principals.tenantId,
+        tenantId: tenants.tenantId,
+      })
+      .from(principalAuthBindings)
+      .innerJoin(
+        principals,
+        and(
+          eq(principals.tenantId, principalAuthBindings.tenantId),
+          eq(principals.principalId, principalAuthBindings.principalId),
+        ),
+      )
+      .innerJoin(tenants, eq(tenants.tenantId, principalAuthBindings.tenantId))
+      .where(
+        and(
+          eq(principalAuthBindings.principalAuthBindingId, input.originalAuthBindingId),
+          eq(principalAuthBindings.tenantId, input.tenantId),
+          eq(principalAuthBindings.principalId, input.originalPrincipalId),
+          eq(principalAuthBindings.provider, 'better_auth'),
+          eq(principalAuthBindings.subjectType, 'user'),
+        ),
+      )
+      .limit(1)
+      .pipe(
+        Effect.mapError(unavailable),
+        Effect.map(([loaded]) => Option.fromNullishOr(loaded)),
+        Effect.timeoutOrElse({
+          duration: DATABASE_OPERATION_TIMEOUT,
+          orElse: () => Effect.fail(unavailable()),
+        }),
+      ),
 });
 
 const supportRecoveryPrincipalContextResolverFromEffectRecordReader = (
@@ -202,9 +181,7 @@ const supportRecoveryPrincipalContextResolverFromEffectRecordReader = (
 export const supportRecoveryPrincipalContextResolverFromRepository = (
   repository: SupportRecoveryPrincipalContextRecordReader<SupportRecoveryPrincipalContextRepositoryLoadResult>,
 ): SupportRecoveryPrincipalContextResolverService =>
-  supportRecoveryPrincipalContextResolverFromEffectRecordReader(
-    supportRecoveryPrincipalContextEffectRecordReaderFromPromise(repository),
-  );
+  supportRecoveryPrincipalContextResolverFromEffectRecordReader(repository);
 
 export const makeSupportRecoveryPrincipalContextResolver = (database: {
   readonly executor: Pick<CoreDatabaseExecutor, 'select'>;

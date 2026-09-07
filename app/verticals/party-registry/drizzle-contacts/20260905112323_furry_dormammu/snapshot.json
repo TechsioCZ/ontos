@@ -235,14 +235,14 @@
       "entityType": "uniques"
     },
     {
-      "value": "\"contacts\".\"organization_engagement_profiles\".\"party_resource_id\" = btrim(\"contacts\".\"organization_engagement_profiles\".\"party_resource_id\") and length(\"contacts\".\"organization_engagement_profiles\".\"party_resource_id\") > 0",
+      "value": "\"party_resource_id\" = btrim(\"party_resource_id\") and length(\"party_resource_id\") > 0",
       "name": "contacts_organization_engagement_profiles_party_resource_id_ck",
       "schema": "contacts",
       "table": "organization_engagement_profiles",
       "entityType": "checks"
     },
     {
-      "value": "\"contacts\".\"organization_engagement_profiles\".\"counterparty_resource_id\" = btrim(\"contacts\".\"organization_engagement_profiles\".\"counterparty_resource_id\") and length(\"contacts\".\"organization_engagement_profiles\".\"counterparty_resource_id\") > 0",
+      "value": "\"counterparty_resource_id\" = btrim(\"counterparty_resource_id\") and length(\"counterparty_resource_id\") > 0",
       "name": "contacts_organization_engagement_profiles_counterparty_resource_id_ck",
       "schema": "contacts",
       "table": "organization_engagement_profiles",
@@ -323,7 +323,7 @@
         }
       ],
       "isUnique": false,
-      "where": "\"contacts\".\"organization_engagement_profiles\".\"archived_at\" is null",
+      "where": "\"archived_at\" is null",
       "with": "",
       "method": "btree",
       "concurrently": false,
@@ -504,14 +504,14 @@
       "entityType": "uniques"
     },
     {
-      "value": "\"contacts\".\"person_engagement_profiles\".\"party_resource_id\" = btrim(\"contacts\".\"person_engagement_profiles\".\"party_resource_id\") and length(\"contacts\".\"person_engagement_profiles\".\"party_resource_id\") > 0",
+      "value": "\"party_resource_id\" = btrim(\"party_resource_id\") and length(\"party_resource_id\") > 0",
       "name": "contacts_person_engagement_profiles_party_resource_id_ck",
       "schema": "contacts",
       "table": "person_engagement_profiles",
       "entityType": "checks"
     },
     {
-      "value": "\"contacts\".\"person_engagement_profiles\".\"counterparty_resource_id\" = btrim(\"contacts\".\"person_engagement_profiles\".\"counterparty_resource_id\") and length(\"contacts\".\"person_engagement_profiles\".\"counterparty_resource_id\") > 0",
+      "value": "\"counterparty_resource_id\" = btrim(\"counterparty_resource_id\") and length(\"counterparty_resource_id\") > 0",
       "name": "contacts_person_engagement_profiles_counterparty_resource_id_ck",
       "schema": "contacts",
       "table": "person_engagement_profiles",
@@ -571,7 +571,7 @@
         }
       ],
       "isUnique": true,
-      "where": "\"contacts\".\"person_engagement_profiles\".\"counterparty_resource_id\" is null",
+      "where": "\"counterparty_resource_id\" is null",
       "with": "",
       "method": "btree",
       "concurrently": false,
@@ -606,7 +606,7 @@
         }
       ],
       "isUnique": false,
-      "where": "\"contacts\".\"person_engagement_profiles\".\"archived_at\" is null",
+      "where": "\"archived_at\" is null",
       "with": "",
       "method": "btree",
       "concurrently": false,

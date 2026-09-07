@@ -11,6 +11,7 @@ import {
   toModuleAccessObjectId,
   toResourceAccessObjectId,
 } from '../../src/permissions/context-access.ts';
+import { spiceDbPermissionClientError } from '../../src/permissions/client.ts';
 import type { SpiceDbPermissionClient } from '../../src/permissions/client.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -43,27 +44,19 @@ const responseFor = (
   });
 
 const makeClient = (
-  handle: (request: v1.CheckBulkPermissionsRequest) => Promise<v1.CheckBulkPermissionsResponse>,
+  handle: SpiceDbPermissionClient['checkBulkPermissions'],
 ): SpiceDbPermissionClient => ({
   checkBulkPermissions: handle,
-  checkPermission: flow(
-    () => Effect.die(new Error('Action check must not run')),
-    runEffectTestPromise,
-  ),
+  checkPermission: () => Effect.die(new Error('Action check must not run')),
   close: () => {},
 });
-const makeEffectClient = (
-  handle: (
-    request: v1.CheckBulkPermissionsRequest,
-  ) => Effect.Effect<v1.CheckBulkPermissionsResponse>,
-) => makeClient(flow(handle, runEffectTestPromise));
 
 effectTest(
   'uses one fully consistent batch and correlates allowed and denied module decisions',
   Effect.gen(function* correlatesModuleDecisions() {
     const requests: v1.CheckBulkPermissionsRequest[] = [];
     const access = makeContextAccess(
-      makeEffectClient((request) =>
+      makeClient((request) =>
         Effect.sync(() => {
           requests.push(request);
           return responseFor(request, [
@@ -100,7 +93,7 @@ effectTest(
   Effect.gen(function* checksResourceWrites() {
     const permissions: string[] = [];
     const service = makeContextAccess(
-      makeEffectClient((request) =>
+      makeClient((request) =>
         Effect.sync(() => {
           permissions.push(...request.items.map(({ permission }) => permission));
           return responseFor(request, [v1.CheckPermissionResponse_Permissionship.NO_PERMISSION]);
@@ -125,7 +118,7 @@ effectTest(
   Effect.gen(function* forwardsTenantPermissionKeys() {
     const observed: string[] = [];
     const service = makeContextAccess(
-      makeEffectClient((request) =>
+      makeClient((request) =>
         Effect.sync(() => {
           observed.push(...request.items.map(({ permission }) => permission));
           return responseFor(
@@ -156,7 +149,7 @@ effectTest(
   Effect.gen(function* forwardsLegalEntityPermissionKeys() {
     const observed: string[] = [];
     const service = makeContextAccess(
-      makeEffectClient((request) =>
+      makeClient((request) =>
         Effect.sync(() => {
           observed.push(...request.items.map(({ permission }) => permission));
           return responseFor(
@@ -210,7 +203,7 @@ effectTest(
   Effect.gen(function* supportsEmptyBatches() {
     let requests = 0;
     const access = makeContextAccess(
-      makeEffectClient((request) =>
+      makeClient((request) =>
         Effect.sync(() => {
           requests += 1;
           return responseFor(request, [
@@ -248,14 +241,16 @@ effectTest(
   Effect.gen(function* classifiesUnavailableResults() {
     const input = { legalEntityIds: [legalEntityId], principalId, tenantId };
     const failures = [
-      makeEffectClient(() => Effect.die(new Error('secret SpiceDB diagnostic'))),
-      makeEffectClient(() => Effect.succeed(v1.CheckBulkPermissionsResponse.create({ pairs: [] }))),
-      makeEffectClient((request) =>
+      makeClient(() =>
+        Effect.fail(spiceDbPermissionClientError(new Error('secret SpiceDB diagnostic'))),
+      ),
+      makeClient(() => Effect.succeed(v1.CheckBulkPermissionsResponse.create({ pairs: [] }))),
+      makeClient((request) =>
         Effect.succeed(
           responseFor(request, [v1.CheckPermissionResponse_Permissionship.CONDITIONAL_PERMISSION]),
         ),
       ),
-      makeEffectClient((request) =>
+      makeClient((request) =>
         Effect.sync(() => {
           const response = responseFor(request, [
             v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,

@@ -1,14 +1,21 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { Scope as NativeScope, Exit as NativeExit, Effect, Layer, Predicate, Schema } from 'effect';
+import {
+  runEffectTestSync as runNativeSync,
+  makeEffectTestCallback as nativeTestCallback,
+  runEffectTestPromise,
+} from '@app/core-runtime/testing/effect-runtime';
+
 import assert from 'node:assert/strict';
 // @effect-diagnostics asyncFunction:off processEnv:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import test from 'node:test';
+import test, { after as afterNativeDatabase } from 'node:test';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect, Layer, Predicate, Schema } from 'effect';
+
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import { Pool } from 'pg';
 import {
@@ -43,6 +50,8 @@ import { account, authRelations, session, user } from '../../api/auth/db/schema.
 import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
 import { makeShellAuthenticationApiRuntime } from '../../api/index.ts';
 import { renderActionPrincipalServer } from '../../../../scripts/scaffolding/microvertical-action-boundary/scaffold.mts';
+
+const nativeDatabaseScope = runNativeSync(NativeScope.make());
 
 const email = 'better-auth-runtime@example.test';
 const password = 'correct-horse-battery-staple';
@@ -208,7 +217,11 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
   const configuration = await runEffectTestPromise(loadAuthConfig());
   const corePool = new Pool({ connectionString: configuration.connectionString });
   const authPool = new Pool({ connectionString: configuration.connectionString });
-  const coreDatabase = drizzle({ client: corePool, relations: coreRelations });
+  const coreDatabase = await runEffectTestPromise(
+    makeTestDatabaseFromPool(corePool, coreRelations).pipe(
+      NativeScope.provide(nativeDatabaseScope),
+    ),
+  );
   const authDatabase = drizzle({ client: authPool, relations: authRelations });
   const resolver = makePrincipalResolver({ executor: coreDatabase });
   const authentication = makeAuthenticationService(configuration, authDatabase, resolver, {
@@ -224,9 +237,15 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
   const generatedFixtureRoot = await mkdtemp(path.join(tmpdir(), 'ontos-auth-runtime-'));
 
   const cleanup = async () => {
-    await coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId));
-    await coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId));
-    await coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId));
+    await runEffectTestPromise(
+      coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
+    );
+    await runEffectTestPromise(
+      coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
+    );
+    await runEffectTestPromise(
+      coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
+    );
     const existingUsers = await authDatabase
       .select({ id: user.id })
       .from(user)
@@ -234,28 +253,42 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
 
     await Promise.all(
       existingUsers.map(async (existingUser) => {
-        await coreDatabase
-          .delete(principalAuthBindings)
-          .where(eq(principalAuthBindings.providerSubjectId, existingUser.id));
+        await runEffectTestPromise(
+          coreDatabase
+            .delete(principalAuthBindings)
+            .where(eq(principalAuthBindings.providerSubjectId, existingUser.id)),
+        );
         await authDatabase.delete(session).where(eq(session.userId, existingUser.id));
         await authDatabase.delete(account).where(eq(account.userId, existingUser.id));
         await authDatabase.delete(user).where(eq(user.id, existingUser.id));
       }),
     );
 
-    await coreDatabase
-      .delete(principalAuthBindings)
-      .where(eq(principalAuthBindings.principalId, principalId));
-    await coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId));
-    await coreDatabase
-      .delete(tenantModuleStates)
-      .where(eq(tenantModuleStates.tenantId, foreignTenantId));
-    await coreDatabase.delete(principals).where(eq(principals.principalId, principalId));
-    await coreDatabase
-      .delete(legalEntities)
-      .where(eq(legalEntities.legalEntityId, fixtureLegalEntityId));
-    await coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId));
-    await coreDatabase.delete(tenants).where(eq(tenants.tenantId, foreignTenantId));
+    await runEffectTestPromise(
+      coreDatabase
+        .delete(principalAuthBindings)
+        .where(eq(principalAuthBindings.principalId, principalId)),
+    );
+    await runEffectTestPromise(
+      coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
+    );
+    await runEffectTestPromise(
+      coreDatabase
+        .delete(tenantModuleStates)
+        .where(eq(tenantModuleStates.tenantId, foreignTenantId)),
+    );
+    await runEffectTestPromise(
+      coreDatabase.delete(principals).where(eq(principals.principalId, principalId)),
+    );
+    await runEffectTestPromise(
+      coreDatabase
+        .delete(legalEntities)
+        .where(eq(legalEntities.legalEntityId, fixtureLegalEntityId)),
+    );
+    await runEffectTestPromise(coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)));
+    await runEffectTestPromise(
+      coreDatabase.delete(tenants).where(eq(tenants.tenantId, foreignTenantId)),
+    );
   };
 
   try {
@@ -263,51 +296,63 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     const betterAuthUserId = await runEffectTestPromise(
       authentication.createFixtureUser(email, 'Runtime fixture', password),
     );
-    await coreDatabase.insert(tenants).values({
-      defaultLocale: 'en',
-      name: 'Authentication runtime tenant',
-      slug: 'authentication-runtime-tenant',
-      status: 'active',
-      tenantId,
-    });
-    await coreDatabase.insert(tenants).values({
-      defaultLocale: 'en',
-      name: 'Foreign authentication runtime tenant',
-      slug: 'foreign-authentication-runtime-tenant',
-      status: 'active',
-      tenantId: foreignTenantId,
-    });
-    await coreDatabase.insert(principals).values({
-      displayName: 'Runtime fixture',
-      kind: 'human',
-      principalId,
-      status: 'active',
-      tenantId,
-    });
-    await coreDatabase.insert(legalEntities).values({
-      legalEntityId: fixtureLegalEntityId,
-      legalName: 'Fixture legal entity',
-      registrationCountry: 'CZ',
-      registrationNumber: 'AUTH-RUNTIME-1',
-      status: 'active',
-      tenantId,
-    });
-    await coreDatabase.insert(principalAuthBindings).values({
-      principalAuthBindingId: fixtureAuthBindingId,
-      principalId,
-      provider: 'better_auth',
-      providerSubjectId: betterAuthUserId,
-      status: 'active',
-      subjectType: 'user',
-      tenantId,
-    });
-    await coreDatabase.insert(tenantModuleStates).values([
-      { moduleKey: 'testing1', state: 'active', tenantId },
-      { moduleKey: 'testing.pages', state: 'active', tenantId },
-      { moduleKey: 'stale-non-installed', state: 'active', tenantId },
-      { moduleKey: 'inactive-installed', state: 'suspended', tenantId },
-      { moduleKey: 'testing1', state: 'active', tenantId: foreignTenantId },
-    ]);
+    await runEffectTestPromise(
+      coreDatabase.insert(tenants).values({
+        defaultLocale: 'en',
+        name: 'Authentication runtime tenant',
+        slug: 'authentication-runtime-tenant',
+        status: 'active',
+        tenantId,
+      }),
+    );
+    await runEffectTestPromise(
+      coreDatabase.insert(tenants).values({
+        defaultLocale: 'en',
+        name: 'Foreign authentication runtime tenant',
+        slug: 'foreign-authentication-runtime-tenant',
+        status: 'active',
+        tenantId: foreignTenantId,
+      }),
+    );
+    await runEffectTestPromise(
+      coreDatabase.insert(principals).values({
+        displayName: 'Runtime fixture',
+        kind: 'human',
+        principalId,
+        status: 'active',
+        tenantId,
+      }),
+    );
+    await runEffectTestPromise(
+      coreDatabase.insert(legalEntities).values({
+        legalEntityId: fixtureLegalEntityId,
+        legalName: 'Fixture legal entity',
+        registrationCountry: 'CZ',
+        registrationNumber: 'AUTH-RUNTIME-1',
+        status: 'active',
+        tenantId,
+      }),
+    );
+    await runEffectTestPromise(
+      coreDatabase.insert(principalAuthBindings).values({
+        principalAuthBindingId: fixtureAuthBindingId,
+        principalId,
+        provider: 'better_auth',
+        providerSubjectId: betterAuthUserId,
+        status: 'active',
+        subjectType: 'user',
+        tenantId,
+      }),
+    );
+    await runEffectTestPromise(
+      coreDatabase.insert(tenantModuleStates).values([
+        { moduleKey: 'testing1', state: 'active', tenantId },
+        { moduleKey: 'testing.pages', state: 'active', tenantId },
+        { moduleKey: 'stale-non-installed', state: 'active', tenantId },
+        { moduleKey: 'inactive-installed', state: 'suspended', tenantId },
+        { moduleKey: 'testing1', state: 'active', tenantId: foreignTenantId },
+      ]),
+    );
 
     const requestHeaders = new Headers({
       origin: configuration.baseUrl,
@@ -574,26 +619,30 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       }),
     );
     assert.equal(deniedIdentityAdministrationResponse.status, 403);
-    const [deniedIdentityInvocation] = await coreDatabase
-      .select({
-        actionInvocationId: actionInvocations.actionInvocationId,
-        status: actionInvocations.status,
-      })
-      .from(actionInvocations)
-      .where(eq(actionInvocations.idempotencyKey, 'denied-managed-identity'))
-      .limit(1);
+    const [deniedIdentityInvocation] = await runEffectTestPromise(
+      coreDatabase
+        .select({
+          actionInvocationId: actionInvocations.actionInvocationId,
+          status: actionInvocations.status,
+        })
+        .from(actionInvocations)
+        .where(eq(actionInvocations.idempotencyKey, 'denied-managed-identity'))
+        .limit(1),
+    );
     assert.equal(deniedIdentityInvocation?.status, 'rejected');
     if (deniedIdentityInvocation === undefined) {
       throw new Error('The denied identity Action did not persist its invocation');
     }
-    const [deniedIdentityAudit] = await coreDatabase
-      .select({
-        eventType: auditEvents.eventType,
-        outcomeCode: auditEvents.outcomeCode,
-      })
-      .from(auditEvents)
-      .where(eq(auditEvents.actionInvocationId, deniedIdentityInvocation.actionInvocationId))
-      .limit(1);
+    const [deniedIdentityAudit] = await runEffectTestPromise(
+      coreDatabase
+        .select({
+          eventType: auditEvents.eventType,
+          outcomeCode: auditEvents.outcomeCode,
+        })
+        .from(auditEvents)
+        .where(eq(auditEvents.actionInvocationId, deniedIdentityInvocation.actionInvocationId))
+        .limit(1),
+    );
     assert.deepEqual(deniedIdentityAudit, {
       eventType: 'action.rejected',
       outcomeCode: 'spicedb_permission_denied',
@@ -610,22 +659,24 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       state: 'available',
       unavailableDeployments: [],
     });
-    const [compositionEvidence] = await coreDatabase
-      .select({
-        authBindingId: dataAccessEvents.authBindingId,
-        evidencePayloadJson: dataAccessEvents.evidencePayloadJson,
-        outcome: dataAccessEvents.outcome,
-        outcomeCode: dataAccessEvents.outcomeCode,
-        queryHash: dataAccessEvents.queryHash,
-        resultCount: dataAccessEvents.resultCount,
-      })
-      .from(dataAccessEvents)
-      .where(
-        and(
-          eq(dataAccessEvents.tenantId, tenantId),
-          eq(dataAccessEvents.evidencePolicyKey, 'core.shell.composition.evidence.v1'),
+    const [compositionEvidence] = await runEffectTestPromise(
+      coreDatabase
+        .select({
+          authBindingId: dataAccessEvents.authBindingId,
+          evidencePayloadJson: dataAccessEvents.evidencePayloadJson,
+          outcome: dataAccessEvents.outcome,
+          outcomeCode: dataAccessEvents.outcomeCode,
+          queryHash: dataAccessEvents.queryHash,
+          resultCount: dataAccessEvents.resultCount,
+        })
+        .from(dataAccessEvents)
+        .where(
+          and(
+            eq(dataAccessEvents.tenantId, tenantId),
+            eq(dataAccessEvents.evidencePolicyKey, 'core.shell.composition.evidence.v1'),
+          ),
         ),
-      );
+    );
     assert.deepEqual(compositionEvidence, {
       authBindingId: fixtureAuthBindingId,
       evidencePayloadJson: null,
@@ -944,10 +995,12 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     );
     assert.equal(stillAuthenticated.identity?.principalId, principalId);
 
-    await coreDatabase
-      .update(principalAuthBindings)
-      .set({ revokedAt: new Date('2026-09-01T00:00:00.000Z'), status: 'revoked' })
-      .where(eq(principalAuthBindings.providerSubjectId, betterAuthUserId));
+    await runEffectTestPromise(
+      coreDatabase
+        .update(principalAuthBindings)
+        .set({ revokedAt: new Date('2026-09-01T00:00:00.000Z'), status: 'revoked' })
+        .where(eq(principalAuthBindings.providerSubjectId, betterAuthUserId)),
+    );
     const revoked = await runEffectTestPromise(
       Effect.flip(
         authentication
@@ -965,10 +1018,12 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     assert.match(forbiddenModulesResponse.headers.get('www-authenticate') ?? '', /^Bearer/u);
     assert.doesNotMatch(await forbiddenModulesResponse.text(), /30000000|40000000/u);
 
-    await coreDatabase
-      .update(principalAuthBindings)
-      .set({ revokedAt: null, status: 'active' })
-      .where(eq(principalAuthBindings.providerSubjectId, betterAuthUserId));
+    await runEffectTestPromise(
+      coreDatabase
+        .update(principalAuthBindings)
+        .set({ revokedAt: null, status: 'active' })
+        .where(eq(principalAuthBindings.providerSubjectId, betterAuthUserId)),
+    );
     const signOutResponse = await unavailableHandler.handler(
       new Request(`${configuration.baseUrl}/auth/sign-out`, {
         headers: authenticatedHeaders,
@@ -1051,7 +1106,11 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
   });
   const corePool = new Pool({ connectionString: configuration.connectionString });
   const authPool = new Pool({ connectionString: configuration.connectionString });
-  const coreDatabase = drizzle({ client: corePool, relations: coreRelations });
+  const coreDatabase = await runEffectTestPromise(
+    makeTestDatabaseFromPool(corePool, coreRelations).pipe(
+      NativeScope.provide(nativeDatabaseScope),
+    ),
+  );
   const authDatabase = drizzle({ client: authPool, relations: authRelations });
   const adminAuthDatabase = drizzle({ client: adminPool, relations: authRelations });
   const resolver = makePrincipalResolver({ executor: coreDatabase });
@@ -1066,35 +1125,51 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
   const handlers: { readonly dispose: () => Promise<void> }[] = [];
 
   const cleanup = async () => {
-    await coreDatabase
-      .delete(dataAccessEvents)
-      .where(inArray(dataAccessEvents.tenantId, [firstTenantId, secondTenantId]));
+    await runEffectTestPromise(
+      coreDatabase
+        .delete(dataAccessEvents)
+        .where(inArray(dataAccessEvents.tenantId, [firstTenantId, secondTenantId])),
+    );
     const existingUsers = await authDatabase
       .select({ id: user.id })
       .from(user)
       .where(eq(user.email, multiEmail));
     const existingUserIds = existingUsers.map(({ id }) => id);
     if (existingUserIds.length > 0) {
-      await coreDatabase
-        .delete(principalAuthBindings)
-        .where(inArray(principalAuthBindings.providerSubjectId, existingUserIds));
+      await runEffectTestPromise(
+        coreDatabase
+          .delete(principalAuthBindings)
+          .where(inArray(principalAuthBindings.providerSubjectId, existingUserIds)),
+      );
       await authDatabase.delete(session).where(inArray(session.userId, existingUserIds));
       await authDatabase.delete(account).where(inArray(account.userId, existingUserIds));
       await authDatabase.delete(user).where(inArray(user.id, existingUserIds));
     }
-    await coreDatabase
-      .delete(tenantModuleStates)
-      .where(eq(tenantModuleStates.tenantId, firstTenantId));
-    await coreDatabase
-      .delete(tenantModuleStates)
-      .where(eq(tenantModuleStates.tenantId, secondTenantId));
-    await coreDatabase.delete(principals).where(eq(principals.principalId, firstPrincipalId));
-    await coreDatabase.delete(principals).where(eq(principals.principalId, secondPrincipalId));
-    await coreDatabase
-      .delete(legalEntities)
-      .where(inArray(legalEntities.legalEntityId, [firstLegalEntityId, secondLegalEntityId]));
-    await coreDatabase.delete(tenants).where(eq(tenants.tenantId, firstTenantId));
-    await coreDatabase.delete(tenants).where(eq(tenants.tenantId, secondTenantId));
+    await runEffectTestPromise(
+      coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, firstTenantId)),
+    );
+    await runEffectTestPromise(
+      coreDatabase
+        .delete(tenantModuleStates)
+        .where(eq(tenantModuleStates.tenantId, secondTenantId)),
+    );
+    await runEffectTestPromise(
+      coreDatabase.delete(principals).where(eq(principals.principalId, firstPrincipalId)),
+    );
+    await runEffectTestPromise(
+      coreDatabase.delete(principals).where(eq(principals.principalId, secondPrincipalId)),
+    );
+    await runEffectTestPromise(
+      coreDatabase
+        .delete(legalEntities)
+        .where(inArray(legalEntities.legalEntityId, [firstLegalEntityId, secondLegalEntityId])),
+    );
+    await runEffectTestPromise(
+      coreDatabase.delete(tenants).where(eq(tenants.tenantId, firstTenantId)),
+    );
+    await runEffectTestPromise(
+      coreDatabase.delete(tenants).where(eq(tenants.tenantId, secondTenantId)),
+    );
   };
 
   try {
@@ -1102,82 +1177,92 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     const betterAuthUserId = await runEffectTestPromise(
       authentication.createFixtureUser(multiEmail, 'Multi tenant fixture', password),
     );
-    await coreDatabase.insert(tenants).values([
-      {
-        defaultLocale: 'en',
-        name: 'Zeta tenant',
-        slug: 'multi-zeta-tenant',
-        status: 'active',
-        tenantId: firstTenantId,
-      },
-      {
-        defaultLocale: 'en',
-        name: 'Alpha tenant',
-        slug: 'multi-alpha-tenant',
-        status: 'active',
-        tenantId: secondTenantId,
-      },
-    ]);
-    await coreDatabase.insert(principals).values([
-      {
-        displayName: 'First tenant principal',
-        kind: 'human',
-        principalId: firstPrincipalId,
-        status: 'active',
-        tenantId: firstTenantId,
-      },
-      {
-        displayName: 'Second tenant principal',
-        kind: 'human',
-        principalId: secondPrincipalId,
-        status: 'active',
-        tenantId: secondTenantId,
-      },
-    ]);
-    await coreDatabase.insert(legalEntities).values([
-      {
-        legalEntityId: firstLegalEntityId,
-        legalName: 'First legal entity',
-        registrationCountry: 'CZ',
-        registrationNumber: 'AUTH-MULTI-1',
-        status: 'active',
-        tenantId: firstTenantId,
-      },
-      {
-        legalEntityId: secondLegalEntityId,
-        legalName: 'Second legal entity',
-        registrationCountry: 'CZ',
-        registrationNumber: 'AUTH-MULTI-2',
-        status: 'active',
-        tenantId: secondTenantId,
-      },
-    ]);
-    await coreDatabase.insert(principalAuthBindings).values([
-      {
-        createdAt: new Date('2026-01-01T00:00:00.000Z'),
-        principalAuthBindingId: firstAuthBindingId,
-        principalId: firstPrincipalId,
-        provider: 'better_auth',
-        providerSubjectId: betterAuthUserId,
-        status: 'active',
-        subjectType: 'user',
-        tenantId: firstTenantId,
-      },
-      {
-        createdAt: new Date('2026-02-01T00:00:00.000Z'),
-        principalAuthBindingId: secondAuthBindingId,
-        principalId: secondPrincipalId,
-        provider: 'better_auth',
-        providerSubjectId: betterAuthUserId,
-        status: 'active',
-        subjectType: 'user',
-        tenantId: secondTenantId,
-      },
-    ]);
-    await coreDatabase.insert(tenantModuleStates).values([
-      { moduleKey: 'first-module', state: 'active', tenantId: firstTenantId },
-      { moduleKey: 'second-module', state: 'active', tenantId: secondTenantId },
-    ]);
+    await runEffectTestPromise(
+      coreDatabase.insert(tenants).values([
+        {
+          defaultLocale: 'en',
+          name: 'Zeta tenant',
+          slug: 'multi-zeta-tenant',
+          status: 'active',
+          tenantId: firstTenantId,
+        },
+        {
+          defaultLocale: 'en',
+          name: 'Alpha tenant',
+          slug: 'multi-alpha-tenant',
+          status: 'active',
+          tenantId: secondTenantId,
+        },
+      ]),
+    );
+    await runEffectTestPromise(
+      coreDatabase.insert(principals).values([
+        {
+          displayName: 'First tenant principal',
+          kind: 'human',
+          principalId: firstPrincipalId,
+          status: 'active',
+          tenantId: firstTenantId,
+        },
+        {
+          displayName: 'Second tenant principal',
+          kind: 'human',
+          principalId: secondPrincipalId,
+          status: 'active',
+          tenantId: secondTenantId,
+        },
+      ]),
+    );
+    await runEffectTestPromise(
+      coreDatabase.insert(legalEntities).values([
+        {
+          legalEntityId: firstLegalEntityId,
+          legalName: 'First legal entity',
+          registrationCountry: 'CZ',
+          registrationNumber: 'AUTH-MULTI-1',
+          status: 'active',
+          tenantId: firstTenantId,
+        },
+        {
+          legalEntityId: secondLegalEntityId,
+          legalName: 'Second legal entity',
+          registrationCountry: 'CZ',
+          registrationNumber: 'AUTH-MULTI-2',
+          status: 'active',
+          tenantId: secondTenantId,
+        },
+      ]),
+    );
+    await runEffectTestPromise(
+      coreDatabase.insert(principalAuthBindings).values([
+        {
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          principalAuthBindingId: firstAuthBindingId,
+          principalId: firstPrincipalId,
+          provider: 'better_auth',
+          providerSubjectId: betterAuthUserId,
+          status: 'active',
+          subjectType: 'user',
+          tenantId: firstTenantId,
+        },
+        {
+          createdAt: new Date('2026-02-01T00:00:00.000Z'),
+          principalAuthBindingId: secondAuthBindingId,
+          principalId: secondPrincipalId,
+          provider: 'better_auth',
+          providerSubjectId: betterAuthUserId,
+          status: 'active',
+          subjectType: 'user',
+          tenantId: secondTenantId,
+        },
+      ]),
+    );
+    await runEffectTestPromise(
+      coreDatabase.insert(tenantModuleStates).values([
+        { moduleKey: 'first-module', state: 'active', tenantId: firstTenantId },
+        { moduleKey: 'second-module', state: 'active', tenantId: secondTenantId },
+      ]),
+    );
 
     const signIn = await runEffectTestPromise(
       authentication.signIn(multiEmail, password, new Headers({ origin: configuration.baseUrl })),
@@ -1273,10 +1358,12 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       .where(eq(session.userId, betterAuthUserId));
     assert.equal(sessionsAfterForbiddenSwitch[0]?.activeTenantId, firstTenantId);
 
-    await coreDatabase
-      .update(principals)
-      .set({ status: 'disabled' })
-      .where(eq(principals.principalId, secondPrincipalId));
+    await runEffectTestPromise(
+      coreDatabase
+        .update(principals)
+        .set({ status: 'disabled' })
+        .where(eq(principals.principalId, secondPrincipalId)),
+    );
     const inactiveTargetResponse = await runtime.handler(
       new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
         body: JSON.stringify({ tenantId: secondTenantId }),
@@ -1294,10 +1381,12 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       .from(session)
       .where(eq(session.userId, betterAuthUserId));
     assert.equal(sessionsAfterInactiveSwitch[0]?.activeTenantId, firstTenantId);
-    await coreDatabase
-      .update(principals)
-      .set({ status: 'active' })
-      .where(eq(principals.principalId, secondPrincipalId));
+    await runEffectTestPromise(
+      coreDatabase
+        .update(principals)
+        .set({ status: 'active' })
+        .where(eq(principals.principalId, secondPrincipalId)),
+    );
 
     const resolverUnavailableAuthentication = makeAuthenticationService(
       configuration,
@@ -1577,10 +1666,12 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         .switchTenant(secondTenantId, authenticatedHeaders)
         .pipe(Effect.provide(multiAuthenticationContextLayer)),
     );
-    await coreDatabase
-      .update(principalAuthBindings)
-      .set({ revokedAt: new Date('2026-09-01T00:00:00.000Z'), status: 'revoked' })
-      .where(eq(principalAuthBindings.tenantId, secondTenantId));
+    await runEffectTestPromise(
+      coreDatabase
+        .update(principalAuthBindings)
+        .set({ revokedAt: new Date('2026-09-01T00:00:00.000Z'), status: 'revoked' })
+        .where(eq(principalAuthBindings.tenantId, secondTenantId)),
+    );
     const revokedSession = await runEffectTestPromise(
       Effect.flip(
         authentication
@@ -1589,10 +1680,12 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       ),
     );
     assert.equal(revokedSession._tag, 'OntosIdentityForbiddenError');
-    await coreDatabase
-      .update(principalAuthBindings)
-      .set({ revokedAt: null, status: 'active' })
-      .where(eq(principalAuthBindings.tenantId, secondTenantId));
+    await runEffectTestPromise(
+      coreDatabase
+        .update(principalAuthBindings)
+        .set({ revokedAt: null, status: 'active' })
+        .where(eq(principalAuthBindings.tenantId, secondTenantId)),
+    );
     const restoredSession = await runEffectTestPromise(
       authentication
         .currentSession(authenticatedHeaders)
@@ -1602,12 +1695,14 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
 
     // Production evidence retains referenced bindings. Clear only this fixture's evidence so the
     // resolver can still prove that an existing selected session rejects a genuinely missing row.
-    await coreDatabase
-      .delete(dataAccessEvents)
-      .where(eq(dataAccessEvents.tenantId, secondTenantId));
-    await coreDatabase
-      .delete(principalAuthBindings)
-      .where(eq(principalAuthBindings.tenantId, secondTenantId));
+    await runEffectTestPromise(
+      coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, secondTenantId)),
+    );
+    await runEffectTestPromise(
+      coreDatabase
+        .delete(principalAuthBindings)
+        .where(eq(principalAuthBindings.tenantId, secondTenantId)),
+    );
     const sessionWithRemovedBinding = await runEffectTestPromise(
       Effect.flip(
         authentication
@@ -1622,3 +1717,6 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     await Promise.all([adminPool.end(), authPool.end(), corePool.end()]);
   }
 });
+afterNativeDatabase(
+  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
+);

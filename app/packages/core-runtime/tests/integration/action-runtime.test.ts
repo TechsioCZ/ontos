@@ -1,41 +1,25 @@
 import { runEffectTestPromise, runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
+import { ConnectionError, SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 import assert from 'node:assert/strict';
 // @effect-diagnostics asyncFunction:off globalDateInEffect:off -- Existing compatibility boundary; expires: 2026-12-31.
-import { randomUUID } from 'node:crypto';
-import test, { after, before } from 'node:test';
 import { and, eq } from 'drizzle-orm';
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
+import { randomUUID } from 'node:crypto';
+import test, { after, before } from 'node:test';
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
-import { makeActionRepository } from '../../src/actions/repository.ts';
 import { defineAction } from '../../src/actions/definition.ts';
 import { ActionInvocationPersistenceError } from '../../src/actions/errors.ts';
 import { createDomainEventReference } from '../../src/actions/events.ts';
+import type { ActionPolicy } from '../../src/actions/policy.ts';
 import {
   defineGlobalPolicy,
   defineMicroverticalPolicy,
   denyPolicy,
 } from '../../src/actions/policy.ts';
-import type { ActionPolicy } from '../../src/actions/policy.ts';
+import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
-import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
-import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
-import {
-  defineSystemModuleEntrypoint,
-  defineTenantModuleEntrypoint,
-} from '../../src/modules/module-entrypoint.ts';
-import { makeModuleEntrypointGateway } from '../../src/modules/module-entrypoint-gateway.ts';
-import { makeModuleStateGate } from '../../src/modules/module-state-gate.ts';
-import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
-import { InstalledModuleCatalogService } from '../../src/modules/catalog.ts';
-import type { InstalledModuleCatalog } from '../../src/modules/catalog.ts';
-import type { OntosModuleDeploymentContract } from '../../src/modules/manifest.ts';
-import {
-  TenantModuleStateService,
-  makeTenantModuleStateService,
-} from '../../src/modules/tenant-module-state-service.ts';
+import { makeFaultInjectableCoreDatabase, TestQueryHook } from '../support/database-faults.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
-import { makeCoreDatabase } from '../../src/db/client.ts';
-import type { ScopedTransactionExecutor } from '../../src/db/scoped-transaction.ts';
 import {
   actionInvocations,
   auditEvents,
@@ -49,6 +33,23 @@ import {
   tenantModuleStates,
   tenants,
 } from '../../src/db/schema.ts';
+import type { ScopedTransactionExecutor } from '../../src/db/scoped-transaction.ts';
+import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
+import type { InstalledModuleCatalog } from '../../src/modules/catalog.ts';
+import { InstalledModuleCatalogService } from '../../src/modules/catalog.ts';
+import type { OntosModuleDeploymentContract } from '../../src/modules/manifest.ts';
+import { makeModuleEntrypointGateway } from '../../src/modules/module-entrypoint-gateway.ts';
+import {
+  defineSystemModuleEntrypoint,
+  defineTenantModuleEntrypoint,
+} from '../../src/modules/module-entrypoint.ts';
+import { makeModuleStateGate } from '../../src/modules/module-state-gate.ts';
+import {
+  TenantModuleStateService,
+  makeTenantModuleStateService,
+} from '../../src/modules/tenant-module-state-service.ts';
+import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
+import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 
 const TestPersistenceErrorContract = Schema.TaggedStruct('TestPersistenceError', {
   reason: Schema.String,
@@ -172,7 +173,7 @@ const withDatabase = <Value, Error>(
   Effect.scoped(
     Effect.gen(function* databaseScope() {
       const configuration = yield* loadDatabaseConfig();
-      const database = yield* makeCoreDatabase(configuration);
+      const database = yield* makeFaultInjectableCoreDatabase(configuration);
       return yield* execute(database);
     }),
   );
@@ -193,31 +194,31 @@ const withEvidencePersistenceFailure = (
   stage: EvidencePersistenceStage,
 ): ContextServiceContract => {
   const transactionOverride = {
-    transaction: async (transactionBody, configuration) =>
-      await database.executor.transaction(async (transaction) => {
-        const insert: typeof transaction.insert = (table) => {
-          if (
-            (stage === 'audit' && Object.is(table, auditEvents)) ||
-            (stage === 'data-access' && Object.is(table, dataAccessEvents)) ||
-            (stage === 'domain-event' && Object.is(table, domainEvents)) ||
-            (stage === 'outbox' && Object.is(table, outboxMessages))
-          ) {
-            throw new Error(`Injected ${stage} persistence failure`);
-          }
-          return transaction.insert(table);
-        };
-        const update: typeof transaction.update = (table) => {
-          if (stage === 'invocation-success' && Object.is(table, actionInvocations)) {
-            throw new Error(`Injected ${stage} persistence failure`);
-          }
-          return transaction.update(table);
-        };
-        const faultingTransaction: typeof transaction = Object.assign(Object.create(transaction), {
-          insert,
-          update,
-        });
-        return await transactionBody(faultingTransaction);
-      }, configuration),
+    transaction: (transactionBody) =>
+      database.executor.transaction((transaction) => {
+        const table = {
+          audit: 'audit_events',
+          'data-access': 'data_access_events',
+          'domain-event': 'domain_events',
+          'invocation-success': 'action_invocations',
+          outbox: 'outbox_messages',
+        }[stage];
+        const operation = stage === 'invocation-success' ? 'update' : 'insert into';
+        return transactionBody(transaction).pipe(
+          Effect.provideService(TestQueryHook, (statement) =>
+            statement.startsWith(`${operation} "core"."${table}"`)
+              ? Effect.fail(
+                  new SqlError({
+                    reason: new UnknownError({
+                      cause: new Error('Injected SQL failure'),
+                      message: `Injected ${stage} persistence failure`,
+                    }),
+                  }),
+                )
+              : Effect.void,
+          ),
+        );
+      }),
   } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
   const executor: ContextServiceContract['executor'] = Object.assign(
     Object.create(database.executor),
@@ -243,66 +244,94 @@ const liveModuleStateOptions = (database: ContextServiceContract) => {
 
 before(async () => {
   await databasePromise(async (database) => {
-    await database.executor.insert(tenants).values({
-      defaultLocale: 'en',
-      name: 'Action Runtime Integration',
-      slug: `action-runtime-${tenantId}`,
-      status: 'active',
-      tenantId,
-    });
-    await database.executor.insert(legalEntities).values({
-      legalEntityId,
-      legalName: 'Action Runtime Integration',
-      registrationCountry: 'CZ',
-      registrationNumber: tenantId,
-      status: 'active',
-      tenantId,
-    });
-    await database.executor.insert(principals).values({
-      displayName: 'Action Runtime Integration',
-      kind: 'human',
-      principalId,
-      status: 'active',
-      tenantId,
-    });
-    await database.executor.insert(principalAuthBindings).values({
-      principalAuthBindingId: authBindingId,
-      principalId,
-      provider: 'better_auth',
-      providerSubjectId: `action-runtime-${principalId}`,
-      status: 'active',
-      subjectType: 'user',
-      tenantId,
-    });
-    await database.executor.insert(tenantModuleStates).values({
-      moduleKey: 'inventory.stock',
-      state: 'active',
-      tenantId,
-    });
+    await runEffectTestPromise(
+      database.executor.insert(tenants).values({
+        defaultLocale: 'en',
+        name: 'Action Runtime Integration',
+        slug: `action-runtime-${tenantId}`,
+        status: 'active',
+        tenantId,
+      }),
+    );
+    await runEffectTestPromise(
+      database.executor.insert(legalEntities).values({
+        legalEntityId,
+        legalName: 'Action Runtime Integration',
+        registrationCountry: 'CZ',
+        registrationNumber: tenantId,
+        status: 'active',
+        tenantId,
+      }),
+    );
+    await runEffectTestPromise(
+      database.executor.insert(principals).values({
+        displayName: 'Action Runtime Integration',
+        kind: 'human',
+        principalId,
+        status: 'active',
+        tenantId,
+      }),
+    );
+    await runEffectTestPromise(
+      database.executor.insert(principalAuthBindings).values({
+        principalAuthBindingId: authBindingId,
+        principalId,
+        provider: 'better_auth',
+        providerSubjectId: `action-runtime-${principalId}`,
+        status: 'active',
+        subjectType: 'user',
+        tenantId,
+      }),
+    );
+    await runEffectTestPromise(
+      database.executor.insert(tenantModuleStates).values({
+        moduleKey: 'inventory.stock',
+        state: 'active',
+        tenantId,
+      }),
+    );
   });
 });
 
 after(async () => {
   await databasePromise(async (database) => {
-    await database.executor.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId));
-    await database.executor.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId));
-    await database.executor.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId));
-    await database.executor.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId));
-    await database.executor
-      .delete(tenantModuleStateChanges)
-      .where(eq(tenantModuleStateChanges.tenantId, tenantId));
-    await database.executor
-      .delete(tenantModuleStates)
-      .where(eq(tenantModuleStates.tenantId, tenantId));
-    await database.executor
-      .delete(actionInvocations)
-      .where(eq(actionInvocations.tenantId, tenantId));
-    await database.executor
-      .delete(principalAuthBindings)
-      .where(eq(principalAuthBindings.tenantId, tenantId));
-    await database.executor.delete(principals).where(eq(principals.tenantId, tenantId));
-    await database.executor.delete(legalEntities).where(eq(legalEntities.tenantId, tenantId));
-    await database.executor.delete(tenants).where(eq(tenants.tenantId, tenantId));
+    await runEffectTestPromise(
+      database.executor.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
+    );
+    await runEffectTestPromise(
+      database.executor.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId)),
+    );
+    await runEffectTestPromise(
+      database.executor.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
+    );
+    await runEffectTestPromise(
+      database.executor.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
+    );
+    await runEffectTestPromise(
+      database.executor
+        .delete(tenantModuleStateChanges)
+        .where(eq(tenantModuleStateChanges.tenantId, tenantId)),
+    );
+    await runEffectTestPromise(
+      database.executor.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
+    );
+    await runEffectTestPromise(
+      database.executor.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
+    );
+    await runEffectTestPromise(
+      database.executor
+        .delete(principalAuthBindings)
+        .where(eq(principalAuthBindings.tenantId, tenantId)),
+    );
+    await runEffectTestPromise(
+      database.executor.delete(principals).where(eq(principals.tenantId, tenantId)),
+    );
+    await runEffectTestPromise(
+      database.executor.delete(legalEntities).where(eq(legalEntities.tenantId, tenantId)),
+    );
+    await runEffectTestPromise(
+      database.executor.delete(tenants).where(eq(tenants.tenantId, tenantId)),
+    );
   });
 });
 
@@ -360,20 +389,21 @@ const makeRegistration = ({
     (payload, context: TestActionContext) =>
       Effect.gen(function* integrationHandler() {
         onExecute?.();
-        const inserted = yield* Effect.tryPromise({
-          catch: () => new TestPersistenceError({ reason: 'test business write failed' }),
-          try: () =>
-            context.services.transaction
-              .insert(tenantModuleStates)
-              .values({
-                moduleKey: moduleStateKey,
-                state: 'active',
-                tenantId: context.scope.tenantId,
-              })
-              .returning({
-                tenantModuleStateId: tenantModuleStates.tenantModuleStateId,
-              }),
-        });
+        const inserted = yield* context.services.transaction
+          .insert(tenantModuleStates)
+          .values({
+            moduleKey: moduleStateKey,
+            state: 'active',
+            tenantId: context.scope.tenantId,
+          })
+          .returning({
+            tenantModuleStateId: tenantModuleStates.tenantModuleStateId,
+          })
+          .pipe(
+            Effect.mapError(
+              () => new TestPersistenceError({ reason: 'test business write failed' }),
+            ),
+          );
 
         yield* context.recordDataAccess({
           accessKind: 'read',
@@ -440,10 +470,12 @@ const failureTag = <Error>(exit: Exit.Exit<unknown, Error>): string | undefined 
 
 void test('rechecks business module state under the tenant lock and retries after Core recovery', async () => {
   await databasePromise(async (database) => {
-    await database.executor
-      .update(tenantModuleStates)
-      .set({ state: 'active' })
-      .where(eq(tenantModuleStates.moduleKey, 'inventory.stock'));
+    await runEffectTestPromise(
+      database.executor
+        .update(tenantModuleStates)
+        .set({ state: 'active' })
+        .where(eq(tenantModuleStates.moduleKey, 'inventory.stock')),
+    );
 
     const policyReached = await runEffectTestPromise(Deferred.make<null>());
     const continuePolicy = await runEffectTestPromise(Deferred.make<null>());
@@ -530,16 +562,20 @@ void test('rechecks business module state under the tenant lock and retries afte
     assert.equal(failureTag(denied), 'ModuleStateDeniedError');
     assert.equal(handlerExecutions, 0);
 
-    const [openInvocation] = await database.executor
-      .select()
-      .from(actionInvocations)
-      .where(eq(actionInvocations.idempotencyKey, 'business-module-concurrent-gate'));
+    const [openInvocation] = await runEffectTestPromise(
+      database.executor
+        .select()
+        .from(actionInvocations)
+        .where(eq(actionInvocations.idempotencyKey, 'business-module-concurrent-gate')),
+    );
     assert.ok(openInvocation);
     assert.equal(openInvocation.completedAt, null);
-    const deniedEvidence = await database.executor
-      .select()
-      .from(auditEvents)
-      .where(eq(auditEvents.actionInvocationId, openInvocation.actionInvocationId));
+    const deniedEvidence = await runEffectTestPromise(
+      database.executor
+        .select()
+        .from(auditEvents)
+        .where(eq(auditEvents.actionInvocationId, openInvocation.actionInvocationId)),
+    );
     assert.equal(deniedEvidence.length, 0);
 
     await runEffectTestPromise(
@@ -598,26 +634,31 @@ void test('atomically commits business state, all success evidence, and the succ
       }),
     );
 
-    const [states, invocations, audits, accesses, events, messages] = await Promise.all([
-      database.executor
-        .select()
-        .from(tenantModuleStates)
-        .where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
-      database.executor
-        .select()
-        .from(actionInvocations)
-        .where(eq(actionInvocations.idempotencyKey, key)),
-      database.executor.select().from(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
-      database.executor
-        .select()
-        .from(dataAccessEvents)
-        .where(eq(dataAccessEvents.tenantId, tenantId)),
-      database.executor
-        .select()
-        .from(domainEvents)
-        .where(eq(domainEvents.subjectResourceId, moduleStateKey)),
-      database.executor.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
-    ]);
+    const [states, invocations, audits, accesses, events, messages] = await runEffectTestPromise(
+      Effect.all([
+        database.executor
+          .select()
+          .from(tenantModuleStates)
+          .where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
+        database.executor
+          .select()
+          .from(actionInvocations)
+          .where(eq(actionInvocations.idempotencyKey, key)),
+        database.executor.select().from(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
+        database.executor
+          .select()
+          .from(dataAccessEvents)
+          .where(eq(dataAccessEvents.tenantId, tenantId)),
+        database.executor
+          .select()
+          .from(domainEvents)
+          .where(eq(domainEvents.subjectResourceId, moduleStateKey)),
+        database.executor
+          .select()
+          .from(outboxMessages)
+          .where(eq(outboxMessages.tenantId, tenantId)),
+      ]),
+    );
 
     assert.equal(result.value, 'committed');
     assert.equal(states.length, 1);
@@ -675,15 +716,19 @@ void test('commits allowed Policy checkpoints atomically before handler success 
       }),
     );
 
-    const [invocation] = await database.executor
-      .select()
-      .from(actionInvocations)
-      .where(eq(actionInvocations.idempotencyKey, key));
+    const [invocation] = await runEffectTestPromise(
+      database.executor
+        .select()
+        .from(actionInvocations)
+        .where(eq(actionInvocations.idempotencyKey, key)),
+    );
     assert.ok(invocation);
-    const audits = await database.executor
-      .select()
-      .from(auditEvents)
-      .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
+    const audits = await runEffectTestPromise(
+      database.executor
+        .select()
+        .from(auditEvents)
+        .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId)),
+    );
 
     assert.deepEqual(observed, ['policy', 'handler']);
     assert.equal(invocation.status, 'succeeded');
@@ -791,10 +836,12 @@ void test('atomically rejects denied global and same-owner MicroVertical Policie
         return;
       }
       let handlerExecutions = 0;
-      const beforeMessages = await database.executor
-        .select()
-        .from(outboxMessages)
-        .where(eq(outboxMessages.tenantId, tenantId));
+      const beforeMessages = await runEffectTestPromise(
+        database.executor
+          .select()
+          .from(outboxMessages)
+          .where(eq(outboxMessages.tenantId, tenantId)),
+      );
       const actionEffect = runtime.runAction({
         payload: { value: 'must-not-persist' },
         principal,
@@ -814,33 +861,39 @@ void test('atomically rejects denied global and same-owner MicroVertical Policie
       }
       assert.equal(handlerExecutions, 0);
 
-      const [invocation] = await database.executor
-        .select()
-        .from(actionInvocations)
-        .where(eq(actionInvocations.idempotencyKey, scenario.key));
+      const [invocation] = await runEffectTestPromise(
+        database.executor
+          .select()
+          .from(actionInvocations)
+          .where(eq(actionInvocations.idempotencyKey, scenario.key)),
+      );
       assert.ok(invocation);
-      const [audits, accesses, events, states] = await Promise.all([
+      const [audits, accesses, events, states] = await runEffectTestPromise(
+        Effect.all([
+          database.executor
+            .select()
+            .from(auditEvents)
+            .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId)),
+          database.executor
+            .select()
+            .from(dataAccessEvents)
+            .where(eq(dataAccessEvents.actionInvocationId, invocation.actionInvocationId)),
+          database.executor
+            .select()
+            .from(domainEvents)
+            .where(eq(domainEvents.actionInvocationId, invocation.actionInvocationId)),
+          database.executor
+            .select()
+            .from(tenantModuleStates)
+            .where(eq(tenantModuleStates.moduleKey, `test.${scenario.key}.${tenantId}`)),
+        ]),
+      );
+      const messages = await runEffectTestPromise(
         database.executor
           .select()
-          .from(auditEvents)
-          .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId)),
-        database.executor
-          .select()
-          .from(dataAccessEvents)
-          .where(eq(dataAccessEvents.actionInvocationId, invocation.actionInvocationId)),
-        database.executor
-          .select()
-          .from(domainEvents)
-          .where(eq(domainEvents.actionInvocationId, invocation.actionInvocationId)),
-        database.executor
-          .select()
-          .from(tenantModuleStates)
-          .where(eq(tenantModuleStates.moduleKey, `test.${scenario.key}.${tenantId}`)),
-      ]);
-      const messages = await database.executor
-        .select()
-        .from(outboxMessages)
-        .where(eq(outboxMessages.tenantId, tenantId));
+          .from(outboxMessages)
+          .where(eq(outboxMessages.tenantId, tenantId)),
+      );
 
       assert.equal(invocation.status, 'rejected');
       assert.ok(invocation.completedAt);
@@ -901,17 +954,25 @@ void test('rolls back every denied-Policy finalization persistence failure', asy
           }),
         ),
       );
-      const [invocation] = await database.executor
-        .select()
-        .from(actionInvocations)
-        .where(eq(actionInvocations.idempotencyKey, key));
+      const [invocation] = await runEffectTestPromise(
+        database.executor
+          .select()
+          .from(actionInvocations)
+          .where(eq(actionInvocations.idempotencyKey, key)),
+      );
       assert.ok(invocation);
-      const audits = await database.executor
-        .select()
-        .from(auditEvents)
-        .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
+      const audits = await runEffectTestPromise(
+        database.executor
+          .select()
+          .from(auditEvents)
+          .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId)),
+      );
 
-      assert.equal(failureTag(exit), 'ActionInvocationPersistenceError');
+      assert.equal(
+        failureTag(exit),
+        'ActionInvocationPersistenceError',
+        Exit.isFailure(exit) ? Cause.pretty(exit.cause) : 'success',
+      );
       assert.equal(handlerExecutions, 0);
       assert.equal(invocation.status, 'received');
       assert.equal(invocation.completedAt, null);
@@ -975,36 +1036,46 @@ void test('rolls back domain rejection, evidence persistence failure, and orphan
         ),
       );
 
-      const states = await database.executor
-        .select()
-        .from(tenantModuleStates)
-        .where(eq(tenantModuleStates.moduleKey, moduleStateKey));
-      const invocations = await database.executor
-        .select()
-        .from(actionInvocations)
-        .where(eq(actionInvocations.idempotencyKey, scenario.key));
+      const states = await runEffectTestPromise(
+        database.executor
+          .select()
+          .from(tenantModuleStates)
+          .where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
+      );
+      const invocations = await runEffectTestPromise(
+        database.executor
+          .select()
+          .from(actionInvocations)
+          .where(eq(actionInvocations.idempotencyKey, scenario.key)),
+      );
       const invocationId = invocations[0]?.actionInvocationId;
       const committedEvidence =
         invocationId === undefined
           ? []
-          : await database.executor
-              .select()
-              .from(auditEvents)
-              .where(eq(auditEvents.actionInvocationId, invocationId));
+          : await runEffectTestPromise(
+              database.executor
+                .select()
+                .from(auditEvents)
+                .where(eq(auditEvents.actionInvocationId, invocationId)),
+            );
       const committedAccesses =
         invocationId === undefined
           ? []
-          : await database.executor
-              .select()
-              .from(dataAccessEvents)
-              .where(eq(dataAccessEvents.actionInvocationId, invocationId));
+          : await runEffectTestPromise(
+              database.executor
+                .select()
+                .from(dataAccessEvents)
+                .where(eq(dataAccessEvents.actionInvocationId, invocationId)),
+            );
       const committedEvents =
         invocationId === undefined
           ? []
-          : await database.executor
-              .select()
-              .from(domainEvents)
-              .where(eq(domainEvents.actionInvocationId, invocationId));
+          : await runEffectTestPromise(
+              database.executor
+                .select()
+                .from(domainEvents)
+                .where(eq(domainEvents.actionInvocationId, invocationId)),
+            );
 
       assert.equal(failureTag(exit), scenario.expectedTag);
       assert.equal(states.length, 0);
@@ -1040,10 +1111,12 @@ void test('rolls back every individual success-evidence persistence failure', as
       }
       const key = `evidence-${stage}`;
       const moduleStateKey = `test.${key}.${tenantId}`;
-      const beforeOutbox = await database.executor
-        .select()
-        .from(outboxMessages)
-        .where(eq(outboxMessages.tenantId, tenantId));
+      const beforeOutbox = await runEffectTestPromise(
+        database.executor
+          .select()
+          .from(outboxMessages)
+          .where(eq(outboxMessages.tenantId, tenantId)),
+      );
       const runtime = makeActionRuntime(
         withEvidencePersistenceFailure(database, stage),
         makeActionRepository(),
@@ -1066,34 +1139,40 @@ void test('rolls back every individual success-evidence persistence failure', as
         ),
       );
 
-      const states = await database.executor
-        .select()
-        .from(tenantModuleStates)
-        .where(eq(tenantModuleStates.moduleKey, moduleStateKey));
-      const [invocation] = await database.executor
-        .select()
-        .from(actionInvocations)
-        .where(eq(actionInvocations.idempotencyKey, key));
+      const states = await runEffectTestPromise(
+        database.executor
+          .select()
+          .from(tenantModuleStates)
+          .where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
+      );
+      const [invocation] = await runEffectTestPromise(
+        database.executor
+          .select()
+          .from(actionInvocations)
+          .where(eq(actionInvocations.idempotencyKey, key)),
+      );
       assert.notEqual(invocation, undefined);
       const invocationId = invocation?.actionInvocationId ?? '';
-      const [audits, accesses, events, afterOutbox] = await Promise.all([
-        database.executor
-          .select()
-          .from(auditEvents)
-          .where(eq(auditEvents.actionInvocationId, invocationId)),
-        database.executor
-          .select()
-          .from(dataAccessEvents)
-          .where(eq(dataAccessEvents.actionInvocationId, invocationId)),
-        database.executor
-          .select()
-          .from(domainEvents)
-          .where(eq(domainEvents.actionInvocationId, invocationId)),
-        database.executor
-          .select()
-          .from(outboxMessages)
-          .where(eq(outboxMessages.tenantId, tenantId)),
-      ]);
+      const [audits, accesses, events, afterOutbox] = await runEffectTestPromise(
+        Effect.all([
+          database.executor
+            .select()
+            .from(auditEvents)
+            .where(eq(auditEvents.actionInvocationId, invocationId)),
+          database.executor
+            .select()
+            .from(dataAccessEvents)
+            .where(eq(dataAccessEvents.actionInvocationId, invocationId)),
+          database.executor
+            .select()
+            .from(domainEvents)
+            .where(eq(domainEvents.actionInvocationId, invocationId)),
+          database.executor
+            .select()
+            .from(outboxMessages)
+            .where(eq(outboxMessages.tenantId, tenantId)),
+        ]),
+      );
 
       assert.equal(failureTag(exit), 'ActionTransactionError', stage);
       assert.equal(states.length, 0, stage);
@@ -1144,15 +1223,19 @@ void test('keeps Policy rejection terminal and deduplicates repeated and concurr
     };
     const first = await runEffectTestPromise(Effect.exit(runtime.runAction(input)));
     const retry = await runEffectTestPromise(Effect.exit(runtime.runAction(input)));
-    const [invocation] = await database.executor
-      .select()
-      .from(actionInvocations)
-      .where(eq(actionInvocations.idempotencyKey, key));
+    const [invocation] = await runEffectTestPromise(
+      database.executor
+        .select()
+        .from(actionInvocations)
+        .where(eq(actionInvocations.idempotencyKey, key)),
+    );
     assert.ok(invocation);
-    const audits = await database.executor
-      .select()
-      .from(auditEvents)
-      .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
+    const audits = await runEffectTestPromise(
+      database.executor
+        .select()
+        .from(auditEvents)
+        .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId)),
+    );
 
     assert.equal(failureTag(first), 'ActionPolicyDenied');
     assert.equal(failureTag(retry), 'ActionInvocationStateError');
@@ -1193,15 +1276,19 @@ void test('keeps Policy rejection terminal and deduplicates repeated and concurr
       runEffectTestPromise(Effect.exit(runtime.runAction(concurrentInput))),
       runEffectTestPromise(Effect.exit(runtime.runAction(concurrentInput))),
     ]);
-    const [concurrentInvocation] = await database.executor
-      .select()
-      .from(actionInvocations)
-      .where(eq(actionInvocations.idempotencyKey, concurrentKey));
+    const [concurrentInvocation] = await runEffectTestPromise(
+      database.executor
+        .select()
+        .from(actionInvocations)
+        .where(eq(actionInvocations.idempotencyKey, concurrentKey)),
+    );
     assert.ok(concurrentInvocation);
-    const concurrentAudits = await database.executor
-      .select()
-      .from(auditEvents)
-      .where(eq(auditEvents.actionInvocationId, concurrentInvocation.actionInvocationId));
+    const concurrentAudits = await runEffectTestPromise(
+      database.executor
+        .select()
+        .from(auditEvents)
+        .where(eq(auditEvents.actionInvocationId, concurrentInvocation.actionInvocationId)),
+    );
 
     assert.deepEqual(concurrent.map(failureTag), ['ActionPolicyDenied', 'ActionPolicyDenied']);
     assert.equal(concurrentEvaluations, 2);
@@ -1267,15 +1354,19 @@ void test('never lets a losing Policy denial replace a running or successful inv
       Effect.exit(deniedRuntime.runAction({ ...sharedInput, registration: denied })),
     );
     const [successResult, rejectedExit] = await Promise.all([success, rejected]);
-    const [invocation] = await database.executor
-      .select()
-      .from(actionInvocations)
-      .where(eq(actionInvocations.idempotencyKey, key));
+    const [invocation] = await runEffectTestPromise(
+      database.executor
+        .select()
+        .from(actionInvocations)
+        .where(eq(actionInvocations.idempotencyKey, key)),
+    );
     assert.ok(invocation);
-    const audits = await database.executor
-      .select()
-      .from(auditEvents)
-      .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
+    const audits = await runEffectTestPromise(
+      database.executor
+        .select()
+        .from(auditEvents)
+        .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId)),
+    );
 
     assert.equal(successResult.value, 'same');
     assert.equal(failureTag(rejectedExit), 'ActionInvocationPersistenceError');
@@ -1404,13 +1495,15 @@ void test('serializes Domain Event allocation by tenant commit order', async () 
     const firstFlushed = await runEffectTestPromise(Deferred.make<null>());
     const secondInsertStarted = await runEffectTestPromise(Deferred.make<null>());
     const delayedTransaction = {
-      transaction: async (transactionBody, configuration) =>
-        await database.executor.transaction(async (transaction) => {
-          const result = await transactionBody(transaction);
-          runEffectTestSync(Deferred.succeed(firstFlushed, null));
-          await runEffectTestPromise(Deferred.await(firstCommitRelease));
-          return result;
-        }, configuration),
+      transaction: (transactionBody) =>
+        database.executor.transaction((transaction) =>
+          Effect.gen(function* delayCommit() {
+            const result = yield* transactionBody(transaction);
+            yield* Deferred.succeed(firstFlushed, null);
+            yield* Deferred.await(firstCommitRelease);
+            return result;
+          }),
+        ),
     } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
     const delayedExecutor: ContextServiceContract['executor'] = Object.assign(
       Object.create(database.executor),
@@ -1424,16 +1517,8 @@ void test('serializes Domain Event allocation by tenant commit order', async () 
       testOperationalScopeResolver,
       openActionRuntimeOptions,
     );
-    const signaledInsert: typeof database.executor.insert = (table) => {
-      runEffectTestSync(Deferred.succeed(secondInsertStarted, null));
-      return database.executor.insert(table);
-    };
-    const signaledExecutor: ContextServiceContract['executor'] = Object.assign(
-      Object.create(database.executor),
-      { insert: signaledInsert },
-    );
     const secondRuntime = makeActionRuntime(
-      { executor: signaledExecutor },
+      database,
       repository,
       allowedPermission,
       testOperationalScopeResolver,
@@ -1457,15 +1542,21 @@ void test('serializes Domain Event allocation by tenant commit order', async () 
 
     let secondCompleted = false;
     const second = runEffectTestPromise(
-      secondRuntime.runAction({
-        payload: { value: 'second' },
-        principal,
-        registration: makeRegistration({
-          actionKey: 'shell.test.sequence-second',
-          moduleStateKey: secondModule,
-        }),
-        transport: transport('sequence-second', secondModule),
-      }),
+      secondRuntime
+        .runAction({
+          payload: { value: 'second' },
+          principal,
+          registration: makeRegistration({
+            actionKey: 'shell.test.sequence-second',
+            moduleStateKey: secondModule,
+          }),
+          transport: transport('sequence-second', secondModule),
+        })
+        .pipe(
+          Effect.provideService(TestQueryHook, () =>
+            Deferred.succeed(secondInsertStarted, null).pipe(Effect.asVoid),
+          ),
+        ),
     ).finally(() => {
       secondCompleted = true;
     });
@@ -1476,10 +1567,9 @@ void test('serializes Domain Event allocation by tenant commit order', async () 
     runEffectTestSync(Deferred.succeed(firstCommitRelease, null));
     await Promise.all([first, second]);
 
-    const events = await database.executor
-      .select()
-      .from(domainEvents)
-      .where(eq(domainEvents.tenantId, tenantId));
+    const events = await runEffectTestPromise(
+      database.executor.select().from(domainEvents).where(eq(domainEvents.tenantId, tenantId)),
+    );
     const firstEvent = events.find((event) => event.subjectResourceId === firstModule);
     const secondEvent = events.find((event) => event.subjectResourceId === secondModule);
 
@@ -1499,13 +1589,14 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
       moduleStateKey,
     });
 
+    const acknowledgementLost = new SqlError({
+      reason: new ConnectionError({ cause: { code: '08007' } }),
+    });
     const uncertainTransaction = {
-      transaction: async (transactionBody, configuration) => {
-        await database.executor.transaction(transactionBody, configuration);
-        throw Object.assign(new Error('commit acknowledgement lost'), {
-          commitIndeterminate: true,
-        });
-      },
+      transaction: (transactionBody) =>
+        database.executor
+          .transaction(transactionBody)
+          .pipe(Effect.andThen(Effect.die(acknowledgementLost))),
     } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
     const uncertainExecutor: ContextServiceContract['executor'] = Object.assign(
       Object.create(database.executor),
@@ -1537,10 +1628,12 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
       testOperationalScopeResolver,
       openActionRuntimeOptions,
     );
-    const invocations = await database.executor
-      .select()
-      .from(actionInvocations)
-      .where(eq(actionInvocations.idempotencyKey, key));
+    const invocations = await runEffectTestPromise(
+      database.executor
+        .select()
+        .from(actionInvocations)
+        .where(eq(actionInvocations.idempotencyKey, key)),
+    );
     const invocationId = invocations[0]?.actionInvocationId;
     assert.notEqual(invocationId, undefined);
     const unauthorizedResolution = await runEffectTestPromise(
@@ -1596,10 +1689,12 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
         }),
       ),
     );
-    const states = await database.executor
-      .select()
-      .from(tenantModuleStates)
-      .where(eq(tenantModuleStates.moduleKey, moduleStateKey));
+    const states = await runEffectTestPromise(
+      database.executor
+        .select()
+        .from(tenantModuleStates)
+        .where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
+    );
 
     assert.equal(failureTag(committedResolution), 'ActionAlreadyCommitted');
     assert.equal(failureTag(unauthorizedResolution), 'ActionInvocationNotFound');
@@ -1615,18 +1710,14 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
       moduleStateKey: openModuleStateKey,
     });
     const uncertainRollbackTransaction = {
-      transaction: async (transactionBody, configuration) => {
-        try {
-          return await database.executor.transaction(async (transaction) => {
-            await transactionBody(transaction);
-            throw new Error('force rollback after the transaction body');
-          }, configuration);
-        } catch {
-          throw Object.assign(new Error('commit acknowledgement lost'), {
-            commitIndeterminate: true,
-          });
-        }
-      },
+      transaction: (transactionBody) =>
+        database.executor
+          .transaction((transaction) =>
+            transactionBody(transaction).pipe(
+              Effect.andThen(Effect.die(new Error('force rollback after the transaction body'))),
+            ),
+          )
+          .pipe(Effect.catchCause(() => Effect.die(acknowledgementLost))),
     } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
     const uncertainRollbackExecutor: ContextServiceContract['executor'] = Object.assign(
       Object.create(database.executor),
@@ -1651,10 +1742,12 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
     );
     assert.equal(failureTag(openFirst), 'ActionCommitIndeterminate');
 
-    const openInvocations = await database.executor
-      .select()
-      .from(actionInvocations)
-      .where(eq(actionInvocations.idempotencyKey, openKey));
+    const openInvocations = await runEffectTestPromise(
+      database.executor
+        .select()
+        .from(actionInvocations)
+        .where(eq(actionInvocations.idempotencyKey, openKey)),
+    );
     const openInvocationId = openInvocations[0]?.actionInvocationId;
     assert.notEqual(openInvocationId, undefined);
     const openResolution = await runEffectTestPromise(
@@ -1671,10 +1764,12 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
         transport: transport(openKey, openModuleStateKey),
       }),
     );
-    const openStates = await database.executor
-      .select()
-      .from(tenantModuleStates)
-      .where(eq(tenantModuleStates.moduleKey, openModuleStateKey));
+    const openStates = await runEffectTestPromise(
+      database.executor
+        .select()
+        .from(tenantModuleStates)
+        .where(eq(tenantModuleStates.moduleKey, openModuleStateKey)),
+    );
 
     assert.equal(openResolution._tag, 'ActionCommitOpen');
     assert.equal(openResolved.value, 'rolled-back-with-lost-ack');
@@ -1685,10 +1780,12 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
 void test('persists no invocation or evidence for every non-writable business module state', async () => {
   await databasePromise(async (database) => {
     const moduleKey = 'inventory.state-matrix';
-    await database.executor
-      .insert(tenantModuleStates)
-      .values({ moduleKey, state: 'active', tenantId })
-      .onConflictDoNothing();
+    await runEffectTestPromise(
+      database.executor
+        .insert(tenantModuleStates)
+        .values({ moduleKey, state: 'active', tenantId })
+        .onConflictDoNothing(),
+    );
     let handlerExecutions = 0;
     const action = defineAction(
       {
@@ -1750,15 +1847,17 @@ void test('persists no invocation or evidence for every non-writable business mo
       if (state === undefined) {
         return;
       }
-      await database.executor
-        .update(tenantModuleStates)
-        .set({ state })
-        .where(
-          and(
-            eq(tenantModuleStates.tenantId, tenantId),
-            eq(tenantModuleStates.moduleKey, moduleKey),
+      await runEffectTestPromise(
+        database.executor
+          .update(tenantModuleStates)
+          .set({ state })
+          .where(
+            and(
+              eq(tenantModuleStates.tenantId, tenantId),
+              eq(tenantModuleStates.moduleKey, moduleKey),
+            ),
           ),
-        );
+      );
       const idempotencyKey = `module-state-denied-${index}`;
       const exit = await runEffectTestPromise(
         Effect.exit(
@@ -1771,20 +1870,27 @@ void test('persists no invocation or evidence for every non-writable business mo
         ),
       );
       assert.equal(failureTag(exit), 'ModuleStateDeniedError', state);
-      const invocations = await database.executor
-        .select()
-        .from(actionInvocations)
-        .where(eq(actionInvocations.idempotencyKey, idempotencyKey));
+      const invocations = await runEffectTestPromise(
+        database.executor
+          .select()
+          .from(actionInvocations)
+          .where(eq(actionInvocations.idempotencyKey, idempotencyKey)),
+      );
       assert.equal(invocations.length, 0, state);
       await verifyDeniedStateAt(index + 1);
     };
     await verifyDeniedStateAt(0);
 
-    await database.executor
-      .delete(tenantModuleStates)
-      .where(
-        and(eq(tenantModuleStates.tenantId, tenantId), eq(tenantModuleStates.moduleKey, moduleKey)),
-      );
+    await runEffectTestPromise(
+      database.executor
+        .delete(tenantModuleStates)
+        .where(
+          and(
+            eq(tenantModuleStates.tenantId, tenantId),
+            eq(tenantModuleStates.moduleKey, moduleKey),
+          ),
+        ),
+    );
     const missingExit = await runEffectTestPromise(
       Effect.exit(
         runtime.runAction({
