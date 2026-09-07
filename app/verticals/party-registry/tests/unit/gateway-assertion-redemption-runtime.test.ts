@@ -2,7 +2,7 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Cause, Clock, Effect, Exit, Schema, Stream } from 'effect';
+import { Cause, Clock, Effect, Exit, Schema, Stream, Predicate } from 'effect';
 import { TestClock } from 'effect/testing';
 import { Reactivity } from 'effect/unstable/reactivity';
 import type { Connection } from 'effect/unstable/sql/SqlConnection';
@@ -73,7 +73,7 @@ for (const settlement of ['COMMIT', 'ROLLBACK']) {
         const failure = yield* fixture.redemption
           .consume(assertion)
           .pipe(Effect.provideService(Clock.Clock, fixture.clock), Effect.flip);
-        assert.equal(failure._tag, 'GatewayAssertionRedemptionUnavailableError');
+        assert.ok(Predicate.isTagged(failure, 'GatewayAssertionRedemptionUnavailableError'));
         const serializedFailure = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
           failure,
         );
@@ -120,7 +120,7 @@ test('rejects assertions crossing expiry before redemption without deleting repl
         const failure = yield* fixture.redemption
           .consume(assertion)
           .pipe(Effect.provideService(Clock.Clock, fixture.clock), Effect.flip);
-        assert.equal(failure._tag, 'GatewayAssertionReplayError');
+        assert.ok(Predicate.isTagged(failure, 'GatewayAssertionReplayError'));
       }
       assert.deepEqual(statements, [], 'expired assertions cannot run replay-evidence cleanup');
     }).pipe(Effect.scoped),

@@ -3,7 +3,7 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { NodeHttpServer } from '@effect/platform-node';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Match, Redacted, Schema } from 'effect';
+import { Effect, Match, Redacted, Schema, Predicate } from 'effect';
 import {
   FetchHttpClient,
   HttpClient,
@@ -140,9 +140,11 @@ test('mounted HTTP authentication maps verifier classes, challenges unusable cre
             expectedStatus === 401 ? authenticationProblem() : unavailableProblem(),
           );
           const body = yield* Schema.decodeUnknownEffect(ProblemResponseSchema)(rawBody);
-          assert.equal(
-            body._tag,
-            expectedStatus === 401 ? 'FixtureAuthenticationProblem' : 'FixtureUnavailableProblem',
+          assert.ok(
+            Predicate.isTagged(
+              body,
+              expectedStatus === 401 ? 'FixtureAuthenticationProblem' : 'FixtureUnavailableProblem',
+            ),
           );
           assert.equal(body.status, expectedStatus);
         }
