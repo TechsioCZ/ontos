@@ -1,0 +1,32 @@
+{
+  "minimumVersion": "3.22.0",
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/dist-cloudflare/**",
+    "**/cloudflare-dist/**",
+    "**/.output/**",
+    "**/.modern/**",
+    "**/.modernjs/**",
+    "**/modern-tanstack/**",
+    "**/routeTree.gen.*",
+    "tools/oxlint/effect-native/tests/fixtures/**",
+    "**/.env",
+    "**/.env.*",
+    "repos/**",
+    "docs/**",
+    "specs/**",
+    ".agents/**",
+    ".codex/**"
+  ],
+  "duplicates": {
+    "ignoreDefaults": false,
+    "ignoreImports": true
+  },
+  "health": {
+    "maxCyclomatic": 10,
+    "maxCognitive": 15,
+    "maxCrap": 0,
+    "suggestInlineSuppression": false
+  }
+}
