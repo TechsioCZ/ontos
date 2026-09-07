@@ -158,6 +158,14 @@ Generated HTTP APIs use one direct topology:
 - browser clients: `src/api/*-client.ts`;
 - Modern configuration: Effect runtime with `strictEffectApproach: true`.
 
+Codesmith-generated module API, search-provider, and report clients construct their typed clients
+through `makeEffectBffClient` from `@app/shared-contracts/client-runtime`. The generated owner
+wrapper still imports its owner-local API contract, acquires a fresh audience-scoped assertion from
+its owner-local operation gateway for every attempt, and supplies the bearer authorization and
+correlation headers explicitly. If validation reports a governed client-runtime failure, restore
+that shared factory import and rerun the governing scaffold instead of recreating low-level
+framework client or HTTP request transforms.
+
 Do not add legacy nested API paths, Hono server imports, raw handlers, manual body parsing, manual
 `Response` construction, or generic JSON schemas in API modules. `api:check`, type checking, and
 linting enforce the boundary. Staff authentication and service identity remain Shell/Core
