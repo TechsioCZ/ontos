@@ -1,7 +1,16 @@
-import { Effect, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
-import type { HttpApi, HttpApiClient, HttpApiGroup } from '@modern-js/plugin-bff/effect-client';
-import { Context, Redacted } from 'effect';
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { makeEffectBffClient } from '@app/shared-contracts/client-runtime';
+import type {
+  EffectBffClientOptions,
+  EffectBffRequestContext,
+} from '@app/shared-contracts/client-runtime';
+import { Effect } from '@modern-js/plugin-bff/effect-client';
+import type {
+  HttpApi,
+  HttpApiClient,
+  HttpApiGroup,
+  Schema,
+} from '@modern-js/plugin-bff/effect-client';
+import { Redacted } from 'effect';
 import { partyRegistryApi, partyRegistryApiContract } from '../../shared/api.ts';
 import type { OperationContext } from '../../shared/api.ts';
 
@@ -44,61 +53,6 @@ export interface PartyRegistryHttpRequestContextValue {
   readonly requestTraceparent?: string;
 }
 
-const defaultPartyRegistryHttpRequestContext: PartyRegistryHttpRequestContextValue = {
-  baseUrl: partyRegistryApiContract.apiPrefix,
-};
-
-const PartyRegistryHttpRequestContext = Context.Reference<PartyRegistryHttpRequestContextValue>(
-  'PartyRegistryHttpRequestContext',
-  { defaultValue: () => defaultPartyRegistryHttpRequestContext },
-);
-
-const applyPartyRegistryHttpRequestContext = Effect.fn(
-  'PartyRegistryHttpClient.applyRequestContext',
-)(function* applyRequestContext(request: HttpClientRequest.HttpClientRequest) {
-  const context = yield* PartyRegistryHttpRequestContext;
-  let nextRequest = HttpClientRequest.prependUrl(request, context.baseUrl.toString());
-  if (context.requestLocale !== undefined) {
-    nextRequest = HttpClientRequest.setHeader(
-      nextRequest,
-      'accept-language',
-      context.requestLocale,
-    );
-  }
-  if (context.requestTraceparent !== undefined) {
-    nextRequest = HttpClientRequest.setHeader(
-      nextRequest,
-      'traceparent',
-      context.requestTraceparent,
-    );
-  }
-  if (context.credential === undefined || context.requestCorrelation === undefined) {
-    return nextRequest;
-  }
-  const requestCorrelationHeader = context.requestCorrelationHeader ?? 'x-correlation-id';
-  return HttpClientRequest.setHeaders(
-    nextRequest,
-    context.requestTrace === undefined
-      ? {
-          authorization: Redacted.value(context.credential),
-          [requestCorrelationHeader]: context.requestCorrelation,
-        }
-      : {
-          authorization: Redacted.value(context.credential),
-          [requestCorrelationHeader]: context.requestCorrelation,
-          'x-trace-id': context.requestTrace,
-        },
-  );
-});
-
-const sharedPartyRegistryHttpClient = Effect.runSync(
-  Effect.cached(
-    makeEffectHttpApiClient(partyRegistryApi, {
-      transformClient: HttpClient.mapRequestEffect(applyPartyRegistryHttpRequestContext),
-    }),
-  ),
-);
-
 export const partyRegistryHttpRequestContext = (
   options: PartyRegistryHttpClientOptions = {},
 ): PartyRegistryHttpRequestContextValue => {
@@ -131,66 +85,51 @@ export const authenticatePartyRegistryHttpRequest = (
         requestTrace,
       };
 
+const effectBffClientOptions = (
+  context: PartyRegistryHttpRequestContextValue,
+): EffectBffClientOptions => {
+  const requestCorrelationHeader = context.requestCorrelationHeader ?? requestCorrelationHeaderName;
+  const transportHeaders =
+    context.credential === undefined || context.requestCorrelation === undefined
+      ? undefined
+      : {
+          authorization: Redacted.value(context.credential),
+          [requestCorrelationHeader]: context.requestCorrelation,
+          'x-trace-id': context.requestTrace,
+        };
+  const requestContext: EffectBffRequestContext = {};
+  if (context.requestLocale !== undefined) {
+    Object.assign(requestContext, { locale: context.requestLocale });
+  }
+  if (context.operationContext !== undefined) {
+    Object.assign(requestContext, { operationContext: context.operationContext });
+  }
+  if (context.requestTraceparent !== undefined) {
+    Object.assign(requestContext, { traceparent: context.requestTraceparent });
+  }
+  const options: EffectBffClientOptions = { baseUrl: context.baseUrl };
+  if (Object.keys(requestContext).length > 0) {
+    Object.assign(options, { requestContext });
+  }
+  if (transportHeaders !== undefined) {
+    Object.assign(options, { transportHeaders });
+  }
+  return options;
+};
+
 export const invokePartyRegistryHttpClient = <Success, Failure, Requirements>(
   context: PartyRegistryHttpRequestContextValue,
   operation: (client: PartyRegistryHttpClient) => Effect.Effect<Success, Failure, Requirements>,
-): Effect.Effect<Success, Failure, Requirements> =>
-  sharedPartyRegistryHttpClient.pipe(
-    Effect.flatMap(operation),
-    Effect.provideService(PartyRegistryHttpRequestContext, context),
-  );
-
-type BindablePartyRegistryOperation = (
-  ...arguments_: readonly unknown[]
-) => Effect.Effect<unknown, object, object>;
-
-type BindablePartyRegistryGroup = Readonly<
-  Record<PropertyKey, BindablePartyRegistryOperation | undefined>
->;
-
-type BindablePartyRegistryClient = Readonly<
-  Record<PropertyKey, BindablePartyRegistryGroup | undefined>
->;
-
-const bindPartyRegistryGroup = (
-  group: BindablePartyRegistryGroup,
-  context: PartyRegistryHttpRequestContextValue,
-) =>
-  new Proxy(group, {
-    get(currentGroup, property) {
-      const operation = currentGroup[property];
-      if (operation === undefined) {
-        return;
-      }
-      return (...args: readonly unknown[]) =>
-        Effect.provideService(
-          operation.bind(currentGroup)(...args),
-          PartyRegistryHttpRequestContext,
-          context,
-        );
-    },
-  });
-
-export const bindPartyRegistryHttpClient = (
-  client: PartyRegistryHttpClient,
-  context: PartyRegistryHttpRequestContextValue,
-): PartyRegistryHttpClient => {
-  // SAFETY: HttpApi clients contain named groups whose properties are endpoint functions. The
-  // proxies retain that generated shape and only install the fiber-local request context.
-  const bindableClient: BindablePartyRegistryClient = client as never;
-  const boundClient = new Proxy(bindableClient, {
-    get(currentClient, property) {
-      const group = currentClient[property];
-      return group === undefined ? undefined : bindPartyRegistryGroup(group, context);
-    },
-  });
-  // SAFETY: The proxy above preserves the generated client shape described by the same contract.
-  return boundClient as never;
-};
+): Effect.Effect<Success, Failure | Schema.SchemaError, Requirements> =>
+  makeEffectBffClient({
+    api: partyRegistryApi,
+    defaultApiPrefix: partyRegistryApiContract.apiPrefix,
+    ...effectBffClientOptions(context),
+  }).pipe(Effect.flatMap(operation));
 
 export const createPartyRegistryHttpClient = (options: PartyRegistryHttpClientOptions = {}) =>
-  sharedPartyRegistryHttpClient.pipe(
-    Effect.map((client) =>
-      bindPartyRegistryHttpClient(client, partyRegistryHttpRequestContext(options)),
-    ),
-  );
+  makeEffectBffClient({
+    api: partyRegistryApi,
+    defaultApiPrefix: partyRegistryApiContract.apiPrefix,
+    ...effectBffClientOptions(partyRegistryHttpRequestContext(options)),
+  });

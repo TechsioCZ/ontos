@@ -1,3 +1,4 @@
+import { isAPIError } from 'better-auth/api';
 import type {
   AvailableTenant,
   PrincipalResolutionError,
@@ -14,7 +15,6 @@ import {
 import { apiKey } from '@better-auth/api-key';
 import { APIError, betterAuth } from 'better-auth';
 import { getCookies } from 'better-auth/cookies';
-import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { admin } from 'better-auth/plugins';
 import { Context, Effect, Function as Fn, Layer, Predicate, Redacted, Schema, flow } from 'effect';
 import {
@@ -25,8 +25,7 @@ import {
 import { AuthConfig } from './config.ts';
 import type { AuthConfigValue } from './config.ts';
 import { AuthDatabase } from './db/client.ts';
-import type { AuthDatabaseExecutor } from './db/types.ts';
-import { authDatabaseSchema } from './db/schema.ts';
+import type { BetterAuthDatabaseAdapter } from './db/types.ts';
 import {
   AuthenticationInternalError,
   AuthenticationUnavailableError,
@@ -314,7 +313,7 @@ const toSafeIdentity = (
 });
 
 const mapKnownRuntimeError = <Failure>(error: Failure): AuthenticationRuntimeError | undefined => {
-  if (error instanceof APIError) {
+  if (isAPIError(error)) {
     const code =
       Predicate.isObjectKeyword(error.body) && error.body !== null && 'code' in error.body
         ? error.body.code
@@ -346,7 +345,7 @@ const mapRuntimeError = <Failure>(error: Failure): AuthenticationRuntimeError =>
     return knownError;
   }
 
-  if (error instanceof APIError && error.statusCode >= 500) {
+  if (isAPIError(error) && error.statusCode >= 500) {
     return new AuthenticationUnavailableError();
   }
 
@@ -422,9 +421,9 @@ interface AuthenticationAssemblyOptions {
 }
 
 const assembleAuthenticationService = (
-  ...[configuration, database, resolver, options]: readonly [
+  ...[configuration, databaseAdapter, resolver, options]: readonly [
     configuration: AuthConfigValue,
-    database: AuthDatabaseExecutor,
+    databaseAdapter: BetterAuthDatabaseAdapter,
     resolver: (typeof PrincipalResolver)['Service'],
     options: AuthenticationAssemblyOptions,
   ]
@@ -451,11 +450,7 @@ const assembleAuthenticationService = (
       useSecureCookies: configuration.secureCookies,
     },
     baseURL: configuration.baseUrl,
-    database: drizzleAdapter(database, {
-      provider: 'pg',
-      schema: authDatabaseSchema,
-      transaction: true,
-    }),
+    database: databaseAdapter,
     databaseHooks: {
       session: {
         create: {
@@ -1055,7 +1050,7 @@ export const AuthenticationServiceLive = Layer.effect(
     const resolver = yield* PrincipalResolver;
     const effectContext = yield* Effect.context();
     const runResolverEffect = Effect.runPromiseWith(effectContext);
-    return makeAuthenticationService(configuration, database.executor, resolver, {
+    return makeAuthenticationService(configuration, database.adapter, resolver, {
       runResolverEffect,
     });
   }),
