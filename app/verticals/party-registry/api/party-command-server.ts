@@ -11,7 +11,7 @@ import type {
   ResolvePartyCommandCommitResult,
 } from '../shared/command-api.ts';
 import { ActionInvocationIdSchema } from '../shared/domain/correction-contracts.ts';
-import { verifyOperationPrincipal } from './auth/action-principal.ts';
+import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 import { partyCommandRegistrations } from './party-command-registrations.ts';
 import {
   failPartyCommandProblem,
@@ -22,26 +22,11 @@ import {
 } from './party-command-problems.ts';
 import type { PartyActionError } from './party-command-problems.ts';
 
-const verifyPrincipal = (authorization: Redacted.Redacted<string | undefined>) => {
-  const authorizationHeader = Redacted.value(authorization);
-  // Missing credentials remain 401 even when the verifier has not been configured yet.
-  return authorizationHeader === undefined
-    ? failPartyCommandProblem(partyCommandProblem.authentication())
-    : verifyOperationPrincipal(authorization).pipe(
-        Effect.catchTags({
-          ActionPrincipalConfigurationError: () => Effect.fail(partyCommandProblem.unavailable()),
-          ActionPrincipalExpiredError: () =>
-            failPartyCommandProblem(partyCommandProblem.authentication()),
-          ActionPrincipalInvalidError: () =>
-            failPartyCommandProblem(partyCommandProblem.authentication()),
-          ActionPrincipalMissingError: () =>
-            failPartyCommandProblem(partyCommandProblem.authentication()),
-          ActionPrincipalScopeError: () =>
-            failPartyCommandProblem(partyCommandProblem.authentication()),
-          ActionPrincipalUnavailableError: () => Effect.fail(partyCommandProblem.unavailable()),
-        }),
-      );
-};
+const verifyPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
+  authenticateOperationPrincipal(authorization, {
+    authentication: partyCommandProblem.authentication,
+    unavailable: partyCommandProblem.unavailable,
+  });
 
 const runPartyCommand = Effect.fn('PartyCommandServer.runPartyCommand')(
   function* runPartyCommandEffect<
