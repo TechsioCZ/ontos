@@ -30,6 +30,4 @@ export default defineConfig({
   },
   out: './drizzle-auth',
   schema: './api/auth/db/schema.ts',
-  strict: true,
-  verbose: true,
 });

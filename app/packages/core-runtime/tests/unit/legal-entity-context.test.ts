@@ -1,16 +1,18 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { Effect, flow } from 'effect';
+import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, flow } from 'effect';
-import {
-  classifyActiveLegalEntities,
-  classifySelectedLegalEntity,
-  legalEntityContextFromRepository,
-} from '../../src/auth/legal-entity-context.ts';
 import type {
   LegalEntityContextError,
   LegalEntityContextRecord,
 } from '../../src/auth/legal-entity-context.ts';
+import {
+  classifyActiveLegalEntities,
+  classifySelectedLegalEntity,
+  makeLegalEntityContext,
+} from '../../src/auth/legal-entity-context.ts';
+import { makeTestDatabase } from '../support/database.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const effectTest = <Value, Failure>(name: string, effect: Effect.Effect<Value, Failure>): void => {
@@ -143,8 +145,14 @@ effectTest(
 effectTest(
   'types database failures as sanitized legal-entity context unavailability',
   Effect.gen(function* sanitizesLegalEntityDatabaseFailure() {
-    const context = legalEntityContextFromRepository({
-      load: flow(() => Effect.die(new Error('secret database diagnostic')), runEffectTestPromise),
+    const context = makeLegalEntityContext({
+      executor: makeTestDatabase(() =>
+        Effect.fail(
+          new SqlError({
+            reason: new ConnectionError({ cause: new Error('secret database diagnostic') }),
+          }),
+        ),
+      ),
     });
     const error = yield* Effect.flip(context.listActiveForTenant(tenantId));
     assert.equal(error._tag, 'LegalEntityContextUnavailableError');

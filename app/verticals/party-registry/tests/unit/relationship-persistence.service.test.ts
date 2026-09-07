@@ -1,16 +1,16 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off globalDate:off -- Existing compatibility boundary; expires: 2026-12-31.
-/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type, unicorn/no-thenable -- This focused harness models only the Drizzle system boundary used by the Relationship service. expires: 2026-12-31. */
+/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This focused harness models only the Drizzle system boundary used by the Relationship service. expires: 2026-12-31. */
+import { DateTime, Effect, Option, Schema } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 import {
   CreatePartyRelationshipPayloadSchema,
   EndPartyRelationshipPayloadSchema,
   PartyRelationshipCorrectionRequired,
   UpdatePartyRelationshipPayloadSchema,
 } from '../../shared/domain/relationship-contract.ts';
-import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 import {
   createPartyRelationshipRecord,
   endPartyRelationshipRecord,
@@ -90,22 +90,22 @@ const transactionHarness = (
   const updateSets: Readonly<Record<string, unknown>>[] = [];
   const select = () => {
     const rows = selectQueue.shift() ?? [];
-    const chain = {
-      for: () => Promise.resolve(rows),
-      from: () => chain,
-      limit: () => chain,
-      orderBy: () => chain,
-      then: <Result>(
-        onfulfilled?: ((value: readonly Readonly<Record<string, unknown>>[]) => Result) | null,
-      ) => Promise.resolve(rows).then(onfulfilled),
-      where: () => chain,
-    };
+    const chain = Object.assign(
+      Effect.sync(() => rows),
+      {
+        for: () => Effect.succeed(rows),
+        from: () => chain,
+        limit: () => chain,
+        orderBy: () => chain,
+        where: () => chain,
+      },
+    );
     return chain;
   };
   const insert = () => {
     const rows = insertQueue.shift() ?? [];
     const chain = {
-      returning: () => Promise.resolve(rows),
+      returning: () => Effect.succeed(rows),
       values: (values: Readonly<Record<string, unknown>>) => {
         insertValues.push(values);
         return chain;
@@ -116,7 +116,7 @@ const transactionHarness = (
   const update = () => {
     const rows = updateQueue.shift() ?? [];
     const chain = {
-      returning: () => Promise.resolve(rows),
+      returning: () => Effect.succeed(rows),
       set: (values: Readonly<Record<string, unknown>>) => {
         updateSets.push(values);
         return chain;

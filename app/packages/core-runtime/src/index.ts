@@ -162,6 +162,8 @@ export type {
   DatabaseDriverFailureInput,
   DatabaseDriverFailureKind,
 } from './database/driver-failure.ts';
+export { findPostgresFailure } from './database/postgres-failure.ts';
+export type { PostgresFailureMetadata } from './database/postgres-failure.ts';
 export {
   ContextAccess,
   ContextAccessLive,

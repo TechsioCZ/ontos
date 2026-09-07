@@ -228,7 +228,7 @@ const ownerRepositorySource = (schemaName: string): string => `
 // Test-owned adaptation of Codesmith-generated disposable owner artifacts.
 import { eq } from 'drizzle-orm';
 import { pgSchema, text, uuid } from 'drizzle-orm/pg-core';
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
 
 const ownerSchema = pgSchema('${schemaName}');
 const tenantRecords = ownerSchema.table('tenant_records', {
@@ -243,7 +243,7 @@ const entityRecords = ownerSchema.table('entity_records', {
   title: text('title').notNull(),
 });
 
-type OwnerExecutor = Pick<NodePgDatabase, 'insert' | 'select'>;
+type OwnerExecutor = Pick<EffectPgDatabase, 'insert' | 'select'>;
 
 export const makeOwnerRepository = (transaction: OwnerExecutor) => ({
   // Deliberately buggy: these reads omit tenant and legal-entity predicates.
@@ -308,10 +308,7 @@ export const resourceDetailRead = defineRead(
   ({ resourceId }, context) =>
     Effect.gen(function* generatedDetail() {
       generatedOwnerHandlerCounts.detail += 1;
-      const rows = yield* Effect.tryPromise({
-        catch: () => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Owner detail is unavailable' }),
-        try: () => context.services.detail(resourceId),
-      });
+      const rows = yield* context.services.detail(resourceId).pipe(Effect.mapError(() => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Owner detail is unavailable' })));
       const row = rows[0];
       if (row === undefined) {
         return yield* new ReadHandlerNotFound({ code: 'read_handler_not_found', reason: 'Owner record was not found' });
@@ -362,10 +359,7 @@ export const resourceListRead = defineRead(
   ({ resourceId }, context) =>
     Effect.gen(function* generatedList() {
       generatedOwnerHandlerCounts.list += 1;
-      const rows = yield* Effect.tryPromise({
-        catch: () => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Owner list is unavailable' }),
-        try: () => context.services.listTenant(),
-      });
+      const rows = yield* context.services.listTenant().pipe(Effect.mapError(() => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Owner list is unavailable' })));
       return {
         evidence: { resultCount: rows.length },
         result: {
@@ -420,10 +414,7 @@ export const recordsRead = defineRead(
   ({ query }, context) =>
     Effect.gen(function* generatedSearch() {
       generatedOwnerHandlerCounts.search += 1;
-      const rows = yield* Effect.tryPromise({
-        catch: () => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Owner search is unavailable' }),
-        try: () => context.services.search(),
-      });
+      const rows = yield* context.services.search().pipe(Effect.mapError(() => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Owner search is unavailable' })));
       const normalized = query.toLocaleLowerCase('en');
       const result = rows
         .filter((row: { readonly title: string }) => row.title.toLocaleLowerCase('en').includes(normalized))
@@ -488,10 +479,7 @@ export const createRecordAction = defineAction(
       if (payload.title === 'trigger safe logging defect') {
         return yield* Effect.die(new Error('Generated owner safe defect'));
       }
-      yield* Effect.tryPromise({
-        catch: () => new CreateRecordRejected({ code: 'owner_write_rejected', reason: 'The owner write was rejected' }),
-        try: () => context.services.insertEntity(payload),
-      });
+      yield* context.services.insertEntity(payload).pipe(Effect.mapError(() => new CreateRecordRejected({ code: 'owner_write_rejected', reason: 'The owner write was rejected' })));
       return { created: true as const };
     }),
   (transaction) => Effect.succeed(makeOwnerRepository(transaction)),

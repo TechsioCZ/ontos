@@ -70,6 +70,23 @@ database APIs when Drizzle and Effect can represent the behavior. The
 node-postgres pool is a private implementation detail acquired and released by
 an Effect scope.
 
+Core and Party persistence use `drizzle-orm/effect-postgres` with `@effect/sql-pg`.
+Queries are native Effects: yield the query directly and map its typed error at the
+owning repository or service. Transaction callbacks return an Effect; the native SQL
+client owns connection acquisition, commit, rollback, savepoints, and interruption.
+Do not wrap native queries in `Effect.tryPromise`, or start another runtime inside a
+transaction callback. Caller services, references, tracing, and cancellation remain
+in the same Effect execution.
+
+Drizzle query failures carry an Effect `Cause` containing the SQL driver failure.
+`findPostgresFailure` is the sole decoder for sanitized PostgreSQL code and constraint
+metadata. Owners assign domain meaning only to their exact code/constraint pairs.
+Native SQL settlement failures use the defect channel; transaction owners narrow
+only `SqlError` to their declared failure and preserve all other defects. The Action
+runtime distinguishes an uncertain commit acknowledgement from a failed body, retains
+the failed body for rollback diagnostics, and resolves uncertainty from the durable
+invocation marker instead of rerunning the Action.
+
 ## Narrow SQL Exceptions
 
 Drizzle's parameterized `sql` tagged template is allowed only for:
@@ -81,7 +98,9 @@ Drizzle's parameterized `sql` tagged template is allowed only for:
 
 Every application-level exception needs a nearby explanation and a focused
 test. Parameters must remain values in the tagged template; never construct SQL
-by joining or interpolating strings.
+by joining or interpolating strings. Raw native Drizzle reads explicitly pass
+`'objects'` as the second argument to `execute<Row>`: the default raw mode exposes
+the underlying driver result instead of the object-row array.
 
 Generated migration SQL is an output of the typed schema and is not application
 query code. Handwritten migration SQL must not replace an expressible typed
@@ -95,8 +114,10 @@ by an explicit path, independent of the invocation directory.
 
 Missing or malformed configuration is an expected typed Effect error. There is
 no silent localhost fallback. The application database layer owns a `pg.Pool`,
-binds it to `drizzle-orm/node-postgres`, and closes it when its Effect scope
-ends.
+binds it through `PgClient.fromPool` to native Drizzle Effect queries, and closes it
+when its Effect scope ends. Pool acquisition and server-side statement deadlines
+remain configured on the pool; a local timeout does not prove that PostgreSQL stopped
+executing a statement.
 
 ## Core Migration Boundary
 

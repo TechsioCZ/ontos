@@ -1,26 +1,28 @@
 import { Cause, Context, Effect, Exit, Layer, Option, Ref, Result, Schema } from 'effect';
-import { CoreDatabase as CoreDatabaseService } from '../db/client.ts';
-import { CoreTransactionBridgeFailure, runCoreTransaction } from '../db/transaction-bridge.ts';
-import type { CoreTransaction } from '../db/types.ts';
-import { createActionCollector } from './collector.ts';
-import { ActionTransportMetadataSchema } from './context.ts';
-import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
+import type { SqlError } from 'effect/unstable/sql/SqlError';
+import { ConnectionError, UnknownError, isSqlError } from 'effect/unstable/sql/SqlError';
 import {
   decodeTrustedPrincipalContext,
   isTrustedSupportRecoveryPrincipalContext,
 } from '../auth/system-principal-context-provenance.ts';
+import { findPostgresFailure } from '../database/postgres-failure.ts';
+import { CoreDatabase as CoreDatabaseService } from '../db/client.ts';
+import type { CoreTransaction } from '../db/types.ts';
+import { createActionCollector } from './collector.ts';
+import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
+import { ActionTransportMetadataSchema } from './context.ts';
+import type {
+  ActionLegalEntityPermission,
+  ActionRegistration,
+  ActionResourcePermissionTarget,
+  ActionTenantPermission,
+} from './definition.ts';
 import {
   decodeActionPayload,
   decodeActionResult,
   getActionHandler,
   getActionResourcePermissionTargetResolver,
   getActionServiceFactory,
-} from './definition.ts';
-import type {
-  ActionLegalEntityPermission,
-  ActionRegistration,
-  ActionResourcePermissionTarget,
-  ActionTenantPermission,
 } from './definition.ts';
 import {
   ActionAlreadyCommitted,
@@ -30,9 +32,9 @@ import {
   ActionIdempotencyKeyRequired,
   ActionInvocationPersistenceError,
   ActionInvocationStateError,
+  ActionPayloadValidationError,
   ActionPermissionCheckError,
   ActionPermissionDenied,
-  ActionPayloadValidationError,
   ActionPolicyDenied,
   ActionPolicyEvaluationError,
   ActionRequestHashConflict,
@@ -41,34 +43,34 @@ import {
   ActionTrustedContextValidationError,
 } from './errors.ts';
 
+import { isDatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
+import { installOperationalScope } from '../db/scoped-transaction.ts';
+import type { ModuleEntrypointGatewayService } from '../modules/module-entrypoint-gateway.ts';
+import { ModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
+import type { TenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
+import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
+import { ModuleStateGate } from '../modules/module-state-gate.ts';
+import type { OperationalScope, OperationalScopeResolverService } from '../operations/context.ts';
+import { OperationalScopeResolver } from '../operations/context.ts';
+import { ContextAccess } from '../permissions/context-access.ts';
+import type { ActionPermissionService } from '../permissions/service.ts';
+import { ActionPermission } from '../permissions/service.ts';
 import type { ActionCoreError, ActionInvocationNotFound } from './errors.ts';
 import type { DomainEventContractMap } from './events.ts';
-import { ActionPermission } from '../permissions/service.ts';
-import type { ActionPermissionService } from '../permissions/service.ts';
-import { PolicyDenied } from './policy.ts';
 import type { ActionPolicy, ActionPolicyEvaluatorInput } from './policy.ts';
-import {
-  computeActionRequestHash,
-  computeCanonicalValueHash,
-  logActionInvocationPersistenceFailureCause,
-  logActionTransactionFailureCause,
-  ActionRepository,
-} from './repository.ts';
+import { PolicyDenied } from './policy.ts';
 import type {
   ActionInvocationRecord,
   ActionPolicyEvidence,
   ActionRepositoryService,
 } from './repository.ts';
-import { ModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
-import type { ModuleEntrypointGatewayService } from '../modules/module-entrypoint-gateway.ts';
-import type { TenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
-import { ModuleStateGate } from '../modules/module-state-gate.ts';
-import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
-import { installOperationalScope } from '../db/scoped-transaction.ts';
-import { OperationalScopeResolver } from '../operations/context.ts';
-import type { OperationalScope, OperationalScopeResolverService } from '../operations/context.ts';
-import { ContextAccess } from '../permissions/context-access.ts';
-import { isDatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
+import {
+  ActionRepository,
+  computeActionRequestHash,
+  computeCanonicalValueHash,
+  logActionInvocationPersistenceFailureCause,
+  logActionTransactionFailureCause,
+} from './repository.ts';
 
 const withOptionalProperty = <
   Base extends object,
@@ -199,22 +201,15 @@ const logInvocationPersistenceFailure = (
   annotations: Readonly<Record<string, string>>,
 ): Effect.Effect<void> => logActionInvocationPersistenceFailureCause(failure, annotations);
 
-const CommitIndeterminateMarkerSchema = Schema.Struct({
-  commitIndeterminate: Schema.Literal(true),
-});
-const CommitIndeterminateFailureSchema = Schema.Union([
-  CommitIndeterminateMarkerSchema,
-  Schema.Struct({ cause: CommitIndeterminateMarkerSchema }),
-]);
-
-const isCommitAcknowledgementFailure = <Failure>(failure: Failure): boolean =>
-  Schema.is(CommitIndeterminateFailureSchema)(failure) ||
-  isDatabaseCommitAcknowledgementAmbiguous(failure);
+const isCommitAcknowledgementFailure = (failure: SqlError): boolean =>
+  isDatabaseCommitAcknowledgementAmbiguous(failure) ||
+  (Option.isNone(findPostgresFailure(failure)) &&
+    (Schema.is(ConnectionError)(failure.reason) || Schema.is(UnknownError)(failure.reason)));
 
 const transactionFailure = () =>
   new ActionTransactionError({
     code: 'action_transaction_failed',
-    reason: 'The Action transaction failed and was rolled back',
+    reason: 'The Action transaction did not complete successfully',
   });
 
 const alreadyCommitted = (invocationId: string) =>
@@ -909,6 +904,7 @@ export const makeActionRuntime = (
       notifyStage('invocation_running');
 
       const transactionBodyCompleted = yield* Ref.make(false);
+      const transactionBodyExit = yield* Ref.make<Exit.Exit<unknown, unknown> | null>(null);
       const transactionProgram = Effect.fn('ActionRuntime.transaction')(
         function* executeTransaction(drizzleTransaction: CoreTransaction) {
           const lockedInvocation = yield* repository
@@ -1051,41 +1047,47 @@ export const makeActionRuntime = (
           ) => Effect.Effect<Value, Failure, Requirements>,
         ) {
           const transactionExit = yield* Effect.exit(
-            restore(runCoreTransaction(database.executor, transactionProgram)),
+            restore(
+              database.executor.transaction((transaction) =>
+                transactionProgram(transaction).pipe(
+                  Effect.onExit((exit) => Ref.set(transactionBodyExit, exit)),
+                ),
+              ),
+            ),
           );
           if (Exit.isSuccess(transactionExit)) {
             return transactionExit.value;
           }
 
-          const bodyCompleted = yield* Ref.get(transactionBodyCompleted);
-          yield* Effect.forEach(
-            transactionExit.cause.reasons,
-            (reason) =>
-              Cause.isFailReason(reason) &&
-              Schema.is(CoreTransactionBridgeFailure)(reason.error) &&
-              reason.error.outcome === 'unknown' &&
-              !(bodyCompleted && isCommitAcknowledgementFailure(reason.error.original))
-                ? Effect.logError('Unexpected Action transaction failure', reason.error.original)
-                : Effect.void,
-            { concurrency: 1, discard: true },
-          );
+          const bodyExit = yield* Ref.get(transactionBodyExit);
+          const bodyCompleted =
+            (yield* Ref.get(transactionBodyCompleted)) &&
+            bodyExit !== null &&
+            Exit.isSuccess(bodyExit);
+          if (
+            bodyExit !== null &&
+            Exit.isFailure(bodyExit) &&
+            transactionExit.cause.reasons.some(
+              (reason) => Cause.isDieReason(reason) && isSqlError(reason.defect),
+            )
+          ) {
+            yield* Effect.logError(
+              'Action body failed before transaction rollback failed',
+              bodyExit.cause,
+            );
+          }
           return yield* Effect.failCause(
             Cause.fromReasons(
               transactionExit.cause.reasons.map((reason) => {
-                if (
-                  !Cause.isFailReason(reason) ||
-                  !Schema.is(CoreTransactionBridgeFailure)(reason.error)
-                ) {
+                if (Cause.isInterruptReason(reason)) {
                   return reason;
                 }
-                const failure = reason.error;
-                if (failure.outcome === 'committed') {
-                  // A committed interruption is not a recoverable Action failure or a plain cancel.
-                  // Retain its outcome marker as a defect alongside the original interruption.
-                  return Cause.makeDieReason(failure);
+                const failure = Cause.isFailReason(reason) ? reason.error : reason.defect;
+                if (!isSqlError(failure)) {
+                  return reason;
                 }
                 return Cause.makeFailReason(
-                  bodyCompleted && isCommitAcknowledgementFailure(failure.original)
+                  bodyCompleted && isCommitAcknowledgementFailure(failure)
                     ? new ActionCommitIndeterminate({
                         code: 'action_commit_indeterminate',
                         invocationId: invocation.actionInvocationId,

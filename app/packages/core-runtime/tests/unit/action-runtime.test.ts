@@ -1,15 +1,25 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 /* oxlint-disable sonarjs/use-type-alias -- Existing compatibility boundary; expires: 2026-12-31. */
 // @effect-diagnostics asyncFunction:off globalDate:off globalDateInEffect:off missingEffectError:off unsafeEffectTypeAssertion:off -- Existing compatibility boundary; expires: 2026-12-31.
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
+import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { Cause, DateTime, Effect, Exit, Fiber, Option, Schema, Predicate } from 'effect';
-import { Pool } from 'pg';
-import type { PrincipalManagementRepositoryService } from '../../src/auth/principal-management.ts';
-import { PrincipalManagementRepository } from '../../src/auth/principal-management.ts';
-import { CoreDatabase } from '../../src/db/client.ts';
-import { CoreTransactionBridgeFailure } from '../../src/db/transaction-bridge.ts';
+import {
+  defineAction,
+  defineActionResourcePermission,
+  getActionHandler,
+} from '../../src/actions/definition.ts';
+import {
+  ActionInvocationPersistenceError,
+  ActionPermissionCheckError,
+  ActionTransactionError,
+} from '../../src/actions/errors.ts';
+import {
+  defineGlobalPolicy,
+  defineMicroverticalPolicy,
+  denyPolicy,
+} from '../../src/actions/policy.ts';
 import type {
   ActionInvocationRecord,
   ActionRepositoryService,
@@ -24,46 +34,34 @@ import {
   getActionTransactionFailureCause,
   makeActionRepository,
 } from '../../src/actions/repository.ts';
-import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
 import type { ActionRuntimeStage } from '../../src/actions/runtime.ts';
-import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
-import {
-  defineAction,
-  defineActionResourcePermission,
-  getActionHandler,
-} from '../../src/actions/definition.ts';
-import {
-  ActionInvocationPersistenceError,
-  ActionPermissionCheckError,
-  ActionTransactionError,
-} from '../../src/actions/errors.ts';
-import {
-  ModuleStateCheckUnavailableError,
-  ModuleStateDeniedError,
-} from '../../src/modules/module-state-gate-errors.ts';
-import type { TenantModuleState } from '../../src/modules/tenant-module-state-service.ts';
-import {
-  defineGlobalPolicy,
-  defineMicroverticalPolicy,
-  denyPolicy,
-} from '../../src/actions/policy.ts';
-import type {
-  ActionPermissionDecision,
-  CheckActionPermissionInput,
-} from '../../src/permissions/service.ts';
+import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
+import type { PrincipalManagementRepositoryService } from '../../src/auth/principal-management.ts';
+import { PrincipalManagementRepository } from '../../src/auth/principal-management.ts';
+import { supportRecoveryPrincipalContextResolverFromRepository } from '../../src/auth/support-recovery-principal-context.ts';
+import { CoreDatabase } from '../../src/db/client.ts';
+import { recordSupportImpersonationAction } from '../../src/modules/actions/record-support-impersonation.action.ts';
+import { makeModuleEntrypointGateway } from '../../src/modules/module-entrypoint-gateway.ts';
+import type { ModuleEntrypointDescriptor } from '../../src/modules/module-entrypoint.ts';
 import {
   defineSystemModuleEntrypoint,
   defineTenantModuleEntrypoint,
 } from '../../src/modules/module-entrypoint.ts';
-import type { ModuleEntrypointDescriptor } from '../../src/modules/module-entrypoint.ts';
-import { makeModuleEntrypointGateway } from '../../src/modules/module-entrypoint-gateway.ts';
+import {
+  ModuleStateCheckUnavailableError,
+  ModuleStateDeniedError,
+} from '../../src/modules/module-state-gate-errors.ts';
 import {
   checkModuleEntrypoint,
   makeModuleStateSnapshot,
 } from '../../src/modules/module-state-gate.ts';
-import { supportRecoveryPrincipalContextResolverFromRepository } from '../../src/auth/support-recovery-principal-context.ts';
-import { coreRelations } from '../../src/db/schema.ts';
-import { recordSupportImpersonationAction } from '../../src/modules/actions/record-support-impersonation.action.ts';
+import type { TenantModuleState } from '../../src/modules/tenant-module-state-service.ts';
+import type {
+  ActionPermissionDecision,
+  CheckActionPermissionInput,
+} from '../../src/permissions/service.ts';
+import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
+import { makeTestDatabase } from '../support/database.ts';
 
 const principal = {
   authBindingId: '00000000-0000-4000-8000-000000000004',
@@ -82,7 +80,6 @@ const transport = (idempotencyKey = 'intent-1') => ({
   targetResourceType: 'counter',
 });
 
-const QueryConfigSchema = Schema.Struct({ text: Schema.String });
 const CounterpartyIdSchema = Schema.String.pipe(Schema.brand('CounterpartyId'));
 type CounterpartyId = typeof CounterpartyIdSchema.Type;
 const completionTime = () => DateTime.toDateUtc(DateTime.makeUnsafe(0));
@@ -118,7 +115,7 @@ const providePrincipalManagementRepository = Effect.provideService(
 );
 
 interface HarnessOptions {
-  readonly commit?: () => Promise<{ rows: [] }>;
+  readonly commit?: Effect.Effect<readonly object[], SqlError>;
   readonly commitFailureCode?: string;
   readonly createRecord?: ActionInvocationRecord;
   readonly legalEntityPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
@@ -246,10 +243,10 @@ const makeHarness = (options: HarnessOptions = {}) => {
 
   let installedTenantId: string = principal.tenantId;
   let installedLegalEntityId: string = principal.legalEntityId;
-  const query = async <Query, Values>(queryInput: Query, values?: Values) =>
-    await Promise.resolve().then(async () => {
-      const { text } = Schema.decodeUnknownSync(QueryConfigSchema)(queryInput);
-      if (text.includes('set_config') && Array.isArray(values)) {
+  const query = (statement: string, values: readonly unknown[]) =>
+    Effect.gen(function* executeQuery() {
+      const text = statement.toLowerCase();
+      if (text.includes('set_config')) {
         const [tenantId, legalEntityId] = values;
         if (Predicate.isString(tenantId) && Predicate.isString(legalEntityId)) {
           installedTenantId = tenantId;
@@ -259,50 +256,34 @@ const makeHarness = (options: HarnessOptions = {}) => {
       if (text === 'begin') {
         transactionCount += 1;
         if (options.transactionMode === 'definite-failure') {
-          throw new Error('transaction unavailable');
+          return yield* new SqlError({
+            reason: new ConnectionError({ cause: new Error('transaction unavailable') }),
+          });
         }
       }
       if (text === 'commit') {
-        if (options.transactionMode === 'uncertain') {
-          throw Object.assign(new Error('commit acknowledgement indeterminate'), {
-            commitIndeterminate: true,
-          });
-        }
-        if (options.commitFailureCode !== undefined) {
-          throw Object.assign(new Error('commit acknowledgement failed'), {
-            code: options.commitFailureCode,
-          });
-        }
-        if (options.transactionMode === 'commit-definite') {
-          throw Object.assign(new Error('serialization failure'), { code: '40001' });
+        const defaultCommitCodes = { 'commit-definite': '40001', uncertain: '08007' };
+        const defaultCode =
+          options.transactionMode === 'uncertain' || options.transactionMode === 'commit-definite'
+            ? defaultCommitCodes[options.transactionMode]
+            : undefined;
+        const code = options.commitFailureCode ?? defaultCode;
+        if (code !== undefined) {
+          return yield* new SqlError({ reason: new ConnectionError({ cause: { code } }) });
         }
         if (options.commit !== undefined) {
-          return await options.commit();
+          return yield* options.commit;
         }
       }
       if (text.includes('current_setting')) {
-        return {
-          rows: [
-            {
-              legal_entity_id: installedLegalEntityId,
-              tenant_id: installedTenantId,
-            },
-          ],
-        };
+        return [{ legal_entity_id: installedLegalEntityId, tenant_id: installedTenantId }];
       }
       if (text.startsWith('select')) {
-        return { rows: [{ authBindingId: principal.authBindingId }] };
+        return [{ authBindingId: principal.authBindingId }];
       }
-      return { rows: [] };
+      return [];
     });
-  const pool = new Pool();
-  Object.defineProperty(pool, 'connect', {
-    value: async () => ({ query, release: () => {} }),
-  });
-  Object.defineProperty(pool, 'query', { value: query });
-  const database = {
-    executor: drizzle({ client: pool, relations: coreRelations }),
-  };
+  const database = { executor: makeTestDatabase(query) };
 
   const permission = {
     checkActionPermission: (input: CheckActionPermissionInput) => {
@@ -440,11 +421,10 @@ const makeHarness = (options: HarnessOptions = {}) => {
 };
 
 const makeRepositoryFailures = async () => {
-  const cause = new Error('private repository defect');
-  const executor = drizzle({ client: new Pool(), relations: coreRelations });
-  Object.defineProperty(executor, 'transaction', {
-    value: async () => await Promise.reject(cause),
+  const cause = new SqlError({
+    reason: new ConnectionError({ cause: new Error('private repository defect') }),
   });
+  const executor = makeTestDatabase(() => Effect.fail(cause));
   const repository = makeActionRepository();
   const input = {
     actionInvocationId: 'invocation-1',
@@ -702,13 +682,16 @@ test('hashes the encoded representation of decoded DateTime and Option values', 
 test('uses a resolver-branded recovery only for the exact support-stop Action and still checks permission', async () => {
   const recoveryPrincipal = await runEffectTestPromise(
     supportRecoveryPrincipalContextResolverFromRepository({
-      load: async () => ({
-        bindingPrincipalId: principal.principalId,
-        bindingTenantId: principal.tenantId,
-        principalKind: 'human' as const,
-        principalTenantId: principal.tenantId,
-        tenantId: principal.tenantId,
-      }),
+      load: () =>
+        Effect.succeed(
+          Option.some({
+            bindingPrincipalId: principal.principalId,
+            bindingTenantId: principal.tenantId,
+            principalKind: 'human' as const,
+            principalTenantId: principal.tenantId,
+            tenantId: principal.tenantId,
+          }),
+        ),
     }).resolveStoppedImpersonation({
       originalAuthBindingId: principal.authBindingId,
       originalPrincipalId: principal.principalId,
@@ -2271,14 +2254,13 @@ test('handles committed, conflict, definite rollback, and indeterminate commit b
   );
 });
 
-test('preserves interruption and a committed defect after the Action commit settles', async () => {
-  const commitStarted = Promise.withResolvers<null>();
-  const commitSettlement = Promise.withResolvers<{ rows: [] }>();
+test('interruption during commit waits for native commit settlement', async () => {
+  const commitStarted = Deferred.makeUnsafe<null>();
+  const commitSettlement = Deferred.makeUnsafe<readonly object[]>();
   const harness = makeHarness({
-    commit: async () => {
-      commitStarted.resolve(null);
-      return await commitSettlement.promise;
-    },
+    commit: Deferred.succeed(commitStarted, null).pipe(
+      Effect.andThen(Deferred.await(commitSettlement)),
+    ),
   });
   const { exit, pendingBeforeSettlement } = await runEffectTestPromise(
     Effect.gen(function* interruptCommittedAction() {
@@ -2290,30 +2272,19 @@ test('preserves interruption and a committed defect after the Action commit sett
           transport: transport('interrupted-commit'),
         })
         .pipe(Effect.forkChild);
-      yield* Effect.promise(async () => await commitStarted.promise);
+      yield* Deferred.await(commitStarted);
       const interruption = yield* Fiber.interrupt(actionFiber).pipe(Effect.forkChild);
       yield* Effect.yieldNow;
       const pending = actionFiber.pollUnsafe() === undefined;
-      commitSettlement.resolve({ rows: [] });
+      yield* Deferred.succeed(commitSettlement, []);
       yield* Fiber.join(interruption);
-      const actionExit = yield* Fiber.await(actionFiber);
-      return { exit: actionExit, pendingBeforeSettlement: pending };
+      return { exit: yield* Fiber.await(actionFiber), pendingBeforeSettlement: pending };
     }),
   );
   assert.equal(pendingBeforeSettlement, true);
-  assert.equal(Exit.isFailure(exit), true);
-  if (Exit.isFailure(exit)) {
-    assert.equal(Cause.hasInterrupts(exit.cause), true);
-    const defects = exit.cause.reasons.filter(Cause.isDieReason);
-    assert.equal(defects.length, 1, Cause.pretty(exit.cause));
-    const [defect] = defects;
-    assert.ok(defect !== undefined);
-    assert.equal(Schema.is(CoreTransactionBridgeFailure)(defect.defect), true);
-    if (Schema.is(CoreTransactionBridgeFailure)(defect.defect)) {
-      assert.equal(defect.defect.outcome, 'committed');
-    }
-    assert.equal(exit.cause.reasons.filter(Cause.isFailReason).length, 0);
-  }
+  assert.ok(Exit.isFailure(exit));
+  assert.equal(Cause.hasInterrupts(exit.cause), true);
+  assert.equal(harness.flushed.length, 1);
 });
 
 test('resolves commit state explicitly and keeps unavailable outcomes indeterminate', async () => {
