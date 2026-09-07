@@ -1,8 +1,8 @@
 diff --git a/dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs b/dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs
-index 274117ad372e9fdc0a95da28731999524a8ef842..f36a2a31c55e555630f095013289c72884676a08 100644
+index 274117ad372e9fdc0a95da28731999524a8ef842..37edeeeb3489619996ab9beb7becd1ac77280dda 100644
 --- a/dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs
 +++ b/dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs
-@@ -54,10 +54,515 @@ const createStrictEffectApiBoundariesRule = ()=>({
+@@ -54,10 +54,536 @@ const createStrictEffectApiBoundariesRule = ()=>({
                      (0, external_ast_cjs_namespaceObject.reportProgramPattern)(context, node, source, /(?:from|import)\s*['"][^'"]*(?:api\/effect|shared\/effect)[^'"]*['"]|shared-effect-api/u, 'Import API code from direct api/index.ts, shared/api.ts or src/api/* paths, not api/effect, shared/effect or shared Effect API packages.');
                      (0, external_ast_cjs_namespaceObject.reportProgramPattern)(context, node, source, /\bstrictEffectApproach\s*(?::|=)\s*false\b/u, 'UltraModern API apps must keep strictEffectApproach enabled.');
                      if ((0, external_ast_cjs_namespaceObject.isApiEntryFile)(filename)) {
@@ -111,7 +111,7 @@ index 274117ad372e9fdc0a95da28731999524a8ef842..f36a2a31c55e555630f095013289c728
 +                        };
 +                        const safePipeArguments = (expression)=>{
 +                            const argumentsList = callArguments(expression, '.pipe');
-+                            return argumentsList?.every((argument)=>argument === 'Layer.orDie' || callArguments(argument, 'Layer.provide') !== undefined) === true ? argumentsList : undefined;
++                            return argumentsList?.every((argument)=>argument === 'Layer.orDie' || argument === 'GovernedReadLayer.orDie' || callArguments(argument, 'Layer.provide') !== undefined || callArguments(argument, 'GovernedReadLayer.provide') !== undefined) === true ? argumentsList : undefined;
 +                        };
 +                        const layerRemainder = (expression, callee)=>{
 +                            const prefix = new RegExp(String.raw`^${escapeRegularExpression(callee)}\s*\(`, 'u').exec(expression);
@@ -411,9 +411,29 @@ index 274117ad372e9fdc0a95da28731999524a8ef842..f36a2a31c55e555630f095013289c728
 +                                source: fs.readFileSync(id, 'utf8')
 +                            };
 +                        };
++                        const trustedGovernedLayer = (state)=>{
++                            if (!/\bGovernedReadLayer\s*\./u.test(state.code)) return true;
++                            const binding = moduleImportBinding(state, 'GovernedReadLayer');
++                            const body = state.code.replace(/\bimport\b[^;]*;/gu, '');
++                            return binding?.imported === 'Layer' && (binding.specifier === 'effect' || binding.specifier === '@modern-js/plugin-bff/effect-edge') && !/\bGovernedReadLayer\b(?!\s*\.)/u.test(body);
++                        };
++                        const canonicalApiExport = (moduleSource, name, seen = new Set())=>{
++                            if (seen.has(name)) return undefined;
++                            const state = moduleState(moduleSource);
++                            if (!new RegExp(String.raw`\bexport\s+const\s+${escapeRegularExpression(name)}\s*=`, 'u').test(state.code)) return undefined;
++                            const initializer = initializerIn(state.code, name);
++                            if (initializer === undefined) return undefined;
++                            return /^[$A-Z_a-z][$\w]*$/u.test(initializer) ? canonicalApiExport(moduleSource, initializer, new Set([...seen, name])) : name;
++                        };
++                        const sameApiExport = (resolved, actual, expected)=>{
++                            if (actual === expected) return true;
++                            if (resolved === undefined || actual === undefined) return false;
++                            const canonical = canonicalApiExport(resolved.source, actual);
++                            return canonical !== undefined && canonical === canonicalApiExport(resolved.source, expected);
++                        };
 +                        const handlerLayerDerivesFromHttpApiBuilder = (moduleSource, state, name, expectedApiExport, expectedApiModuleId, usageIndex, moduleId, seen = new Set())=>{
 +                            const key = `${moduleId}#${name}`;
-+                            if (seen.has(key)) return false;
++                            if (!trustedGovernedLayer(state) || seen.has(key)) return false;
 +                            const nextSeen = new Set([
 +                                ...seen,
 +                                key
@@ -423,9 +443,10 @@ index 274117ad372e9fdc0a95da28731999524a8ef842..f36a2a31c55e555630f095013289c728
 +                                const groupArguments = leadingCallArguments(initializer, 'HttpApiBuilder.group');
 +                                if (safeConstructor(initializer, 'HttpApiBuilder.group') && groupArguments !== undefined && groupCallbackRegistersHandler(groupArguments)) {
 +                                    const apiBinding = groupArguments[0] === undefined ? undefined : moduleImportBinding(state, groupArguments[0]);
-+                                    const apiModuleId = apiBinding === undefined ? undefined : resolveModule(moduleId, apiBinding.specifier)?.id;
++                                    const apiModule = apiBinding === undefined ? undefined : resolveModule(moduleId, apiBinding.specifier);
++                                    const apiModuleId = apiModule?.id;
 +                                    const builderBinding = moduleImportBinding(state, 'HttpApiBuilder');
-+                                    return builderBinding?.imported === 'HttpApiBuilder' && builderBinding.specifier === '@modern-js/plugin-bff/effect-edge' && apiBinding?.imported === expectedApiExport && (expectedApiModuleId === undefined ? /(?:^|\/)shared\/api\.ts$/u.test(apiBinding.specifier) : apiModuleId === expectedApiModuleId);
++                                    return builderBinding?.imported === 'HttpApiBuilder' && builderBinding.specifier === '@modern-js/plugin-bff/effect-edge' && apiBinding !== undefined && sameApiExport(apiModule, apiBinding.imported, expectedApiExport) && (expectedApiModuleId === undefined ? /(?:^|\/)shared\/api\.ts$/u.test(apiBinding.specifier) : apiModuleId === expectedApiModuleId);
 +                                }
 +                                const mergeArguments = leadingCallArguments(initializer, 'Layer.mergeAll');
 +                                const layerBinding = moduleImportBinding(state, 'Layer');
@@ -512,7 +533,7 @@ index 274117ad372e9fdc0a95da28731999524a8ef842..f36a2a31c55e555630f095013289c728
 +                            };
 +                            const callIndex = call?.index ?? runtimeCode.length;
 +                            const hasTransport = transport === undefined || declaresLayer(transport, true, false, '', undefined, callIndex) && (!usesCors(transport, callIndex) || moduleImportBinding({ code: runtimeCode, imports: runtimeImports }, 'HttpRouter')?.imported === 'HttpRouter' && moduleImportBinding({ code: runtimeCode, imports: runtimeImports }, 'HttpRouter')?.specifier === '@modern-js/plugin-bff/effect-edge' && !shadows('HttpRouter', callIndex));
-+                                const hasHelperTopology = hasHelperImport && call !== null && api !== undefined && handlers !== undefined && apiExport !== undefined && importsName(api, '\\.\\.\\/shared\\/api\\.ts') && moduleImportBinding({ code: runtimeCode, imports: runtimeImports }, 'Layer')?.imported === 'Layer' && moduleImportBinding({ code: runtimeCode, imports: runtimeImports }, 'Layer')?.specifier === '@modern-js/plugin-bff/effect-edge' && !shadows(api, call.index) && !shadows('Layer', call.index) && declaresLayer(handlers, false, true, apiExport, expectedApiModuleId, call.index) && hasTransport && isRuntimeRootCall(call.index, call.index + call[0].length);
++                                const hasHelperTopology = trustedGovernedLayer({ code: runtimeCode, imports: runtimeImports }) && hasHelperImport && call !== null && api !== undefined && handlers !== undefined && apiExport !== undefined && importsName(api, '\\.\\.\\/shared\\/api\\.ts') && moduleImportBinding({ code: runtimeCode, imports: runtimeImports }, 'Layer')?.imported === 'Layer' && moduleImportBinding({ code: runtimeCode, imports: runtimeImports }, 'Layer')?.specifier === '@modern-js/plugin-bff/effect-edge' && !shadows(api, call.index) && !shadows('Layer', call.index) && declaresLayer(handlers, false, true, apiExport, expectedApiModuleId, call.index) && hasTransport && isRuntimeRootCall(call.index, call.index + call[0].length);
 +                                if (!usesRpcRuntime && !hasHelperTopology) (0, external_ast_cjs_namespaceObject.reportMissingProgramPattern)(context, node, '', /required/u, 'Generated REST API entries must pass the imported concrete API and an explicitly composed handler Layer to the shared assembly helper.');
 +                        }
                          (0, external_ast_cjs_namespaceObject.reportMissingProgramPattern)(context, node, source, /\bLayer\b/u, 'Generated API entries must compose dependencies with Effect Layer.');
@@ -522,10 +543,10 @@ index 274117ad372e9fdc0a95da28731999524a8ef842..f36a2a31c55e555630f095013289c728
                      if ((0, external_ast_cjs_namespaceObject.isSharedApiContractFile)(filename)) {
                          (0, external_ast_cjs_namespaceObject.reportMissingProgramPattern)(context, node, source, /\bHttpApi\.make\b/u, 'Generated shared API contracts must declare an HttpApi contract.');
 diff --git a/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js b/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js
-index edb519487006c65d15bdef2150b7ddae2f54ab3e..386357a3335399031296aa3f916230f264f8a951 100644
+index edb519487006c65d15bdef2150b7ddae2f54ab3e..dbc9cad9a0fb3e55d20da65308caa979f545925e 100644
 --- a/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js
 +++ b/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js
-@@ -22,10 +22,511 @@ const createStrictEffectApiBoundariesRule = ()=>({
+@@ -22,10 +22,532 @@ const createStrictEffectApiBoundariesRule = ()=>({
                      reportProgramPattern(context, node, source, /(?:from|import)\s*['"][^'"]*(?:api\/effect|shared\/effect)[^'"]*['"]|shared-effect-api/u, 'Import API code from direct api/index.ts, shared/api.ts or src/api/* paths, not api/effect, shared/effect or shared Effect API packages.');
                      reportProgramPattern(context, node, source, /\bstrictEffectApproach\s*(?::|=)\s*false\b/u, 'UltraModern API apps must keep strictEffectApproach enabled.');
                      if (isApiEntryFile(filename)) {
@@ -634,7 +655,7 @@ index edb519487006c65d15bdef2150b7ddae2f54ab3e..386357a3335399031296aa3f916230f2
 +                        };
 +                        const safePipeArguments = (expression)=>{
 +                            const argumentsList = callArguments(expression, '.pipe');
-+                            return argumentsList?.every((argument)=>argument === 'Layer.orDie' || callArguments(argument, 'Layer.provide') !== undefined) === true ? argumentsList : undefined;
++                            return argumentsList?.every((argument)=>argument === 'Layer.orDie' || argument === 'GovernedReadLayer.orDie' || callArguments(argument, 'Layer.provide') !== undefined || callArguments(argument, 'GovernedReadLayer.provide') !== undefined) === true ? argumentsList : undefined;
 +                        };
 +                        const layerRemainder = (expression, callee)=>{
 +                            const prefix = new RegExp(String.raw`^${escapeRegularExpression(callee)}\s*\(`, 'u').exec(expression);
@@ -930,9 +951,29 @@ index edb519487006c65d15bdef2150b7ddae2f54ab3e..386357a3335399031296aa3f916230f2
 +                                source: fs.readFileSync(id, 'utf8')
 +                            };
 +                        };
++                        const trustedGovernedLayer = (state)=>{
++                            if (!/\bGovernedReadLayer\s*\./u.test(state.code)) return true;
++                            const binding = moduleImportBinding(state, 'GovernedReadLayer');
++                            const body = state.code.replace(/\bimport\b[^;]*;/gu, '');
++                            return binding?.imported === 'Layer' && (binding.specifier === 'effect' || binding.specifier === '@modern-js/plugin-bff/effect-edge') && !/\bGovernedReadLayer\b(?!\s*\.)/u.test(body);
++                        };
++                        const canonicalApiExport = (moduleSource, name, seen = new Set())=>{
++                            if (seen.has(name)) return undefined;
++                            const state = moduleState(moduleSource);
++                            if (!new RegExp(String.raw`\bexport\s+const\s+${escapeRegularExpression(name)}\s*=`, 'u').test(state.code)) return undefined;
++                            const initializer = initializerIn(state.code, name);
++                            if (initializer === undefined) return undefined;
++                            return /^[$A-Z_a-z][$\w]*$/u.test(initializer) ? canonicalApiExport(moduleSource, initializer, new Set([...seen, name])) : name;
++                        };
++                        const sameApiExport = (resolved, actual, expected)=>{
++                            if (actual === expected) return true;
++                            if (resolved === undefined || actual === undefined) return false;
++                            const canonical = canonicalApiExport(resolved.source, actual);
++                            return canonical !== undefined && canonical === canonicalApiExport(resolved.source, expected);
++                        };
 +                        const handlerLayerDerivesFromHttpApiBuilder = (moduleSource, state, name, expectedApiExport, expectedApiModuleId, usageIndex, moduleId, seen = new Set())=>{
 +                            const key = `${moduleId}#${name}`;
-+                            if (seen.has(key)) return false;
++                            if (!trustedGovernedLayer(state) || seen.has(key)) return false;
 +                            const nextSeen = new Set([
 +                                ...seen,
 +                                key
@@ -942,9 +983,10 @@ index edb519487006c65d15bdef2150b7ddae2f54ab3e..386357a3335399031296aa3f916230f2
 +                                const groupArguments = leadingCallArguments(initializer, 'HttpApiBuilder.group');
 +                                if (safeConstructor(initializer, 'HttpApiBuilder.group') && groupArguments !== undefined && groupCallbackRegistersHandler(groupArguments)) {
 +                                    const apiBinding = groupArguments[0] === undefined ? undefined : moduleImportBinding(state, groupArguments[0]);
-+                                    const apiModuleId = apiBinding === undefined ? undefined : resolveModule(moduleId, apiBinding.specifier)?.id;
++                                    const apiModule = apiBinding === undefined ? undefined : resolveModule(moduleId, apiBinding.specifier);
++                                    const apiModuleId = apiModule?.id;
 +                                    const builderBinding = moduleImportBinding(state, 'HttpApiBuilder');
-+                                    return builderBinding?.imported === 'HttpApiBuilder' && builderBinding.specifier === '@modern-js/plugin-bff/effect-edge' && apiBinding?.imported === expectedApiExport && (expectedApiModuleId === undefined ? /(?:^|\/)shared\/api\.ts$/u.test(apiBinding.specifier) : apiModuleId === expectedApiModuleId);
++                                    return builderBinding?.imported === 'HttpApiBuilder' && builderBinding.specifier === '@modern-js/plugin-bff/effect-edge' && apiBinding !== undefined && sameApiExport(apiModule, apiBinding.imported, expectedApiExport) && (expectedApiModuleId === undefined ? /(?:^|\/)shared\/api\.ts$/u.test(apiBinding.specifier) : apiModuleId === expectedApiModuleId);
 +                                }
 +                                const mergeArguments = leadingCallArguments(initializer, 'Layer.mergeAll');
 +                                const layerBinding = moduleImportBinding(state, 'Layer');
@@ -1031,7 +1073,7 @@ index edb519487006c65d15bdef2150b7ddae2f54ab3e..386357a3335399031296aa3f916230f2
 +                            };
 +                            const callIndex = call?.index ?? runtimeCode.length;
 +                            const hasTransport = transport === undefined || declaresLayer(transport, true, false, '', undefined, callIndex) && (!usesCors(transport, callIndex) || moduleImportBinding({ code: runtimeCode, imports: runtimeImports }, 'HttpRouter')?.imported === 'HttpRouter' && moduleImportBinding({ code: runtimeCode, imports: runtimeImports }, 'HttpRouter')?.specifier === '@modern-js/plugin-bff/effect-edge' && !shadows('HttpRouter', callIndex));
-+                            const hasHelperTopology = hasHelperImport && call !== null && api !== undefined && handlers !== undefined && apiExport !== undefined && importsName(api, '\\.\\.\\/shared\\/api\\.ts') && moduleImportBinding({ code: runtimeCode, imports: runtimeImports }, 'Layer')?.imported === 'Layer' && moduleImportBinding({ code: runtimeCode, imports: runtimeImports }, 'Layer')?.specifier === '@modern-js/plugin-bff/effect-edge' && !shadows(api, call.index) && !shadows('Layer', call.index) && declaresLayer(handlers, false, true, apiExport, expectedApiModuleId, call.index) && hasTransport && isRuntimeRootCall(call.index, call.index + call[0].length);
++                            const hasHelperTopology = trustedGovernedLayer({ code: runtimeCode, imports: runtimeImports }) && hasHelperImport && call !== null && api !== undefined && handlers !== undefined && apiExport !== undefined && importsName(api, '\\.\\.\\/shared\\/api\\.ts') && moduleImportBinding({ code: runtimeCode, imports: runtimeImports }, 'Layer')?.imported === 'Layer' && moduleImportBinding({ code: runtimeCode, imports: runtimeImports }, 'Layer')?.specifier === '@modern-js/plugin-bff/effect-edge' && !shadows(api, call.index) && !shadows('Layer', call.index) && declaresLayer(handlers, false, true, apiExport, expectedApiModuleId, call.index) && hasTransport && isRuntimeRootCall(call.index, call.index + call[0].length);
 +                            if (!usesRpcRuntime && !hasHelperTopology) reportMissingProgramPattern(context, node, '', /required/u, 'Generated REST API entries must pass the imported concrete API and an explicitly composed handler Layer to the shared assembly helper.');
 +                        }
                          reportMissingProgramPattern(context, node, source, /\bLayer\b/u, 'Generated API entries must compose dependencies with Effect Layer.');
@@ -1041,10 +1083,10 @@ index edb519487006c65d15bdef2150b7ddae2f54ab3e..386357a3335399031296aa3f916230f2
                      if (isSharedApiContractFile(filename)) {
                          reportMissingProgramPattern(context, node, source, /\bHttpApi\.make\b/u, 'Generated shared API contracts must declare an HttpApi contract.');
 diff --git a/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js b/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js
-index 044b7e175b0df7c266c3ddbbe915888f059a322a..d74e51da0f3496e3241a458f0dc7494ccb21f9ba 100644
+index 044b7e175b0df7c266c3ddbbe915888f059a322a..7ef9d6c8c38a86018b918d9c76521b995277ac52 100644
 --- a/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js
 +++ b/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js
-@@ -23,10 +23,511 @@ const createStrictEffectApiBoundariesRule = ()=>({
+@@ -23,10 +23,532 @@ const createStrictEffectApiBoundariesRule = ()=>({
                      reportProgramPattern(context, node, source, /(?:from|import)\s*['"][^'"]*(?:api\/effect|shared\/effect)[^'"]*['"]|shared-effect-api/u, 'Import API code from direct api/index.ts, shared/api.ts or src/api/* paths, not api/effect, shared/effect or shared Effect API packages.');
                      reportProgramPattern(context, node, source, /\bstrictEffectApproach\s*(?::|=)\s*false\b/u, 'UltraModern API apps must keep strictEffectApproach enabled.');
                      if (isApiEntryFile(filename)) {
@@ -1153,7 +1195,7 @@ index 044b7e175b0df7c266c3ddbbe915888f059a322a..d74e51da0f3496e3241a458f0dc7494c
 +                        };
 +                        const safePipeArguments = (expression)=>{
 +                            const argumentsList = callArguments(expression, '.pipe');
-+                            return argumentsList?.every((argument)=>argument === 'Layer.orDie' || callArguments(argument, 'Layer.provide') !== undefined) === true ? argumentsList : undefined;
++                            return argumentsList?.every((argument)=>argument === 'Layer.orDie' || argument === 'GovernedReadLayer.orDie' || callArguments(argument, 'Layer.provide') !== undefined || callArguments(argument, 'GovernedReadLayer.provide') !== undefined) === true ? argumentsList : undefined;
 +                        };
 +                        const layerRemainder = (expression, callee)=>{
 +                            const prefix = new RegExp(String.raw`^${escapeRegularExpression(callee)}\s*\(`, 'u').exec(expression);
@@ -1449,9 +1491,29 @@ index 044b7e175b0df7c266c3ddbbe915888f059a322a..d74e51da0f3496e3241a458f0dc7494c
 +                                source: fs.readFileSync(id, 'utf8')
 +                            };
 +                        };
++                        const trustedGovernedLayer = (state)=>{
++                            if (!/\bGovernedReadLayer\s*\./u.test(state.code)) return true;
++                            const binding = moduleImportBinding(state, 'GovernedReadLayer');
++                            const body = state.code.replace(/\bimport\b[^;]*;/gu, '');
++                            return binding?.imported === 'Layer' && (binding.specifier === 'effect' || binding.specifier === '@modern-js/plugin-bff/effect-edge') && !/\bGovernedReadLayer\b(?!\s*\.)/u.test(body);
++                        };
++                        const canonicalApiExport = (moduleSource, name, seen = new Set())=>{
++                            if (seen.has(name)) return undefined;
++                            const state = moduleState(moduleSource);
++                            if (!new RegExp(String.raw`\bexport\s+const\s+${escapeRegularExpression(name)}\s*=`, 'u').test(state.code)) return undefined;
++                            const initializer = initializerIn(state.code, name);
++                            if (initializer === undefined) return undefined;
++                            return /^[$A-Z_a-z][$\w]*$/u.test(initializer) ? canonicalApiExport(moduleSource, initializer, new Set([...seen, name])) : name;
++                        };
++                        const sameApiExport = (resolved, actual, expected)=>{
++                            if (actual === expected) return true;
++                            if (resolved === undefined || actual === undefined) return false;
++                            const canonical = canonicalApiExport(resolved.source, actual);
++                            return canonical !== undefined && canonical === canonicalApiExport(resolved.source, expected);
++                        };
 +                        const handlerLayerDerivesFromHttpApiBuilder = (moduleSource, state, name, expectedApiExport, expectedApiModuleId, usageIndex, moduleId, seen = new Set())=>{
 +                            const key = `${moduleId}#${name}`;
-+                            if (seen.has(key)) return false;
++                            if (!trustedGovernedLayer(state) || seen.has(key)) return false;
 +                            const nextSeen = new Set([
 +                                ...seen,
 +                                key
@@ -1461,9 +1523,10 @@ index 044b7e175b0df7c266c3ddbbe915888f059a322a..d74e51da0f3496e3241a458f0dc7494c
 +                                const groupArguments = leadingCallArguments(initializer, 'HttpApiBuilder.group');
 +                                if (safeConstructor(initializer, 'HttpApiBuilder.group') && groupArguments !== undefined && groupCallbackRegistersHandler(groupArguments)) {
 +                                    const apiBinding = groupArguments[0] === undefined ? undefined : moduleImportBinding(state, groupArguments[0]);
-+                                    const apiModuleId = apiBinding === undefined ? undefined : resolveModule(moduleId, apiBinding.specifier)?.id;
++                                    const apiModule = apiBinding === undefined ? undefined : resolveModule(moduleId, apiBinding.specifier);
++                                    const apiModuleId = apiModule?.id;
 +                                    const builderBinding = moduleImportBinding(state, 'HttpApiBuilder');
-+                                    return builderBinding?.imported === 'HttpApiBuilder' && builderBinding.specifier === '@modern-js/plugin-bff/effect-edge' && apiBinding?.imported === expectedApiExport && (expectedApiModuleId === undefined ? /(?:^|\/)shared\/api\.ts$/u.test(apiBinding.specifier) : apiModuleId === expectedApiModuleId);
++                                    return builderBinding?.imported === 'HttpApiBuilder' && builderBinding.specifier === '@modern-js/plugin-bff/effect-edge' && apiBinding !== undefined && sameApiExport(apiModule, apiBinding.imported, expectedApiExport) && (expectedApiModuleId === undefined ? /(?:^|\/)shared\/api\.ts$/u.test(apiBinding.specifier) : apiModuleId === expectedApiModuleId);
 +                                }
 +                                const mergeArguments = leadingCallArguments(initializer, 'Layer.mergeAll');
 +                                const layerBinding = moduleImportBinding(state, 'Layer');
@@ -1550,7 +1613,7 @@ index 044b7e175b0df7c266c3ddbbe915888f059a322a..d74e51da0f3496e3241a458f0dc7494c
 +                            };
 +                            const callIndex = call?.index ?? runtimeCode.length;
 +                            const hasTransport = transport === undefined || declaresLayer(transport, true, false, '', undefined, callIndex) && (!usesCors(transport, callIndex) || moduleImportBinding({ code: runtimeCode, imports: runtimeImports }, 'HttpRouter')?.imported === 'HttpRouter' && moduleImportBinding({ code: runtimeCode, imports: runtimeImports }, 'HttpRouter')?.specifier === '@modern-js/plugin-bff/effect-edge' && !shadows('HttpRouter', callIndex));
-+                            const hasHelperTopology = hasHelperImport && call !== null && api !== undefined && handlers !== undefined && apiExport !== undefined && importsName(api, '\\.\\.\\/shared\\/api\\.ts') && moduleImportBinding({ code: runtimeCode, imports: runtimeImports }, 'Layer')?.imported === 'Layer' && moduleImportBinding({ code: runtimeCode, imports: runtimeImports }, 'Layer')?.specifier === '@modern-js/plugin-bff/effect-edge' && !shadows(api, call.index) && !shadows('Layer', call.index) && declaresLayer(handlers, false, true, apiExport, expectedApiModuleId, call.index) && hasTransport && isRuntimeRootCall(call.index, call.index + call[0].length);
++                            const hasHelperTopology = trustedGovernedLayer({ code: runtimeCode, imports: runtimeImports }) && hasHelperImport && call !== null && api !== undefined && handlers !== undefined && apiExport !== undefined && importsName(api, '\\.\\.\\/shared\\/api\\.ts') && moduleImportBinding({ code: runtimeCode, imports: runtimeImports }, 'Layer')?.imported === 'Layer' && moduleImportBinding({ code: runtimeCode, imports: runtimeImports }, 'Layer')?.specifier === '@modern-js/plugin-bff/effect-edge' && !shadows(api, call.index) && !shadows('Layer', call.index) && declaresLayer(handlers, false, true, apiExport, expectedApiModuleId, call.index) && hasTransport && isRuntimeRootCall(call.index, call.index + call[0].length);
 +                            if (!usesRpcRuntime && !hasHelperTopology) reportMissingProgramPattern(context, node, '', /required/u, 'Generated REST API entries must pass the imported concrete API and an explicitly composed handler Layer to the shared assembly helper.');
 +                        }
                          reportMissingProgramPattern(context, node, source, /\bLayer\b/u, 'Generated API entries must compose dependencies with Effect Layer.');
