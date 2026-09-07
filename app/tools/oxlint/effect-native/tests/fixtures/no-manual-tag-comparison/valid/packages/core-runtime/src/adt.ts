@@ -20,3 +20,9 @@ assert.equal(option._tag, 'Some');
 equal('None', option._tag);
 expect(option._tag).not.toEqual('None');
 assert.deepEqual(values.map(value => value._tag), ['Some', 'None']);
+
+switch (option._tag) {
+  case 'Some': break;
+  case 'None': break;
+  default: break;
+}

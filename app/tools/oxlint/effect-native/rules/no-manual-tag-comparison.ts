@@ -293,6 +293,77 @@ function constInitialiser(context: Context, node: ESTree.Node): ESTree.Node | nu
   return declarator.init ?? null;
 }
 
+/** Resolve assertion imports through lexical bindings, aliases, and matcher modifiers. */
+function assertionCall(
+  context: Context,
+  call: ESTree.CallExpression,
+): { method: string; subject: ESTree.CallExpression | null } | null {
+  let expression = unwrap(call.callee);
+  const members: string[] = [];
+  const seen = new Set<ESTree.Node>();
+  let subject: ESTree.CallExpression | null = null;
+  for (let depth = 0; depth < MAX_DEPTH && !seen.has(expression); depth += 1) {
+    seen.add(expression);
+    const initialiser = constInitialiser(context, expression);
+    if (initialiser !== null) {
+      expression = unwrap(initialiser);
+      continue;
+    }
+    if (expression.type === 'MemberExpression') {
+      const member = memberPropertyName(expression);
+      if (member === null) return null;
+      members.unshift(member);
+      expression = unwrap(expression.object as ESTree.Node);
+      continue;
+    }
+    if (expression.type === 'CallExpression') {
+      if (subject !== null) return null;
+      subject = expression;
+      expression = unwrap(expression.callee);
+      continue;
+    }
+    if (expression.type !== 'Identifier') return null;
+    const variable = resolveVariable(context, expression.name, expression);
+    const definition = variable?.defs.find((entry) => entry.type === 'ImportBinding');
+    const specifier = definition?.node as ESTree.Node | undefined;
+    if (specifier === undefined) return null;
+    const declaration = context.sourceCode.ast.body.find(
+      (statement) =>
+        statement.type === 'ImportDeclaration' &&
+        statement.specifiers.some((entry) => entry === specifier),
+    );
+    if (declaration?.type !== 'ImportDeclaration') return null;
+    if (specifier.type === 'ImportSpecifier')
+      members.unshift(
+        specifier.imported.type === 'Identifier'
+          ? specifier.imported.name
+          : specifier.imported.value,
+      );
+    const source = declaration.source.value;
+    if (/^(?:node:)?assert(?:\/strict)?$/u.test(source)) {
+      if (subject !== null) return null;
+      while (members[0] === 'strict' || members[0] === 'default') members.shift();
+      const method = members[0];
+      return members.length === 1 && method !== undefined ? { method, subject: null } : null;
+    }
+    if (
+      !['@rstest/core', '@app/effect-rstest', 'vitest', '@jest/globals', 'expect'].includes(source)
+    )
+      return null;
+    if (specifier.type === 'ImportDefaultSpecifier' && source === 'expect')
+      members.unshift('expect');
+    if (subject === null || members.shift() !== 'expect') return null;
+    const method = members.pop();
+    if (
+      method === undefined ||
+      !members.every((member) => ['not', 'resolves', 'rejects'].includes(member))
+    )
+      return null;
+    return { method, subject };
+  }
+  return null;
+}
+
 /**
  * A statically known string, following one level of `const KEY = '_tag'` indirection and folding
  * literal `'_' + 'tag'` concatenation — the two spellings that hide a computed `_tag` key.
@@ -754,6 +825,15 @@ export const rule = defineRule({
     return {
       SwitchStatement(node) {
         if (tagOf(node.discriminant) === null || suppressed(node)) return;
+        const labels = node.cases.flatMap((branch) => (branch.test === null ? [] : [branch.test]));
+        if (
+          labels.length > 0 &&
+          labels.every((label) => {
+            const literal = asStringLiteral(label);
+            return literal !== null && exempt.has(literal);
+          })
+        )
+          return;
         context.report({ node, messageId: 'tagSwitch' });
       },
       BinaryExpression(node) {
@@ -870,33 +950,11 @@ export const rule = defineRule({
           if (initialiser === null) break;
           callee = unwrap(initialiser);
         }
-        let method: string | null = null;
-        let receiver: ESTree.Node | null = null;
-        if (callee.type === 'MemberExpression') {
-          method = memberPropertyName(callee);
-          receiver = callee.object as ESTree.Node;
-        } else if (callee.type === 'Identifier') {
-          const variable = resolveVariable(context, callee.name, callee);
-          const definition = variable?.defs.find((entry) => entry.type === 'ImportBinding');
-          const specifier = definition?.node as ESTree.Node | undefined;
-          if (specifier?.type === 'ImportSpecifier') {
-            const declaration = context.sourceCode.ast.body.find(
-              (statement) =>
-                statement.type === 'ImportDeclaration' &&
-                statement.specifiers.some((entry) => entry === specifier),
-            );
-            if (
-              declaration?.type === 'ImportDeclaration' &&
-              /^(?:node:)?assert(?:\/strict)?$/u.test(declaration.source.value)
-            ) {
-              method =
-                specifier.imported.type === 'Identifier'
-                  ? specifier.imported.name
-                  : specifier.imported.value;
-            }
-          }
-        }
-        if (method === null) return;
+        const assertion = assertionCall(context, node);
+        const method =
+          callee.type === 'MemberExpression' ? memberPropertyName(callee) : assertion?.method;
+        const receiver = callee.type === 'MemberExpression' ? callee.object : null;
+        if (method === null || method === undefined) return;
 
         // Assertions are comparisons too, including tag projections in arrays and aliased values.
         const assertionMethods = new Set([
@@ -917,13 +975,10 @@ export const rule = defineRule({
           'match',
           'doesNotMatch',
         ]);
-        if (assertionMethods.has(method)) {
+        if (assertion !== null && assertionMethods.has(assertion.method)) {
           let compared = node.arguments.slice(0, 2);
-          let subject = receiver === null ? null : unwrap(receiver);
-          while (subject?.type === 'MemberExpression')
-            subject = unwrap(subject.object as ESTree.Node);
-          if (subject?.type === 'CallExpression')
-            compared = [...subject.arguments.slice(0, 1), ...node.arguments.slice(0, 1)];
+          if (assertion.subject !== null)
+            compared = [...assertion.subject.arguments.slice(0, 1), ...node.arguments.slice(0, 1)];
           for (const [index, argument] of compared.entries()) {
             if (argument.type === 'SpreadElement') continue;
             const reference = comparedTag(argument);

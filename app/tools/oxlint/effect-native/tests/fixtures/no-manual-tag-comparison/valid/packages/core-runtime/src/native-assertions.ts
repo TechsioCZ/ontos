@@ -10,3 +10,12 @@ expect(Predicate.isTagged(error, 'Missing')).toBe(true);
 function unrelatedCallback(equal: (actual: unknown, expected: unknown) => void) {
   equal(error._tag, 'Missing');
 }
+
+router.match('/failure', () => log(error._tag));
+comparison.equal(error._tag, 'Missing');
+function shadowedAssertion(assert: typeof import('node:assert/strict')) {
+  assert.equal(error._tag, 'Missing');
+}
+function shadowedExpectation(expect: (value: unknown) => { toBe: (expected: unknown) => void }) {
+  expect(error._tag).toBe('Missing');
+}
