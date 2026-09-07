@@ -93,6 +93,8 @@ const ensureAuthUser = Effect.fn('StageDemoBootstrap.ensureAuthUser')(function* 
     plugins: [admin()],
     secret: configuration.authSecret,
   });
+  // Better Auth cannot cancel this write; keep the database scope alive until it settles.
+  // oxlint-disable-next-line effect-native/require-timeout-on-external-effect -- Remove when the SDK supports cancellation or a reconcilable write token.
   const created = yield* Effect.tryPromise({
     catch: persistenceFailure,
     // oxlint-disable-next-line typescript/promise-function-async -- Effect owns the Better Auth SDK boundary.
@@ -104,7 +106,7 @@ const ensureAuthUser = Effect.fn('StageDemoBootstrap.ensureAuthUser')(function* 
           password: accountConfiguration.password,
         },
       }),
-  }).pipe(bootstrapSdkTimeout);
+  }).pipe(Effect.uninterruptible);
   return { status: 'created' as const, userId: created.user.id };
 });
 
