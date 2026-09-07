@@ -3,7 +3,7 @@ import { Effect, FileSystem, Path, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 import { parseSync, Visitor } from 'oxc-parser';
 import type { Node, ObjectExpression, Program } from 'oxc-parser';
-import { buildKnipRuntimeEvidence } from './knip-runtime-model.mts';
+import { buildKnipRuntimeEvidence, workspaceDirectories } from './knip-runtime-model.mts';
 
 const Strings = Schema.Array(Schema.String);
 const PluginSchema = Schema.Struct({
@@ -249,26 +249,6 @@ const sourceFiles = Effect.fn('QualityAudit.knipModelSourceFiles')(function* rea
     }
   }
   return files;
-});
-
-const workspaceDirectories = Effect.fn('QualityAudit.knipWorkspaces')(function* readModelWorkspaces(
-  appRoot: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const workspaces = ['.'];
-  for (const directory of ['apps', 'verticals', 'packages']) {
-    const location = path.join(appRoot, directory);
-    if (!(yield* fs.exists(location))) {
-      continue;
-    }
-    for (const name of yield* fs.readDirectory(location)) {
-      if (yield* fs.exists(path.join(location, name, 'package.json'))) {
-        workspaces.push(`${directory}/${name}`);
-      }
-    }
-  }
-  return workspaces;
 });
 
 const evidenceAt = (

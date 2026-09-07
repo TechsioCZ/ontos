@@ -128,6 +128,26 @@ const cssDependencies = (
   return result;
 };
 
+export const workspaceDirectories = Effect.fn('QualityAudit.knipWorkspaces')(
+  function* readModelWorkspaces(appRoot: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const workspaces = ['.'];
+    for (const directory of ['apps', 'verticals', 'packages']) {
+      const location = path.join(appRoot, directory);
+      if (!(yield* fs.exists(location))) {
+        continue;
+      }
+      for (const name of yield* fs.readDirectory(location)) {
+        if (yield* fs.exists(path.join(location, name, 'package.json'))) {
+          workspaces.push(`${directory}/${name}`);
+        }
+      }
+    }
+    return workspaces;
+  },
+);
+
 /** Model only source-backed runtime contracts; never execute a wrapper or vendor module. */
 export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntimeEvidence')(
   function* buildRuntimeEvidence(appRoot: string) {
@@ -141,22 +161,6 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         ? yield* fs.readFileString(path.join(appRoot, file))
         : undefined;
     });
-    const collectWorkspaces = Effect.fn('QualityAudit.runtimeWorkspaces')(
-      function* collectWorkspaces() {
-        const workspaces = ['.'];
-        for (const group of ['apps', 'verticals', 'packages']) {
-          if (!(yield* fs.exists(path.join(appRoot, group)))) {
-            continue;
-          }
-          for (const name of yield* fs.readDirectory(path.join(appRoot, group))) {
-            if (yield* fs.exists(path.join(appRoot, group, name, 'package.json'))) {
-              workspaces.push(`${group}/${name}`);
-            }
-          }
-        }
-        return workspaces;
-      },
-    );
     const shellEvidence = Effect.fn('QualityAudit.shellEvidence')(function* shellEvidence(
       command: string,
       prefix: string,
@@ -442,7 +446,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         }
       },
     );
-    const workspaces = yield* collectWorkspaces();
+    const workspaces = yield* workspaceDirectories(appRoot);
     for (const workspace of workspaces) {
       const prefix = workspace === '.' ? '' : `${workspace}/`;
       const manifestFile = `${prefix}package.json`;
