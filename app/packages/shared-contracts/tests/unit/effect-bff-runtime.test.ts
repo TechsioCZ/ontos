@@ -1,3 +1,4 @@
+// @effect-diagnostics asyncFunction:off -- Node test callbacks exercise the generated Web handler boundary; expires: 2027-03-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -15,7 +16,9 @@ import { Context, Schema } from 'effect';
 
 import { assembleEffectBffRuntime } from '../../src/effect-bff-runtime.ts';
 
-class Greeting extends Context.Service<Greeting, { readonly value: string }>()('Greeting') {}
+class Greeting extends Context.Service<Greeting, { readonly value: string }>()(
+  '@app/shared-contracts/tests/unit/effect-bff-runtime.test/Greeting',
+) {}
 
 const GreetingSchema = Schema.Struct({ greeting: Schema.String });
 const api = HttpApi.make('AssemblyFixture').add(

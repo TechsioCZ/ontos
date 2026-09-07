@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 
-import { ActionRuntime, ReadRuntime } from '@app/core-runtime';
+import { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/plugin-bff/effect-edge';
 import { ConfigProvider, Context, Effect, Layer, Schema } from 'effect';
@@ -12,6 +12,7 @@ import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { makePartyRegistryApiRuntime, partyRegistryFoundationLive } from '../../api/index.ts';
 import { partyRegistryApi, partyRegistryReadinessSchema } from '../../shared/api.ts';
+import { PartyDetailAuthenticationProblemSchema } from '../../shared/apis/party-detail.ts';
 import { PartySearchProjectionGateway } from '../../shared/domain/search-projection-gateway.ts';
 import type { PartySearchProjectionGatewayService } from '../../shared/domain/search-projection-gateway.ts';
 import { AresSubjectService } from '../../src/integrations/ares/ares-subject.service.ts';
@@ -97,6 +98,7 @@ test('serves readiness and rejects the removed placeholder write without busines
 
 test('builds every declared handler and preserves owner-local CORS through the injectable runtime', async () => {
   const assertion = await makeAssertion();
+  let redemptionCalls = 0;
   let actionCalls = 0;
   let actionCommitCalls = 0;
   let aresCalls = 0;
@@ -216,9 +218,40 @@ test('builds every declared handler and preserves owner-local CORS through the i
     aresSubjectLayer,
     searchProjectionLayer,
     actionRuntimeLayer,
+    Layer.succeed(GatewayAssertionRedemptionService, {
+      consume: () =>
+        Effect.sync(() => {
+          redemptionCalls += 1;
+        }),
+    }),
   );
   const runtime = assembledRuntime.createHandler();
+
   try {
+    const unauthenticatedRead = await runtime.handler(
+      new Request('http://localhost/reads/party-detail', {
+        body: JSON.stringify({
+          partyRef: {
+            moduleId: 'party.registry',
+            resourceId: 'a4000000-0000-4000-8000-000000000001',
+            resourceType: 'party.registry.party',
+            tenantId: 'a3000000-0000-4000-8000-000000000001',
+          },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          'x-correlation-id': 'runtime-missing-credentials',
+        },
+        method: 'POST',
+      }),
+    );
+    assert.equal(unauthenticatedRead.status, 401);
+    assert.equal(redemptionCalls, 0);
+    assert.equal(unauthenticatedRead.headers.get('www-authenticate'), 'Bearer');
+    Schema.decodeUnknownSync(PartyDetailAuthenticationProblemSchema)(
+      await unauthenticatedRead.json(),
+    );
+
     const endpoints = Object.values(partyRegistryApi.groups).flatMap((group) =>
       Object.values(group.endpoints),
     );
@@ -374,6 +407,7 @@ test('builds every declared handler and preserves owner-local CORS through the i
         );
       }
     }
+    assert.ok(redemptionCalls > 0);
     assert.ok(actionCalls > 0);
     assert.equal(actionCommitCalls, 1);
     assert.ok(readCalls > 0);

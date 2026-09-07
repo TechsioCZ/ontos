@@ -1,5 +1,9 @@
 import { DatabaseConfigLive } from '@app/core-runtime';
-import type { ActionRuntime, ReadRuntime } from '@app/core-runtime';
+import type {
+  ActionRuntime,
+  GatewayAssertionRedemptionService,
+  ReadRuntime,
+} from '@app/core-runtime';
 import { HttpRouter, Layer } from '@modern-js/plugin-bff/effect-edge';
 import { assembleEffectBffRuntime } from '@app/shared-contracts/server/effect-bff-runtime';
 import type {
@@ -13,6 +17,10 @@ import { partyRegistryApi } from '../shared/api.ts';
 import type { PartySearchProjectionGateway } from '../shared/domain/search-projection-gateway.ts';
 import type { AresSubjectService } from '../src/integrations/ares/ares-subject.service.ts';
 import { ActionPrincipalVerifierLive } from './auth/action-principal.ts';
+import {
+  GatewayAssertionRedemptionDatabaseLive,
+  GatewayAssertionRedemptionLive,
+} from './auth/gateway-assertion-redemption.ts';
 import { aresLookupReadApiLive } from './ares-lookup-read-server.ts';
 import { counterpartiesReadApiLive } from './counterparties-search-server.ts';
 import { counterpartyReadReadApiLive } from './counterparty-read-read-server.ts';
@@ -65,6 +73,10 @@ const readShellOrigin = () => {
 };
 const shellOrigin = readShellOrigin();
 
+const gatewayAssertionRedemptionLive = GatewayAssertionRedemptionLive.pipe(
+  Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+  Layer.provide(DatabaseConfigLive),
+);
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
   Layer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
@@ -92,13 +104,23 @@ type PartyRegistryApiRuntimeArguments = readonly [
     Layer.Error<typeof productionSearchProjectionGatewayLive>
   >,
   actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof productionActionRuntimeLive>>,
+  gatewayAssertionRedemption: Layer.Layer<
+    GatewayAssertionRedemptionService,
+    Layer.Error<typeof gatewayAssertionRedemptionLive>
+  >,
 ];
 
 export const makePartyRegistryApiRuntime = (
   ...args: PartyRegistryApiRuntimeArguments
 ): EffectBffDefinition<typeof partyRegistryApi, EffectRuntimeLayer> &
   EffectBffRuntime<typeof partyRegistryApi, EffectRuntimeLayer> => {
-  const [readRuntime, aresSubjectService, searchProjectionGateway, actionRuntime] = args;
+  const [
+    readRuntime,
+    aresSubjectService,
+    searchProjectionGateway,
+    actionRuntime,
+    gatewayAssertionRedemption,
+  ] = args;
   const actionPrincipalVerifierLive = ActionPrincipalVerifierLive.pipe(
     Layer.provide(actionRuntime),
   );
@@ -126,7 +148,7 @@ export const makePartyRegistryApiRuntime = (
       Layer.provide(readRuntime),
       Layer.provide(searchProjectionGateway),
     ),
-  ).pipe(Layer.provide(actionPrincipalVerifierLive));
+  ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
   const resolvedApiHandlersLive = apiHandlersLive.pipe(
     Layer.provide(runtimeObservabilityLive),
     Layer.orDie,
@@ -150,6 +172,7 @@ const apiRuntime = makePartyRegistryApiRuntime(
   partyRegistryAresSubjectServiceLive,
   productionSearchProjectionGatewayLive,
   productionActionRuntimeLive,
+  gatewayAssertionRedemptionLive,
 );
 
 export default apiRuntime;

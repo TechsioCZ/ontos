@@ -20,7 +20,7 @@ import {
   CounterpartyRoleHistoryUnavailableProblemSchema,
 } from '../shared/apis/counterparty-role-history.ts';
 import { counterpartyRoleHistoryRead } from '../src/api/counterparty-role-history.read.ts';
-import { verifyOperationPrincipal } from './auth/action-principal.ts';
+import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 import { governedReadProblemStatus } from './read-server-support.ts';
 
 const preserveCause = <Problem extends object>(problem: Problem, cause?: unknown): Problem => {
@@ -146,16 +146,10 @@ const readProblem = (error: ReadCoreError) =>
   );
 
 const verifyPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
-  verifyOperationPrincipal(authorization).pipe(
-    Effect.catchTags({
-      ActionPrincipalConfigurationError: (failure) => Effect.fail(problem.unavailable(failure)),
-      ActionPrincipalExpiredError: (failure) => failProblem(problem.authentication(failure)),
-      ActionPrincipalInvalidError: (failure) => failProblem(problem.authentication(failure)),
-      ActionPrincipalMissingError: (failure) => failProblem(problem.authentication(failure)),
-      ActionPrincipalScopeError: (failure) => failProblem(problem.authentication(failure)),
-      ActionPrincipalUnavailableError: (failure) => Effect.fail(problem.unavailable(failure)),
-    }),
-  );
+  authenticateOperationPrincipal(authorization, {
+    authentication: () => problem.authentication(),
+    unavailable: () => problem.unavailable(),
+  });
 
 export const counterpartyRoleHistoryReadApiLive = HttpApiBuilder.group(
   partyRegistryApi,

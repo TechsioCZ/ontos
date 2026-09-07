@@ -7,6 +7,7 @@ import {
   privateOwnerImportViolation,
   strictEffectRuntimeTopologyViolation,
   usesStrictRpcRuntimeTopology,
+  unconstrainedHttpApiContractSchemaViolation,
 } from './ultramodern-api-boundary-rules.mts';
 
 class ApiBoundaryCheckFailed extends Schema.TaggedError<ApiBoundaryCheckFailed>()(
@@ -238,10 +239,17 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     );
 
     for (const file of textFiles) {
-      const content = yield* readText(file);
-      sourceByFile.set(file, content);
+      sourceByFile.set(file, yield* readText(file));
+    }
 
+    for (const [file, content] of sourceByFile) {
       assertPrivateOwnerImports(file, content);
+      const unconstrainedContractSchema = file.includes('/tests/')
+        ? undefined
+        : unconstrainedHttpApiContractSchemaViolation(content, { file, sources: sourceByFile });
+      if (unconstrainedContractSchema !== undefined) {
+        fail(`${file}: ${unconstrainedContractSchema}.`);
+      }
       assertNotContains(
         file,
         content,

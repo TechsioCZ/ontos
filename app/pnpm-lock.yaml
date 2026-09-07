@@ -11927,7 +11927,7 @@ snapshots:
       detect-libc: 2.1.2
       is-glob: 4.0.3
       node-addon-api: 7.1.1
-      picomatch: 4.0.5
+      picomatch: 4.0.7
     optionalDependencies:
       '@parcel/watcher-android-arm64': 2.6.0
       '@parcel/watcher-darwin-arm64': 2.6.0
@@ -14391,7 +14391,7 @@ snapshots:
       '@drizzle-team/brocli': 0.12.0
       '@js-temporal/polyfill': 0.5.1
       esbuild: 0.25.12
-      get-tsconfig: 4.14.0
+      get-tsconfig: 4.14.3
       jiti: 2.7.0
 
   drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(pg@8.22.0)(zod@4.4.3):
@@ -15609,7 +15609,7 @@ snapshots:
       chalk: 4.1.2
       ci-info: 4.4.0
       graceful-fs: 4.2.11
-      picomatch: 4.0.5
+      picomatch: 4.0.7
 
   jest-worker@27.5.1:
     dependencies:
