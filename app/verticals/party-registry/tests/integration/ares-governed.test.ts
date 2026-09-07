@@ -2,7 +2,7 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { loadDatabaseConnectionPair } from '@app/core-runtime';
+import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import {
   ConfigProvider,
@@ -24,6 +24,10 @@ import { Pool } from 'pg';
 import { partyRegistryApi } from '../../shared/api.ts';
 import { partyRegistryCommandsLive } from '../../api/party-command-server.ts';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
+import {
+  GatewayAssertionRedemptionDatabaseLive,
+  GatewayAssertionRedemptionLive,
+} from '../../api/auth/gateway-assertion-redemption.ts';
 import { aresLookupReadApiLive } from '../../api/ares-lookup-read-server.ts';
 import { partyDetailReadApiLive } from '../../api/party-detail-read-server.ts';
 import { partyOfficialIdentifierHistoryReadApiLive } from '../../api/party-official-identifier-history-read-server.ts';
@@ -140,8 +144,10 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
             .setExpirationTime('5m')
             .setJti(randomUUID())
             .sign(privateKey);
-        const token = yield* promiseEffect(sign.bind(undefined, fixture.manager));
-        const authorization = `Bearer ${token}`;
+        const authorization = () =>
+          promiseEffect(sign.bind(undefined, fixture.manager)).pipe(
+            Effect.map((signedToken) => `Bearer ${signedToken}`),
+          );
         const gateway = makeActionGateway(() =>
           promiseEffect(sign.bind(undefined, fixture.manager)).pipe(
             Effect.map((signedToken) => ({ expiresAt: 0, token: signedToken })),
@@ -159,6 +165,10 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
         const upstream = AresSubjectServiceLive.pipe(
           Layer.provide(Layer.succeed(HttpClient.HttpClient, provider)),
         );
+        const redemption = GatewayAssertionRedemptionLive.pipe(
+          Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+          Layer.provide(Layer.succeed(DatabaseConfig, connections.runtime)),
+        );
         const api = HttpApi.make('PartyRegistryApi')
           .add(partyRegistryApi.groups.partyCommands)
           .add(partyRegistryApi.groups.aresLookup)
@@ -173,6 +183,7 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
           aresLookupReadApiLive.pipe(Layer.provide(upstream)),
         ).pipe(
           Layer.provide(ActionPrincipalVerifierLive),
+          Layer.provide(redemption),
           Layer.provide(fixture.layer),
           Layer.provide(
             ConfigProvider.layer(
@@ -223,7 +234,7 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
                   validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
                 },
               },
-              authorization,
+              yield* authorization(),
               options(),
             ),
           );
@@ -236,28 +247,35 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
                 expectedRevision: 1,
                 reason: 'Reviewed concrete organization without a strong identifier',
               },
-              authorization,
+              yield* authorization(),
               options(),
             ),
           );
           assert.ok(reviewed.partyRef);
           return reviewed.partyRef;
         });
-        const lookup = () =>
-          runHttpEffect(
-            executeAresLookupWithAuthorization({ ico: lookupIco }, authorization, randomUUID(), {
-              baseUrl,
-            }),
-          );
-        const detail = (partyRef: PartyRef) =>
-          runHttpEffect(
-            executePartyDetailWithAuthorization(
-              { partyRef, includeFactHistory: true },
-              authorization,
+        const lookup = Effect.fn('AresGovernedTest.lookup')(function* lookupEffect() {
+          return yield* runHttpEffect(
+            executeAresLookupWithAuthorization(
+              { ico: lookupIco },
+              yield* authorization(),
               randomUUID(),
               { baseUrl },
             ),
           );
+        });
+        const detail = Effect.fn('AresGovernedTest.detail')(function* detailEffect(
+          partyRef: PartyRef,
+        ) {
+          return yield* runHttpEffect(
+            executePartyDetailWithAuthorization(
+              { partyRef, includeFactHistory: true },
+              yield* authorization(),
+              randomUUID(),
+              { baseUrl },
+            ),
+          );
+        });
         const state = Effect.fn('AresGovernedTest.state')(() =>
           Effect.all(
             {
@@ -471,7 +489,7 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
               provenanceSource: 'ARES',
               externalEvidence: makeAresAppliedEvidence(logical, decision),
             },
-            authorization,
+            yield* authorization(),
             options(),
           ),
         );
@@ -526,7 +544,7 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
         const afterReview = yield* state();
         assert.equal(afterReview.core.invocations.length, beforeReview.core.invocations.length);
         yield* runHttpEffect(
-          correctPartyFactWithAuthorization(correctionPayload, authorization, options()),
+          correctPartyFactWithAuthorization(correctionPayload, yield* authorization(), options()),
         );
         const corrected = yield* detail(erroneousParty);
         assert.equal(Option.getOrUndefined(corrected.party.displayName), rawSubject.obchodniJmeno);

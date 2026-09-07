@@ -39,7 +39,7 @@ import { attachOrganizationEngagementAction } from '../src/actions/attach-organi
 import { attachPersonEngagementAction } from '../src/actions/attach-person-engagement.action.ts';
 import { unarchiveOrganizationEngagementAction } from '../src/actions/unarchive-organization-engagement.action.ts';
 import { unarchivePersonEngagementAction } from '../src/actions/unarchive-person-engagement.action.ts';
-import { verifyOperationPrincipal } from './auth/action-principal.ts';
+import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 import { organizationEngagementProfileReadApiLive } from './organization-engagement-profile-read-server.ts';
 import { personEngagementProfileReadApiLive } from './person-engagement-profile-read-server.ts';
 
@@ -206,16 +206,10 @@ const actionProblem = (error: EngagementActionError): ContactsProblem =>
   );
 
 const verifyPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
-  verifyOperationPrincipal(authorization).pipe(
-    Effect.catchTags({
-      ActionPrincipalConfigurationError: (_error) => Effect.fail(problem.unavailable()),
-      ActionPrincipalExpiredError: (_error) => failProblem(problem.authentication()),
-      ActionPrincipalInvalidError: (_error) => failProblem(problem.authentication()),
-      ActionPrincipalMissingError: (_error) => failProblem(problem.authentication()),
-      ActionPrincipalScopeError: (_error) => failProblem(problem.authentication()),
-      ActionPrincipalUnavailableError: (_error) => Effect.fail(problem.unavailable()),
-    }),
-  );
+  authenticateOperationPrincipal(authorization, {
+    authentication: problem.authentication,
+    unavailable: problem.unavailable,
+  });
 
 const RequestHeadersSchema = Schema.Record(
   Schema.String,

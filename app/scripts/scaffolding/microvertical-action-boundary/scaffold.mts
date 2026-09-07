@@ -77,11 +77,13 @@ export const renderActionPrincipalServer = (
 ): string => `${ACTION_BOUNDARY_GENERATOR_HEADER}
 // @ontos-action-boundary-owner ${vertical.appId}
 // @ontos-action-boundary-audience ${vertical.appId}
+import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
+import { makeMicroverticalHttpPrincipalAuthentication } from '@app/core-runtime/http/principal-authentication';
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import type {
   GatewayPrincipalVerificationWithRedemptionOptions,
 } from '@app/gateway-principal-verifier/server';
-import { Redacted } from 'effect';
+import { Effect, Redacted } from 'effect';
 
 export {
   ACTION_PRINCIPAL_BEARER_CHALLENGE,
@@ -117,8 +119,15 @@ export const verifyActionPrincipal = (
   options: ActionPrincipalVerificationOptions,
 ) => principalVerifier.verifyAndRedeem(Redacted.make(authorization), options);
 
-/** Shared trusted-identity acquisition for generated Actions and governed reads. */
-export const verifyOperationPrincipal = verifyActionPrincipal;
+const verifyOperationPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
+  GatewayAssertionRedemptionService.pipe(
+    Effect.flatMap((redemption) => principalVerifier.verifyAndRedeem(authorization, { redemption })),
+  );
+
+/** Shared HTTP acquisition bound to this deployment's audience-specific verifier. */
+export const authenticateOperationPrincipal = makeMicroverticalHttpPrincipalAuthentication(
+  verifyOperationPrincipal,
+);
 `;
 
 export const renderGatewayAssertionRedemptionAdapter = (

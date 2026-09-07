@@ -20,7 +20,7 @@ import {
   PersonEngagementProfileUnavailableProblemSchema,
 } from '../shared/apis/person-engagement-profile.ts';
 import { personEngagementProfileRead } from '../src/api/person-engagement-profile.read.ts';
-import { verifyOperationPrincipal } from './auth/action-principal.ts';
+import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 import { governedReadProblemStatus } from './read-server-support.ts';
 
 type PersonEngagementProfileProblem =
@@ -136,17 +136,12 @@ export const personEngagementProfileReadApiLive = HttpApiBuilder.group(
         if (correlationId === undefined || correlationId.trim().length === 0) {
           return yield* Effect.fail(invalidProblem());
         }
-        const principal = yield* verifyOperationPrincipal(
+        const principal = yield* authenticateOperationPrincipal(
           Redacted.make(request.headers['authorization']),
-        ).pipe(
-          Effect.catchTags({
-            ActionPrincipalConfigurationError: () => Effect.fail(unavailableProblem()),
-            ActionPrincipalExpiredError: () => failProblem(authenticationProblem()),
-            ActionPrincipalInvalidError: () => failProblem(authenticationProblem()),
-            ActionPrincipalMissingError: () => failProblem(authenticationProblem()),
-            ActionPrincipalScopeError: () => failProblem(authenticationProblem()),
-            ActionPrincipalUnavailableError: () => Effect.fail(unavailableProblem()),
-          }),
+          {
+            authentication: authenticationProblem,
+            unavailable: unavailableProblem,
+          },
         );
         const runtime = yield* ReadRuntime;
         return yield* runtime

@@ -39,6 +39,10 @@ import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { AresSubjectServiceLive } from '../src/integrations/ares/ares-subject.service.ts';
 import { PartySearchProjectionGatewayLive } from '../src/search/parties.provider.ts';
 import { ActionPrincipalVerifierLive } from './auth/action-principal.ts';
+import {
+  GatewayAssertionRedemptionDatabaseLive,
+  GatewayAssertionRedemptionLive,
+} from './auth/gateway-assertion-redemption.ts';
 import { aresLookupReadApiLive } from './ares-lookup-read-server.ts';
 import { counterpartiesReadApiLive } from './counterparties-search-server.ts';
 import { counterpartyReadReadApiLive } from './counterparty-read-read-server.ts';
@@ -145,6 +149,9 @@ const coreSearchQueryRuntimeLive = CoreSearchQueryRuntimeLive.pipe(
 const searchProjectionGatewayLive = PartySearchProjectionGatewayLive.pipe(
   Layer.provide(coreSearchQueryRuntimeLive),
 );
+const gatewayAssertionRedemptionLive = GatewayAssertionRedemptionLive.pipe(
+  Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+);
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
   Layer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
@@ -186,7 +193,9 @@ export const makePartyRegistryApiRuntime = (): EffectBffDefinition<typeof partyR
       Layer.provide(readRuntimeLive),
       Layer.provide(searchProjectionGatewayLive),
     ),
-  ).pipe(Layer.provide(ActionPrincipalVerifierLive));
+  ).pipe(
+    Layer.provide(Layer.mergeAll(ActionPrincipalVerifierLive, gatewayAssertionRedemptionLive)),
+  );
   const layer = HttpApiBuilder.layer(partyRegistryApi).pipe(
     Layer.provide(apiHandlersLive),
     Layer.provide(DatabaseConfigLive),

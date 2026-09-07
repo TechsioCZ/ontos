@@ -641,7 +641,7 @@ const renderGovernedServer = (
   /* eslint-enable no-nested-ternary, unicorn/no-nested-ternary */
   const problemStem = `${type}${isModuleApi ? '' : 'Provider'}`;
   return `${generatedHeader(kind)}
-import { GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
+import { ReadRuntime } from '@app/core-runtime';
 import type { ReadCoreError } from '@app/core-runtime';
 import {
   Effect,
@@ -649,10 +649,10 @@ import {
   HttpEffect,
   HttpServerResponse,
 } from '@modern-js/plugin-bff/effect-edge';
-import { Config, Match } from 'effect';
+import { Match, Redacted } from 'effect';
 import { ${apiValue} } from '../shared/apis/${contract}.ts';
 import { ${readValue} } from '${readImport}';
-import { verifyOperationPrincipal } from './auth/action-principal.ts';
+import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 
 const authenticationProblem = () => ({
   _tag: '${problemStem}AuthenticationProblem' as const,
@@ -716,9 +716,6 @@ const internalProblem = () => ({
 const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
 );
-type VerificationProblem =
-  | ReturnType<typeof authenticationProblem>
-  | ReturnType<typeof unavailableProblem>;
 const readProblem = (error: ReadCoreError) =>
   Match.value(error).pipe(
     Match.tags({
@@ -753,37 +750,12 @@ export const ${toCamelCase(name)}ReadApiLive = HttpApiBuilder.group(
         if (correlationId === undefined || correlationId.trim().length === 0) {
           return yield* Effect.fail(invalidProblem());
         }
-        const environment = yield* Config.all({
-          ONTOS_GATEWAY_ISSUER: Config.string('ONTOS_GATEWAY_ISSUER'),
-          ONTOS_GATEWAY_PUBLIC_JWKS: Config.string('ONTOS_GATEWAY_PUBLIC_JWKS'),
-        }).pipe(Effect.mapError(unavailableProblem));
-        const redemption = yield* GatewayAssertionRedemptionService;
-        const principal = yield* verifyOperationPrincipal(request.headers.authorization, {
-          environment,
-          redemption,
-        }).pipe(
-          Effect.catchTags({
-            ActionPrincipalConfigurationError: () =>
-              Effect.fail<VerificationProblem>(unavailableProblem()),
-            ActionPrincipalExpiredError: () =>
-              bearerChallenge.pipe(
-                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
-              ),
-            ActionPrincipalInvalidError: () =>
-              bearerChallenge.pipe(
-                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
-              ),
-            ActionPrincipalMissingError: () =>
-              bearerChallenge.pipe(
-                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
-              ),
-            ActionPrincipalScopeError: () =>
-              bearerChallenge.pipe(
-                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
-              ),
-            ActionPrincipalUnavailableError: () =>
-              Effect.fail<VerificationProblem>(unavailableProblem()),
-          }),
+        const principal = yield* authenticateOperationPrincipal(
+          Redacted.make(request.headers.authorization),
+          {
+            authentication: authenticationProblem,
+            unavailable: unavailableProblem,
+          },
         );
         const runtime = yield* ReadRuntime;
         return yield* runtime

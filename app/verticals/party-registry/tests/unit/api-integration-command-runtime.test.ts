@@ -4,13 +4,15 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { ConfigProvider, Context, Effect, Layer, Schema } from 'effect';
 import {
+  GatewayAssertionRedemptionService,
+  GatewayAssertionReplayError,
   ReadRuntime,
   ReadHandlerNotFound,
   ReadPermissionDenied,
   ReadResultValidationError,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
-import type { ReadRuntimeService } from '@app/core-runtime';
+import type { GatewayAssertionRedemption, ReadRuntimeService } from '@app/core-runtime';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/plugin-bff/effect-edge';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
@@ -129,7 +131,10 @@ const endpointNames = [
   'updatePartyRelationship',
 ] as const;
 
-const makeAssertion = async (audience = 'party-registry') => {
+const makeAssertion = async (
+  audience = 'party-registry',
+  options: { readonly expiresAt?: number; readonly tokenIssuer?: string } = {},
+) => {
   const { privateKey, publicKey } = await generateKeyPair('Ed25519');
   const publicJwk = {
     ...(await exportJWK(publicKey)),
@@ -139,11 +144,11 @@ const makeAssertion = async (audience = 'party-registry') => {
   };
   const token = await new SignJWT({ principal, ver: 1 })
     .setProtectedHeader({ alg: 'EdDSA', kid: 'party-command-test', typ: 'JWT' })
-    .setIssuer(issuer)
+    .setIssuer(options.tokenIssuer ?? issuer)
     .setAudience(audience)
     .setSubject(principal.principalId)
     .setIssuedAt()
-    .setExpirationTime('5m')
+    .setExpirationTime(options.expiresAt ?? '5m')
     .setJti(randomUUID())
     .sign(privateKey);
   const otherPrincipal = { ...principal, principalId: randomUUID() };
@@ -166,10 +171,13 @@ const makeAssertion = async (audience = 'party-registry') => {
   };
 };
 
+const nonPersistingRedemption: GatewayAssertionRedemption = { consume: () => Effect.void };
+
 const mounted = (
   harness: ReturnType<typeof makeActionTestHarness>,
   environment: Readonly<Record<string, string>>,
   readRuntime?: ReadRuntimeService,
+  redemption: GatewayAssertionRedemption = nonPersistingRedemption,
 ) => {
   const resolvedReadRuntime = readRuntime ?? {
     runRead: () =>
@@ -183,6 +191,7 @@ const mounted = (
     .add(partyRegistryApi.groups.partyCommandRecovery)
     .add(partyRegistryApi.groups.partyMatchDecision);
   const readLayer = Layer.succeed(ReadRuntime, resolvedReadRuntime);
+  const redemptionLayer = Layer.succeed(GatewayAssertionRedemptionService, redemption);
   const handlers = Layer.mergeAll(
     partyRegistryCommandsLive,
     partyRegistryCommandRecoveryLive,
@@ -191,6 +200,7 @@ const mounted = (
     Layer.provide(ActionPrincipalVerifierLive),
     Layer.provide(harness.layer),
     Layer.provide(readLayer),
+    Layer.provide(redemptionLayer),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
   );
   return HttpRouter.toWebHandler(
@@ -198,10 +208,30 @@ const mounted = (
       Layer.provide(handlers),
       Layer.provideMerge(harness.layer),
       Layer.provideMerge(readLayer),
+      Layer.provideMerge(redemptionLayer),
       Layer.provide(HttpServer.layerServices),
     ),
     { disableLogger: true },
   );
+};
+
+const makeSingleUseRedemption = (): GatewayAssertionRedemption => {
+  const redeemed = new Set<string>();
+  return {
+    consume: ({ audience, issuer: assertionIssuer, jti }) =>
+      Effect.suspend(() => {
+        const key = `${assertionIssuer}\u0000${audience}\u0000${jti}`;
+        if (redeemed.has(key)) {
+          return Effect.fail(
+            new GatewayAssertionReplayError({
+              reason: 'The Bearer assertion is no longer usable',
+            }),
+          );
+        }
+        redeemed.add(key);
+        return Effect.void;
+      }),
+  };
 };
 
 // The mounted layers provide every runtime service; the handler's conservative unknown requirement
@@ -339,28 +369,44 @@ test('every registered command is mounted and rejects missing structural input o
   }
 });
 
-test('missing, malformed, and wrong-audience assertions are challenged without creating invocations', async () => {
-  await forEachSequential(['party-registry', 'contacts'], async (audience) => {
-    const assertion = await makeAssertion(audience);
+test('missing, malformed, expired, tampered, wrong-audience, and wrong-issuer assertions are challenged without creating invocations', async () => {
+  const expired = await makeAssertion('party-registry', {
+    expiresAt: 1,
+  });
+  const wrongAudience = await makeAssertion('contacts');
+  const wrongIssuer = await makeAssertion('party-registry', {
+    tokenIssuer: 'https://untrusted-shell.ontos.test',
+  });
+  const valid = await makeAssertion();
+  const signatureStart = valid.token.lastIndexOf('.') + 1;
+  const signatureFirstCharacter = valid.token.at(signatureStart);
+  assert.notEqual(signatureFirstCharacter, undefined);
+  const tampered = `${valid.token.slice(0, signatureStart)}${signatureFirstCharacter === 'A' ? 'B' : 'A'}${valid.token.slice(signatureStart + 1)}`;
+  const cases = [
+    { assertion: valid, token: undefined },
+    { assertion: valid, token: 'not-a-jwt' },
+    { assertion: expired, token: expired.token },
+    { assertion: valid, token: tampered },
+    { assertion: wrongAudience, token: wrongAudience.token },
+    { assertion: wrongIssuer, token: wrongIssuer.token },
+  ];
+  await forEachSequential(cases, async ({ assertion, token }) => {
     const harness = makeActionTestHarness();
     const app = mounted(harness, assertion.environment);
     try {
-      const tokens = audience === 'contacts' ? [assertion.token] : [undefined, 'not-a-jwt'];
-      await forEachSequential(tokens, async (token) => {
-        const response = await handle(
-          app,
-          commandRequest('request-search-rebuild', {}, token, {
-            'idempotency-key': 'authentication-test',
-          }),
-        );
-        assert.equal(response.status, 401);
-        assert.equal(response.headers.get('www-authenticate'), 'Bearer');
-        assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
-        const body = await response.json();
-        assert.equal(body._tag, 'PartyCommandAuthenticationProblem');
-        assert.equal(body.status, 401);
-        assert.equal(JSON.stringify(body).includes(assertion.token), false);
-      });
+      const response = await handle(
+        app,
+        commandRequest('request-search-rebuild', {}, token, {
+          'idempotency-key': 'authentication-test',
+        }),
+      );
+      assert.equal(response.status, 401);
+      assert.equal(response.headers.get('www-authenticate'), 'Bearer');
+      assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
+      const body = await response.json();
+      assert.equal(body._tag, 'PartyCommandAuthenticationProblem');
+      assert.equal(body.status, 401);
+      assert.equal(JSON.stringify(body).includes(assertion.token), false);
       assert.equal(harness.snapshot().invocations.length, 0);
     } finally {
       await app.dispose();
@@ -368,23 +414,126 @@ test('missing, malformed, and wrong-audience assertions are challenged without c
   });
 });
 
-test('verification configuration unavailability is retryable and never reaches the lifecycle', async () => {
+test('missing and malformed verification configuration are retryable and never reach the lifecycle', async () => {
+  const assertion = await makeAssertion();
+  await forEachSequential(
+    [
+      {},
+      { ...assertion.environment, ONTOS_GATEWAY_ISSUER: 'not-an-absolute-http-url' },
+      { ...assertion.environment, ONTOS_GATEWAY_PUBLIC_JWKS: '{malformed' },
+    ],
+    async (environment) => {
+      const harness = makeActionTestHarness();
+      const app = mounted(harness, environment);
+      try {
+        const response = await handle(
+          app,
+          commandRequest('request-search-rebuild', {}, assertion.token, {
+            'idempotency-key': 'configuration-test',
+          }),
+        );
+        assert.equal(response.status, 503);
+        assert.equal(response.headers.get('www-authenticate'), null);
+        assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
+        const body = await response.json();
+        assert.equal(body._tag, 'PartyCommandUnavailableProblem');
+        assert.equal(body.retryable, true);
+        assert.equal(harness.snapshot().invocations.length, 0);
+      } finally {
+        await app.dispose();
+      }
+    },
+  );
+});
+
+test('generated governed reads authenticate through the shared adapter before starting ReadRuntime', async () => {
   const assertion = await makeAssertion();
   const harness = makeActionTestHarness();
-  const app = mounted(harness, {});
+  let reads = 0;
+  const readRuntime: ReadRuntimeService = {
+    runRead: () =>
+      Effect.sync(() => {
+        reads += 1;
+      }).pipe(
+        Effect.andThen(
+          Effect.fail(
+            new ReadHandlerNotFound({
+              code: 'read_handler_not_found',
+              reason: 'No fixture decision',
+            }),
+          ),
+        ),
+      ),
+  };
+  const app = mounted(harness, assertion.environment, readRuntime);
   try {
-    const response = await handle(
+    await forEachSequential([undefined, 'not-a-jwt'], async (token) => {
+      const response = await handle(app, decisionRequest(randomUUID(), token));
+      assert.equal(response.status, 401);
+      assert.equal(response.headers.get('www-authenticate'), 'Bearer');
+      assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
+      const body = await response.json();
+      assert.equal(body._tag, 'PartyMatchDecisionAuthenticationProblem');
+      assert.equal(reads, 0);
+    });
+    const valid = await handle(app, decisionRequest(randomUUID(), assertion.token));
+    assert.equal(valid.status, 404);
+    assert.equal(reads, 1);
+  } finally {
+    await app.dispose();
+  }
+});
+
+test('replayed assertions are challenged before a second Action or generated Read lifecycle', async () => {
+  const assertion = await makeAssertion();
+  const harness = makeActionTestHarness();
+  let reads = 0;
+  const readRuntime: ReadRuntimeService = {
+    runRead: () =>
+      Effect.sync(() => {
+        reads += 1;
+      }).pipe(
+        Effect.andThen(
+          Effect.fail(
+            new ReadHandlerNotFound({
+              code: 'read_handler_not_found',
+              reason: 'No fixture decision',
+            }),
+          ),
+        ),
+      ),
+  };
+  const app = mounted(harness, assertion.environment, readRuntime, makeSingleUseRedemption());
+  try {
+    const firstAction = await handle(
       app,
       commandRequest('request-search-rebuild', {}, assertion.token, {
-        'idempotency-key': 'configuration-test',
+        'idempotency-key': 'first-redemption',
       }),
     );
-    assert.equal(response.status, 503);
-    assert.equal(response.headers.get('www-authenticate'), null);
-    const body = await response.json();
-    assert.equal(body._tag, 'PartyCommandUnavailableProblem');
-    assert.equal(body.retryable, true);
-    assert.equal(harness.snapshot().invocations.length, 0);
+    assert.notEqual(firstAction.status, 401);
+    assert.equal(harness.snapshot().invocations.length, 1);
+
+    const replayedAction = await handle(
+      app,
+      commandRequest('request-search-rebuild', {}, assertion.token, {
+        'idempotency-key': 'second-redemption',
+      }),
+    );
+    assert.equal(replayedAction.status, 401);
+    assert.equal(replayedAction.headers.get('www-authenticate'), 'Bearer');
+    assert.match(replayedAction.headers.get('content-type') ?? '', /application\/problem\+json/u);
+    assert.equal(harness.snapshot().invocations.length, 1);
+
+    const firstRead = await handle(app, decisionRequest(randomUUID(), assertion.otherToken));
+    assert.equal(firstRead.status, 404);
+    assert.equal(reads, 1);
+
+    const replayedRead = await handle(app, decisionRequest(randomUUID(), assertion.otherToken));
+    assert.equal(replayedRead.status, 401);
+    assert.equal(replayedRead.headers.get('www-authenticate'), 'Bearer');
+    assert.match(replayedRead.headers.get('content-type') ?? '', /application\/problem\+json/u);
+    assert.equal(reads, 1);
   } finally {
     await app.dispose();
   }

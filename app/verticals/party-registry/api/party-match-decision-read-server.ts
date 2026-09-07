@@ -20,7 +20,7 @@ import {
   PartyMatchDecisionUnavailableProblemSchema,
 } from '../shared/apis/party-match-decision.ts';
 import { partyMatchDecisionRead } from '../src/api/party-match-decision.read.ts';
-import { verifyOperationPrincipal } from './auth/action-principal.ts';
+import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 
 const authenticationProblem = () => PartyMatchDecisionAuthenticationProblemSchema.make({});
 const unavailableProblem = (cause?: unknown) => {
@@ -40,9 +40,6 @@ const internalProblem = () => PartyMatchDecisionInternalProblemSchema.make({});
 const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
 );
-type VerificationProblem =
-  | ReturnType<typeof authenticationProblem>
-  | ReturnType<typeof unavailableProblem>;
 const isAuthenticationProblem = Schema.is(PartyMatchDecisionAuthenticationProblemSchema);
 const readProblem = (error: ReadCoreError) =>
   Match.value(error).pipe(
@@ -82,31 +79,12 @@ export const partyMatchDecisionReadApiLive = HttpApiBuilder.group(
         if (correlationId === undefined || correlationId.trim().length === 0) {
           return yield* Effect.fail(invalidProblem());
         }
-        const principal = yield* verifyOperationPrincipal(
+        const principal = yield* authenticateOperationPrincipal(
           Redacted.make(request.headers['authorization']),
-        ).pipe(
-          Effect.catchTags({
-            ActionPrincipalConfigurationError: (error) =>
-              Effect.fail<VerificationProblem>(unavailableProblem(error)),
-            ActionPrincipalExpiredError: () =>
-              bearerChallenge.pipe(
-                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
-              ),
-            ActionPrincipalInvalidError: () =>
-              bearerChallenge.pipe(
-                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
-              ),
-            ActionPrincipalMissingError: () =>
-              bearerChallenge.pipe(
-                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
-              ),
-            ActionPrincipalScopeError: () =>
-              bearerChallenge.pipe(
-                Effect.andThen(Effect.fail<VerificationProblem>(authenticationProblem())),
-              ),
-            ActionPrincipalUnavailableError: (error) =>
-              Effect.fail<VerificationProblem>(unavailableProblem(error)),
-          }),
+          {
+            authentication: authenticationProblem,
+            unavailable: unavailableProblem,
+          },
         );
         const runtime = yield* ReadRuntime;
         return yield* runtime

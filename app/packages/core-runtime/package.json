@@ -7,6 +7,8 @@
     ".": "./src/index.ts",
     "./actions/principal-context": "./src/actions/principal-context.ts",
     "./actions/runtime-wiring": "./src/actions/runtime-wiring.ts",
+    "./auth/gateway-assertion-redemption": "./src/auth/gateway-assertion-redemption.ts",
+    "./http/principal-authentication": "./src/http/principal-authentication.ts",
     "./install/stage-context-bootstrap": "./src/install/stage-context-bootstrap.ts",
     "./outbox/worker": "./src/outbox/worker-entrypoint.ts",
     "./testing/actions": "./src/testing/actions.ts",

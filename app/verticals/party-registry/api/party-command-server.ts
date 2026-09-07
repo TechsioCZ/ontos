@@ -35,7 +35,7 @@ import type {
   ResolvePartyCommandCommitPayload,
   ResolvePartyCommandCommitResult,
 } from '../shared/command-api.ts';
-import { verifyOperationPrincipal } from './auth/action-principal.ts';
+import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 import { ActionInvocationIdSchema } from '../shared/domain/correction-contracts.ts';
 import { addContactPointAction } from '../src/actions/add-contact-point.action.ts';
 import { addPartyOfficialIdentifierAction } from '../src/actions/add-party-official-identifier.action.ts';
@@ -302,22 +302,11 @@ const actionProblem = (error: PartyActionError): PartyCommandProblem =>
     Match.exhaustive,
   );
 
-const verifyPrincipal = (authorization: Redacted.Redacted<string | undefined>) => {
-  const authorizationHeader = Redacted.value(authorization);
-  // Missing credentials remain 401 even when the verifier has not been configured yet.
-  return authorizationHeader === undefined
-    ? failProblem(problem.authentication())
-    : verifyOperationPrincipal(authorization).pipe(
-        Effect.catchTags({
-          ActionPrincipalConfigurationError: () => Effect.fail(problem.unavailable()),
-          ActionPrincipalExpiredError: () => failProblem(problem.authentication()),
-          ActionPrincipalInvalidError: () => failProblem(problem.authentication()),
-          ActionPrincipalMissingError: () => failProblem(problem.authentication()),
-          ActionPrincipalScopeError: () => failProblem(problem.authentication()),
-          ActionPrincipalUnavailableError: () => Effect.fail(problem.unavailable()),
-        }),
-      );
-};
+const verifyPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
+  authenticateOperationPrincipal(authorization, {
+    authentication: problem.authentication,
+    unavailable: problem.unavailable,
+  });
 
 const runPartyCommand = Effect.fn('PartyCommandServer.runPartyCommand')(
   function* runPartyCommandEffect<
