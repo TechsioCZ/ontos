@@ -51,6 +51,10 @@ import { AuthenticationService, makeAuthenticationService } from '../../api/auth
 import { makeShellAuthenticationApiRuntime } from '../../api/index.ts';
 import { renderActionPrincipalServer } from '../../../../scripts/scaffolding/microvertical-action-boundary/scaffold.mts';
 
+type AuthenticationRuntimeHandler = ReturnType<
+  ReturnType<typeof makeShellAuthenticationApiRuntime>['createHandler']
+>;
+
 const nativeDatabaseScope = runNativeSync(NativeScope.make());
 
 const email = 'better-auth-runtime@example.test';
@@ -240,7 +244,7 @@ void test('creates, resolves, persists, revokes, and signs out a Better Auth ses
     TenantModuleStateService,
     makeTenantModuleStateService({ executor: coreDatabase }),
   );
-  const handlers: { readonly dispose: () => Promise<void> }[] = [];
+  const handlers: AuthenticationRuntimeHandler[] = [];
   const generatedFixtureRoot = await mkdtemp(path.join(tmpdir(), 'ontos-auth-runtime-'));
 
   const cleanup = async () => {
@@ -1138,7 +1142,7 @@ void test('selects, lists, switches, revalidates, and upgrades a multi-tenant se
     TenantModuleStateService,
     makeTenantModuleStateService({ executor: coreDatabase }),
   );
-  const handlers: { readonly dispose: () => Promise<void> }[] = [];
+  const handlers: AuthenticationRuntimeHandler[] = [];
 
   const cleanup = async () => {
     await runEffectTestPromise(

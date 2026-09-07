@@ -52,13 +52,7 @@ const BuildArtifactSchema = Schema.Struct({
     ui: Schema.Struct({ ...IdentitySchema.fields, surface: Schema.Literal('ui') }),
   }),
 });
-interface ReleaseEnvelope {
-  readonly surfaces: {
-    readonly apiBackend: readonly string[];
-    readonly ssr: readonly string[];
-    readonly uiClient: readonly string[];
-  };
-}
+type ReleaseEnvelope = typeof ReleaseEnvelopeSchema.Type;
 
 interface ReleaseFramework {
   // oxlint-disable-next-line effect-native/no-promise-shaped-port -- Structural mirror of the installed Modern.js release-envelope SDK.
@@ -255,20 +249,10 @@ const loadReleaseFramework = async (modulePath: string): Promise<ReleaseFramewor
   const verifyBuildOutputReleaseEnvelope = framework.verifyBuildOutputReleaseEnvelope.bind(source);
   const verifyNodeReleaseEnvelopeStaging = framework.verifyNodeReleaseEnvelopeStaging.bind(source);
   return {
-    emitFrameworkMicroVerticalReleaseEnvelope: async (input) => {
-      const output: unknown = await emitFrameworkMicroVerticalReleaseEnvelope(input);
-      return Schema.decodeUnknownSync(ReleaseEnvelopeSchema)(output);
-    },
-    emitNodeStagedReleaseEnvelope: async (input) => {
-      const output: unknown = await emitNodeStagedReleaseEnvelope(input);
-      return Schema.decodeUnknownSync(ReleaseEnvelopeSchema)(output);
-    },
-    verifyBuildOutputReleaseEnvelope: async (root, target) => {
-      await verifyBuildOutputReleaseEnvelope(root, target);
-    },
-    verifyNodeReleaseEnvelopeStaging: async (input) => {
-      await verifyNodeReleaseEnvelopeStaging(input);
-    },
+    emitFrameworkMicroVerticalReleaseEnvelope,
+    emitNodeStagedReleaseEnvelope,
+    verifyBuildOutputReleaseEnvelope,
+    verifyNodeReleaseEnvelopeStaging,
   };
 };
 
@@ -359,11 +343,13 @@ const releaseFixture = async (context: TestContext) => {
     ),
   );
   const emit = async () =>
-    await releaseFramework.emitFrameworkMicroVerticalReleaseEnvelope({
-      apiOnly: false,
-      distDirectory: root,
-      target: 'node',
-    });
+    Schema.decodeUnknownSync(ReleaseEnvelopeSchema)(
+      await releaseFramework.emitFrameworkMicroVerticalReleaseEnvelope({
+        apiOnly: false,
+        distDirectory: root,
+        target: 'node',
+      }),
+    );
   return { artifact, emit, framework: releaseFramework, manifest, putJson, putText, root };
 };
 
@@ -379,19 +365,23 @@ void test('empty MF producers retain complete build and Node staged release evid
           `ultramodern-release-envelope/framework-output.${extension}`,
         ),
       );
-      const envelope = await framework.emitFrameworkMicroVerticalReleaseEnvelope({
-        apiOnly: false,
-        distDirectory: fixture.root,
-        target: 'node',
-      });
+      const envelope = Schema.decodeUnknownSync(ReleaseEnvelopeSchema)(
+        await framework.emitFrameworkMicroVerticalReleaseEnvelope({
+          apiOnly: false,
+          distDirectory: fixture.root,
+          target: 'node',
+        }),
+      );
       assert.ok(envelope.surfaces.uiClient.includes(compiledUiAssetPath));
       assert.deepEqual(envelope.surfaces.ssr, [ssrBundlePath]);
       assert.deepEqual(envelope.surfaces.apiBackend, [apiBundlePath]);
       await framework.verifyBuildOutputReleaseEnvelope(fixture.root, 'node');
-      const staged = await framework.emitNodeStagedReleaseEnvelope({
-        distDirectory: fixture.root,
-        outputDirectory: fixture.root,
-      });
+      const staged = Schema.decodeUnknownSync(ReleaseEnvelopeSchema)(
+        await framework.emitNodeStagedReleaseEnvelope({
+          distDirectory: fixture.root,
+          outputDirectory: fixture.root,
+        }),
+      );
       assert.ok(staged.surfaces.uiClient.includes(compiledUiAssetPath));
       await framework.verifyNodeReleaseEnvelopeStaging({ outputDirectory: fixture.root });
     }),
@@ -422,11 +412,13 @@ void test('empty MF producers bind root-relative route assets when publicPath is
           `ultramodern-release-envelope/framework-output.${extension}`,
         ),
       );
-      const envelope = await framework.emitFrameworkMicroVerticalReleaseEnvelope({
-        apiOnly: false,
-        distDirectory: fixture.root,
-        target: 'node',
-      });
+      const envelope = Schema.decodeUnknownSync(ReleaseEnvelopeSchema)(
+        await framework.emitFrameworkMicroVerticalReleaseEnvelope({
+          apiOnly: false,
+          distDirectory: fixture.root,
+          target: 'node',
+        }),
+      );
       assert.ok(envelope.surfaces.uiClient.includes(compiledUiAssetPath));
     }),
   );

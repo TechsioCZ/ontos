@@ -140,6 +140,7 @@ const supportRecoveryPrincipal: SupportRecoveryPrincipalContextResolverService =
 
 const provider = (impersonated: boolean): SupportAuthProvider => ({
   api: {
+    // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements Better Auth's foreign Promise API.
     getSession: async () => ({
       headers: new Headers(),
       response: {
@@ -159,9 +160,11 @@ const provider = (impersonated: boolean): SupportAuthProvider => ({
         user: { id: 'original-provider-user' },
       },
     }),
+    // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements Better Auth's foreign Promise API.
     impersonateUser: async () => {
       throw new Error('not used');
     },
+    // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements Better Auth's foreign Promise API.
     stopImpersonating: async () => {
       const headers = new Headers();
       headers.append('set-cookie', 'session=restored; Path=/; HttpOnly');
@@ -223,6 +226,7 @@ test('preserves definite requested-checkpoint errors for their declared HTTP map
             }),
             configuration,
             provider: makeSupportAuthProviderDouble({
+              // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements Better Auth's foreign Promise API.
               impersonateUser: async () => {
                 providerCalls += 1;
                 throw new Error('must not create a session');
@@ -293,6 +297,7 @@ test('removes the provider session and recovery when started evidence cannot com
     }),
     configuration,
     provider: makeSupportAuthProviderDouble({
+      // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements Better Auth's foreign Promise API.
       impersonateUser: async () => ({
         headers: new Headers(),
         response: { session: { id: impersonationSessionId } },
@@ -531,6 +536,7 @@ test('persists and completes stopped evidence on the first stop after impersonat
     authentication: makeAuthenticationServiceDouble(),
     configuration,
     provider: makeSupportAuthProviderDouble({
+      // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements Better Auth's foreign Promise API.
       getSession: async () => ({ headers: new Headers(), response: null }),
     }),
     resolver: makePrincipalResolverDouble(),
@@ -625,6 +631,7 @@ test('restores the original session and stopped checkpoint after the provider re
     authentication: makeAuthenticationServiceDouble(),
     configuration,
     provider: makeSupportAuthProviderDouble({
+      // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements Better Auth's foreign Promise API.
       getSession: async () => ({ headers: new Headers(), response: null }),
     }),
     resolver: makePrincipalResolverDouble(),
@@ -702,6 +709,7 @@ test('completes stopped recovery when a lost response leaves only an expired ori
     authentication: makeAuthenticationServiceDouble(),
     configuration,
     provider: makeSupportAuthProviderDouble({
+      // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements Better Auth's foreign Promise API.
       getSession: async () => ({ headers: new Headers(), response: null }),
     }),
     resolver: makePrincipalResolverDouble(),
@@ -757,6 +765,7 @@ test('clears a mismatched restored session and completes recovery from the recor
     configuration,
     provider: makeSupportAuthProviderDouble({
       ...provider(true).api,
+      // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements Better Auth's foreign Promise API.
       stopImpersonating: async () => {
         const headers = new Headers();
         headers.append('set-cookie', 'better-auth.session_token=unexpected; Path=/; HttpOnly');
@@ -807,6 +816,7 @@ test('deletes the impersonation session and clears cookies when original restora
     configuration,
     provider: makeSupportAuthProviderDouble({
       ...provider(true).api,
+      // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements Better Auth's foreign Promise API.
       stopImpersonating: async () => {
         throw new Error('admin session expired');
       },

@@ -29,6 +29,7 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
 }));
 
 rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
+  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This double implements ManagedRuntime.runPromise at the browser execution boundary.
   runBrowserEffect: async <Success, Failure>(effect: Effect.Effect<Success, Failure>) =>
     await runEffectTestPromise(
       effect.pipe(

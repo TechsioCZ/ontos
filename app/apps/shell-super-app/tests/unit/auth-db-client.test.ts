@@ -7,6 +7,7 @@ import { acquirePoolResource } from '../../api/auth/db/client.ts';
 test('ends the pool resource without arguments when its scope closes', async () => {
   const recorded: number[] = [];
   const fake: PoolResource = {
+    // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements pg Pool.end's foreign Promise API.
     async end(...args: []) {
       recorded.push(args.length);
     },

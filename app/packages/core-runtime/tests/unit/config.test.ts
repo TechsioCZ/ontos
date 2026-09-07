@@ -125,6 +125,7 @@ void test('finalizes the pool resource when its Effect scope closes', async () =
   await runEffectTestPromise(
     Effect.scoped(
       acquirePoolResource(() => ({
+        // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements pg Pool.end's foreign Promise API.
         end: async () => {
           finalized = true;
         },

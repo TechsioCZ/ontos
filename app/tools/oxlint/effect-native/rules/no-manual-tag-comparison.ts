@@ -862,11 +862,41 @@ export const rule = defineRule({
           return;
         }
 
-        const callee = unwrap(node.callee);
-        if (callee.type !== 'MemberExpression') return;
-        const method = memberPropertyName(callee);
+        let callee = unwrap(node.callee);
+        const seenCallees = new Set<ESTree.Node>();
+        while (callee.type === 'Identifier' && !seenCallees.has(callee)) {
+          seenCallees.add(callee);
+          const initialiser = constInitialiser(context, callee);
+          if (initialiser === null) break;
+          callee = unwrap(initialiser);
+        }
+        let method: string | null = null;
+        let receiver: ESTree.Node | null = null;
+        if (callee.type === 'MemberExpression') {
+          method = memberPropertyName(callee);
+          receiver = callee.object as ESTree.Node;
+        } else if (callee.type === 'Identifier') {
+          const variable = resolveVariable(context, callee.name, callee);
+          const definition = variable?.defs.find((entry) => entry.type === 'ImportBinding');
+          const specifier = definition?.node as ESTree.Node | undefined;
+          if (specifier?.type === 'ImportSpecifier') {
+            const declaration = context.sourceCode.ast.body.find(
+              (statement) =>
+                statement.type === 'ImportDeclaration' &&
+                statement.specifiers.some((entry) => entry === specifier),
+            );
+            if (
+              declaration?.type === 'ImportDeclaration' &&
+              /^(?:node:)?assert(?:\/strict)?$/u.test(declaration.source.value)
+            ) {
+              method =
+                specifier.imported.type === 'Identifier'
+                  ? specifier.imported.name
+                  : specifier.imported.value;
+            }
+          }
+        }
         if (method === null) return;
-        const receiver = callee.object as ESTree.Node;
 
         // Assertions are comparisons too, including tag projections in arrays and aliased values.
         const assertionMethods = new Set([
@@ -889,10 +919,10 @@ export const rule = defineRule({
         ]);
         if (assertionMethods.has(method)) {
           const compared = [...node.arguments];
-          let subject = unwrap(receiver);
-          while (subject.type === 'MemberExpression')
+          let subject = receiver === null ? null : unwrap(receiver);
+          while (subject?.type === 'MemberExpression')
             subject = unwrap(subject.object as ESTree.Node);
-          if (subject.type === 'CallExpression') compared.push(...subject.arguments);
+          if (subject?.type === 'CallExpression') compared.push(...subject.arguments);
           for (const argument of compared) {
             if (argument.type === 'SpreadElement') continue;
             const reference = comparedTag(argument);
@@ -909,6 +939,8 @@ export const rule = defineRule({
             return;
           }
         }
+
+        if (receiver === null) return;
 
         // `error._tag.startsWith('Contacts')`, `String(error._tag).endsWith('Problem')`.
         if (STRING_PROBES.has(method)) {

@@ -6,3 +6,7 @@ assert.ok(Schema.is(Missing)(error));
 assert.deepEqual(error, { _tag: 'Missing', message: 'gone' });
 assert.fail(`Unexpected failure ${error._tag}`);
 expect(Predicate.isTagged(error, 'Missing')).toBe(true);
+
+function unrelatedCallback(equal: (actual: unknown, expected: unknown) => void) {
+  equal(error._tag, 'Missing');
+}

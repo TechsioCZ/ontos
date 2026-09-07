@@ -277,6 +277,7 @@ test(
         {
           identity: 'property-registry/page',
           isCompatible: compatibleRemoteModule,
+          // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements the Module Federation import Promise boundary.
           load: async () => {
             throw new Error('remote unavailable');
           },
@@ -326,6 +327,7 @@ test('never starts a queued load whose deadline expired before a permit became a
       Array.from({ length: MODULE_LOAD_CONCURRENCY + 1 }, (_, index) => ({
         identity: `module-${index}/page`,
         isCompatible: compatibleRemoteModule,
+        // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements the Module Federation import Promise boundary.
         load: async () => {
           const pending = Promise.withResolvers<RemoteModule>();
           pendingLoads.push(pending);
@@ -373,6 +375,7 @@ test('never starts an expired queued load when synchronous work delays deadline 
         Array.from({ length: MODULE_LOAD_CONCURRENCY + 1 }, (_, index) => ({
           identity: `module-${index}/page`,
           isCompatible: compatibleRemoteModule,
+          // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements the Module Federation import Promise boundary.
           load: async () => {
             started.push(index);
             if (index === 0) {
@@ -413,6 +416,7 @@ test(
           Array.from({ length: 12 }, (_, index) => ({
             identity: `module-${index}/page`,
             isCompatible: compatibleRemoteModule,
+            // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements the Module Federation import Promise boundary.
             load: async () => {
               started.push(index);
               if (started.length === MODULE_LOAD_CONCURRENCY) {
@@ -456,6 +460,7 @@ test(
           Array.from({ length: MODULE_LOAD_CONCURRENCY + 1 }, (_, index) => ({
             identity: `module-${index}/page`,
             isCompatible: compatibleRemoteModule,
+            // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements the Module Federation import Promise boundary.
             load: async () => {
               events.push(`started-${index}`);
               if (index === MODULE_LOAD_CONCURRENCY - 1) {
@@ -510,6 +515,7 @@ test(
           {
             identity: 'late-rejection/page',
             isCompatible: compatibleRemoteModule,
+            // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements the Module Federation import Promise boundary.
             load: async () => {
               loadStarted.resolve(null);
               try {

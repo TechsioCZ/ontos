@@ -462,6 +462,7 @@ export const rule = defineRule({
     const atTestBoundary = (node: any): boolean => {
       if (!isTestFile(path)) return false;
       for (let current = node; current?.parent; current = current.parent) {
+        if (current !== node && FUNCTION_TYPES.has(current.type)) return false;
         const call = current.parent;
         if (
           call.type === 'CallExpression' &&
@@ -823,6 +824,7 @@ export const rule = defineRule({
     const exemptHelper = (fn: any, seen = new Set<any>()): boolean => {
       if (seen.has(fn)) return false;
       seen.add(fn);
+      if (atTestBoundary(fn)) return true;
       const body = functionBody(fn);
       if (body?.type === 'ImportExpression') return true;
       if (
@@ -833,8 +835,11 @@ export const rule = defineRule({
       const owner = namedOwner(fn);
       const id = (owner as any).id;
       if (!id || id.type !== 'Identifier') {
-        for (let current = fn.parent; current; current = current.parent) {
-          if (FUNCTION_TYPES.has(current.type)) return exemptHelper(current, new Set(seen));
+        const call = fn.parent;
+        if (call?.type === 'CallExpression' && call.arguments.includes(fn)) {
+          for (let current = call.parent; current; current = current.parent) {
+            if (FUNCTION_TYPES.has(current.type)) return exemptHelper(current, new Set(seen));
+          }
         }
         return false;
       }
