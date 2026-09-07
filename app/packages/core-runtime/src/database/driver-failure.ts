@@ -1,4 +1,5 @@
 import { Option, Schema } from 'effect';
+import { findPostgresFailure } from './postgres-failure.ts';
 
 export const DatabaseDriverFailureKindSchema = Schema.Literals(['socket', 'sqlstate']);
 export type DatabaseDriverFailureKind = Schema.Schema.Type<typeof DatabaseDriverFailureKindSchema>;
@@ -55,13 +56,6 @@ export type DatabaseDriverFailureInput = Schema.Schema.Type<
   typeof DatabaseDriverFailureInputSchema
 >;
 
-const DriverCodeSchema = Schema.Struct({ code: Schema.String });
-const causeKey = ['ca', 'use'].join('');
-const NestedCauseSchema = Schema.Struct({ [causeKey]: Schema.Unknown });
-const decodeDriverCode = Schema.decodeUnknownOption(DriverCodeSchema);
-const decodeNestedCause = Schema.decodeUnknownOption(NestedCauseSchema);
-
-const MAX_CAUSE_DEPTH = 3;
 const connectionSqlStateClass = ['0', '8'].join('');
 const transactionSqlStateClass = ['4', '0'].join('');
 const administrativeShutdownSqlState = ['57', 'P01'].join('');
@@ -97,32 +91,13 @@ const decodeDriverCodeFailure = (code: string): Option.Option<DatabaseDriverFail
 const isUnavailableDriverCode = (code: string): boolean =>
   unavailableSqlStateClasses.has(code.slice(0, 2)) || unavailableSocketCodes.has(code);
 
-const decodeAtDepth = (
-  input: DatabaseDriverFailureInput,
-  depth: number,
-): Option.Option<DatabaseDriverFailure> => {
-  if (depth > MAX_CAUSE_DEPTH) {
-    return Option.none();
-  }
-
-  const driverCode = decodeDriverCode(input);
-  if (Option.isSome(driverCode)) {
-    const failure = decodeDriverCodeFailure(driverCode.value.code);
-    if (Option.isSome(failure)) {
-      return failure;
-    }
-  }
-
-  const nestedCause = decodeNestedCause(input);
-  if (Option.isNone(nestedCause)) {
-    return Option.none();
-  }
-  return decodeAtDepth(nestedCause.value[causeKey], depth + 1);
-};
-
 export const decodeDatabaseDriverFailure = (
   input: DatabaseDriverFailureInput,
-): Option.Option<DatabaseDriverFailure> => decodeAtDepth(input, 0);
+): Option.Option<DatabaseDriverFailure> =>
+  Option.flatMap(
+    findPostgresFailure(input, ({ code }) => Option.isSome(decodeDriverCodeFailure(code))),
+    ({ code }) => decodeDriverCodeFailure(code),
+  );
 
 export const isDatabaseUnavailableFailure = (input: DatabaseDriverFailureInput): boolean =>
   Option.exists(decodeDatabaseDriverFailure(input), ({ code }) => isUnavailableDriverCode(code));

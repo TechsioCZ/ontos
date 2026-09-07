@@ -1,4 +1,5 @@
 // @generated-origin OntOS Codesmith Action Service v1
+import { findPostgresFailure } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { DateTime, Duration, Effect, Option, Schema } from 'effect';
 import type { CounterpartyRef, PartyRef } from '../../shared/party-registry-references.ts';
@@ -44,34 +45,15 @@ const unavailable = (cause?: unknown) => {
 };
 
 const uniqueViolationSqlState = ['23', '505'].join('');
-const engagementUniqueConstraintSchema = Schema.String.check(
-  Schema.makeFilter((constraint) =>
-    constraint.startsWith('contacts_') && constraint.endsWith('_uk')
-      ? undefined
-      : 'not an engagement uniqueness constraint',
-  ),
-);
-const directEngagementUniquenessFailureSchema = Schema.Struct({
-  code: Schema.Literal(uniqueViolationSqlState),
-  constraint: engagementUniqueConstraintSchema,
-});
-const makeEngagementUniquenessFailureSchema = (): Schema.Codec<unknown, unknown> => {
-  let nested: Schema.Codec<unknown, unknown> = directEngagementUniquenessFailureSchema;
-  for (let depth = 0; depth < 8; depth += 1) {
-    nested = Schema.Union([
-      directEngagementUniquenessFailureSchema,
-      Schema.Struct({ nested }).pipe(Schema.encodeKeys({ nested: 'cause' })),
-    ]);
-  }
-  return nested;
-};
-const engagementUniquenessFailureSchema = makeEngagementUniquenessFailureSchema();
-const decodeEngagementUniquenessFailure = Schema.decodeUnknownOption(
-  engagementUniquenessFailureSchema,
-);
-
+const isEngagementUniquenessFailure = ({
+  code,
+  constraint,
+}: Readonly<{ readonly code: string; readonly constraint?: string }>) =>
+  code === uniqueViolationSqlState &&
+  constraint?.startsWith('contacts_') === true &&
+  constraint.endsWith('_uk');
 const mutationFailure = <Failure>(failure: Failure) =>
-  Option.isSome(decodeEngagementUniquenessFailure(failure))
+  Option.isSome(findPostgresFailure(failure, isEngagementUniquenessFailure))
     ? new EngagementProfileConflict({
         code: 'contacts_engagement_profile_already_exists',
         reason: 'An engagement profile already exists for these canonical references',
