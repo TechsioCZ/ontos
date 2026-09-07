@@ -13,7 +13,7 @@ import { attachOrganizationEngagementAction } from '../src/actions/attach-organi
 import { attachPersonEngagementAction } from '../src/actions/attach-person-engagement.action.ts';
 import { unarchiveOrganizationEngagementAction } from '../src/actions/unarchive-organization-engagement.action.ts';
 import { unarchivePersonEngagementAction } from '../src/actions/unarchive-person-engagement.action.ts';
-import { verifyOperationPrincipal } from './auth/action-principal.ts';
+import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 import {
   engagementProblem,
   failEngagementProblem,
@@ -31,20 +31,10 @@ interface EngagementActionTransportRequest {
 }
 
 const verifyPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
-  verifyOperationPrincipal(authorization).pipe(
-    Effect.catchTags({
-      ActionPrincipalConfigurationError: (_error) => Effect.fail(engagementProblem.unavailable()),
-      ActionPrincipalExpiredError: (_error) =>
-        failEngagementProblem(engagementProblem.authentication()),
-      ActionPrincipalInvalidError: (_error) =>
-        failEngagementProblem(engagementProblem.authentication()),
-      ActionPrincipalMissingError: (_error) =>
-        failEngagementProblem(engagementProblem.authentication()),
-      ActionPrincipalScopeError: (_error) =>
-        failEngagementProblem(engagementProblem.authentication()),
-      ActionPrincipalUnavailableError: (_error) => Effect.fail(engagementProblem.unavailable()),
-    }),
-  );
+  authenticateOperationPrincipal(authorization, {
+    authentication: engagementProblem.authentication,
+    unavailable: engagementProblem.unavailable,
+  });
 
 const RequestHeadersSchema = Schema.Record(
   Schema.String,

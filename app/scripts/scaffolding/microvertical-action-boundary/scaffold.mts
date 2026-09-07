@@ -47,6 +47,7 @@ const createOrAcceptOwnedMutation = (
   filePath: string,
   content: string,
   requiredMarkers: readonly string[],
+  requiredContract?: { readonly marker: string; readonly migration: string },
 ): Effect.Effect<
   Option.Option<Mutation>,
   ActionBoundaryScaffoldError | ScaffoldFailure,
@@ -67,6 +68,11 @@ const createOrAcceptOwnedMutation = (
       current.startsWith(`${ACTION_BOUNDARY_GENERATOR_HEADER}\n`) &&
       requiredMarkers.every((marker) => current.includes(marker))
     ) {
+      if (requiredContract !== undefined && !current.includes(requiredContract.marker)) {
+        return yield* scaffoldError(
+          `incompatible generated Action boundary: ${filePath}. ${requiredContract.migration}`,
+        );
+      }
       return Option.none();
     }
     return yield* scaffoldError(`refusing to overwrite existing business file: ${filePath}`);
@@ -77,11 +83,13 @@ export const renderActionPrincipalServer = (
 ): string => `${ACTION_BOUNDARY_GENERATOR_HEADER}
 // @ontos-action-boundary-owner ${vertical.appId}
 // @ontos-action-boundary-audience ${vertical.appId}
+import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
+import { makeMicroverticalHttpPrincipalAuthentication } from '@app/core-runtime/http/principal-authentication';
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import type {
   GatewayPrincipalVerificationWithRedemptionOptions,
 } from '@app/gateway-principal-verifier/server';
-import { Redacted } from 'effect';
+import { Effect, Redacted } from 'effect';
 
 export {
   ACTION_PRINCIPAL_BEARER_CHALLENGE,
@@ -117,8 +125,15 @@ export const verifyActionPrincipal = (
   options: ActionPrincipalVerificationOptions,
 ) => principalVerifier.verifyAndRedeem(Redacted.make(authorization), options);
 
-/** Shared trusted-identity acquisition for generated Actions and governed reads. */
-export const verifyOperationPrincipal = verifyActionPrincipal;
+const verifyOperationPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
+  GatewayAssertionRedemptionService.pipe(
+    Effect.flatMap((redemption) => principalVerifier.verifyAndRedeem(authorization, { redemption })),
+  );
+
+/** Shared HTTP acquisition bound to this deployment's audience-specific verifier. */
+export const authenticateOperationPrincipal = makeMicroverticalHttpPrincipalAuthentication(
+  verifyOperationPrincipal,
+);
 `;
 
 export const renderGatewayAssertionRedemptionAdapter = (
@@ -235,6 +250,11 @@ export const planActionBoundaryScaffold = (
         `@ontos-action-boundary-owner ${vertical.appId}`,
         `@ontos-action-boundary-audience ${vertical.appId}`,
       ],
+      {
+        marker: 'export const authenticateOperationPrincipal',
+        migration:
+          'Preserve owner adaptations and export authenticateOperationPrincipal using makeMicroverticalHttpPrincipalAuthentication with the audience-bound verifier; provide ActionPrincipalVerifierLive at the owning API runtime before generating governed contributions.',
+      },
     );
     const clientMutation = yield* createOrAcceptOwnedMutation(clientPath, renderClient(vertical), [
       `ACTION_GATEWAY_AUDIENCE = '${vertical.appId}'`,
