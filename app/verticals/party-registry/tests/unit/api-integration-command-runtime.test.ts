@@ -5,6 +5,7 @@ import test from 'node:test';
 import { ConfigProvider, Context, Effect, Layer, Schema } from 'effect';
 import {
   GatewayAssertionRedemptionService,
+  GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
   ReadRuntime,
   ReadHandlerNotFound,
@@ -446,7 +447,7 @@ test('missing and malformed verification configuration are retryable and never r
   );
 });
 
-test('generated governed reads authenticate through the shared adapter before starting ReadRuntime', async () => {
+test('redemption storage outages return safe retryable problems before Action and Read lifecycles', async () => {
   const assertion = await makeAssertion();
   const harness = makeActionTestHarness();
   let reads = 0;
@@ -454,6 +455,73 @@ test('generated governed reads authenticate through the shared adapter before st
     runRead: () =>
       Effect.sync(() => {
         reads += 1;
+      }).pipe(
+        Effect.andThen(
+          Effect.fail(
+            new ReadHandlerNotFound({
+              code: 'read_handler_not_found',
+              reason: 'No fixture decision',
+            }),
+          ),
+        ),
+      ),
+  };
+  const app = mounted(harness, assertion.environment, readRuntime, {
+    consume: () =>
+      Effect.fail(
+        new GatewayAssertionRedemptionUnavailableError({
+          reason: 'private redemption storage diagnostic',
+        }),
+      ),
+  });
+  const before = harness.snapshot();
+  try {
+    await forEachSequential(
+      [
+        {
+          request: commandRequest('request-search-rebuild', {}, assertion.token, {
+            'idempotency-key': 'redemption-unavailable',
+          }),
+          tag: 'PartyCommandUnavailableProblem',
+        },
+        {
+          request: decisionRequest(randomUUID(), assertion.token),
+          tag: 'PartyMatchDecisionUnavailableProblem',
+        },
+      ],
+      async ({ request, tag }) => {
+        const response = await handle(app, request);
+        assert.equal(response.status, 503);
+        assert.equal(response.headers.get('www-authenticate'), null);
+        assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
+        const body = await response.json();
+        assert.equal(body._tag, tag);
+        assert.equal(body.status, 503);
+        assert.equal(body.retryable, true);
+        const encoded = JSON.stringify(body);
+        assert.equal(encoded.includes('private redemption'), false);
+        assert.equal(encoded.includes(assertion.token), false);
+        assert.equal(encoded.includes(principal.principalId), false);
+        assert.equal(encoded.includes(principal.tenantId), false);
+        assert.equal(reads, 0);
+        assert.deepEqual(harness.snapshot(), before);
+      },
+    );
+  } finally {
+    await app.dispose();
+  }
+});
+
+test('generated governed reads authenticate through the shared adapter before starting ReadRuntime', async () => {
+  const assertion = await makeAssertion();
+  const harness = makeActionTestHarness();
+  let reads = 0;
+  const receivedPrincipals: unknown[] = [];
+  const readRuntime: ReadRuntimeService = {
+    runRead: (input) =>
+      Effect.sync(() => {
+        reads += 1;
+        receivedPrincipals.push(input.principal);
       }).pipe(
         Effect.andThen(
           Effect.fail(
@@ -479,6 +547,7 @@ test('generated governed reads authenticate through the shared adapter before st
     const valid = await handle(app, decisionRequest(randomUUID(), assertion.token));
     assert.equal(valid.status, 404);
     assert.equal(reads, 1);
+    assert.deepEqual(receivedPrincipals, [principal]);
   } finally {
     await app.dispose();
   }
@@ -524,6 +593,14 @@ test('replayed assertions are challenged before a second Action or generated Rea
     assert.equal(replayedAction.headers.get('www-authenticate'), 'Bearer');
     assert.match(replayedAction.headers.get('content-type') ?? '', /application\/problem\+json/u);
     assert.equal(harness.snapshot().invocations.length, 1);
+
+    const actionAssertionReadReplay = await handle(
+      app,
+      decisionRequest(randomUUID(), assertion.token),
+    );
+    assert.equal(actionAssertionReadReplay.status, 401);
+    assert.equal(actionAssertionReadReplay.headers.get('www-authenticate'), 'Bearer');
+    assert.equal(reads, 0);
 
     const firstRead = await handle(app, decisionRequest(randomUUID(), assertion.otherToken));
     assert.equal(firstRead.status, 404);

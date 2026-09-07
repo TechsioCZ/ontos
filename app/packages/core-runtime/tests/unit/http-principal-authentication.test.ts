@@ -134,15 +134,17 @@ test('mounted HTTP authentication maps verifier classes, challenges unusable cre
             response.headers['www-authenticate'],
             expectedStatus === 401 ? 'Bearer' : undefined,
           );
-          const body = yield* response.json.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(ProblemResponseSchema)),
+          const rawBody = yield* response.json;
+          assert.deepEqual(
+            rawBody,
+            expectedStatus === 401 ? authenticationProblem() : unavailableProblem(),
           );
+          const body = yield* Schema.decodeUnknownEffect(ProblemResponseSchema)(rawBody);
           assert.equal(
             body._tag,
             expectedStatus === 401 ? 'FixtureAuthenticationProblem' : 'FixtureUnavailableProblem',
           );
           assert.equal(body.status, expectedStatus);
-          assert.equal(Object.hasOwn(body, 'reason'), false);
         }
         assert.equal(privateOperationReached, 0);
 
