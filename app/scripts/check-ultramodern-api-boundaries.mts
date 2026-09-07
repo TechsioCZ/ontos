@@ -3,7 +3,11 @@ import { NodeFileSystem, NodePath, NodeRuntime } from '@effect/platform-node';
 import { Config, Console, Effect, FileSystem, Layer, Path, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 import { hasCompleteGeneratedModuleApiSeam } from './generated-module-api-boundary.mts';
-import { privateOwnerImportViolation } from './ultramodern-api-boundary-rules.mts';
+import {
+  privateOwnerImportViolation,
+  strictEffectRuntimeTopologyViolation,
+  usesStrictRpcRuntimeTopology,
+} from './ultramodern-api-boundary-rules.mts';
 
 class ApiBoundaryCheckFailed extends Schema.TaggedError<ApiBoundaryCheckFailed>()(
   'ApiBoundaryCheckFailed',
@@ -98,6 +102,7 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     Config.withDefault(path.resolve()),
   );
   const failures: string[] = [];
+  const sourceByFile = new Map<string, string>();
 
   const exists = (relativePath: string) =>
     fileSystem.exists(path.join(workspaceRoot, relativePath));
@@ -234,6 +239,7 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
 
     for (const file of textFiles) {
       const content = yield* readText(file);
+      sourceByFile.set(file, content);
 
       assertPrivateOwnerImports(file, content);
       assertNotContains(
@@ -298,6 +304,25 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
   });
   yield* inspectGeneratedSources;
 
+  const topologyResolverFor = (importer: string) => {
+    const resolveImport = (specifier: string) => {
+      if (!specifier.startsWith('.')) {
+        // oxlint-disable-next-line unicorn/no-useless-undefined -- The resolver's explicit miss value preserves its module-or-undefined contract.
+        return undefined;
+      }
+      const unresolved = path.normalize(path.join(path.dirname(importer), specifier));
+      const candidates = /\.[cm]?[jt]sx?$/u.test(unresolved)
+        ? [unresolved]
+        : [`${unresolved}.ts`, `${unresolved}.mts`, `${unresolved}/index.ts`];
+      const id = candidates.find((candidate) => sourceByFile.has(candidate));
+      const source = id === undefined ? undefined : sourceByFile.get(id);
+      return id === undefined || source === undefined
+        ? undefined
+        : { id, resolveImport: topologyResolverFor(id), source };
+    };
+    return resolveImport;
+  };
+
   const verticalDirectories: string[] = [];
   for (const verticalPath of allVerticalDirectories) {
     if (yield* exists(`${verticalPath}/package.json`)) {
@@ -331,30 +356,28 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
 
       if (yield* exists(apiEntry)) {
         const entry = yield* readText(apiEntry);
-        assertContains(
-          apiEntry,
+        const usesRpcRuntime = usesStrictRpcRuntimeTopology(entry, topologyResolverFor(apiEntry));
+        const runtimeTopologyViolation = strictEffectRuntimeTopologyViolation(
           entry,
-          /\bdefineEffectBff\b/u,
-          'must export a defineEffectBff(...) runtime definition.',
+          topologyResolverFor(apiEntry),
         );
-        assertContains(
-          apiEntry,
-          entry,
-          /\bHttpApiBuilder\b/u,
-          'must implement handlers through HttpApiBuilder.',
-        );
+        if (runtimeTopologyViolation !== undefined) {
+          fail(`${apiEntry}: ${runtimeTopologyViolation}.`);
+        }
         assertContains(
           apiEntry,
           entry,
           /\bLayer\b/u,
           'must compose dependencies with Effect Layer.',
         );
-        assertContains(
-          apiEntry,
-          entry,
-          /from ['"]\.\.\/shared\/api\.ts['"]/u,
-          'must import the contract from ../shared/api.ts.',
-        );
+        if (!usesRpcRuntime) {
+          assertContains(
+            apiEntry,
+            entry,
+            /from ['"]\.\.\/shared\/api\.ts['"]/u,
+            'must import the contract from ../shared/api.ts.',
+          );
+        }
       }
       if (yield* exists(backendEffectExpose)) {
         const backendExpose = yield* readText(backendEffectExpose);

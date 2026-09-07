@@ -102,6 +102,7 @@
     "@types/react-dom": "^19.2.3",
     "@typescript/native": "npm:typescript@7.0.2",
     "drizzle-kit": "1.0.0-rc.4",
+    "fast-check": "4.9.0",
     "happy-dom": "20.8.3",
     "tailwindcss": "^4.3.2",
     "typescript": "7.0.2",

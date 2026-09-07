@@ -1,17 +1,12 @@
 import {
   Cookies,
-  defineEffectBff,
   Effect,
   HttpApiBuilder,
   HttpEffect,
   HttpServerResponse,
   Layer,
 } from '@modern-js/plugin-bff/effect-edge';
-import type {
-  EffectBffDefinition,
-  EffectBffRuntime,
-  EffectRuntimeLayer,
-} from '@modern-js/plugin-bff/effect-edge';
+import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/plugin-bff/effect-edge';
 import type {
   ActionCoreError,
   ContextAccess,
@@ -47,6 +42,7 @@ import {
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import type { GatewayContextProblem } from '@app/shared-contracts';
+import { assembleEffectBffRuntime } from '@app/shared-contracts/server/effect-bff-runtime';
 import {
   Cause,
   Exit,
@@ -1997,44 +1993,36 @@ export const makeShellAuthenticationApiRuntime = (
         ),
       )
     : Layer.empty;
-  const layer = HttpApiBuilder.layer(ShellAuthenticationApi).pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        authenticationGroupLive,
-        identityGroupLive,
-        tenantGroupLive,
-        legalEntityGroupLive,
-        compositionGroupLive,
-        resourcesGroupLive,
-        gatewayContextGroupLive,
-        outboxMatcherLayer,
-      ),
-    ),
-    Layer.provide(
-      Layer.mergeAll(
-        authenticationLayer,
-        authPersistenceLive,
-        actionRuntimeLayer,
-        apiKeyServiceLive,
-        identityLifecycleLayer,
-        supportImpersonationServiceLive,
-        principalResolverLive,
-        legalEntityContextLive,
-        issuerLayer,
-        moduleStateLayer,
-        moduleCatalogLayer,
-        contextAccessLayer,
-        shellGovernedReadsLayer,
-        readRuntimeLayer,
-        runtimeObservabilityLive,
-      ),
-    ),
-    Layer.orDie,
-  ) satisfies EffectRuntimeLayer;
+  const handlerDependenciesLive = Layer.mergeAll(
+    authenticationLayer,
+    authPersistenceLive,
+    actionRuntimeLayer,
+    apiKeyServiceLive,
+    identityLifecycleLayer,
+    supportImpersonationServiceLive,
+    principalResolverLive,
+    legalEntityContextLive,
+    issuerLayer,
+    moduleStateLayer,
+    moduleCatalogLayer,
+    contextAccessLayer,
+    shellGovernedReadsLayer,
+    readRuntimeLayer,
+    runtimeObservabilityLive,
+  );
+  const apiHandlersLive = Layer.mergeAll(
+    authenticationGroupLive,
+    identityGroupLive,
+    tenantGroupLive,
+    legalEntityGroupLive,
+    compositionGroupLive,
+    resourcesGroupLive,
+    gatewayContextGroupLive,
+  ).pipe(Layer.provide(outboxMatcherLayer), Layer.provide(handlerDependenciesLive), Layer.orDie);
 
-  return defineEffectBff({
+  return assembleEffectBffRuntime({
     api: ShellAuthenticationApi,
-    layer,
+    handlers: apiHandlersLive,
   });
 };
 
