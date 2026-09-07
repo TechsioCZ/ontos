@@ -190,18 +190,21 @@ export const classifyExactStageDemoRecord = <Expected extends ExactRecord>(
   label: string,
   existing: ExactRecord | undefined,
   expected: Expected,
-): 'create' | 'existing' => {
-  if (existing === undefined) {
-    return 'create';
-  }
-  const conflictingFields = Object.entries(expected).flatMap(([key, value]) =>
-    existing[key] === value ? [] : [key],
-  );
-  if (conflictingFields.length > 0) {
-    throw new StageDemoBootstrapError({
-      code: 'stage_demo_conflict',
-      reason: `Existing ${label} conflicts with the stage demo definition (${conflictingFields.join(', ')})`,
-    });
-  }
-  return 'existing';
-};
+): Effect.Effect<'create' | 'existing', StageDemoBootstrapError> =>
+  Effect.suspend(() => {
+    if (existing === undefined) {
+      return Effect.succeed('create' as const);
+    }
+    const conflictingFields = Object.entries(expected).flatMap(([key, value]) =>
+      existing[key] === value ? [] : [key],
+    );
+    if (conflictingFields.length > 0) {
+      return Effect.fail(
+        new StageDemoBootstrapError({
+          code: 'stage_demo_conflict',
+          reason: `Existing ${label} conflicts with the stage demo definition (${conflictingFields.join(', ')})`,
+        }),
+      );
+    }
+    return Effect.succeed('existing' as const);
+  });
