@@ -36,6 +36,7 @@ import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/plug
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { partyRegistryApi } from '../../shared/api.ts';
+import { PartyCommandInvalidRequestProblemSchema } from '../../shared/command-api.ts';
 import {
   partyRegistryCommandRecoveryLive,
   partyRegistryCommandsLive,
@@ -747,6 +748,18 @@ test('correlation and idempotency are mandatory before the Core Action lifecycle
     const missingCorrelationBody = await missingCorrelation.json();
     assert.equal(missingCorrelationBody._tag, 'PartyCommandInvalidRequestProblem');
     assert.equal(runtimeCalls, 1);
+    const oversizedCorrelation = await handle(
+      app,
+      commandRequest('request-search-rebuild', {}, assertion.token, {
+        'idempotency-key': 'oversized-correlation-test',
+        'x-correlation-id': 'x'.repeat(201),
+      }),
+    );
+    assert.equal(oversizedCorrelation.status, 400);
+    Schema.decodeUnknownSync(PartyCommandInvalidRequestProblemSchema)(
+      await oversizedCorrelation.json(),
+    );
+    assert.equal(runtimeCalls, 1);
     assert.equal(harness.snapshot().invocations.length, 0);
   } finally {
     await app.dispose();
@@ -755,7 +768,7 @@ test('correlation and idempotency are mandatory before the Core Action lifecycle
 
 test('the governed runner passes safe transport metadata through one complete Action execution', async () => {
   const assertion = await makeAssertion();
-  const correlationId = `correlation-transport-${'x'.repeat(201)}`;
+  const correlationId = 'x'.repeat(200);
   const harness = makeActionTestHarness({
     actionPermission: 'allowed',
     tenantPermission: 'allowed',

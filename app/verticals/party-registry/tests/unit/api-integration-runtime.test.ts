@@ -12,6 +12,7 @@ import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { makePartyRegistryApiRuntime, partyRegistryFoundationLive } from '../../api/index.ts';
 import { partyRegistryApi, partyRegistryReadinessSchema } from '../../shared/api.ts';
+import { PartyCommandInvalidRequestProblemSchema } from '../../shared/command-api.ts';
 import { PartyDetailAuthenticationProblemSchema } from '../../shared/apis/party-detail.ts';
 import { PartySearchProjectionGateway } from '../../shared/domain/search-projection-gateway.ts';
 import type { PartySearchProjectionGatewayService } from '../../shared/domain/search-projection-gateway.ts';
@@ -290,7 +291,36 @@ test('builds every declared handler and preserves owner-local CORS through the i
       method: 'DOCUMENT_REVIEW',
       source: 'USER_ASSERTION',
     };
+    const addContactPointPayload = {
+      contactPoint: { preferred: false, type: 'EMAIL', value: 'contact@example.test' },
+      partyRef,
+      privacyClassification: 'PUBLIC',
+      provenance: contactPointProvenance,
+      validFrom: '2026-09-07T00:00:00.000Z',
+      verification: { state: 'UNVERIFIED' },
+    } as const;
+    const invalidContactResponse = await runtime.handler(
+      new Request('http://localhost/party-registry/actions/add-contact-point', {
+        body: JSON.stringify({
+          ...addContactPointPayload,
+          contactPoint: { ...addContactPointPayload.contactPoint, value: 'not-an-email' },
+        }),
+        headers: { ...headers, 'idempotency-key': 'invalid-contact-point' },
+        method: 'POST',
+      }),
+    );
+    assert.equal(invalidContactResponse.status, 400);
+    assert.match(
+      invalidContactResponse.headers.get('content-type') ?? '',
+      /application\/problem\+json/u,
+    );
+    Schema.decodeUnknownSync(PartyCommandInvalidRequestProblemSchema)(
+      await invalidContactResponse.json(),
+    );
+    assert.equal(actionCalls, 0);
+    assert.equal(redemptionCalls, 0);
     const manualPayloads = {
+      '/party-registry/actions/add-contact-point': addContactPointPayload,
       '/party-registry/actions/add-party-official-identifier': {
         identifier: {
           identifierType: 'ICO',
@@ -328,6 +358,14 @@ test('builds every declared handler and preserves owner-local CORS through the i
         target: { type: 'WHOLE_CONTACT_POINT' },
       },
       '/party-registry/actions/match-party': { candidate },
+      '/party-registry/actions/update-party': {
+        displayName: 'Updated runtime assembly proof',
+        expectedRevision: 1,
+        partyRef,
+        provenanceMethod: 'DOCUMENT',
+        provenanceSource: 'runtime-assembly-proof',
+        validFrom: '2026-09-07T00:00:00.000Z',
+      },
       '/party-registry/actions/update-contact-point': {
         change: { preferred: true, type: 'SET_CHANNEL_PREFERRED' },
         contactPointRef,

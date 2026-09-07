@@ -56,6 +56,10 @@ const runPartyCommand = Effect.fn('PartyCommandServer.runPartyCommand')(
     idempotencyKey: string | undefined,
     request: HttpServerRequest.HttpServerRequest,
   ) {
+    const correlationId = request.headers['x-correlation-id'];
+    if (correlationId !== undefined && correlationId.length > 200) {
+      return yield* Effect.fail(partyCommandProblem.invalid());
+    }
     const traceId = request.headers['x-trace-id'];
     return yield* runActionHttp<
       PayloadSchema,
@@ -111,7 +115,7 @@ const runWirePayloadPartyCommand = Effect.fn('PartyCommandServer.runWirePayloadP
   ) {
     const decodedPayload = yield* Schema.decodeUnknownEffect(registration.descriptor.payloadSchema)(
       payload,
-    ).pipe(Effect.orDie);
+    ).pipe(Effect.mapError(partyCommandProblem.invalid));
     return yield* runPartyCommand<
       PayloadSchema,
       ResultSchema,
