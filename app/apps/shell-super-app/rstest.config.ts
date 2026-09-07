@@ -53,21 +53,32 @@ const encodedSiteUrl = Result.getOrThrow(
 );
 
 export default defineConfig({
-  clearMocks: true,
-  extends: withModernConfig({
-    configPath: './modern.rstest.config.ts',
-  }),
-  include: ['tests/unit/**/*.{test,spec}.?(c|m)[jt]s?(x)'],
-  output: {
-    module: false,
-  },
-  restoreMocks: true,
-  source: {
-    define: {
-      ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: encodedReferenceTopology,
-      ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: encodedModuleDeploymentAllowlist,
-      ULTRAMODERN_SITE_URL: encodedSiteUrl,
+  projects: [
+    {
+      clearMocks: true,
+      extends: withModernConfig({
+        configPath: './modern.rstest.config.ts',
+      }),
+      include: ['tests/unit/**/*.{test,spec}.?(c|m)[jt]s?(x)'],
+      name: 'unit',
+      output: {
+        module: false,
+      },
+      restoreMocks: true,
+      source: {
+        define: {
+          ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: encodedReferenceTopology,
+          ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: encodedModuleDeploymentAllowlist,
+          ULTRAMODERN_SITE_URL: encodedSiteUrl,
+        },
+      },
+      testEnvironment: 'happy-dom',
     },
-  },
-  testEnvironment: 'happy-dom',
+    {
+      include: ['tests/integration/**/*.test.ts'],
+      name: 'integration',
+      testEnvironment: 'node',
+      testTimeout: 30_000,
+    },
+  ],
 });

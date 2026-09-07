@@ -21,8 +21,8 @@
     "serve": "modern serve",
     "stage:bootstrap-demo": "sh scripts/bootstrap-stage-demo.sh",
     "test:e2e": "playwright test",
-    "test:integration": "node --test tests/integration/*.test.ts",
-    "test:unit": "rstest",
+    "test:integration": "rstest --project integration",
+    "test:unit": "rstest --project unit",
     "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
   },
   "dependencies": {
@@ -77,7 +77,8 @@
     "tailwindcss": "^4.3.2",
     "typescript": "7.0.2",
     "wrangler": "4.110.0",
-    "zephyr-rspack-plugin": "1.2.4"
+    "zephyr-rspack-plugin": "1.2.4",
+    "@app/effect-rstest": "workspace:*"
   },
   "modernjs": {
     "preset": "presetUltramodern",

@@ -54,9 +54,9 @@
     "dev": "node ../../scripts/prepare-dev-module-contract.mts party-registry && modern dev",
     "dev:worker": "node --experimental-strip-types ./src/worker-host/main.ts",
     "serve": "modern serve",
-    "test:component": "rstest --config rstest.config.ts",
-    "test:integration": "node --test tests/integration/*.test.ts",
-    "test:unit": "node --test tests/unit/*.test.ts",
+    "test:component": "rstest --project component",
+    "test:integration": "rstest --project integration",
+    "test:unit": "rstest --project unit",
     "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json",
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
@@ -108,7 +108,8 @@
     "tailwindcss": "^4.3.2",
     "typescript": "7.0.2",
     "wrangler": "4.110.0",
-    "zephyr-rspack-plugin": "1.2.4"
+    "zephyr-rspack-plugin": "1.2.4",
+    "@app/effect-rstest": "workspace:*"
   },
   "modernjs": {
     "preset": "presetUltramodern",

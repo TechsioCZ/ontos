@@ -18,6 +18,9 @@
     },
     {
       "path": "verticals/party-registry"
+    },
+    {
+      "path": "packages/effect-rstest"
     }
   ]
 }
