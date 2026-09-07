@@ -1,13 +1,13 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { DateTime, Effect, Match, Schema } from 'effect';
 // @effect-diagnostics asyncFunction:off globalDate:off -- Existing compatibility boundary; expires: 2026-12-31.
-/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type, unicorn/no-thenable -- Focused harness implements only the owner service's Drizzle seam. expires: 2026-12-31. */
+/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- Focused harness implements only the owner service's Drizzle seam. expires: 2026-12-31. */
+import type { SQL } from 'drizzle-orm';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { SQL } from 'drizzle-orm';
-import { DateTime, Match, Schema } from 'effect';
 import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
-import { parties, partyIdentifierClaims, partyOfficialIdentifiers } from '../../src/db/schema.ts';
 import type { partyAliases } from '../../src/db/schema.ts';
+import { parties, partyIdentifierClaims, partyOfficialIdentifiers } from '../../src/db/schema.ts';
 import {
   addOfficialIdentifierRecord,
   endOfficialIdentifierRecord,
@@ -94,27 +94,27 @@ const harness = (
       }
       return [];
     };
-    const chain = {
-      for: () => {
-        lockedTables.push(table);
-        return Promise.resolve(rows());
+    const chain = Object.assign(
+      Effect.sync(() => rows()),
+      {
+        for: () => {
+          lockedTables.push(table);
+          return Effect.succeed(rows());
+        },
+        from: (value: HarnessTable) => {
+          table = value;
+          return chain;
+        },
+        limit: () => chain,
+        where: () => chain,
       },
-      from: (value: HarnessTable) => {
-        table = value;
-        return chain;
-      },
-      limit: () => chain,
-      then: <Result>(
-        fulfilled?: ((value: readonly Readonly<Record<string, unknown>>[]) => Result) | null,
-      ) => Promise.resolve(rows()).then(fulfilled),
-      where: () => chain,
-    };
+    );
     return chain;
   };
   const update = () => {
     let values: Readonly<Record<string, unknown>> = {};
     const chain = {
-      returning: () => Promise.resolve([{ ...current, ...values }]),
+      returning: () => Effect.succeed([{ ...current, ...values }]),
       set: (next: Readonly<Record<string, unknown>>) => {
         values = next;
         updates.push(next);
@@ -127,11 +127,10 @@ const harness = (
   const insert = (table: HarnessTable) => ({
     values: (values: Readonly<Record<string, unknown>>) => {
       inserts.push({ table, values });
-      return {
-        returning: () => Promise.resolve([{ ...current, ...values }]),
-        then: <Result>(fulfilled?: ((value: null) => Result) | null) =>
-          Promise.resolve(null).then(fulfilled),
-      };
+      return Object.assign(
+        Effect.sync(() => null),
+        { returning: () => Effect.succeed([{ ...current, ...values }]) },
+      );
     },
   });
   // SAFETY: this harness implements precisely the Drizzle fluent operations used by the tested service.
@@ -139,7 +138,7 @@ const harness = (
     delete: () => ({
       where: () => {
         deletes += 1;
-        return Promise.resolve();
+        return Effect.void;
       },
     }),
     insert,

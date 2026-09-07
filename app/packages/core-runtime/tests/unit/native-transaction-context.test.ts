@@ -1,28 +1,22 @@
 // @effect-diagnostics asyncFunction:off -- Node test runner and foreign driver fixtures require Promises; expires: 2026-12-31.
-import { runEffectTestPromise } from '../support/effect-runtime.ts';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { Pool } from 'pg';
-import { coreRelations } from '../../src/db/schema.ts';
-import assert from 'node:assert/strict';
-import test from 'node:test';
 import { Clock, Config, ConfigProvider, Context, Effect, Logger, Option, References } from 'effect';
 import { TestClock } from 'effect/testing';
-import { runCoreTransaction } from '../../src/db/transaction-bridge.ts';
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { makeTestDatabase } from '../support/database.ts';
+import { runEffectTestPromise } from '../support/effect-runtime.ts';
 
-// Drizzle constructs the transaction; the client fixture performs no network I/O.
-const query = async () => ({ rows: [] });
-const pool = new Pool();
-Object.defineProperty(pool, 'connect', { value: async () => ({ query, release: () => {} }) });
-Object.defineProperty(pool, 'query', { value: query });
-const executor = drizzle({ client: pool, relations: coreRelations });
+const executor = makeTestDatabase(() => Effect.succeed([]));
 
 test('preserves a caller Context.Reference override instead of its default', async () => {
   const fallback = { source: 'default' };
   const override = { source: 'caller' };
-  const reference = Context.Reference('bridge-context/reference', { defaultValue: () => fallback });
+  const reference = Context.Reference('native-transaction-context/reference', {
+    defaultValue: () => fallback,
+  });
   assert.equal(await runEffectTestPromise(reference), fallback);
   const actual = await runEffectTestPromise(
-    runCoreTransaction(executor, () => reference).pipe(Effect.provideService(reference, override)),
+    executor.transaction(() => reference).pipe(Effect.provideService(reference, override)),
   );
   assert.equal(actual, override);
   assert.equal(await runEffectTestPromise(reference), fallback);
@@ -43,12 +37,14 @@ test('uses caller Clock operations inside the transaction', async () => {
       }),
   };
   const actual = await runEffectTestPromise(
-    runCoreTransaction(executor, () =>
-      Effect.gen(function* callerProgram() {
-        yield* Effect.sleep('1 millis');
-        return yield* Clock.currentTimeMillis;
-      }),
-    ).pipe(Effect.provideService(Clock.Clock, clock)),
+    executor
+      .transaction(() =>
+        Effect.gen(function* callerProgram() {
+          yield* Effect.sleep('1 millis');
+          return yield* Clock.currentTimeMillis;
+        }),
+      )
+      .pipe(Effect.provideService(Clock.Clock, clock)),
   );
   assert.equal(actual, 1234);
   assert.equal(sleeps, 1);
@@ -59,20 +55,20 @@ test('preserves a caller TestClock inside the transaction', async () => {
     Effect.gen(function* virtualClockProgram() {
       const clock = yield* TestClock.make();
       yield* clock.setTime(1234);
-      return yield* runCoreTransaction(executor, () => Clock.currentTimeMillis).pipe(
-        Effect.provideService(Clock.Clock, clock),
-      );
+      return yield* executor
+        .transaction(() => Clock.currentTimeMillis)
+        .pipe(Effect.provideService(Clock.Clock, clock));
     }).pipe(Effect.scoped),
   );
   assert.equal(actual, 1234);
 });
 
 test('loads configuration from the caller provider inside the transaction', async () => {
-  const provider = ConfigProvider.fromUnknown({ BRIDGE_CONTEXT_TEST_VALUE: 'caller-config' });
+  const provider = ConfigProvider.fromUnknown({ NATIVE_CONTEXT_TEST_VALUE: 'caller-config' });
   const actual = await runEffectTestPromise(
-    runCoreTransaction(executor, () => Config.string('BRIDGE_CONTEXT_TEST_VALUE')).pipe(
-      Effect.provideService(ConfigProvider.ConfigProvider, provider),
-    ),
+    executor
+      .transaction(() => Config.string('NATIVE_CONTEXT_TEST_VALUE'))
+      .pipe(Effect.provideService(ConfigProvider.ConfigProvider, provider)),
   );
   assert.equal(actual, 'caller-config');
 });
@@ -81,7 +77,7 @@ test('preserves the caller span and parents transaction child spans to it', asyn
   const actual = await runEffectTestPromise(
     Effect.gen(function* callerProgram() {
       const caller = yield* Effect.currentSpan;
-      const inner = yield* runCoreTransaction(executor, () =>
+      const inner = yield* executor.transaction(() =>
         Effect.gen(function* transactionProgram() {
           const parent = yield* Effect.currentParentSpan;
           const child = yield* Effect.currentSpan.pipe(Effect.withSpan('transaction-child'));
@@ -91,9 +87,12 @@ test('preserves the caller span and parents transaction child spans to it', asyn
       return { caller, ...inner };
     }).pipe(Effect.withSpan('transaction-caller')),
   );
-  assert.equal(actual.parent, actual.caller);
+  assert.ok('name' in actual.parent);
+  assert.equal(actual.parent.name, 'sql.transaction');
+  assert.ok(Option.isSome(actual.parent.parent));
+  assert.equal(actual.parent.parent.value, actual.caller);
   assert.ok(Option.isSome(actual.child.parent));
-  assert.equal(actual.child.parent.value, actual.caller);
+  assert.equal(actual.child.parent.value, actual.parent);
 });
 
 test('emits transaction logs with caller annotations and logger', async () => {
@@ -102,10 +101,12 @@ test('emits transaction logs with caller annotations and logger', async () => {
     records.push(fiber.getRef(References.CurrentLogAnnotations));
   });
   await runEffectTestPromise(
-    runCoreTransaction(executor, () => Effect.logInfo('transaction-body')).pipe(
-      Effect.annotateLogs({ operation: 'context-test', requestId: 'bridge-request' }),
-      Effect.provideService(Logger.CurrentLoggers, new Set([logger])),
-    ),
+    executor
+      .transaction(() => Effect.logInfo('transaction-body'))
+      .pipe(
+        Effect.annotateLogs({ operation: 'context-test', requestId: 'native-request' }),
+        Effect.provideService(Logger.CurrentLoggers, new Set([logger])),
+      ),
   );
-  assert.deepEqual(records, [{ operation: 'context-test', requestId: 'bridge-request' }]);
+  assert.deepEqual(records, [{ operation: 'context-test', requestId: 'native-request' }]);
 });

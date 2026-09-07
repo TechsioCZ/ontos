@@ -1,18 +1,18 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type, unicorn/no-thenable -- This harness implements the narrow Drizzle PromiseLike boundary exercised by the owner-local matching service. expires: 2026-12-31. */
+/* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This harness implements the narrow Drizzle Effect boundary exercised by the owner-local matching service. expires: 2026-12-31. */
+import type { SQL } from 'drizzle-orm';
+import { DateTime, Effect, Schema } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DateTime, Effect, Schema } from 'effect';
-import type { SQL } from 'drizzle-orm';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import type { PartyCandidate } from '../../shared/domain/identity-contracts.ts';
 import { makePartyRef, partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
-import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
+import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
-import { resolveDuplicateCandidateMatchAction } from '../../src/actions/resolve-duplicate-candidate-match.action.ts';
 import { matchPartyAction } from '../../src/actions/match-party.action.ts';
+import { resolveDuplicateCandidateMatchAction } from '../../src/actions/resolve-duplicate-candidate-match.action.ts';
 import { partyMatchRead } from '../../src/api/party-match.read.ts';
 import {
   duplicateCandidateCaseParties,
@@ -24,9 +24,9 @@ import {
   partyOfficialIdentifiers,
 } from '../../src/db/schema.ts';
 import {
-  matchParty,
   candidateFingerprint,
   createOrMatchParty,
+  matchParty,
   resolveDuplicateCandidateCreate,
   resolveDuplicateCandidateMatch,
 } from '../../src/services/party-matching-persistence.service.ts';
@@ -118,23 +118,24 @@ const harness = (queues: ReadonlyMap<unknown, readonly Rows[]> = new Map()) => {
     let rows: Rows | undefined;
     const read = { locked: false, table: selected };
     const resolve = () => (rows ??= results.get(selected)?.shift() ?? []);
-    const chain = {
-      for: () => {
-        read.locked = true;
-        return chain;
+    const chain = Object.assign(
+      Effect.sync(() => resolve()),
+      {
+        for: () => {
+          read.locked = true;
+          return chain;
+        },
+        from: (table: HarnessTable) => {
+          selected = table;
+          read.table = table;
+          reads.push(read);
+          return chain;
+        },
+        limit: () => chain,
+        orderBy: () => chain,
+        where: () => chain,
       },
-      from: (table: HarnessTable) => {
-        selected = table;
-        read.table = table;
-        reads.push(read);
-        return chain;
-      },
-      limit: () => chain,
-      orderBy: () => chain,
-      then: <Result>(onfulfilled?: ((value: Rows) => Result) | null) =>
-        Promise.resolve(resolve()).then(onfulfilled),
-      where: () => chain,
-    };
+    );
     return chain;
   };
   const insert = (table: HarnessTable) => {
@@ -151,28 +152,30 @@ const harness = (queues: ReadonlyMap<unknown, readonly Rows[]> = new Map()) => {
       }
       return [];
     };
-    const chain = {
-      returning: () => Promise.resolve(returned()),
-      then: <Result>(onfulfilled?: ((value: Rows) => Result) | null) =>
-        Promise.resolve(returned()).then(onfulfilled),
-      values: (input: Row | readonly Row[]) => {
-        values = input;
-        inserts.push({ table, values });
-        return chain;
+    const chain = Object.assign(
+      Effect.sync(() => returned()),
+      {
+        returning: () => Effect.succeed(returned()),
+        values: (input: Row | readonly Row[]) => {
+          values = input;
+          inserts.push({ table, values });
+          return chain;
+        },
       },
-    };
+    );
     return chain;
   };
   const update = (table: HarnessTable) => {
-    const chain = {
-      set: (values: Row) => {
-        updates.push({ table, values });
-        return chain;
+    const chain = Object.assign(
+      Effect.sync(() => []),
+      {
+        set: (values: Row) => {
+          updates.push({ table, values });
+          return chain;
+        },
+        where: () => chain,
       },
-      then: <Result>(onfulfilled?: ((value: Rows) => Result) | null) =>
-        Promise.resolve([]).then(onfulfilled),
-      where: () => chain,
-    };
+    );
     return chain;
   };
   // SAFETY: this test double implements exactly the fluent methods called by the persistence seam.
