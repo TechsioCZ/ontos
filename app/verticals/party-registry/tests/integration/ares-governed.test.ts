@@ -57,7 +57,7 @@ import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
 import { updatePartyAction } from '../../src/actions/update-party.action.ts';
 import type { AresApplyRequest } from '../../src/api/action-gateway.ts';
-import { makeActionGateway } from '../../src/api/action-gateway.ts';
+import { makeOperationGateway } from '../../src/api/action-gateway.ts';
 import { executeAresLookupWithAuthorization } from '../../src/api/ares-lookup-client.ts';
 import {
   correctPartyFactWithAuthorization,
@@ -162,7 +162,7 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
           promiseEffect(sign.bind(undefined, fixture.manager)).pipe(
             Effect.map((signedToken) => `Bearer ${signedToken}`),
           );
-        const gateway = makeActionGateway(() =>
+        const gateway = makeOperationGateway(() =>
           promiseEffect(sign.bind(undefined, fixture.manager)).pipe(
             Effect.map((signedToken) => ({ expiresAt: 0, token: signedToken })),
           ),
@@ -433,7 +433,7 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
         assert.equal(replay.skipped.length, 3);
         const afterReplay = yield* state();
         assert.equal(afterReplay.core.events.length, persisted.core.events.length);
-        const deniedGateway = makeActionGateway(() =>
+        const deniedGateway = makeOperationGateway(() =>
           promiseEffect(sign.bind(undefined, fixture.denied)).pipe(
             Effect.map((signedToken) => ({ expiresAt: 0, token: signedToken })),
           ),

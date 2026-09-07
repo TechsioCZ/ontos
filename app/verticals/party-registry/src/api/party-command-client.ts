@@ -166,7 +166,7 @@ const invoke = <Success, Failure>(
   operation: (gatewayAssertion: string) => Effect.Effect<Success, Failure>,
 ) =>
   Effect.promise(() => import('./action-gateway.ts')).pipe(
-    Effect.flatMap(({ actionGateway }) => actionGateway.invoke(operation, options.gateway)),
+    Effect.flatMap(({ operationGateway }) => operationGateway.invoke(operation, options.gateway)),
   );
 
 export const resolvePartyCommandCommitWithAuthorization = (

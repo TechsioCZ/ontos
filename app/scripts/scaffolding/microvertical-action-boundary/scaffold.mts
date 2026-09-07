@@ -169,38 +169,26 @@ export const GatewayAssertionRedemptionLive = Layer.succeed(
 const renderClient = (vertical: VerticalMetadata): string => `${ACTION_BOUNDARY_GENERATOR_HEADER}
 // @ontos-action-boundary-owner ${vertical.appId}
 // @ontos-action-boundary-audience ${vertical.appId}
-import { issueGatewayContext } from '@app/shared-contracts';
-import type {
-  GatewayContextClientEffect,
-  GatewayContextClientOptions,
-  GatewayContextResponse,
+import {
+  issueGatewayContext,
+  makeOperationGateway as makeSharedOperationGateway,
 } from '@app/shared-contracts';
-import { Effect } from 'effect';
+import type {
+  GatewayContextClientError,
+  OperationGatewayIssuer as SharedOperationGatewayIssuer,
+} from '@app/shared-contracts';
 
 export const ACTION_GATEWAY_AUDIENCE = '${vertical.appId}' as const;
 
-export type ActionGatewayIssuer = (
-  payload: { readonly audience: typeof ACTION_GATEWAY_AUDIENCE },
-  options?: GatewayContextClientOptions,
-) => GatewayContextClientEffect<GatewayContextResponse>;
+export type OperationGatewayIssuer = SharedOperationGatewayIssuer<
+  typeof ACTION_GATEWAY_AUDIENCE,
+  GatewayContextClientError
+>;
 
-export type ActionGatewayAttempt<Success, Failure> = (
-  authorization: string,
-) => Effect.Effect<Success, Failure>;
+export const makeOperationGateway = (acquire: OperationGatewayIssuer = issueGatewayContext) =>
+  makeSharedOperationGateway(ACTION_GATEWAY_AUDIENCE, acquire);
 
-export const makeActionGateway = (acquire: ActionGatewayIssuer = issueGatewayContext) => ({
-  invoke: <Success, Failure>(
-    attempt: ActionGatewayAttempt<Success, Failure>,
-    options: GatewayContextClientOptions = {},
-  ) =>
-    acquire({ audience: ACTION_GATEWAY_AUDIENCE }, options).pipe(
-      Effect.flatMap(({ token }) => attempt(\`Bearer \${token}\`)),
-    ),
-});
-
-export const actionGateway = makeActionGateway();
-export const makeOperationGateway = makeActionGateway;
-export const operationGateway = actionGateway;
+export const operationGateway = makeOperationGateway();
 `;
 
 export const planActionBoundaryScaffold = (
@@ -258,7 +246,7 @@ export const planActionBoundaryScaffold = (
     );
     const clientMutation = yield* createOrAcceptOwnedMutation(clientPath, renderClient(vertical), [
       `ACTION_GATEWAY_AUDIENCE = '${vertical.appId}'`,
-      'makeActionGateway',
+      'makeOperationGateway',
     ]);
     const redemptionMutation = yield* createOrAcceptOwnedMutation(
       redemptionPath,

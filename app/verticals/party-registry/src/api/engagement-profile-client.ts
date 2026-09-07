@@ -15,7 +15,7 @@ import type {
   PartyRegistryReadiness,
   PersonEngagementLifecyclePayload,
 } from '../../shared/api.ts';
-import { actionGateway } from './action-gateway.ts';
+import { operationGateway } from './action-gateway.ts';
 import {
   authenticatePartyRegistryHttpRequest,
   createPartyRegistryHttpClient,
@@ -62,7 +62,7 @@ const invoke = <Success, Failure>(
   context: OperationContext,
   operation: (client: ContactsClient) => Effect.Effect<Success, Failure>,
 ) =>
-  actionGateway.invoke((authorization) => {
+  operationGateway.invoke((authorization) => {
     const operationContext = options.operationContext ?? context;
     const requestContext = authenticatePartyRegistryHttpRequest(
       partyRegistryHttpRequestContext({ ...options, operationContext }),
