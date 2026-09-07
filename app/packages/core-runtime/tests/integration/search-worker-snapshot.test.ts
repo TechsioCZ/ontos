@@ -1,26 +1,43 @@
+import { makeEffectTestCallback as nativeTestCallback } from '@app/core-runtime/testing/effect-runtime';
 import { NodeServices } from '@effect/platform-node';
-import assert from 'node:assert/strict';
-import test from 'node:test';
 import { eq, sql } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { Cause, Crypto, Deferred, Effect, Exit, Fiber, ManagedRuntime } from 'effect';
-import { Pool } from 'pg';
+import {
+  Cause,
+  Crypto,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  ManagedRuntime,
+  Exit as NativeExit,
+  Scope as NativeScope,
+} from 'effect';
+import assert from 'node:assert/strict';
+import test, { after as afterNativeDatabase } from 'node:test';
 import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
+import { Pool } from 'pg';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations, domainEvents } from '../../src/db/schema.ts';
-import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import type { OutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
-import {
-  makeCoreSearchWorkerSnapshot,
-  makePostgresCoreSearchSnapshotBackend,
-} from '../../src/search/worker-snapshot.ts';
+import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import type {
   CoreSearchSnapshotReadExecutor,
   CoreSearchWorkerSnapshotService,
 } from '../../src/search/worker-snapshot.ts';
+import {
+  makeCoreSearchWorkerSnapshot,
+  makePostgresCoreSearchSnapshotBackend,
+} from '../../src/search/worker-snapshot.ts';
+import { makeTestDatabaseFromPool } from '../support/database.ts';
+import { runEffectTestSync as runNativeSync } from '../support/effect-runtime.ts';
 
+const nativeDatabaseScope = runNativeSync(NativeScope.make());
 const databaseEffect = <Value>(operation: () => PromiseLike<Value>) =>
   Effect.tryPromise(() => operation());
+afterNativeDatabase(
+  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
+);
+
 const workerSnapshotRuntime = ManagedRuntime.make(NodeServices.layer);
 const queryPromise = <Row extends QueryResultRow = QueryResultRow>(
   client: Pool | PoolClient,
@@ -31,25 +48,21 @@ const connectPromise = (pool: Pool): PromiseLike<PoolClient> => pool.connect();
 const endPromise = (pool: Pool): PromiseLike<void> => pool.end();
 
 const readLegalEntitySettings = (executor: CoreSearchSnapshotReadExecutor, eventId: string) =>
-  databaseEffect(() =>
-    executor
-      .select({
-        isolation: sql<string>`current_setting('transaction_isolation')`,
-        legalEntity: sql<string>`current_setting('ontos.legal_entity_id')`,
-        readOnly: sql<string>`current_setting('transaction_read_only')`,
-        tenant: sql<string>`current_setting('ontos.tenant_id')`,
-      })
-      .from(domainEvents)
-      .where(eq(domainEvents.domainEventId, eventId)),
-  );
+  executor
+    .select({
+      isolation: sql<string>`current_setting('transaction_isolation')`,
+      legalEntity: sql<string>`current_setting('ontos.legal_entity_id')`,
+      readOnly: sql<string>`current_setting('transaction_read_only')`,
+      tenant: sql<string>`current_setting('ontos.tenant_id')`,
+    })
+    .from(domainEvents)
+    .where(eq(domainEvents.domainEventId, eventId));
 
 const readTenantMaxVersion = (executor: CoreSearchSnapshotReadExecutor, tenantId: string) =>
-  databaseEffect(() =>
-    executor
-      .select({ version: sql<string>`max(${domainEvents.tenantSequenceNo})::text` })
-      .from(domainEvents)
-      .where(eq(domainEvents.tenantId, tenantId)),
-  );
+  executor
+    .select({ version: sql<string>`max(${domainEvents.tenantSequenceNo})::text` })
+    .from(domainEvents)
+    .where(eq(domainEvents.tenantId, tenantId));
 
 const readSnapshotPosition = (
   source: CoreSearchWorkerSnapshotService,
@@ -97,7 +110,9 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
   });
   const source = makeCoreSearchWorkerSnapshot(
     makePostgresCoreSearchSnapshotBackend({
-      executor: drizzle({ client: runtimePool, relations: coreRelations }),
+      executor: yield* makeTestDatabaseFromPool(runtimePool, coreRelations).pipe(
+        NativeScope.provide(nativeDatabaseScope),
+      ),
     }),
   );
   const insertEvent = (id: string) =>

@@ -1,13 +1,14 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 /* oxlint-disable sonarjs/use-type-alias, typescript/no-unsafe-type-assertion -- Existing compatibility boundary; expires: 2026-12-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
+import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { Cause, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
-import { Pool } from 'pg';
-import { defineRead } from '../../src/reads/definition.ts';
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
+import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { OperationContextUnavailable } from '../../src/operations/errors.ts';
+import { defineRead } from '../../src/reads/definition.ts';
 import {
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
@@ -15,9 +16,7 @@ import {
   ReadPolicyDenied,
 } from '../../src/reads/errors.ts';
 import { makeReadRuntime, READ_RUNTIME_STAGES } from '../../src/reads/runtime.ts';
-import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import { OperationContextUnavailable } from '../../src/operations/errors.ts';
-import { coreRelations } from '../../src/db/schema.ts';
+import { makeTestDatabase } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
 const scope = Object.freeze({
@@ -63,48 +62,40 @@ const makeHarness = (
   let evidence = 0;
   let tenantPermissionChecks = 0;
   const evidenceRows: EvidenceRow[] = [];
-  const QueryConfigSchema = Schema.Struct({ text: Schema.String });
-  const query = async <Query, Values>(queryInput: Query, values?: Values) => {
-    const { text } = Schema.decodeUnknownSync(QueryConfigSchema)(queryInput);
-    if (text.includes('data_access_events')) {
-      if (options.failEvidence === true) {
-        throw new Error('private persistence detail');
+  const query = (text: string, values: readonly unknown[]) =>
+    Effect.gen(function* executeReadQuery() {
+      if (text.includes('data_access_events')) {
+        if (options.failEvidence === true) {
+          return yield* new SqlError({
+            reason: new ConnectionError({ cause: new Error('private persistence detail') }),
+          });
+        }
+        const queryHash = values
+          .filter(Predicate.isString)
+          .find((value) => /^[\da-f]{64}$/u.test(value));
+        evidenceRows.push(queryHash === undefined ? {} : { queryHash });
+        evidence += 1;
       }
-      const queryHash = Array.isArray(values)
-        ? values.find((value) => Predicate.isString(value) && /^[\da-f]{64}$/u.test(value))
-        : undefined;
-      evidenceRows.push(queryHash === undefined ? {} : { queryHash });
-      evidence += 1;
-    }
-    return text.includes('current_setting')
-      ? {
-          rows: [
+      return text.includes('current_setting')
+        ? [
             {
               legal_entity_id: options.resolvedScope?.legalEntityId ?? '',
               tenant_id: scope.tenantId,
             },
-          ],
-        }
-      : { rows: [] };
-  };
-  const pool = new Pool();
-  Object.defineProperty(pool, 'connect', {
-    value: async () => ({ query, release: () => {} }),
-  });
-  Object.defineProperty(pool, 'query', { value: query });
-  const database = {
-    executor: drizzle({ client: pool, relations: coreRelations }),
-  };
+          ]
+        : [];
+    });
+  const database = { executor: makeTestDatabase(query) };
   const transact = database.executor.transaction.bind(database.executor);
-  Object.defineProperty(database.executor, 'transaction', {
-    value: async (...args: Parameters<typeof transact>) => {
-      try {
-        return await transact(...args);
-      } finally {
-        options.transactionEvents?.push('transaction_settled');
-      }
-    },
-  });
+  const transaction: typeof database.executor.transaction = (body) =>
+    transact(body).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          options.transactionEvents?.push('transaction_settled');
+        }),
+      ),
+    );
+  Object.defineProperty(database.executor, 'transaction', { value: transaction });
   const stages: string[] = [];
   const runtime = makeReadRuntime(
     database,

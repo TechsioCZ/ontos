@@ -1,15 +1,15 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { getTableName } from 'drizzle-orm';
-import type { AnyColumn, Query, SQL, Table } from 'drizzle-orm';
-import { PgDialect } from 'drizzle-orm/pg-core';
-import { DateTime, Effect, Result } from 'effect';
 import type {
   CoreSearchSnapshotReadExecutor,
   CoreSearchWorkerSnapshotService,
   OutboxWorkerHandlerContext,
 } from '@app/core-runtime';
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import type { AnyColumn, Query, SQL, Table } from 'drizzle-orm';
+import { getTableName } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import { DateTime, Effect, Result } from 'effect';
+import assert from 'node:assert/strict';
+import test from 'node:test';
 import { makePartySearchProjectionSource } from '../../src/services/party-search-projection-source.service.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -54,7 +54,7 @@ const harness = (
         return {
           where: (condition: SQL) => {
             filters[name] = new PgDialect().sqlToQuery(condition);
-            return Promise.resolve(rows[name] ?? []);
+            return Effect.succeed(rows[name] ?? []);
           },
         };
       },

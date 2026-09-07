@@ -1,12 +1,18 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import {
+  makeEffectTestCallback as nativeTestCallback,
+  runEffectTestPromise,
+  runEffectTestSync as runNativeSync,
+} from '@app/core-runtime/testing/effect-runtime';
+import { findPostgresFailure, loadDatabaseConnectionPair } from '@app/core-runtime';
+
+import { DateTime, Effect, Exit as NativeExit, Scope as NativeScope, Option } from 'effect';
 // @effect-diagnostics asyncFunction:off globalDate:off -- Existing compatibility boundary; expires: 2026-12-31.
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { loadDatabaseConnectionPair } from '@app/core-runtime';
+
 import { and, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { DateTime, Schema } from 'effect';
+import assert from 'node:assert/strict';
+import test, { after as afterNativeDatabase } from 'node:test';
 import { Pool } from 'pg';
+import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { RuleKeySchema } from '../../shared/domain/matching-contracts.ts';
 import {
   counterparties,
@@ -20,15 +26,20 @@ import {
   partyContactPointPurposes,
   partyContactPoints,
   partyCorrections,
-  partyRelations,
   partyFactAssertions,
   partyIdentifierClaims,
   partyMatchDecisions,
   partyMerges,
   partyOfficialIdentifiers,
+  partyRelations,
   partyRelationships,
 } from '../../src/db/schema.ts';
 import type { PartyTransaction } from '../../src/db/types.ts';
+
+const nativeDatabaseScope = runNativeSync(NativeScope.make());
+afterNativeDatabase(
+  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
+);
 
 const tenantA = 'a1000000-0000-4000-8000-000000000001';
 const tenantB = 'a1000000-0000-4000-8000-000000000002';
@@ -53,123 +64,162 @@ const actionA = 'aa000000-0000-4000-8000-000000000001';
 const principalA = 'ab000000-0000-4000-8000-000000000001';
 const fixtureTenants = [tenantA, tenantB] as const;
 
-const PostgreSqlErrorCauseSchema = Schema.Struct({
-  cause: Schema.optionalKey(Schema.Unknown),
-  code: Schema.optionalKey(Schema.String),
-});
-
-const hasPostgreSqlCode = (expected: string) => {
-  const matches = <ErrorValue>(error: ErrorValue): boolean => {
-    if (!Schema.is(PostgreSqlErrorCauseSchema)(error)) {
-      return false;
-    }
-    if ('code' in error && error.code === expected) {
-      return true;
-    }
-    return 'cause' in error && matches(error.cause);
-  };
-  return matches;
-};
+const hasPostgreSqlCode =
+  (expected: string) =>
+  (error: Parameters<typeof findPostgresFailure>[0]): boolean =>
+    Option.exists(findPostgresFailure(error), ({ code }) => code === expected);
 
 test('enforces Party owner invariants, tenant isolation, and independent fact lifecycles', async () => {
   const connections = await runEffectTestPromise(loadDatabaseConnectionPair());
   const adminPool = new Pool({ connectionString: connections.admin.connectionString });
   const runtimePool = new Pool({ connectionString: connections.runtime.connectionString, max: 1 });
-  const admin = drizzle({ client: adminPool, relations: partyRelations });
-  const runtime = drizzle({ client: runtimePool, relations: partyRelations });
+  const admin = await runEffectTestPromise(
+    makeTestDatabaseFromPool(adminPool, partyRelations).pipe(
+      NativeScope.provide(nativeDatabaseScope),
+    ),
+  );
+  const runtime = await runEffectTestPromise(
+    makeTestDatabaseFromPool(runtimePool, partyRelations).pipe(
+      NativeScope.provide(nativeDatabaseScope),
+    ),
+  );
 
   const cleanup = async () => {
-    await admin.delete(partyCorrections).where(inArray(partyCorrections.tenantId, fixtureTenants));
-    await admin.delete(partyAliases).where(inArray(partyAliases.tenantId, fixtureTenants));
-    await admin.delete(partyMerges).where(inArray(partyMerges.tenantId, fixtureTenants));
-    await admin
-      .delete(partyMatchDecisions)
-      .where(inArray(partyMatchDecisions.tenantId, fixtureTenants));
-    await admin
-      .delete(duplicateCandidateCaseParties)
-      .where(inArray(duplicateCandidateCaseParties.tenantId, fixtureTenants));
-    await admin
-      .delete(duplicateCandidateCases)
-      .where(inArray(duplicateCandidateCases.tenantId, fixtureTenants));
-    await admin
-      .delete(counterpartyRoleAdminReadModels)
-      .where(inArray(counterpartyRoleAdminReadModels.tenantId, fixtureTenants));
-    await admin
-      .delete(counterpartyAdminReadModels)
-      .where(inArray(counterpartyAdminReadModels.tenantId, fixtureTenants));
-    await admin
-      .delete(counterpartyRolePeriods)
-      .where(inArray(counterpartyRolePeriods.tenantId, fixtureTenants));
-    await admin.delete(counterparties).where(inArray(counterparties.tenantId, fixtureTenants));
-    await admin
-      .delete(partyRelationships)
-      .where(inArray(partyRelationships.tenantId, fixtureTenants));
-    await admin
-      .delete(partyContactPointPurposes)
-      .where(inArray(partyContactPointPurposes.tenantId, fixtureTenants));
-    await admin
-      .delete(partyContactPoints)
-      .where(inArray(partyContactPoints.tenantId, fixtureTenants));
-    await admin
-      .delete(partyIdentifierClaims)
-      .where(inArray(partyIdentifierClaims.tenantId, fixtureTenants));
-    await admin
-      .delete(partyOfficialIdentifiers)
-      .where(inArray(partyOfficialIdentifiers.tenantId, fixtureTenants));
-    await admin
-      .delete(partyFactAssertions)
-      .where(inArray(partyFactAssertions.tenantId, fixtureTenants));
-    await admin.delete(parties).where(inArray(parties.tenantId, fixtureTenants));
+    await runEffectTestPromise(
+      admin.delete(partyCorrections).where(inArray(partyCorrections.tenantId, fixtureTenants)),
+    );
+    await runEffectTestPromise(
+      admin.delete(partyAliases).where(inArray(partyAliases.tenantId, fixtureTenants)),
+    );
+    await runEffectTestPromise(
+      admin.delete(partyMerges).where(inArray(partyMerges.tenantId, fixtureTenants)),
+    );
+    await runEffectTestPromise(
+      admin
+        .delete(partyMatchDecisions)
+        .where(inArray(partyMatchDecisions.tenantId, fixtureTenants)),
+    );
+    await runEffectTestPromise(
+      admin
+        .delete(duplicateCandidateCaseParties)
+        .where(inArray(duplicateCandidateCaseParties.tenantId, fixtureTenants)),
+    );
+    await runEffectTestPromise(
+      admin
+        .delete(duplicateCandidateCases)
+        .where(inArray(duplicateCandidateCases.tenantId, fixtureTenants)),
+    );
+    await runEffectTestPromise(
+      admin
+        .delete(counterpartyRoleAdminReadModels)
+        .where(inArray(counterpartyRoleAdminReadModels.tenantId, fixtureTenants)),
+    );
+    await runEffectTestPromise(
+      admin
+        .delete(counterpartyAdminReadModels)
+        .where(inArray(counterpartyAdminReadModels.tenantId, fixtureTenants)),
+    );
+    await runEffectTestPromise(
+      admin
+        .delete(counterpartyRolePeriods)
+        .where(inArray(counterpartyRolePeriods.tenantId, fixtureTenants)),
+    );
+    await runEffectTestPromise(
+      admin.delete(counterparties).where(inArray(counterparties.tenantId, fixtureTenants)),
+    );
+    await runEffectTestPromise(
+      admin.delete(partyRelationships).where(inArray(partyRelationships.tenantId, fixtureTenants)),
+    );
+    await runEffectTestPromise(
+      admin
+        .delete(partyContactPointPurposes)
+        .where(inArray(partyContactPointPurposes.tenantId, fixtureTenants)),
+    );
+    await runEffectTestPromise(
+      admin.delete(partyContactPoints).where(inArray(partyContactPoints.tenantId, fixtureTenants)),
+    );
+    await runEffectTestPromise(
+      admin
+        .delete(partyIdentifierClaims)
+        .where(inArray(partyIdentifierClaims.tenantId, fixtureTenants)),
+    );
+    await runEffectTestPromise(
+      admin
+        .delete(partyOfficialIdentifiers)
+        .where(inArray(partyOfficialIdentifiers.tenantId, fixtureTenants)),
+    );
+    await runEffectTestPromise(
+      admin
+        .delete(partyFactAssertions)
+        .where(inArray(partyFactAssertions.tenantId, fixtureTenants)),
+    );
+    await runEffectTestPromise(
+      admin.delete(parties).where(inArray(parties.tenantId, fixtureTenants)),
+    );
   };
 
-  const withTenant = <Value>(
+  const withTenant = <Value, Failure>(
     tenantId: string,
-    operation: (transaction: PartyTransaction) => Promise<Value>,
+    operation: (transaction: PartyTransaction) => Effect.Effect<Value, Failure>,
   ): Promise<Value> =>
-    runtime.transaction(async (transaction) => {
-      await transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantId}, true)`);
-      return operation(transaction);
-    });
+    runEffectTestPromise(
+      runtime.transaction((transaction) =>
+        Effect.gen(function* transactionTestBody() {
+          yield* transaction.execute(
+            sql`select set_config('ontos.tenant_id', ${tenantId}, true)`,
+            'objects',
+          );
+          return yield* operation(transaction);
+        }),
+      ),
+    );
 
   try {
-    const runtimeRole = await runtime.execute<{ rolbypassrls: boolean; rolsuper: boolean }>(
-      sql`select rolbypassrls, rolsuper from pg_roles where rolname = current_user`,
+    const runtimeRole = await runEffectTestPromise(
+      runtime.execute<{ rolbypassrls: boolean; rolsuper: boolean }>(
+        sql`select rolbypassrls, rolsuper from pg_roles where rolname = current_user`,
+        'objects',
+      ),
     );
-    assert.deepEqual(runtimeRole.rows, [{ rolbypassrls: false, rolsuper: false }]);
+    assert.deepEqual(runtimeRole, [{ rolbypassrls: false, rolsuper: false }]);
     await cleanup();
-    await admin.insert(parties).values([
-      {
-        currentDisplayName: 'Organization A',
-        currentType: 'ORGANIZATION',
-        partyId: partyOrganizationA,
-        tenantId: tenantA,
-      },
-      {
-        currentDisplayName: 'Organization A2',
-        currentType: 'ORGANIZATION',
-        partyId: partyOrganizationA2,
-        tenantId: tenantA,
-      },
-      {
-        currentDisplayName: 'Person A',
-        currentType: 'PERSON',
-        partyId: partyPersonA,
-        tenantId: tenantA,
-      },
-      {
-        currentType: 'ORGANIZATION',
-        partyId: partyOrganizationB,
-        tenantId: tenantB,
-      },
-    ]);
+    await runEffectTestPromise(
+      admin.insert(parties).values([
+        {
+          currentDisplayName: 'Organization A',
+          currentType: 'ORGANIZATION',
+          partyId: partyOrganizationA,
+          tenantId: tenantA,
+        },
+        {
+          currentDisplayName: 'Organization A2',
+          currentType: 'ORGANIZATION',
+          partyId: partyOrganizationA2,
+          tenantId: tenantA,
+        },
+        {
+          currentDisplayName: 'Person A',
+          currentType: 'PERSON',
+          partyId: partyPersonA,
+          tenantId: tenantA,
+        },
+        {
+          currentType: 'ORGANIZATION',
+          partyId: partyOrganizationB,
+          tenantId: tenantB,
+        },
+      ]),
+    );
 
-    const [unnamedParty] = await admin
-      .select({ displayName: parties.currentDisplayName })
-      .from(parties)
-      .where(eq(parties.partyId, partyOrganizationB));
+    const [unnamedParty] = await runEffectTestPromise(
+      admin
+        .select({ displayName: parties.currentDisplayName })
+        .from(parties)
+        .where(eq(parties.partyId, partyOrganizationB)),
+    );
     assert.equal(unnamedParty?.displayName, null);
 
-    assert.deepEqual(await runtime.select().from(parties), []);
+    assert.deepEqual(await runEffectTestPromise(runtime.select().from(parties)), []);
     assert.deepEqual(
       await withTenant(tenantA, (transaction) =>
         transaction.select({ partyId: parties.partyId }).from(parties).orderBy(parties.partyId),
@@ -193,9 +243,9 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
       provenanceMethod: 'AUTHORITATIVE_LOOKUP',
       provenanceSource: 'ARES',
       tenantId,
-      validFrom: new Date('2026-01-01T00:00:00.000Z'),
+      validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
       verificationState: 'VERIFIED',
-      verifiedAt: new Date('2026-01-01T00:00:00.000Z'),
+      verifiedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
     });
     const externalEvidence = {
       authorityPolicyKey: 'party_registry.ares_enrichment' as const,
@@ -213,73 +263,85 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
       reasonCode: 'selected_missing_fact_confirmed',
       servedAt: '2026-01-01T12:00:00.000Z',
     };
-    await admin.insert(partyOfficialIdentifiers).values([
-      {
-        ...identifierValues(tenantA, partyOrganizationA, identifierA),
-        externalEvidence: sql`${JSON.stringify(externalEvidence)}::jsonb`,
-      },
-      identifierValues(tenantA, partyOrganizationA2, identifierA2),
-      identifierValues(tenantB, partyOrganizationB, identifierB),
-    ]);
-    const [persistedExternalEvidence] = await admin
-      .select({
-        externalEvidence: partyOfficialIdentifiers.externalEvidence,
-        validFrom: partyOfficialIdentifiers.validFrom,
-      })
-      .from(partyOfficialIdentifiers)
-      .where(eq(partyOfficialIdentifiers.officialIdentifierId, identifierA));
+    await runEffectTestPromise(
+      admin.insert(partyOfficialIdentifiers).values([
+        {
+          ...identifierValues(tenantA, partyOrganizationA, identifierA),
+          externalEvidence: sql`${JSON.stringify(externalEvidence)}::jsonb`,
+        },
+        identifierValues(tenantA, partyOrganizationA2, identifierA2),
+        identifierValues(tenantB, partyOrganizationB, identifierB),
+      ]),
+    );
+    const [persistedExternalEvidence] = await runEffectTestPromise(
+      admin
+        .select({
+          externalEvidence: partyOfficialIdentifiers.externalEvidence,
+          validFrom: partyOfficialIdentifiers.validFrom,
+        })
+        .from(partyOfficialIdentifiers)
+        .where(eq(partyOfficialIdentifiers.officialIdentifierId, identifierA)),
+    );
     assert.deepEqual(persistedExternalEvidence?.externalEvidence, externalEvidence);
     assert.notEqual(
       persistedExternalEvidence?.validFrom.toISOString(),
       externalEvidence.observedAt,
     );
     await assert.rejects(
-      admin
-        .update(partyOfficialIdentifiers)
-        .set({
-          externalEvidence: sql`${JSON.stringify({ ...externalEvidence, rawPayload: { forbidden: true } })}::jsonb`,
-        })
-        .where(eq(partyOfficialIdentifiers.officialIdentifierId, identifierA)),
+      runEffectTestPromise(
+        admin
+          .update(partyOfficialIdentifiers)
+          .set({
+            externalEvidence: sql`${JSON.stringify({ ...externalEvidence, rawPayload: { forbidden: true } })}::jsonb`,
+          })
+          .where(eq(partyOfficialIdentifiers.officialIdentifierId, identifierA)),
+      ),
       hasPostgreSqlCode('23514'),
     );
     await assert.rejects(
-      admin
-        .update(partyOfficialIdentifiers)
-        .set({
-          externalEvidence: sql`${JSON.stringify({ ...externalEvidence, provider: null })}::jsonb`,
-        })
-        .where(eq(partyOfficialIdentifiers.officialIdentifierId, identifierA)),
+      runEffectTestPromise(
+        admin
+          .update(partyOfficialIdentifiers)
+          .set({
+            externalEvidence: sql`${JSON.stringify({ ...externalEvidence, provider: null })}::jsonb`,
+          })
+          .where(eq(partyOfficialIdentifiers.officialIdentifierId, identifierA)),
+      ),
       hasPostgreSqlCode('23514'),
     );
-    await admin.insert(partyIdentifierClaims).values([
-      {
-        identifierClaimId: claimA,
-        identifierTypeKey: 'ICO',
-        namespace: 'CZ:ICO',
-        normalizedValue: '00123456',
-        officialIdentifierId: identifierA,
-        partyId: partyOrganizationA,
-        tenantId: tenantA,
-      },
-      {
-        identifierClaimId: claimB,
-        identifierTypeKey: 'ICO',
-        namespace: 'CZ:ICO',
-        normalizedValue: '00123456',
-        officialIdentifierId: identifierB,
-        partyId: partyOrganizationB,
-        tenantId: tenantB,
-      },
-    ]);
+    await runEffectTestPromise(
+      admin.insert(partyIdentifierClaims).values([
+        {
+          identifierClaimId: claimA,
+          identifierTypeKey: 'ICO',
+          namespace: 'CZ:ICO',
+          normalizedValue: '00123456',
+          officialIdentifierId: identifierA,
+          partyId: partyOrganizationA,
+          tenantId: tenantA,
+        },
+        {
+          identifierClaimId: claimB,
+          identifierTypeKey: 'ICO',
+          namespace: 'CZ:ICO',
+          normalizedValue: '00123456',
+          officialIdentifierId: identifierB,
+          partyId: partyOrganizationB,
+          tenantId: tenantB,
+        },
+      ]),
+    );
     await assert.rejects(
-      admin.insert(partyIdentifierClaims).values({
-        identifierTypeKey: 'ICO',
-        namespace: 'CZ:ICO',
-        normalizedValue: '00123456',
-        officialIdentifierId: identifierA2,
-        partyId: partyOrganizationA2,
-        tenantId: tenantA,
-      }),
+      runEffectTestPromise(
+        admin.insert(partyIdentifierClaims).values({
+          identifierTypeKey: 'ICO',
+          namespace: 'CZ:ICO',
+          normalizedValue: '00123456',
+          officialIdentifierId: identifierA2,
+          partyId: partyOrganizationA2,
+          tenantId: tenantA,
+        }),
+      ),
       hasPostgreSqlCode('23505'),
     );
 
@@ -291,52 +353,54 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
       privacyClassification: 'PERSONAL',
       provenanceMethod: 'DECLARED',
       provenanceSource: 'USER',
-      validFrom: new Date('2026-01-01T00:00:00.000Z'),
+      validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
     } as const;
-    await admin.insert(partyContactPoints).values([
-      {
-        ...contactEvidence,
-        contactPointId: emailA,
-        contactPointType: 'EMAIL',
-        displayValue: 'Shared@Example.test',
-        normalizationVersion: 'email.v1',
-        normalizedValue: 'shared@example.test',
-        partyId: partyOrganizationA,
-        tenantId: tenantA,
-      },
-      {
-        ...contactEvidence,
-        contactPointId: emailA2,
-        contactPointType: 'EMAIL',
-        displayValue: 'shared@example.test',
-        normalizationVersion: 'email.v1',
-        normalizedValue: 'shared@example.test',
-        partyId: partyOrganizationA2,
-        tenantId: tenantA,
-      },
-      {
-        ...contactEvidence,
-        addressLine1: 'Main 1',
-        city: 'Prague',
-        contactPointId: addressA,
-        contactPointType: 'ADDRESS',
-        countryCode: 'CZ',
-        partyId: partyOrganizationA,
-        postalCode: '11000',
-        tenantId: tenantA,
-      },
-      {
-        ...contactEvidence,
-        addressLine1: 'Other 2',
-        city: 'Prague',
-        contactPointId: addressA2,
-        contactPointType: 'ADDRESS',
-        countryCode: 'CZ',
-        partyId: partyOrganizationA,
-        postalCode: '12000',
-        tenantId: tenantA,
-      },
-    ]);
+    await runEffectTestPromise(
+      admin.insert(partyContactPoints).values([
+        {
+          ...contactEvidence,
+          contactPointId: emailA,
+          contactPointType: 'EMAIL',
+          displayValue: 'Shared@Example.test',
+          normalizationVersion: 'email.v1',
+          normalizedValue: 'shared@example.test',
+          partyId: partyOrganizationA,
+          tenantId: tenantA,
+        },
+        {
+          ...contactEvidence,
+          contactPointId: emailA2,
+          contactPointType: 'EMAIL',
+          displayValue: 'shared@example.test',
+          normalizationVersion: 'email.v1',
+          normalizedValue: 'shared@example.test',
+          partyId: partyOrganizationA2,
+          tenantId: tenantA,
+        },
+        {
+          ...contactEvidence,
+          addressLine1: 'Main 1',
+          city: 'Prague',
+          contactPointId: addressA,
+          contactPointType: 'ADDRESS',
+          countryCode: 'CZ',
+          partyId: partyOrganizationA,
+          postalCode: '11000',
+          tenantId: tenantA,
+        },
+        {
+          ...contactEvidence,
+          addressLine1: 'Other 2',
+          city: 'Prague',
+          contactPointId: addressA2,
+          contactPointType: 'ADDRESS',
+          countryCode: 'CZ',
+          partyId: partyOrganizationA,
+          postalCode: '12000',
+          tenantId: tenantA,
+        },
+      ]),
+    );
     const purposeEvidence = {
       acceptedByActionInvocationId: actionA,
       acceptedByPrincipalId: principalA,
@@ -346,53 +410,60 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
       provenanceMethod: 'DECLARED',
       provenanceSource: 'USER',
       tenantId: tenantA,
-      validFrom: new Date('2026-01-01T00:00:00.000Z'),
+      validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
     } as const;
-    await admin.insert(partyContactPointPurposes).values([
-      { ...purposeEvidence, contactPointId: addressA, purposeKey: 'BILLING' },
-      { ...purposeEvidence, contactPointId: addressA, purposeKey: 'DELIVERY' },
-    ]);
+    await runEffectTestPromise(
+      admin.insert(partyContactPointPurposes).values([
+        { ...purposeEvidence, contactPointId: addressA, purposeKey: 'BILLING' },
+        { ...purposeEvidence, contactPointId: addressA, purposeKey: 'DELIVERY' },
+      ]),
+    );
     await assert.rejects(
-      admin.insert(partyContactPointPurposes).values({
-        ...purposeEvidence,
-        contactPointId: addressA2,
-        purposeKey: 'BILLING',
-      }),
+      runEffectTestPromise(
+        admin.insert(partyContactPointPurposes).values({
+          ...purposeEvidence,
+          contactPointId: addressA2,
+          purposeKey: 'BILLING',
+        }),
+      ),
       hasPostgreSqlCode('23505'),
     );
     const contactEndRecordedAt = await runEffectTestPromise(DateTime.nowAsDate);
     const futureContactEnd = new Date('2099-01-01T00:00:00.000Z');
-    await admin
-      .update(partyContactPoints)
-      .set({
-        additionalEvidenceRefs: ['evidence:additional-contact:1'],
-        endEvidenceRefs: [],
-        endProvenanceMethod: 'MANUAL_CONFIRMATION',
-        endProvenanceSource: 'USER_ASSERTION',
-        endReason: 'Future email retirement scheduled',
-        endedByActionInvocationId: 'aa000000-0000-4000-8000-000000000005',
-        endedByPrincipalId: principalA,
-        endedRecordedAt: contactEndRecordedAt,
-        validTo: futureContactEnd,
-      })
-      .where(eq(partyContactPoints.contactPointId, emailA2));
-    await admin
-      .update(partyContactPointPurposes)
-      .set({
-        endEvidenceRefs: ['evidence:delivery-purpose-end:1'],
-        endProvenanceMethod: 'DOCUMENT_REVIEW',
-        endProvenanceSource: 'EXTERNAL_EVIDENCE',
-        endReason: 'Future delivery purpose retirement scheduled',
-        endedByActionInvocationId: 'aa000000-0000-4000-8000-000000000006',
-        endedByPrincipalId: principalA,
-        endedRecordedAt: contactEndRecordedAt,
-        validTo: futureContactEnd,
-      })
-      .where(eq(partyContactPointPurposes.purposeKey, 'DELIVERY'));
-    const [scheduledContactEnd] = await admin
-      .select()
-      .from(partyContactPoints)
-      .where(eq(partyContactPoints.contactPointId, emailA2));
+    await runEffectTestPromise(
+      admin
+        .update(partyContactPoints)
+        .set({
+          additionalEvidenceRefs: ['evidence:additional-contact:1'],
+          endEvidenceRefs: [],
+          endProvenanceMethod: 'MANUAL_CONFIRMATION',
+          endProvenanceSource: 'USER_ASSERTION',
+          endReason: 'Future email retirement scheduled',
+          endedByActionInvocationId: 'aa000000-0000-4000-8000-000000000005',
+          endedByPrincipalId: principalA,
+          endedRecordedAt: contactEndRecordedAt,
+          validTo: futureContactEnd,
+        })
+        .where(eq(partyContactPoints.contactPointId, emailA2)),
+    );
+    await runEffectTestPromise(
+      admin
+        .update(partyContactPointPurposes)
+        .set({
+          endEvidenceRefs: ['evidence:delivery-purpose-end:1'],
+          endProvenanceMethod: 'DOCUMENT_REVIEW',
+          endProvenanceSource: 'EXTERNAL_EVIDENCE',
+          endReason: 'Future delivery purpose retirement scheduled',
+          endedByActionInvocationId: 'aa000000-0000-4000-8000-000000000006',
+          endedByPrincipalId: principalA,
+          endedRecordedAt: contactEndRecordedAt,
+          validTo: futureContactEnd,
+        })
+        .where(eq(partyContactPointPurposes.purposeKey, 'DELIVERY')),
+    );
+    const [scheduledContactEnd] = await runEffectTestPromise(
+      admin.select().from(partyContactPoints).where(eq(partyContactPoints.contactPointId, emailA2)),
+    );
     assert.equal(scheduledContactEnd?.isCurrent, true);
     assert.equal(scheduledContactEnd?.endReason, 'Future email retirement scheduled');
     assert.equal(scheduledContactEnd?.evidenceReference, 'evidence:original-contact:1');
@@ -400,36 +471,59 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
       'evidence:additional-contact:1',
     ]);
     assert.deepEqual(scheduledContactEnd?.endEvidenceRefs, []);
-    const [scheduledPurposeEnd] = await admin
-      .select()
-      .from(partyContactPointPurposes)
-      .where(eq(partyContactPointPurposes.purposeKey, 'DELIVERY'));
+    const [scheduledPurposeEnd] = await runEffectTestPromise(
+      admin
+        .select()
+        .from(partyContactPointPurposes)
+        .where(eq(partyContactPointPurposes.purposeKey, 'DELIVERY')),
+    );
     assert.equal(scheduledPurposeEnd?.isCurrent, true);
     assert.equal(scheduledPurposeEnd?.endProvenanceSource, 'EXTERNAL_EVIDENCE');
     assert.deepEqual(scheduledPurposeEnd?.endEvidenceRefs, ['evidence:delivery-purpose-end:1']);
     await assert.rejects(
-      admin
-        .update(partyContactPointPurposes)
-        .set({ validTo: futureContactEnd })
-        .where(eq(partyContactPointPurposes.purposeKey, 'BILLING')),
+      runEffectTestPromise(
+        admin
+          .update(partyContactPointPurposes)
+          .set({ validTo: futureContactEnd })
+          .where(eq(partyContactPointPurposes.purposeKey, 'BILLING')),
+      ),
       hasPostgreSqlCode('23514'),
     );
 
-    await admin.insert(partyRelationships).values({
-      acceptedByActionInvocationId: actionA,
-      acceptedByPrincipalId: principalA,
-      fromPartyId: partyPersonA,
-      policyVersion: 'party.relationship.v1',
-      provenanceMethod: 'DECLARED',
-      provenanceSource: 'USER',
-      relationshipId: relationshipA,
-      relationshipType: 'CONTACT_PERSON_OF',
-      tenantId: tenantA,
-      toPartyId: partyOrganizationA,
-      validFrom: new Date('2026-01-01T00:00:00.000Z'),
-      validTo: new Date('2026-12-31T00:00:00.000Z'),
-    });
+    await runEffectTestPromise(
+      admin.insert(partyRelationships).values({
+        acceptedByActionInvocationId: actionA,
+        acceptedByPrincipalId: principalA,
+        fromPartyId: partyPersonA,
+        policyVersion: 'party.relationship.v1',
+        provenanceMethod: 'DECLARED',
+        provenanceSource: 'USER',
+        relationshipId: relationshipA,
+        relationshipType: 'CONTACT_PERSON_OF',
+        tenantId: tenantA,
+        toPartyId: partyOrganizationA,
+        validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
+        validTo: new Date('2026-12-31T00:00:00.000Z'),
+      }),
+    );
     await assert.rejects(
+      runEffectTestPromise(
+        admin.insert(partyRelationships).values({
+          acceptedByActionInvocationId: actionA,
+          acceptedByPrincipalId: principalA,
+          fromPartyId: partyPersonA,
+          policyVersion: 'party.relationship.v1',
+          provenanceMethod: 'DECLARED',
+          provenanceSource: 'USER',
+          relationshipType: 'CONTACT_PERSON_OF',
+          tenantId: tenantA,
+          toPartyId: partyOrganizationA,
+          validFrom: new Date('2026-06-01T00:00:00.000Z'),
+        }),
+      ),
+      hasPostgreSqlCode('23P01'),
+    );
+    await runEffectTestPromise(
       admin.insert(partyRelationships).values({
         acceptedByActionInvocationId: actionA,
         acceptedByPrincipalId: principalA,
@@ -440,94 +534,76 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
         relationshipType: 'CONTACT_PERSON_OF',
         tenantId: tenantA,
         toPartyId: partyOrganizationA,
-        validFrom: new Date('2026-06-01T00:00:00.000Z'),
+        validFrom: new Date('2026-12-31T00:00:00.000Z'),
       }),
-      hasPostgreSqlCode('23P01'),
     );
-    await admin.insert(partyRelationships).values({
-      acceptedByActionInvocationId: actionA,
-      acceptedByPrincipalId: principalA,
-      fromPartyId: partyPersonA,
-      policyVersion: 'party.relationship.v1',
-      provenanceMethod: 'DECLARED',
-      provenanceSource: 'USER',
-      relationshipType: 'CONTACT_PERSON_OF',
-      tenantId: tenantA,
-      toPartyId: partyOrganizationA,
-      validFrom: new Date('2026-12-31T00:00:00.000Z'),
-    });
     const effectiveRelationshipCount = async (effectiveAt: Date) => {
-      const relationships = await admin
-        .select()
-        .from(partyRelationships)
-        .where(
-          and(
-            eq(partyRelationships.fromPartyId, partyPersonA),
-            eq(partyRelationships.toPartyId, partyOrganizationA),
-            eq(partyRelationships.assertionState, 'ACTIVE'),
-            lte(partyRelationships.validFrom, effectiveAt),
-            or(isNull(partyRelationships.validTo), gt(partyRelationships.validTo, effectiveAt)),
+      const relationships = await runEffectTestPromise(
+        admin
+          .select()
+          .from(partyRelationships)
+          .where(
+            and(
+              eq(partyRelationships.fromPartyId, partyPersonA),
+              eq(partyRelationships.toPartyId, partyOrganizationA),
+              eq(partyRelationships.assertionState, 'ACTIVE'),
+              lte(partyRelationships.validFrom, effectiveAt),
+              or(isNull(partyRelationships.validTo), gt(partyRelationships.validTo, effectiveAt)),
+            ),
           ),
-        );
+      );
       return relationships.length;
     };
     assert.equal(await effectiveRelationshipCount(new Date('2026-06-01T00:00:00.000Z')), 1);
     assert.equal(await effectiveRelationshipCount(new Date('2027-01-01T00:00:00.000Z')), 1);
-    const [unknownStart] = await admin
-      .insert(partyRelationships)
-      .values({
-        acceptedByActionInvocationId: actionA,
-        acceptedByPrincipalId: principalA,
-        fromPartyId: partyPersonA,
-        policyVersion: 'party.relationship.v1',
-        provenanceMethod: 'DOCUMENT_REVIEW',
-        provenanceSource: 'USER',
-        relationshipType: 'CONTACT_PERSON_OF',
-        tenantId: tenantA,
-        toPartyId: partyOrganizationA2,
-        validTo: new Date('2030-01-01T00:00:00.000Z'),
-      })
-      .returning();
+    const [unknownStart] = await runEffectTestPromise(
+      admin
+        .insert(partyRelationships)
+        .values({
+          acceptedByActionInvocationId: actionA,
+          acceptedByPrincipalId: principalA,
+          fromPartyId: partyPersonA,
+          policyVersion: 'party.relationship.v1',
+          provenanceMethod: 'DOCUMENT_REVIEW',
+          provenanceSource: 'USER',
+          relationshipType: 'CONTACT_PERSON_OF',
+          tenantId: tenantA,
+          toPartyId: partyOrganizationA2,
+          validTo: new Date('2030-01-01T00:00:00.000Z'),
+        })
+        .returning(),
+    );
     assert.ok(unknownStart);
-    await admin
-      .update(partyRelationships)
-      .set({ validFrom: new Date('2028-01-01T00:00:00.000Z') })
-      .where(eq(partyRelationships.relationshipId, unknownStart.relationshipId));
+    await runEffectTestPromise(
+      admin
+        .update(partyRelationships)
+        .set({ validFrom: new Date('2028-01-01T00:00:00.000Z') })
+        .where(eq(partyRelationships.relationshipId, unknownStart.relationshipId)),
+    );
     await assert.rejects(
-      admin.insert(partyRelationships).values({
-        acceptedByActionInvocationId: actionA,
-        acceptedByPrincipalId: principalA,
-        fromPartyId: partyOrganizationA2,
-        policyVersion: 'party.relationship.v1',
-        provenanceMethod: 'DECLARED',
-        provenanceSource: 'USER',
-        relationshipType: 'CONTACT_PERSON_OF',
-        tenantId: tenantA,
-        toPartyId: partyOrganizationA,
-        validFrom: new Date('2030-01-01T00:00:00.000Z'),
-        validTo: new Date('2030-01-01T00:00:00.000Z'),
-      }),
+      runEffectTestPromise(
+        admin.insert(partyRelationships).values({
+          acceptedByActionInvocationId: actionA,
+          acceptedByPrincipalId: principalA,
+          fromPartyId: partyOrganizationA2,
+          policyVersion: 'party.relationship.v1',
+          provenanceMethod: 'DECLARED',
+          provenanceSource: 'USER',
+          relationshipType: 'CONTACT_PERSON_OF',
+          tenantId: tenantA,
+          toPartyId: partyOrganizationA,
+          validFrom: new Date('2030-01-01T00:00:00.000Z'),
+          validTo: new Date('2030-01-01T00:00:00.000Z'),
+        }),
+      ),
       hasPostgreSqlCode('23514'),
     );
 
-    await admin.insert(counterparties).values({
-      acceptedByActionInvocationId: actionA,
-      acceptedByPrincipalId: principalA,
-      counterpartyId: counterpartyA,
-      creationReason: 'Signed commercial agreement',
-      evidenceRefs: ['evidence:agreement:1'],
-      legalEntityId: legalEntityA,
-      partyId: partyOrganizationA,
-      policyVersion: 'party.counterparty.v1',
-      provenanceMethod: 'CONTRACT',
-      provenanceSource: 'COMMERCE',
-      sourceRecordRefs: ['commerce:agreement:1'],
-      tenantId: tenantA,
-    });
-    await assert.rejects(
+    await runEffectTestPromise(
       admin.insert(counterparties).values({
         acceptedByActionInvocationId: actionA,
         acceptedByPrincipalId: principalA,
+        counterpartyId: counterpartyA,
         creationReason: 'Signed commercial agreement',
         evidenceRefs: ['evidence:agreement:1'],
         legalEntityId: legalEntityA,
@@ -538,53 +614,74 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
         sourceRecordRefs: ['commerce:agreement:1'],
         tenantId: tenantA,
       }),
+    );
+    await assert.rejects(
+      runEffectTestPromise(
+        admin.insert(counterparties).values({
+          acceptedByActionInvocationId: actionA,
+          acceptedByPrincipalId: principalA,
+          creationReason: 'Signed commercial agreement',
+          evidenceRefs: ['evidence:agreement:1'],
+          legalEntityId: legalEntityA,
+          partyId: partyOrganizationA,
+          policyVersion: 'party.counterparty.v1',
+          provenanceMethod: 'CONTRACT',
+          provenanceSource: 'COMMERCE',
+          sourceRecordRefs: ['commerce:agreement:1'],
+          tenantId: tenantA,
+        }),
+      ),
       hasPostgreSqlCode('23505'),
     );
-    await admin.insert(counterpartyRolePeriods).values([
-      {
-        acceptedByActionInvocationId: actionA,
-        acceptedByPrincipalId: principalA,
-        addEvidenceRefs: ['evidence:customer-role:1'],
-        addReason: 'Customer agreement began',
-        counterpartyId: counterpartyA,
-        legalEntityId: legalEntityA,
-        policyVersion: 'party.counterparty-role.v1',
-        provenanceMethod: 'CONTRACT',
-        provenanceSource: 'COMMERCE',
-        roleType: 'CUSTOMER',
-        tenantId: tenantA,
-        validFrom: new Date('2026-01-01T00:00:00.000Z'),
-      },
-      {
-        acceptedByActionInvocationId: actionA,
-        acceptedByPrincipalId: principalA,
-        addEvidenceRefs: ['evidence:supplier-role:1'],
-        addReason: 'Supplier agreement began',
-        counterpartyId: counterpartyA,
-        legalEntityId: legalEntityA,
-        policyVersion: 'party.counterparty-role.v1',
-        provenanceMethod: 'CONTRACT',
-        provenanceSource: 'COMMERCE',
-        roleType: 'SUPPLIER',
-        tenantId: tenantA,
-        validFrom: new Date('2026-01-01T00:00:00.000Z'),
-      },
-    ]);
-    await admin
-      .update(counterpartyRolePeriods)
-      .set({
-        endEvidenceRefs: ['evidence:customer-role-end:1'],
-        endProvenanceMethod: 'CONTRACT_TERMINATION',
-        endProvenanceSource: 'COMMERCE',
-        endReason: 'Customer agreement ended',
-        endedByActionInvocationId: 'aa000000-0000-4000-8000-000000000003',
-        endedByPrincipalId: principalA,
-        endedRecordedAt: new Date('2026-06-30T00:00:00.000Z'),
-        isCurrent: false,
-        state: 'ENDED',
-        validTo: new Date('2026-06-30T00:00:00.000Z'),
-      })
-      .where(eq(counterpartyRolePeriods.roleType, 'CUSTOMER'));
+    await runEffectTestPromise(
+      admin.insert(counterpartyRolePeriods).values([
+        {
+          acceptedByActionInvocationId: actionA,
+          acceptedByPrincipalId: principalA,
+          addEvidenceRefs: ['evidence:customer-role:1'],
+          addReason: 'Customer agreement began',
+          counterpartyId: counterpartyA,
+          legalEntityId: legalEntityA,
+          policyVersion: 'party.counterparty-role.v1',
+          provenanceMethod: 'CONTRACT',
+          provenanceSource: 'COMMERCE',
+          roleType: 'CUSTOMER',
+          tenantId: tenantA,
+          validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
+        },
+        {
+          acceptedByActionInvocationId: actionA,
+          acceptedByPrincipalId: principalA,
+          addEvidenceRefs: ['evidence:supplier-role:1'],
+          addReason: 'Supplier agreement began',
+          counterpartyId: counterpartyA,
+          legalEntityId: legalEntityA,
+          policyVersion: 'party.counterparty-role.v1',
+          provenanceMethod: 'CONTRACT',
+          provenanceSource: 'COMMERCE',
+          roleType: 'SUPPLIER',
+          tenantId: tenantA,
+          validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
+        },
+      ]),
+    );
+    await runEffectTestPromise(
+      admin
+        .update(counterpartyRolePeriods)
+        .set({
+          endEvidenceRefs: ['evidence:customer-role-end:1'],
+          endProvenanceMethod: 'CONTRACT_TERMINATION',
+          endProvenanceSource: 'COMMERCE',
+          endReason: 'Customer agreement ended',
+          endedByActionInvocationId: 'aa000000-0000-4000-8000-000000000003',
+          endedByPrincipalId: principalA,
+          endedRecordedAt: new Date('2026-06-30T00:00:00.000Z'),
+          isCurrent: false,
+          state: 'ENDED',
+          validTo: new Date('2026-06-30T00:00:00.000Z'),
+        })
+        .where(eq(counterpartyRolePeriods.roleType, 'CUSTOMER')),
+    );
     const futureRoleEvidence = {
       acceptedByActionInvocationId: actionA,
       acceptedByPrincipalId: principalA,
@@ -600,98 +697,111 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
       state: 'ACTIVE',
       tenantId: tenantA,
     } as const;
-    await admin.insert(counterpartyRolePeriods).values([
-      {
-        ...futureRoleEvidence,
-        endEvidenceRefs: ['evidence:future-customer-role-end:1'],
-        endProvenanceMethod: 'CONTRACT_SCHEDULE',
-        endProvenanceSource: 'COMMERCE',
-        endReason: 'First future agreement is time-bounded',
-        endedByActionInvocationId: 'aa000000-0000-4000-8000-000000000004',
-        endedByPrincipalId: principalA,
-        endedRecordedAt: new Date('2026-07-01T00:00:00.000Z'),
-        validFrom: new Date('2099-01-01T00:00:00.000Z'),
-        validTo: new Date('2099-02-01T00:00:00.000Z'),
-      },
-      {
-        ...futureRoleEvidence,
-        addEvidenceRefs: ['evidence:future-customer-role:2'],
-        validFrom: new Date('2099-02-01T00:00:00.000Z'),
-      },
-    ]);
+    await runEffectTestPromise(
+      admin.insert(counterpartyRolePeriods).values([
+        {
+          ...futureRoleEvidence,
+          endEvidenceRefs: ['evidence:future-customer-role-end:1'],
+          endProvenanceMethod: 'CONTRACT_SCHEDULE',
+          endProvenanceSource: 'COMMERCE',
+          endReason: 'First future agreement is time-bounded',
+          endedByActionInvocationId: 'aa000000-0000-4000-8000-000000000004',
+          endedByPrincipalId: principalA,
+          endedRecordedAt: new Date('2026-07-01T00:00:00.000Z'),
+          validFrom: new Date('2099-01-01T00:00:00.000Z'),
+          validTo: new Date('2099-02-01T00:00:00.000Z'),
+        },
+        {
+          ...futureRoleEvidence,
+          addEvidenceRefs: ['evidence:future-customer-role:2'],
+          validFrom: new Date('2099-02-01T00:00:00.000Z'),
+        },
+      ]),
+    );
     await assert.rejects(
-      admin.insert(counterpartyRolePeriods).values({
-        ...futureRoleEvidence,
-        addEvidenceRefs: ['evidence:overlapping-future-customer-role:1'],
-        validFrom: new Date('2099-01-15T00:00:00.000Z'),
-      }),
+      runEffectTestPromise(
+        admin.insert(counterpartyRolePeriods).values({
+          ...futureRoleEvidence,
+          addEvidenceRefs: ['evidence:overlapping-future-customer-role:1'],
+          validFrom: new Date('2099-01-15T00:00:00.000Z'),
+        }),
+      ),
       hasPostgreSqlCode('23P01'),
     );
-    const effectiveAt = new Date('2026-09-01T00:00:00.000Z');
-    const effectiveRoles = await admin
-      .select()
-      .from(counterpartyRolePeriods)
-      .where(
-        and(
-          eq(counterpartyRolePeriods.counterpartyId, counterpartyA),
-          eq(counterpartyRolePeriods.state, 'ACTIVE'),
-          lte(counterpartyRolePeriods.validFrom, effectiveAt),
-          or(
-            isNull(counterpartyRolePeriods.validTo),
-            gt(counterpartyRolePeriods.validTo, effectiveAt),
+    const effectiveAt = DateTime.toDateUtc(DateTime.makeUnsafe('2026-09-01T00:00:00.000Z'));
+    const effectiveRoles = await runEffectTestPromise(
+      admin
+        .select()
+        .from(counterpartyRolePeriods)
+        .where(
+          and(
+            eq(counterpartyRolePeriods.counterpartyId, counterpartyA),
+            eq(counterpartyRolePeriods.state, 'ACTIVE'),
+            lte(counterpartyRolePeriods.validFrom, effectiveAt),
+            or(
+              isNull(counterpartyRolePeriods.validTo),
+              gt(counterpartyRolePeriods.validTo, effectiveAt),
+            ),
           ),
         ),
-      );
+    );
     assert.equal(effectiveRoles.length, 1);
-    const persistedCounterparties = await admin
-      .select()
-      .from(counterparties)
-      .where(eq(counterparties.counterpartyId, counterpartyA));
+    const persistedCounterparties = await runEffectTestPromise(
+      admin.select().from(counterparties).where(eq(counterparties.counterpartyId, counterpartyA)),
+    );
     assert.equal(persistedCounterparties.length, 1);
 
-    const [counterpartySource] = await admin
-      .select()
-      .from(counterparties)
-      .where(eq(counterparties.counterpartyId, counterpartyA));
+    const [counterpartySource] = await runEffectTestPromise(
+      admin.select().from(counterparties).where(eq(counterparties.counterpartyId, counterpartyA)),
+    );
     assert.ok(counterpartySource);
-    await admin.insert(counterpartyAdminReadModels).values({
-      archivedAt: counterpartySource.archivedAt,
-      counterpartyId: counterpartySource.counterpartyId,
-      createdAt: counterpartySource.createdAt,
-      legalEntityId: counterpartySource.legalEntityId,
-      storedPartyId: counterpartySource.partyId,
-      tenantId: counterpartySource.tenantId,
-    });
-    const roleSources = await admin
-      .select()
-      .from(counterpartyRolePeriods)
-      .where(eq(counterpartyRolePeriods.counterpartyId, counterpartyA));
-    await admin.insert(counterpartyRoleAdminReadModels).values(
-      roleSources.map((role) => ({
-        addEvidenceRefs: role.addEvidenceRefs,
-        addReason: role.addReason,
-        counterpartyId: role.counterpartyId,
-        endEvidenceRefs: role.endEvidenceRefs,
-        endProvenanceMethod: role.endProvenanceMethod,
-        endProvenanceSource: role.endProvenanceSource,
-        endReason: role.endReason,
-        provenanceMethod: role.provenanceMethod,
-        provenanceSource: role.provenanceSource,
-        recordedAt: role.recordedAt,
-        rolePeriodId: role.rolePeriodId,
-        roleType: role.roleType,
-        state: role.state,
-        tenantId: role.tenantId,
-        validFrom: role.validFrom,
-        validTo: role.validTo,
-      })),
+    await runEffectTestPromise(
+      admin.insert(counterpartyAdminReadModels).values({
+        archivedAt: counterpartySource.archivedAt,
+        counterpartyId: counterpartySource.counterpartyId,
+        createdAt: counterpartySource.createdAt,
+        legalEntityId: counterpartySource.legalEntityId,
+        storedPartyId: counterpartySource.partyId,
+        tenantId: counterpartySource.tenantId,
+      }),
+    );
+    const roleSources = await runEffectTestPromise(
+      admin
+        .select()
+        .from(counterpartyRolePeriods)
+        .where(eq(counterpartyRolePeriods.counterpartyId, counterpartyA)),
+    );
+    await runEffectTestPromise(
+      admin.insert(counterpartyRoleAdminReadModels).values(
+        roleSources.map((role) => ({
+          addEvidenceRefs: role.addEvidenceRefs,
+          addReason: role.addReason,
+          counterpartyId: role.counterpartyId,
+          endEvidenceRefs: role.endEvidenceRefs,
+          endProvenanceMethod: role.endProvenanceMethod,
+          endProvenanceSource: role.endProvenanceSource,
+          endReason: role.endReason,
+          provenanceMethod: role.provenanceMethod,
+          provenanceSource: role.provenanceSource,
+          recordedAt: role.recordedAt,
+          rolePeriodId: role.rolePeriodId,
+          roleType: role.roleType,
+          state: role.state,
+          tenantId: role.tenantId,
+          validFrom: role.validFrom,
+          validTo: role.validTo,
+        })),
+      ),
     );
 
     assert.deepEqual(
       await withTenant(tenantA, (transaction) => transaction.select().from(counterparties)),
       [],
     );
-    assert.deepEqual(await runtime.select().from(counterpartyAdminReadModels), []);
+    assert.deepEqual(
+      await runEffectTestPromise(runtime.select().from(counterpartyAdminReadModels)),
+      [],
+    );
     const tenantCounterpartyModels = await withTenant(tenantA, (transaction) =>
       transaction.select().from(counterpartyAdminReadModels),
     );
@@ -712,106 +822,124 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
       ),
       [],
     );
-    const scopedCounterparties = await runtime.transaction(async (transaction) => {
-      await transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantA}, true)`);
-      await transaction.execute(
-        sql`select set_config('ontos.legal_entity_id', ${legalEntityA}, true)`,
-      );
-      return transaction.select().from(counterparties);
-    });
+    const scopedCounterparties = await runEffectTestPromise(
+      runtime.transaction((transaction) =>
+        Effect.gen(function* transactionTestBody() {
+          yield* transaction.execute(
+            sql`select set_config('ontos.tenant_id', ${tenantA}, true)`,
+            'objects',
+          );
+          yield* transaction.execute(
+            sql`select set_config('ontos.legal_entity_id', ${legalEntityA}, true)`,
+            'objects',
+          );
+          return yield* transaction.select().from(counterparties);
+        }),
+      ),
+    );
     assert.equal(scopedCounterparties.length, 1);
 
-    await admin.insert(duplicateCandidateCases).values({
-      candidateCaseId: caseA,
-      candidateFingerprint: 'a'.repeat(64),
-      candidateSnapshot: {
-        names: ['Ambiguous'],
-        provenance: { method: 'DOCUMENT_REVIEW', source: 'USER_ASSERTION' },
-        validFrom: '2026-01-01T00:00:00.000Z',
-      },
-      evaluatedEvidence: [
-        {
-          reason: 'One identifier points to conflicting candidates',
-          ruleKey: RuleKeySchema.make('ico.v1'),
+    await runEffectTestPromise(
+      admin.insert(duplicateCandidateCases).values({
+        candidateCaseId: caseA,
+        candidateFingerprint: 'a'.repeat(64),
+        candidateSnapshot: {
+          names: ['Ambiguous'],
+          provenance: { method: 'DOCUMENT_REVIEW', source: 'USER_ASSERTION' },
+          validFrom: '2026-01-01T00:00:00.000Z',
         },
-      ],
-      evaluationFingerprint: 'c'.repeat(64),
-      matchRuleVersion: 'party-match.v1',
-      tenantId: tenantA,
-    });
-    await admin.insert(duplicateCandidateCaseParties).values({
-      candidateCaseId: caseA,
-      evidenceExplanation: {
-        reason: 'Authoritative conflict',
-        ruleKey: RuleKeySchema.make('ico.v1'),
-      },
-      partyId: partyOrganizationA,
-      rank: 1,
-      tenantId: tenantA,
-    });
-    await admin.insert(partyMatchDecisions).values({
-      actionInvocationId: actionA,
-      candidateCaseId: caseA,
-      candidateFingerprint: 'a'.repeat(64),
-      evidenceExplanation: [
-        {
-          reason: 'One identifier points to conflicting candidates',
-          ruleKey: RuleKeySchema.make('ico.v1'),
-        },
-      ],
-      matchRuleVersion: 'party-match.v1',
-      outcome: 'AMBIGUOUS',
-      tenantId: tenantA,
-    });
-    await assert.rejects(
-      admin.insert(partyMatchDecisions).values({
-        actionInvocationId: actionA,
-        candidateFingerprint: 'b'.repeat(64),
-        evidenceExplanation: [],
+        evaluatedEvidence: [
+          {
+            reason: 'One identifier points to conflicting candidates',
+            ruleKey: RuleKeySchema.make('ico.v1'),
+          },
+        ],
+        evaluationFingerprint: 'c'.repeat(64),
         matchRuleVersion: 'party-match.v1',
-        outcome: 'NO_MATCH',
         tenantId: tenantA,
       }),
+    );
+    await runEffectTestPromise(
+      admin.insert(duplicateCandidateCaseParties).values({
+        candidateCaseId: caseA,
+        evidenceExplanation: {
+          reason: 'Authoritative conflict',
+          ruleKey: RuleKeySchema.make('ico.v1'),
+        },
+        partyId: partyOrganizationA,
+        rank: 1,
+        tenantId: tenantA,
+      }),
+    );
+    await runEffectTestPromise(
+      admin.insert(partyMatchDecisions).values({
+        actionInvocationId: actionA,
+        candidateCaseId: caseA,
+        candidateFingerprint: 'a'.repeat(64),
+        evidenceExplanation: [
+          {
+            reason: 'One identifier points to conflicting candidates',
+            ruleKey: RuleKeySchema.make('ico.v1'),
+          },
+        ],
+        matchRuleVersion: 'party-match.v1',
+        outcome: 'AMBIGUOUS',
+        tenantId: tenantA,
+      }),
+    );
+    await assert.rejects(
+      runEffectTestPromise(
+        admin.insert(partyMatchDecisions).values({
+          actionInvocationId: actionA,
+          candidateFingerprint: 'b'.repeat(64),
+          evidenceExplanation: [],
+          matchRuleVersion: 'party-match.v1',
+          outcome: 'NO_MATCH',
+          tenantId: tenantA,
+        }),
+      ),
       hasPostgreSqlCode('23505'),
     );
 
     await assert.rejects(
-      withTenant(tenantA, async (transaction) => {
-        const [fact] = await transaction
-          .insert(partyFactAssertions)
-          .values({
-            acceptedByActionInvocationId: actionA,
-            acceptedByPrincipalId: principalA,
-            factKind: 'DISPLAY_NAME',
-            normalizedValue: 'Wrong name',
-            partyId: partyOrganizationA,
-            policyVersion: 'party.fact.v1',
-            provenanceMethod: 'DECLARED',
-            provenanceSource: 'USER',
-            tenantId: tenantA,
-            validFrom: new Date('2026-01-01T00:00:00.000Z'),
-          })
-          .returning({ assertionId: partyFactAssertions.assertionId });
-        assert.ok(fact);
-        const [correction] = await transaction
-          .insert(partyCorrections)
-          .values({
-            actingPrincipalId: principalA,
-            actionInvocationId: 'aa000000-0000-4000-8000-000000000002',
-            evidenceRefs: ['evidence:1'],
-            partyFactAssertionId: fact.assertionId,
-            partyId: partyOrganizationA,
-            policyVersion: 'party.correction.v1',
-            reason: 'Original assertion was wrong',
-            tenantId: tenantA,
-          })
-          .returning({ correctionId: partyCorrections.correctionId });
-        assert.ok(correction);
-        await transaction
-          .update(partyCorrections)
-          .set({ reason: 'Mutation must fail' })
-          .where(eq(partyCorrections.correctionId, correction.correctionId));
-      }),
+      withTenant(tenantA, (transaction) =>
+        Effect.gen(function* transactionTestBody() {
+          const [fact] = yield* transaction
+            .insert(partyFactAssertions)
+            .values({
+              acceptedByActionInvocationId: actionA,
+              acceptedByPrincipalId: principalA,
+              factKind: 'DISPLAY_NAME',
+              normalizedValue: 'Wrong name',
+              partyId: partyOrganizationA,
+              policyVersion: 'party.fact.v1',
+              provenanceMethod: 'DECLARED',
+              provenanceSource: 'USER',
+              tenantId: tenantA,
+              validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
+            })
+            .returning({ assertionId: partyFactAssertions.assertionId });
+          assert.ok(fact);
+          const [correction] = yield* transaction
+            .insert(partyCorrections)
+            .values({
+              actingPrincipalId: principalA,
+              actionInvocationId: 'aa000000-0000-4000-8000-000000000002',
+              evidenceRefs: ['evidence:1'],
+              partyFactAssertionId: fact.assertionId,
+              partyId: partyOrganizationA,
+              policyVersion: 'party.correction.v1',
+              reason: 'Original assertion was wrong',
+              tenantId: tenantA,
+            })
+            .returning({ correctionId: partyCorrections.correctionId });
+          assert.ok(correction);
+          yield* transaction
+            .update(partyCorrections)
+            .set({ reason: 'Mutation must fail' })
+            .where(eq(partyCorrections.correctionId, correction.correctionId));
+        }),
+      ),
       hasPostgreSqlCode('55000'),
     );
 
@@ -838,41 +966,47 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
       eligibleBefore: true,
       retainedAfter: true,
     }));
-    await admin.insert(partyMerges).values({
-      policyVersion: 'party.merge-readiness.v1',
-      readinessEvidence: {
-        absorbedPartyRefs: [absorbedPartyRef],
-        blockingReasons: ['Consumer dry-run is required'],
-        confirmedDuplicateDecisionId: 'confirmed-duplicate:fixture',
-        consumerStatuses: [{ consumerKey: 'contacts', status: 'BLOCKED' }],
-        decisionActorPrincipalId: principalA,
-        selectionEvidenceChain: (
-          ['CONFIRMED_DUPLICATE_SET', 'IDENTITY_SAFETY', 'STABLE_RESOURCE_IDENTITY'] as const
-        ).map((criterion) => ({
-          candidatePartyRefs: mergePartyRefs,
-          candidateSnapshots,
-          criterion,
-          evidenceRefs: ['evidence:fixture'],
-          explanation: 'Prepared-only fixture for database alias constraints',
-          winnerPartyRef: criterion === 'STABLE_RESOURCE_IDENTITY' ? survivorPartyRef : null,
-        })),
-        selectionPolicyVersion: 'party-merge-survivor-selection.v1',
-        selectionReason: 'STABLE_RESOURCE_IDENTITY',
-        version: 1,
-      },
-      status: 'BLOCKED',
-      survivorPartyId: partyOrganizationA,
-      tenantId: tenantA,
-    });
-    const [merge] = await admin.select({ mergeId: partyMerges.mergeId }).from(partyMerges).limit(1);
-    assert.ok(merge);
-    await assert.rejects(
-      admin.insert(partyAliases).values({
-        aliasPartyId: partyOrganizationA,
-        canonicalPartyId: partyOrganizationA,
-        mergeId: merge.mergeId,
+    await runEffectTestPromise(
+      admin.insert(partyMerges).values({
+        policyVersion: 'party.merge-readiness.v1',
+        readinessEvidence: {
+          absorbedPartyRefs: [absorbedPartyRef],
+          blockingReasons: ['Consumer dry-run is required'],
+          confirmedDuplicateDecisionId: 'confirmed-duplicate:fixture',
+          consumerStatuses: [{ consumerKey: 'contacts', status: 'BLOCKED' }],
+          decisionActorPrincipalId: principalA,
+          selectionEvidenceChain: (
+            ['CONFIRMED_DUPLICATE_SET', 'IDENTITY_SAFETY', 'STABLE_RESOURCE_IDENTITY'] as const
+          ).map((criterion) => ({
+            candidatePartyRefs: mergePartyRefs,
+            candidateSnapshots,
+            criterion,
+            evidenceRefs: ['evidence:fixture'],
+            explanation: 'Prepared-only fixture for database alias constraints',
+            winnerPartyRef: criterion === 'STABLE_RESOURCE_IDENTITY' ? survivorPartyRef : null,
+          })),
+          selectionPolicyVersion: 'party-merge-survivor-selection.v1',
+          selectionReason: 'STABLE_RESOURCE_IDENTITY',
+          version: 1,
+        },
+        status: 'BLOCKED',
+        survivorPartyId: partyOrganizationA,
         tenantId: tenantA,
       }),
+    );
+    const [merge] = await runEffectTestPromise(
+      admin.select({ mergeId: partyMerges.mergeId }).from(partyMerges).limit(1),
+    );
+    assert.ok(merge);
+    await assert.rejects(
+      runEffectTestPromise(
+        admin.insert(partyAliases).values({
+          aliasPartyId: partyOrganizationA,
+          canonicalPartyId: partyOrganizationA,
+          mergeId: merge.mergeId,
+          tenantId: tenantA,
+        }),
+      ),
       hasPostgreSqlCode('23514'),
     );
   } finally {

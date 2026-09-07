@@ -298,14 +298,14 @@
       "entityType": "columns"
     },
     {
-      "value": "\"core\".\"action_invocations\".\"auth_method\" is null or \"core\".\"action_invocations\".\"auth_method\" in ('session', 'api_key', 'system', 'support_impersonation')",
+      "value": "\"auth_method\" is null or \"auth_method\" in ('session', 'api_key', 'system', 'support_impersonation')",
       "name": "core_action_invocations_auth_method_ck",
       "schema": "core",
       "table": "action_invocations",
       "entityType": "checks"
     },
     {
-      "value": "\"core\".\"action_invocations\".\"status\" in ('received', 'rejected', 'running', 'succeeded', 'failed', 'indeterminate', 'replayed')",
+      "value": "\"status\" in ('received', 'rejected', 'running', 'succeeded', 'failed', 'indeterminate', 'replayed')",
       "name": "core_action_invocations_status_ck",
       "schema": "core",
       "table": "action_invocations",
@@ -372,7 +372,7 @@
         }
       ],
       "isUnique": true,
-      "where": "\"core\".\"action_invocations\".\"idempotency_key\" is not null",
+      "where": "\"idempotency_key\" is not null",
       "with": "",
       "method": "btree",
       "concurrently": false,
@@ -808,21 +808,21 @@
       "entityType": "columns"
     },
     {
-      "value": "\"core\".\"audit_events\".\"outcome\" in ('allowed', 'denied', 'succeeded', 'failed')",
+      "value": "\"outcome\" in ('allowed', 'denied', 'succeeded', 'failed')",
       "name": "core_audit_events_outcome_ck",
       "schema": "core",
       "table": "audit_events",
       "entityType": "checks"
     },
     {
-      "value": "\"core\".\"audit_events\".\"outcome_stage\" in ('system', 'authn', 'authz', 'policy', 'validation', 'execution')",
+      "value": "\"outcome_stage\" in ('system', 'authn', 'authz', 'policy', 'validation', 'execution')",
       "name": "core_audit_events_stage_ck",
       "schema": "core",
       "table": "audit_events",
       "entityType": "checks"
     },
     {
-      "value": "\"core\".\"audit_events\".\"audit_profile\" in ('standard', 'sensitive', 'minimal')",
+      "value": "\"audit_profile\" in ('standard', 'sensitive', 'minimal')",
       "name": "core_audit_events_profile_ck",
       "schema": "core",
       "table": "audit_events",
@@ -1372,35 +1372,35 @@
       "entityType": "columns"
     },
     {
-      "value": "\"core\".\"data_access_events\".\"outcome\" in ('allowed', 'denied', 'failed')",
+      "value": "\"outcome\" in ('allowed', 'denied', 'failed')",
       "name": "core_data_access_events_outcome_ck",
       "schema": "core",
       "table": "data_access_events",
       "entityType": "checks"
     },
     {
-      "value": "\"core\".\"data_access_events\".\"outcome_stage\" in ('authn', 'context', 'module_state', 'authz', 'policy', 'execution', 'evidence')",
+      "value": "\"outcome_stage\" in ('authn', 'context', 'module_state', 'authz', 'policy', 'execution', 'evidence')",
       "name": "core_data_access_events_stage_ck",
       "schema": "core",
       "table": "data_access_events",
       "entityType": "checks"
     },
     {
-      "value": "\"core\".\"data_access_events\".\"access_kind\" in ('read', 'list', 'search', 'export', 'download')",
+      "value": "\"access_kind\" in ('read', 'list', 'search', 'export', 'download')",
       "name": "core_data_access_events_access_kind_ck",
       "schema": "core",
       "table": "data_access_events",
       "entityType": "checks"
     },
     {
-      "value": "\"core\".\"data_access_events\".\"evidence_capture_mode\" in ('metadata_only', 'hash_only', 'redacted_payload', 'stored_artifact')",
+      "value": "\"evidence_capture_mode\" in ('metadata_only', 'hash_only', 'redacted_payload', 'stored_artifact')",
       "name": "core_data_access_events_capture_mode_ck",
       "schema": "core",
       "table": "data_access_events",
       "entityType": "checks"
     },
     {
-      "value": "(\"core\".\"data_access_events\".\"evidence_capture_mode\" = 'redacted_payload' and \"core\".\"data_access_events\".\"redaction_profile\" is not null and \"core\".\"data_access_events\".\"evidence_payload_json\" is not null) or (\"core\".\"data_access_events\".\"evidence_capture_mode\" <> 'redacted_payload' and \"core\".\"data_access_events\".\"redaction_profile\" is null)",
+      "value": "(\"evidence_capture_mode\" = 'redacted_payload' and \"redaction_profile\" is not null and \"evidence_payload_json\" is not null) or (\"evidence_capture_mode\" <> 'redacted_payload' and \"redaction_profile\" is null)",
       "name": "core_data_access_events_redaction_ck",
       "schema": "core",
       "table": "data_access_events",
@@ -2319,35 +2319,35 @@
       "entityType": "columns"
     },
     {
-      "value": "\"core\".\"evidence_references\".\"source_kind\" in ('action', 'audit', 'data_access', 'domain_event')",
+      "value": "\"source_kind\" in ('action', 'audit', 'data_access', 'domain_event')",
       "name": "core_evidence_references_source_kind_ck",
       "schema": "core",
       "table": "evidence_references",
       "entityType": "checks"
     },
     {
-      "value": "num_nonnulls(\"core\".\"evidence_references\".\"action_invocation_id\", \"core\".\"evidence_references\".\"audit_event_id\", \"core\".\"evidence_references\".\"data_access_event_id\", \"core\".\"evidence_references\".\"domain_event_id\") = 1",
+      "value": "num_nonnulls(\"action_invocation_id\", \"audit_event_id\", \"data_access_event_id\", \"domain_event_id\") = 1",
       "name": "core_evidence_references_source_one_ck",
       "schema": "core",
       "table": "evidence_references",
       "entityType": "checks"
     },
     {
-      "value": "num_nonnulls(\"core\".\"evidence_references\".\"subject_module_key\", \"core\".\"evidence_references\".\"subject_resource_type\", \"core\".\"evidence_references\".\"subject_resource_id\") in (0, 3)",
+      "value": "num_nonnulls(\"subject_module_key\", \"subject_resource_type\", \"subject_resource_id\") in (0, 3)",
       "name": "core_evidence_references_subject_all_ck",
       "schema": "core",
       "table": "evidence_references",
       "entityType": "checks"
     },
     {
-      "value": "\"core\".\"evidence_references\".\"disposition_status\" in ('active', 'expired', 'deleted', 'legal_hold')",
+      "value": "\"disposition_status\" in ('active', 'expired', 'deleted', 'legal_hold')",
       "name": "core_evidence_references_disposition_ck",
       "schema": "core",
       "table": "evidence_references",
       "entityType": "checks"
     },
     {
-      "value": "\"core\".\"evidence_references\".\"data_classification\" in ('internal', 'confidential', 'restricted')",
+      "value": "\"data_classification\" in ('internal', 'confidential', 'restricted')",
       "name": "core_evidence_references_classification_ck",
       "schema": "core",
       "table": "evidence_references",
@@ -2660,7 +2660,7 @@
       "entityType": "columns"
     },
     {
-      "value": "\"core\".\"legal_entities\".\"status\" in ('active', 'suspended', 'archived')",
+      "value": "\"status\" in ('active', 'suspended', 'archived')",
       "name": "core_legal_entities_status_ck",
       "schema": "core",
       "table": "legal_entities",
@@ -3018,14 +3018,14 @@
       "entityType": "columns"
     },
     {
-      "value": "\"core\".\"media_assets\".\"ingestion_source\" in ('user', 'integration', 'import', 'system')",
+      "value": "\"ingestion_source\" in ('user', 'integration', 'import', 'system')",
       "name": "core_media_assets_ingestion_source_ck",
       "schema": "core",
       "table": "media_assets",
       "entityType": "checks"
     },
     {
-      "value": "\"core\".\"media_assets\".\"processing_status\" in ('uploaded', 'scanning', 'ready', 'failed')",
+      "value": "\"processing_status\" in ('uploaded', 'scanning', 'ready', 'failed')",
       "name": "core_media_assets_processing_status_ck",
       "schema": "core",
       "table": "media_assets",
@@ -3343,7 +3343,7 @@
       "entityType": "columns"
     },
     {
-      "value": "\"core\".\"media_links\".\"link_source\" in ('user', 'integration', 'import', 'system')",
+      "value": "\"link_source\" in ('user', 'integration', 'import', 'system')",
       "name": "core_media_links_source_ck",
       "schema": "core",
       "table": "media_links",
@@ -3764,14 +3764,14 @@
       "entityType": "columns"
     },
     {
-      "value": "\"core\".\"outbox_deliveries\".\"status\" in ('pending', 'processing', 'done', 'dead')",
+      "value": "\"status\" in ('pending', 'processing', 'done', 'dead')",
       "name": "core_outbox_deliveries_status_ck",
       "schema": "core",
       "table": "outbox_deliveries",
       "entityType": "checks"
     },
     {
-      "value": "\"core\".\"outbox_deliveries\".\"attempts_count\" >= 0",
+      "value": "\"attempts_count\" >= 0",
       "name": "core_outbox_deliveries_attempts_count_ck",
       "schema": "core",
       "table": "outbox_deliveries",
@@ -3817,7 +3817,7 @@
         }
       ],
       "isUnique": false,
-      "where": "\"core\".\"outbox_deliveries\".\"status\" = 'pending'",
+      "where": "\"status\" = 'pending'",
       "with": "",
       "method": "btree",
       "concurrently": false,
@@ -4024,7 +4024,7 @@
         }
       ],
       "isUnique": false,
-      "where": "\"core\".\"outbox_messages\".\"matched_at\" is null",
+      "where": "\"matched_at\" is null",
       "with": "",
       "method": "btree",
       "concurrently": false,
@@ -4216,28 +4216,28 @@
       "entityType": "columns"
     },
     {
-      "value": "\"core\".\"principal_auth_bindings\".\"provider\" in ('better_auth')",
+      "value": "\"provider\" in ('better_auth')",
       "name": "core_auth_bindings_provider_ck",
       "schema": "core",
       "table": "principal_auth_bindings",
       "entityType": "checks"
     },
     {
-      "value": "\"core\".\"principal_auth_bindings\".\"subject_type\" in ('user', 'api_key')",
+      "value": "\"subject_type\" in ('user', 'api_key')",
       "name": "core_auth_bindings_subject_type_ck",
       "schema": "core",
       "table": "principal_auth_bindings",
       "entityType": "checks"
     },
     {
-      "value": "\"core\".\"principal_auth_bindings\".\"status\" in ('active', 'revoked', 'disabled')",
+      "value": "\"status\" in ('active', 'revoked', 'disabled')",
       "name": "core_auth_bindings_status_ck",
       "schema": "core",
       "table": "principal_auth_bindings",
       "entityType": "checks"
     },
     {
-      "value": "(\"core\".\"principal_auth_bindings\".\"status\" = 'revoked' and \"core\".\"principal_auth_bindings\".\"revoked_at\" is not null) or (\"core\".\"principal_auth_bindings\".\"status\" in ('active', 'disabled') and \"core\".\"principal_auth_bindings\".\"revoked_at\" is null)",
+      "value": "(\"status\" = 'revoked' and \"revoked_at\" is not null) or (\"status\" in ('active', 'disabled') and \"revoked_at\" is null)",
       "name": "core_auth_bindings_lifecycle_ck",
       "schema": "core",
       "table": "principal_auth_bindings",
@@ -4339,7 +4339,7 @@
         }
       ],
       "isUnique": true,
-      "where": "\"core\".\"principal_auth_bindings\".\"subject_type\" = 'api_key'",
+      "where": "\"subject_type\" = 'api_key'",
       "with": "",
       "method": "btree",
       "concurrently": false,
@@ -4513,14 +4513,14 @@
       "entityType": "columns"
     },
     {
-      "value": "\"core\".\"principals\".\"kind\" in ('human', 'service', 'integration', 'agent', 'system')",
+      "value": "\"kind\" in ('human', 'service', 'integration', 'agent', 'system')",
       "name": "core_principals_kind_ck",
       "schema": "core",
       "table": "principals",
       "entityType": "checks"
     },
     {
-      "value": "\"core\".\"principals\".\"status\" in ('active', 'disabled', 'archived')",
+      "value": "\"status\" in ('active', 'disabled', 'archived')",
       "name": "core_principals_status_ck",
       "schema": "core",
       "table": "principals",
@@ -4785,14 +4785,14 @@
       "entityType": "columns"
     },
     {
-      "value": "\"core\".\"search_index_entries\".\"deleted\" or (length(btrim(\"core\".\"search_index_entries\".\"title\")) > 0 and length(\"core\".\"search_index_entries\".\"title\") <= 300 and length(\"core\".\"search_index_entries\".\"body_text\") <= 40000)",
+      "value": "\"deleted\" or (length(btrim(\"title\")) > 0 and length(\"title\") <= 300 and length(\"body_text\") <= 40000)",
       "name": "core_search_index_entries_document_ck",
       "schema": "core",
       "table": "search_index_entries",
       "entityType": "checks"
     },
     {
-      "value": "\"core\".\"search_index_entries\".\"projection_version\" > 0",
+      "value": "\"projection_version\" > 0",
       "name": "core_search_index_entries_version_ck",
       "schema": "core",
       "table": "search_index_entries",
@@ -5060,7 +5060,7 @@
       "entityType": "pks"
     },
     {
-      "value": "\"core\".\"search_projection_generations\".\"generation\" > 0",
+      "value": "\"generation\" > 0",
       "name": "core_search_projection_generations_positive_ck",
       "schema": "core",
       "table": "search_projection_generations",
@@ -5219,14 +5219,14 @@
       "entityType": "pks"
     },
     {
-      "value": "\"core\".\"search_projection_rebuilds\".\"rebuild_version\" > 0",
+      "value": "\"rebuild_version\" > 0",
       "name": "core_search_projection_rebuilds_version_ck",
       "schema": "core",
       "table": "search_projection_rebuilds",
       "entityType": "checks"
     },
     {
-      "value": "\"core\".\"search_projection_rebuilds\".\"fingerprint\" ~ '^[a-f0-9]{64}$'",
+      "value": "\"fingerprint\" ~ '^[a-f0-9]{64}$'",
       "name": "core_search_projection_rebuilds_fingerprint_ck",
       "schema": "core",
       "table": "search_projection_rebuilds",
@@ -5435,14 +5435,14 @@
       "entityType": "columns"
     },
     {
-      "value": "\"core\".\"tenant_module_state_changes\".\"change_source\" in ('user', 'support', 'system')",
+      "value": "\"change_source\" in ('user', 'support', 'system')",
       "name": "core_module_state_changes_source_ck",
       "schema": "core",
       "table": "tenant_module_state_changes",
       "entityType": "checks"
     },
     {
-      "value": "\"core\".\"tenant_module_state_changes\".\"new_state\" in ('inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived')",
+      "value": "\"new_state\" in ('inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived')",
       "name": "core_module_state_changes_new_state_ck",
       "schema": "core",
       "table": "tenant_module_state_changes",
@@ -5646,7 +5646,7 @@
       "entityType": "columns"
     },
     {
-      "value": "\"core\".\"tenant_module_states\".\"state\" in ('inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived')",
+      "value": "\"state\" in ('inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived')",
       "name": "core_module_states_state_ck",
       "schema": "core",
       "table": "tenant_module_states",
@@ -5805,7 +5805,7 @@
       "entityType": "columns"
     },
     {
-      "value": "\"core\".\"tenants\".\"status\" in ('active', 'suspended', 'archived')",
+      "value": "\"status\" in ('active', 'suspended', 'archived')",
       "name": "core_tenants_status_ck",
       "schema": "core",
       "table": "tenants",

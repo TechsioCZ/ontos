@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm';
-import { Context, Duration, Effect, Option } from 'effect';
+import { Context, Effect, Option } from 'effect';
+import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-resolution.ts';
 import {
   PartyAliasResolutionBrokenChain,
   PartyAliasResolutionCrossTenant,
@@ -7,7 +8,6 @@ import {
   PartyAliasResolutionUnavailable,
   PartyAliasWriteRejected,
 } from '../../shared/domain/merge-alias-resolution.ts';
-import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-resolution.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import { parties, partyAliases } from '../db/schema.ts';
 import type { PartyTransaction } from '../db/types.ts';
@@ -156,41 +156,37 @@ const unavailable = (cause?: unknown) =>
     }),
     cause,
   );
-const ALIAS_LOOKUP_TIMEOUT = Duration.seconds(30);
-const attempt = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: unavailable, try: operation }).pipe(
-    Effect.timeoutOrElse({
-      duration: ALIAS_LOOKUP_TIMEOUT,
-      orElse: () => Effect.fail(unavailable()),
-    }),
-  );
 
 export const makeTransactionPartyAliasResolutionService = (
   transaction: AliasTransaction,
 ): PartyAliasResolutionService =>
   makePartyAliasResolutionService({
     findAlias: (tenantId, aliasPartyId) =>
-      attempt(() =>
-        transaction
-          .select({
-            aliasPartyId: partyAliases.aliasPartyId,
-            canonicalPartyId: partyAliases.canonicalPartyId,
-            tenantId: partyAliases.tenantId,
-          })
-          .from(partyAliases)
-          .where(
-            and(eq(partyAliases.tenantId, tenantId), eq(partyAliases.aliasPartyId, aliasPartyId)),
-          )
-          .limit(1),
-      ).pipe(Effect.map(([alias]) => Option.fromNullishOr(alias))),
+      transaction
+        .select({
+          aliasPartyId: partyAliases.aliasPartyId,
+          canonicalPartyId: partyAliases.canonicalPartyId,
+          tenantId: partyAliases.tenantId,
+        })
+        .from(partyAliases)
+        .where(
+          and(eq(partyAliases.tenantId, tenantId), eq(partyAliases.aliasPartyId, aliasPartyId)),
+        )
+        .limit(1)
+        .pipe(
+          Effect.mapError(unavailable),
+          Effect.map(([alias]) => Option.fromNullishOr(alias)),
+        ),
     partyExists: (tenantId, partyId) =>
-      attempt(() =>
-        transaction
-          .select({ partyId: parties.partyId })
-          .from(parties)
-          .where(and(eq(parties.tenantId, tenantId), eq(parties.partyId, partyId)))
-          .limit(1),
-      ).pipe(Effect.map((rows) => rows.length === 1)),
+      transaction
+        .select({ partyId: parties.partyId })
+        .from(parties)
+        .where(and(eq(parties.tenantId, tenantId), eq(parties.partyId, partyId)))
+        .limit(1)
+        .pipe(
+          Effect.mapError(unavailable),
+          Effect.map((rows) => rows.length === 1),
+        ),
   });
 
 export const resolvePartyAlias = (
