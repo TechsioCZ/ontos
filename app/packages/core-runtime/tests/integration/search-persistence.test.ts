@@ -1,15 +1,25 @@
-import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
+import {
+  makeEffectTestCallback as nativeTestCallback,
+  makeEffectTestCallback,
+} from '@app/core-runtime/testing/effect-runtime';
+
+import { Effect, Function as Fn, Exit as NativeExit, Scope as NativeScope, Schema } from 'effect';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import test from 'node:test';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect, Function as Fn, Schema } from 'effect';
-import { Pool } from 'pg';
+import test, { after as afterNativeDatabase } from 'node:test';
 import type { QueryResult, QueryResultRow } from 'pg';
+import { Pool } from 'pg';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
 import { makePostgresCoreSearchProjectionStore } from '../../src/search/persistence.ts';
 import { makeCoreSearchQueryRuntime } from '../../src/search/projection.ts';
+import { makeTestDatabaseFromPool } from '../support/database.ts';
+import { runEffectTestSync as runNativeSync } from '../support/effect-runtime.ts';
+
+const nativeDatabaseScope = runNativeSync(NativeScope.make());
+afterNativeDatabase(
+  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
+);
 
 const queryEffect = <Row extends QueryResultRow = QueryResultRow>(
   client: Pool,
@@ -47,7 +57,9 @@ effectTest(
       tenantId,
     };
     const store = makePostgresCoreSearchProjectionStore({
-      executor: drizzle({ client: runtimePool, relations: coreRelations }),
+      executor: yield* makeTestDatabaseFromPool(runtimePool, coreRelations).pipe(
+        NativeScope.provide(nativeDatabaseScope),
+      ),
     });
     const search = makeCoreSearchQueryRuntime(store);
     const partyDocument = (resourceId: string, projectionVersion: string, title: string) => ({
@@ -210,7 +222,9 @@ effectTest(
       yield* store.replace(emptyRebuild);
       // A fresh service instance must observe the durable floor, not process-local state.
       const restarted = makePostgresCoreSearchProjectionStore({
-        executor: drizzle({ client: runtimePool, relations: coreRelations }),
+        executor: yield* makeTestDatabaseFromPool(runtimePool, coreRelations).pipe(
+          NativeScope.provide(nativeDatabaseScope),
+        ),
       });
       const floorSearch = () =>
         makeCoreSearchQueryRuntime(restarted).search({

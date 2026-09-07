@@ -1,10 +1,17 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { Scope as NativeScope, Exit as NativeExit, Context, Effect, Predicate } from 'effect';
+import {
+  runEffectTestSync as runNativeSync,
+  makeEffectTestCallback as nativeTestCallback,
+  runEffectTestPromise,
+} from '@app/core-runtime/testing/effect-runtime';
+
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import test from 'node:test';
+import test, { after as afterNativeDatabase } from 'node:test';
 import { and, eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Context, Effect, Predicate } from 'effect';
+
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import { Pool } from 'pg';
 import {
@@ -59,6 +66,8 @@ import {
 import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
 import { makeIdentityLifecycleService } from '../../api/auth/identity-lifecycle.ts';
 
+const nativeDatabaseScope = runNativeSync(NativeScope.make());
+
 const cookieHeader = (setCookieHeaders: readonly string[]): string => {
   const cookies = new Map<string, string>();
   for (const header of setCookieHeaders) {
@@ -76,7 +85,11 @@ void test('verifies provider keys and completes live support impersonation with 
   const authPool = new Pool({ connectionString: baseConfiguration.connectionString });
   const corePool = new Pool({ connectionString: baseConfiguration.connectionString });
   const authDatabase = drizzle({ client: authPool, relations: authRelations });
-  const coreDatabase = drizzle({ client: corePool, relations: coreRelations });
+  const coreDatabase = await runEffectTestPromise(
+    makeTestDatabaseFromPool(corePool, coreRelations).pipe(
+      NativeScope.provide(nativeDatabaseScope),
+    ),
+  );
   const principalManagementRepository = principalManagementRepositoryFromTransaction(coreDatabase);
   const providePrincipalManagementRepository = <Success, Failure, Requirements>(
     effect: Effect.Effect<Success, Failure, Requirements>,
@@ -166,14 +179,24 @@ void test('verifies provider keys and completes live support impersonation with 
       await authDatabase.delete(account).where(inArray(account.userId, ids));
       await authDatabase.delete(user).where(inArray(user.id, ids));
     }
-    await coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId));
-    await coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId));
-    await coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId));
-    await coreDatabase
-      .delete(principalAuthBindings)
-      .where(eq(principalAuthBindings.tenantId, tenantId));
-    await coreDatabase.delete(principals).where(eq(principals.tenantId, tenantId));
-    await coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId));
+    await runEffectTestPromise(
+      coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
+    );
+    await runEffectTestPromise(
+      coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
+    );
+    await runEffectTestPromise(
+      coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
+    );
+    await runEffectTestPromise(
+      coreDatabase
+        .delete(principalAuthBindings)
+        .where(eq(principalAuthBindings.tenantId, tenantId)),
+    );
+    await runEffectTestPromise(
+      coreDatabase.delete(principals).where(eq(principals.tenantId, tenantId)),
+    );
+    await runEffectTestPromise(coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)));
   };
 
   try {
@@ -190,65 +213,71 @@ void test('verifies provider keys and completes live support impersonation with 
         password,
       ),
     );
-    await coreDatabase.insert(tenants).values({
-      defaultLocale: 'en',
-      name: 'Identity modes Auth integration',
-      slug: `identity-modes-auth-${tenantId}`,
-      status: 'active',
-      tenantId,
-    });
-    await coreDatabase.insert(principals).values([
-      {
-        displayName: 'Support original',
-        kind: 'human',
-        principalId: originalPrincipalId,
+    await runEffectTestPromise(
+      coreDatabase.insert(tenants).values({
+        defaultLocale: 'en',
+        name: 'Identity modes Auth integration',
+        slug: `identity-modes-auth-${tenantId}`,
         status: 'active',
         tenantId,
-      },
-      {
-        displayName: 'Support target',
-        kind: 'human',
-        principalId: targetPrincipalId,
-        status: 'active',
-        tenantId,
-      },
-      {
-        displayName: 'Second identity administrator',
-        kind: 'human',
-        principalId: secondAdministratorPrincipalId,
-        status: 'active',
-        tenantId,
-      },
-    ]);
-    await coreDatabase.insert(principalAuthBindings).values([
-      {
-        principalAuthBindingId: originalAuthBindingId,
-        principalId: originalPrincipalId,
-        provider: 'better_auth',
-        providerSubjectId: originalUserId,
-        status: 'active',
-        subjectType: 'user',
-        tenantId,
-      },
-      {
-        principalAuthBindingId: targetAuthBindingId,
-        principalId: targetPrincipalId,
-        provider: 'better_auth',
-        providerSubjectId: targetUserId,
-        status: 'active',
-        subjectType: 'user',
-        tenantId,
-      },
-      {
-        principalAuthBindingId: secondAdministratorAuthBindingId,
-        principalId: secondAdministratorPrincipalId,
-        provider: 'better_auth',
-        providerSubjectId: secondAdministratorUserId,
-        status: 'active',
-        subjectType: 'user',
-        tenantId,
-      },
-    ]);
+      }),
+    );
+    await runEffectTestPromise(
+      coreDatabase.insert(principals).values([
+        {
+          displayName: 'Support original',
+          kind: 'human',
+          principalId: originalPrincipalId,
+          status: 'active',
+          tenantId,
+        },
+        {
+          displayName: 'Support target',
+          kind: 'human',
+          principalId: targetPrincipalId,
+          status: 'active',
+          tenantId,
+        },
+        {
+          displayName: 'Second identity administrator',
+          kind: 'human',
+          principalId: secondAdministratorPrincipalId,
+          status: 'active',
+          tenantId,
+        },
+      ]),
+    );
+    await runEffectTestPromise(
+      coreDatabase.insert(principalAuthBindings).values([
+        {
+          principalAuthBindingId: originalAuthBindingId,
+          principalId: originalPrincipalId,
+          provider: 'better_auth',
+          providerSubjectId: originalUserId,
+          status: 'active',
+          subjectType: 'user',
+          tenantId,
+        },
+        {
+          principalAuthBindingId: targetAuthBindingId,
+          principalId: targetPrincipalId,
+          provider: 'better_auth',
+          providerSubjectId: targetUserId,
+          status: 'active',
+          subjectType: 'user',
+          tenantId,
+        },
+        {
+          principalAuthBindingId: secondAdministratorAuthBindingId,
+          principalId: secondAdministratorPrincipalId,
+          provider: 'better_auth',
+          providerSubjectId: secondAdministratorUserId,
+          status: 'active',
+          subjectType: 'user',
+          tenantId,
+        },
+      ]),
+    );
     const configuration = {
       ...baseConfiguration,
       supportUserIds: [originalUserId],
@@ -583,10 +612,12 @@ void test('verifies provider keys and completes live support impersonation with 
     );
     assert.equal(stopped.checkpointPending, false);
     assert.ok(stopped.setCookieHeaders.length > 0);
-    const checkpoints = await coreDatabase
-      .select({ evidence: auditEvents.evidenceJson })
-      .from(auditEvents)
-      .where(eq(auditEvents.tenantId, tenantId));
+    const checkpoints = await runEffectTestPromise(
+      coreDatabase
+        .select({ evidence: auditEvents.evidenceJson })
+        .from(auditEvents)
+        .where(eq(auditEvents.tenantId, tenantId)),
+    );
     assert.deepEqual(
       checkpoints
         .flatMap(({ evidence }) =>
@@ -600,15 +631,17 @@ void test('verifies provider keys and completes live support impersonation with 
         .toSorted(),
       ['requested', 'started', 'stopped'],
     );
-    const identityEvidence = await coreDatabase
-      .select({
-        authBindingId: auditEvents.authBindingId,
-        authMethod: auditEvents.authMethod,
-        impersonatedByPrincipalId: auditEvents.impersonatedByPrincipalId,
-        principalId: auditEvents.principalId,
-      })
-      .from(auditEvents)
-      .where(eq(auditEvents.tenantId, tenantId));
+    const identityEvidence = await runEffectTestPromise(
+      coreDatabase
+        .select({
+          authBindingId: auditEvents.authBindingId,
+          authMethod: auditEvents.authMethod,
+          impersonatedByPrincipalId: auditEvents.impersonatedByPrincipalId,
+          principalId: auditEvents.principalId,
+        })
+        .from(auditEvents)
+        .where(eq(auditEvents.tenantId, tenantId)),
+    );
     assert.ok(
       identityEvidence.some(
         (evidence) =>
@@ -634,3 +667,6 @@ void test('verifies provider keys and completes live support impersonation with 
     await Promise.all([authPool.end(), corePool.end()]);
   }
 });
+afterNativeDatabase(
+  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
+);

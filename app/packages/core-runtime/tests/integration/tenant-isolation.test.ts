@@ -1,12 +1,22 @@
-import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
+import {
+  makeEffectTestCallback as nativeTestCallback,
+  makeEffectTestCallback,
+} from '@app/core-runtime/testing/effect-runtime';
+
+import { getTableConfig, pgSchema, text, uuid } from 'drizzle-orm/pg-core';
+import {
+  Effect,
+  Function as Fn,
+  Exit as NativeExit,
+  Scope as NativeScope,
+  Option,
+  Schema,
+} from 'effect';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import test from 'node:test';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { getTableConfig, pgSchema, text, uuid } from 'drizzle-orm/pg-core';
-import { Effect, Function as Fn, Option, Schema } from 'effect';
-import { Pool } from 'pg';
+import test, { after as afterNativeDatabase } from 'node:test';
 import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
+import { Pool } from 'pg';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import {
   actionInvocations,
@@ -29,10 +39,17 @@ import {
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
 } from '../../src/operations/context.ts';
-import { defineRead } from '../../src/reads/definition.ts';
 import type { ReadHandlerContext } from '../../src/reads/context.ts';
+import { defineRead } from '../../src/reads/definition.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
+import { makeTestDatabaseFromPool } from '../support/database.ts';
+import { runEffectTestSync as runNativeSync } from '../support/effect-runtime.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
+
+const nativeDatabaseScope = runNativeSync(NativeScope.make());
+afterNativeDatabase(
+  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
+);
 
 type DatabaseQueryFailureSelf = typeof DatabaseQueryFailureContract.Type;
 const DatabaseQueryFailureContract = Schema.TaggedStruct('DatabaseQueryFailure', {
@@ -72,8 +89,7 @@ const connectPool = (pool: Pool): Effect.Effect<PoolClient> =>
   Effect.suspend(() => Effect.promise(Fn.constant(pool.connect())));
 const endPool = (pool: Pool): Effect.Effect<void> =>
   Effect.suspend(() => Effect.promise(Fn.constant(pool.end())));
-const fromPromiseLike = <Value>(promise: PromiseLike<Value>): Effect.Effect<Value> =>
-  Effect.promise(Fn.constant(promise));
+
 const effectAccessor =
   <Value>(effect: Effect.Effect<Value>) =>
   (): Effect.Effect<Value> =>
@@ -280,7 +296,9 @@ effectTest(
     const connections = yield* loadDatabaseConnectionPair();
     const admin = new Pool({ connectionString: connections.admin.connectionString });
     const runtimePool = new Pool({ connectionString: connections.runtime.connectionString });
-    const runtimeDatabase = drizzle({ client: runtimePool, relations: coreRelations });
+    const runtimeDatabase = yield* makeTestDatabaseFromPool(runtimePool, coreRelations).pipe(
+      NativeScope.provide(nativeDatabaseScope),
+    );
     const schemaName = `governed_isolation_${randomUUID().replaceAll('-', '')}`;
     const ownerSchema = pgSchema(schemaName);
     const records = ownerSchema.table('records', {
@@ -342,10 +360,10 @@ effectTest(
           }>,
         ) => context.services.listWithoutPredicates().pipe(Effect.map(toReadResult)),
         (transaction) => {
-          const rows = fromPromiseLike(transaction.select().from(records));
+          const rows = transaction.select().from(records);
           return Effect.succeed({
             // Deliberately buggy: RLS, not a repository predicate, must enforce the scope.
-            listWithoutPredicates: effectAccessor(rows),
+            listWithoutPredicates: effectAccessor(rows.pipe(Effect.orDie)),
           });
         },
         () => ({ kind: 'legal_entity' }),

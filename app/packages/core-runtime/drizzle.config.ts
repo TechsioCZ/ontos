@@ -1,5 +1,5 @@
-import { Redacted, Result, Schema } from 'effect';
 import { defineConfig } from 'drizzle-kit';
+import { Redacted, Result, Schema } from 'effect';
 import { APP_ENV_PATH } from './src/environment/workspace-environment.ts';
 
 const nodeFileSystem = process.getBuiltinModule('node:fs');
@@ -30,6 +30,4 @@ export default defineConfig({
   },
   out: './drizzle',
   schema: './src/db/schema.ts',
-  strict: true,
-  verbose: true,
 });

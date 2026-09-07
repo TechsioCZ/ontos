@@ -19,9 +19,9 @@ import {
   roleEndEvidenceIsSufficient,
   rolePeriodStorageStateAt,
 } from '../../shared/domain/counterparty-role-period.ts';
+import type { CounterpartyRolePeriodRef } from '../../shared/resources/counterparty-role-period.ts';
 import type { CounterpartyRef } from '../../shared/resources/counterparty.ts';
 import { CounterpartyRefSchema } from '../../shared/resources/counterparty.ts';
-import type { CounterpartyRolePeriodRef } from '../../shared/resources/counterparty-role-period.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import { PartyRefSchema } from '../../shared/resources/party.ts';
 import {
@@ -38,7 +38,6 @@ import {
 } from '../merge/party-alias-resolution.service.ts';
 
 type CounterpartyTransaction = Pick<PartyTransaction, 'insert' | 'select' | 'update'>;
-type PartyRow = typeof parties.$inferSelect;
 type CounterpartyRow = typeof counterparties.$inferSelect;
 type RolePeriodRow = typeof counterpartyRolePeriods.$inferSelect;
 type RolePeriodReadRow = typeof counterpartyRoleAdminReadModels.$inferSelect;
@@ -138,12 +137,6 @@ const unavailable = (cause?: unknown) => {
   return error;
 };
 
-const attempt = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.tryPromise({ catch: unavailable, try: operation }).pipe(
-    Effect.timeout('30 seconds'),
-    Effect.mapError(unavailable),
-  );
-
 const instantAsDate = (instant: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(instant));
 
 const dieInvariant = (reason: string): never => {
@@ -228,21 +221,16 @@ const resolveCanonicalParty = Effect.fn('CounterpartyPersistenceService.resolveC
     transaction: CounterpartyTransaction,
     tenantId: string,
     storedPartyId: string,
-  ): Effect.fn.Return<Option.Option<PartyRow>, CounterpartyPersistenceUnavailable> {
-    const resolution = yield* resolvePartyAlias(transaction, tenantId, storedPartyId).pipe(
-      Effect.mapError(unavailable),
-    );
-    const [party] = yield* attempt(() =>
-      transaction
-        .select()
-        .from(parties)
-        .where(
-          and(eq(parties.tenantId, tenantId), eq(parties.partyId, resolution.canonicalPartyId)),
-        )
-        .limit(1),
-    );
+  ) {
+    const resolution = yield* resolvePartyAlias(transaction, tenantId, storedPartyId);
+    const [party] = yield* transaction
+      .select()
+      .from(parties)
+      .where(and(eq(parties.tenantId, tenantId), eq(parties.partyId, resolution.canonicalPartyId)))
+      .limit(1);
     return Option.fromUndefinedOr(party);
   },
+  Effect.mapError(unavailable),
 );
 
 const findCounterpartyRow = (
@@ -253,33 +241,37 @@ const findCounterpartyRow = (
   lock: boolean,
 ): Effect.Effect<Option.Option<CounterpartyRow>, CounterpartyPersistenceUnavailable> =>
   lock
-    ? attempt(() =>
-        transaction
-          .select()
-          .from(counterparties)
-          .where(
-            and(
-              eq(counterparties.tenantId, tenantId),
-              eq(counterparties.legalEntityId, legalEntityId),
-              eq(counterparties.counterpartyId, counterpartyId),
-            ),
-          )
-          .limit(1)
-          .for('update'),
-      ).pipe(Effect.map((rows) => Option.fromUndefinedOr(rows[0])))
-    : attempt(() =>
-        transaction
-          .select()
-          .from(counterparties)
-          .where(
-            and(
-              eq(counterparties.tenantId, tenantId),
-              eq(counterparties.legalEntityId, legalEntityId),
-              eq(counterparties.counterpartyId, counterpartyId),
-            ),
-          )
-          .limit(1),
-      ).pipe(Effect.map((rows) => Option.fromUndefinedOr(rows[0])));
+    ? transaction
+        .select()
+        .from(counterparties)
+        .where(
+          and(
+            eq(counterparties.tenantId, tenantId),
+            eq(counterparties.legalEntityId, legalEntityId),
+            eq(counterparties.counterpartyId, counterpartyId),
+          ),
+        )
+        .limit(1)
+        .for('update')
+        .pipe(
+          Effect.mapError(unavailable),
+          Effect.map((rows) => Option.fromUndefinedOr(rows[0])),
+        )
+    : transaction
+        .select()
+        .from(counterparties)
+        .where(
+          and(
+            eq(counterparties.tenantId, tenantId),
+            eq(counterparties.legalEntityId, legalEntityId),
+            eq(counterparties.counterpartyId, counterpartyId),
+          ),
+        )
+        .limit(1)
+        .pipe(
+          Effect.mapError(unavailable),
+          Effect.map((rows) => Option.fromUndefinedOr(rows[0])),
+        );
 
 const findCounterpartyReadRow = (
   transaction: CounterpartyTransaction,
@@ -288,44 +280,43 @@ const findCounterpartyReadRow = (
   counterpartyId: string,
 ): Effect.Effect<Option.Option<CounterpartyReadRow>, CounterpartyPersistenceUnavailable> =>
   legalEntityId === undefined
-    ? attempt(() =>
-        transaction
-          .select()
-          .from(counterpartyAdminReadModels)
-          .where(
-            and(
-              eq(counterpartyAdminReadModels.tenantId, tenantId),
-              eq(counterpartyAdminReadModels.counterpartyId, counterpartyId),
-            ),
-          )
-          .limit(1),
-      ).pipe(
-        Effect.map(([row]) =>
-          Option.map(Option.fromUndefinedOr(row), (value) => ({
-            counterpartyId: value.counterpartyId,
-            createdAt: value.createdAt,
-            legalEntityId: value.legalEntityId,
-            partyId: value.storedPartyId,
-            tenantId: value.tenantId,
-          })),
-        ),
-      )
+    ? transaction
+        .select()
+        .from(counterpartyAdminReadModels)
+        .where(
+          and(
+            eq(counterpartyAdminReadModels.tenantId, tenantId),
+            eq(counterpartyAdminReadModels.counterpartyId, counterpartyId),
+          ),
+        )
+        .limit(1)
+        .pipe(
+          Effect.mapError(unavailable),
+          Effect.map(([row]) =>
+            Option.map(Option.fromUndefinedOr(row), (value) => ({
+              counterpartyId: value.counterpartyId,
+              createdAt: value.createdAt,
+              legalEntityId: value.legalEntityId,
+              partyId: value.storedPartyId,
+              tenantId: value.tenantId,
+            })),
+          ),
+        )
     : findCounterpartyRow(transaction, tenantId, legalEntityId, counterpartyId, false);
 
 const syncCounterpartyReadModel = (transaction: CounterpartyTransaction, row: CounterpartyRow) =>
-  attempt(() =>
-    transaction
-      .insert(counterpartyAdminReadModels)
-      .values({
-        archivedAt: row.archivedAt,
-        counterpartyId: row.counterpartyId,
-        createdAt: row.createdAt,
-        legalEntityId: row.legalEntityId,
-        storedPartyId: row.partyId,
-        tenantId: row.tenantId,
-      })
-      .onConflictDoNothing(),
-  );
+  transaction
+    .insert(counterpartyAdminReadModels)
+    .values({
+      archivedAt: row.archivedAt,
+      counterpartyId: row.counterpartyId,
+      createdAt: row.createdAt,
+      legalEntityId: row.legalEntityId,
+      storedPartyId: row.partyId,
+      tenantId: row.tenantId,
+    })
+    .onConflictDoNothing()
+    .pipe(Effect.mapError(unavailable));
 
 const syncRoleReadModel = (transaction: CounterpartyTransaction, row: RolePeriodRow) => {
   const values = {
@@ -346,18 +337,17 @@ const syncRoleReadModel = (transaction: CounterpartyTransaction, row: RolePeriod
     validFrom: row.validFrom,
     validTo: row.validTo,
   };
-  return attempt(() =>
-    transaction
-      .insert(counterpartyRoleAdminReadModels)
-      .values(values)
-      .onConflictDoUpdate({
-        set: values,
-        target: [
-          counterpartyRoleAdminReadModels.tenantId,
-          counterpartyRoleAdminReadModels.rolePeriodId,
-        ],
-      }),
-  );
+  return transaction
+    .insert(counterpartyRoleAdminReadModels)
+    .values(values)
+    .onConflictDoUpdate({
+      set: values,
+      target: [
+        counterpartyRoleAdminReadModels.tenantId,
+        counterpartyRoleAdminReadModels.rolePeriodId,
+      ],
+    })
+    .pipe(Effect.mapError(unavailable));
 };
 
 const listRoleReadRows = (
@@ -368,57 +358,52 @@ const listRoleReadRows = (
   effectiveAt: Date,
 ): Effect.Effect<readonly RolePeriodReadRow[], CounterpartyPersistenceUnavailable> =>
   adminRead
-    ? attempt(() =>
-        transaction
-          .select()
-          .from(counterpartyRoleAdminReadModels)
-          .where(
-            and(
-              eq(counterpartyRoleAdminReadModels.tenantId, counterparty.tenantId),
-              eq(counterpartyRoleAdminReadModels.counterpartyId, counterparty.counterpartyId),
-              currentOnly
-                ? and(
-                    eq(counterpartyRoleAdminReadModels.state, 'ACTIVE'),
-                    lte(counterpartyRoleAdminReadModels.validFrom, effectiveAt),
-                    or(
-                      isNull(counterpartyRoleAdminReadModels.validTo),
-                      gt(counterpartyRoleAdminReadModels.validTo, effectiveAt),
-                    ),
-                  )
-                : undefined,
-            ),
-          )
-          .orderBy(
-            asc(counterpartyRoleAdminReadModels.validFrom),
-            asc(counterpartyRoleAdminReadModels.rolePeriodId),
+    ? transaction
+        .select()
+        .from(counterpartyRoleAdminReadModels)
+        .where(
+          and(
+            eq(counterpartyRoleAdminReadModels.tenantId, counterparty.tenantId),
+            eq(counterpartyRoleAdminReadModels.counterpartyId, counterparty.counterpartyId),
+            currentOnly
+              ? and(
+                  eq(counterpartyRoleAdminReadModels.state, 'ACTIVE'),
+                  lte(counterpartyRoleAdminReadModels.validFrom, effectiveAt),
+                  or(
+                    isNull(counterpartyRoleAdminReadModels.validTo),
+                    gt(counterpartyRoleAdminReadModels.validTo, effectiveAt),
+                  ),
+                )
+              : undefined,
           ),
-      )
-    : attempt(() =>
-        transaction
-          .select()
-          .from(counterpartyRolePeriods)
-          .where(
-            and(
-              eq(counterpartyRolePeriods.tenantId, counterparty.tenantId),
-              eq(counterpartyRolePeriods.legalEntityId, counterparty.legalEntityId),
-              eq(counterpartyRolePeriods.counterpartyId, counterparty.counterpartyId),
-              currentOnly
-                ? and(
-                    eq(counterpartyRolePeriods.state, 'ACTIVE'),
-                    lte(counterpartyRolePeriods.validFrom, effectiveAt),
-                    or(
-                      isNull(counterpartyRolePeriods.validTo),
-                      gt(counterpartyRolePeriods.validTo, effectiveAt),
-                    ),
-                  )
-                : undefined,
-            ),
-          )
-          .orderBy(
-            asc(counterpartyRolePeriods.validFrom),
-            asc(counterpartyRolePeriods.rolePeriodId),
+        )
+        .orderBy(
+          asc(counterpartyRoleAdminReadModels.validFrom),
+          asc(counterpartyRoleAdminReadModels.rolePeriodId),
+        )
+        .pipe(Effect.mapError(unavailable))
+    : transaction
+        .select()
+        .from(counterpartyRolePeriods)
+        .where(
+          and(
+            eq(counterpartyRolePeriods.tenantId, counterparty.tenantId),
+            eq(counterpartyRolePeriods.legalEntityId, counterparty.legalEntityId),
+            eq(counterpartyRolePeriods.counterpartyId, counterparty.counterpartyId),
+            currentOnly
+              ? and(
+                  eq(counterpartyRolePeriods.state, 'ACTIVE'),
+                  lte(counterpartyRolePeriods.validFrom, effectiveAt),
+                  or(
+                    isNull(counterpartyRolePeriods.validTo),
+                    gt(counterpartyRolePeriods.validTo, effectiveAt),
+                  ),
+                )
+              : undefined,
           ),
-      );
+        )
+        .orderBy(asc(counterpartyRolePeriods.validFrom), asc(counterpartyRolePeriods.rolePeriodId))
+        .pipe(Effect.mapError(unavailable));
 
 export const createCounterpartyRecord = Effect.fn(
   'CounterpartyPersistenceService.createCounterpartyRecord',
@@ -463,41 +448,42 @@ export const createCounterpartyRecord = Effect.fn(
   if (resolved.value.archivedAt !== null) {
     return { _tag: 'party_archived', partyId: resolved.value.partyId } as const;
   }
-  const inserted = yield* attempt(() =>
-    transaction
-      .insert(counterparties)
-      .values({
-        acceptedByActionInvocationId: input.actionInvocationId,
-        acceptedByPrincipalId: input.principalId,
-        creationReason: input.provenance.reason ?? input.provenance.method,
-        evidenceRefs: [input.provenance.evidenceReference],
-        legalEntityId: input.legalEntityId,
-        partyId: resolved.value.partyId,
-        policyVersion: input.policyVersion,
-        provenanceMethod: input.provenance.method,
-        provenanceSource: input.provenance.source,
-        sourceRecordRefs: [],
-        tenantId: input.tenantId,
-      })
-      .onConflictDoNothing()
-      .returning(),
-  );
+  const inserted = yield* transaction
+    .insert(counterparties)
+    .values({
+      acceptedByActionInvocationId: input.actionInvocationId,
+      acceptedByPrincipalId: input.principalId,
+      creationReason: input.provenance.reason ?? input.provenance.method,
+      evidenceRefs: [input.provenance.evidenceReference],
+      legalEntityId: input.legalEntityId,
+      partyId: resolved.value.partyId,
+      policyVersion: input.policyVersion,
+      provenanceMethod: input.provenance.method,
+      provenanceSource: input.provenance.source,
+      sourceRecordRefs: [],
+      tenantId: input.tenantId,
+    })
+    .onConflictDoNothing()
+    .returning()
+    .pipe(Effect.mapError(unavailable));
   const [created] = inserted;
   const existing =
     created ??
-    (yield* attempt(() =>
-      transaction
-        .select()
-        .from(counterparties)
-        .where(
-          and(
-            eq(counterparties.tenantId, input.tenantId),
-            eq(counterparties.legalEntityId, input.legalEntityId),
-            eq(counterparties.partyId, resolved.value.partyId),
-          ),
-        )
-        .limit(1),
-    ).pipe(Effect.map((rows) => rows[0])));
+    (yield* transaction
+      .select()
+      .from(counterparties)
+      .where(
+        and(
+          eq(counterparties.tenantId, input.tenantId),
+          eq(counterparties.legalEntityId, input.legalEntityId),
+          eq(counterparties.partyId, resolved.value.partyId),
+        ),
+      )
+      .limit(1)
+      .pipe(
+        Effect.mapError(unavailable),
+        Effect.map((rows) => rows[0]),
+      ));
   if (existing === undefined) {
     return yield* unavailable();
   }
@@ -545,60 +531,58 @@ export const addCounterpartyRoleRecord = Effect.fn(
     { validFrom: input.validFrom, validTo: input.validTo },
     recordedAt.toISOString(),
   );
-  const [overlap] = yield* attempt(() =>
-    transaction
-      .select()
-      .from(counterpartyRolePeriods)
-      .where(
+  const [overlap] = yield* transaction
+    .select()
+    .from(counterpartyRolePeriods)
+    .where(
+      and(
+        eq(counterpartyRolePeriods.tenantId, input.tenantId),
+        eq(counterpartyRolePeriods.legalEntityId, input.legalEntityId),
+        eq(counterpartyRolePeriods.counterpartyId, input.counterpartyId),
+        eq(counterpartyRolePeriods.roleType, input.roleType),
+        inArray(counterpartyRolePeriods.state, ['ACTIVE', 'ENDED']),
         and(
-          eq(counterpartyRolePeriods.tenantId, input.tenantId),
-          eq(counterpartyRolePeriods.legalEntityId, input.legalEntityId),
-          eq(counterpartyRolePeriods.counterpartyId, input.counterpartyId),
-          eq(counterpartyRolePeriods.roleType, input.roleType),
-          inArray(counterpartyRolePeriods.state, ['ACTIVE', 'ENDED']),
-          and(
-            or(
-              isNull(counterpartyRolePeriods.validTo),
-              gt(counterpartyRolePeriods.validTo, validFrom),
-            ),
-            validTo === null ? undefined : lt(counterpartyRolePeriods.validFrom, validTo),
+          or(
+            isNull(counterpartyRolePeriods.validTo),
+            gt(counterpartyRolePeriods.validTo, validFrom),
           ),
+          validTo === null ? undefined : lt(counterpartyRolePeriods.validFrom, validTo),
         ),
-      )
-      .limit(1),
-  );
+      ),
+    )
+    .limit(1)
+    .pipe(Effect.mapError(unavailable));
   if (overlap !== undefined) {
     return { _tag: 'overlap', roleType: input.roleType } as const;
   }
-  const [row] = yield* attempt(() =>
-    transaction
-      .insert(counterpartyRolePeriods)
-      .values({
-        acceptedByActionInvocationId: input.actionInvocationId,
-        acceptedByPrincipalId: input.principalId,
-        addEvidenceRefs: [input.provenance.evidenceReference],
-        addReason: input.provenance.reason ?? input.provenance.method,
-        counterpartyId: input.counterpartyId,
-        endEvidenceRefs: validTo === null ? null : [input.provenance.evidenceReference],
-        endProvenanceMethod: validTo === null ? null : input.provenance.method,
-        endProvenanceSource: validTo === null ? null : input.provenance.source,
-        endReason: validTo === null ? null : (input.provenance.reason ?? input.provenance.method),
-        endedByActionInvocationId: validTo === null ? null : input.actionInvocationId,
-        endedByPrincipalId: validTo === null ? null : input.principalId,
-        endedRecordedAt: validTo === null ? null : recordedAt,
-        isCurrent: lifecycle.isCurrent,
-        legalEntityId: input.legalEntityId,
-        policyVersion: input.policyVersion,
-        provenanceMethod: input.provenance.method,
-        provenanceSource: input.provenance.source,
-        roleType: input.roleType,
-        state: lifecycle.state,
-        tenantId: input.tenantId,
-        validFrom,
-        validTo,
-      })
-      .returning(),
-  );
+  const [row] = yield* transaction
+    .insert(counterpartyRolePeriods)
+    .values({
+      acceptedByActionInvocationId: input.actionInvocationId,
+      acceptedByPrincipalId: input.principalId,
+      addEvidenceRefs: [input.provenance.evidenceReference],
+      addReason: input.provenance.reason ?? input.provenance.method,
+      counterpartyId: input.counterpartyId,
+      endEvidenceRefs: validTo === null ? null : [input.provenance.evidenceReference],
+      endProvenanceMethod: validTo === null ? null : input.provenance.method,
+      endProvenanceSource: validTo === null ? null : input.provenance.source,
+      endReason: validTo === null ? null : (input.provenance.reason ?? input.provenance.method),
+      endedByActionInvocationId: validTo === null ? null : input.actionInvocationId,
+      endedByPrincipalId: validTo === null ? null : input.principalId,
+      endedRecordedAt: validTo === null ? null : recordedAt,
+      isCurrent: lifecycle.isCurrent,
+      legalEntityId: input.legalEntityId,
+      policyVersion: input.policyVersion,
+      provenanceMethod: input.provenance.method,
+      provenanceSource: input.provenance.source,
+      roleType: input.roleType,
+      state: lifecycle.state,
+      tenantId: input.tenantId,
+      validFrom,
+      validTo,
+    })
+    .returning()
+    .pipe(Effect.mapError(unavailable));
   if (row === undefined) {
     return yield* unavailable();
   }
@@ -623,21 +607,20 @@ export const endCounterpartyRoleRecord = Effect.fn(
   if (Option.isNone(counterparty)) {
     return { _tag: 'counterparty_not_found', counterpartyId: input.counterpartyId } as const;
   }
-  const [current] = yield* attempt(() =>
-    transaction
-      .select()
-      .from(counterpartyRolePeriods)
-      .where(
-        and(
-          eq(counterpartyRolePeriods.tenantId, input.tenantId),
-          eq(counterpartyRolePeriods.legalEntityId, input.legalEntityId),
-          eq(counterpartyRolePeriods.counterpartyId, input.counterpartyId),
-          eq(counterpartyRolePeriods.rolePeriodId, input.rolePeriodId),
-        ),
-      )
-      .limit(1)
-      .for('update'),
-  );
+  const [current] = yield* transaction
+    .select()
+    .from(counterpartyRolePeriods)
+    .where(
+      and(
+        eq(counterpartyRolePeriods.tenantId, input.tenantId),
+        eq(counterpartyRolePeriods.legalEntityId, input.legalEntityId),
+        eq(counterpartyRolePeriods.counterpartyId, input.counterpartyId),
+        eq(counterpartyRolePeriods.rolePeriodId, input.rolePeriodId),
+      ),
+    )
+    .limit(1)
+    .for('update')
+    .pipe(Effect.mapError(unavailable));
   if (current === undefined) {
     return { _tag: 'role_not_found', rolePeriodId: input.rolePeriodId } as const;
   }
@@ -671,32 +654,31 @@ export const endCounterpartyRoleRecord = Effect.fn(
     { validFrom: current.validFrom.toISOString(), validTo: input.validTo },
     endedRecordedAt.toISOString(),
   );
-  const [updated] = yield* attempt(() =>
-    transaction
-      .update(counterpartyRolePeriods)
-      .set({
-        endEvidenceRefs: [input.provenance.evidenceReference],
-        endProvenanceMethod: input.provenance.method,
-        endProvenanceSource: input.provenance.source,
-        endReason: input.provenance.reason ?? input.provenance.method,
-        endedByActionInvocationId: input.actionInvocationId,
-        endedByPrincipalId: input.principalId,
-        endedRecordedAt,
-        isCurrent: lifecycle.isCurrent,
-        state: lifecycle.state,
-        validTo,
-      })
-      .where(
-        and(
-          eq(counterpartyRolePeriods.tenantId, input.tenantId),
-          eq(counterpartyRolePeriods.legalEntityId, input.legalEntityId),
-          eq(counterpartyRolePeriods.counterpartyId, input.counterpartyId),
-          eq(counterpartyRolePeriods.rolePeriodId, input.rolePeriodId),
-          eq(counterpartyRolePeriods.state, 'ACTIVE'),
-        ),
-      )
-      .returning(),
-  );
+  const [updated] = yield* transaction
+    .update(counterpartyRolePeriods)
+    .set({
+      endEvidenceRefs: [input.provenance.evidenceReference],
+      endProvenanceMethod: input.provenance.method,
+      endProvenanceSource: input.provenance.source,
+      endReason: input.provenance.reason ?? input.provenance.method,
+      endedByActionInvocationId: input.actionInvocationId,
+      endedByPrincipalId: input.principalId,
+      endedRecordedAt,
+      isCurrent: lifecycle.isCurrent,
+      state: lifecycle.state,
+      validTo,
+    })
+    .where(
+      and(
+        eq(counterpartyRolePeriods.tenantId, input.tenantId),
+        eq(counterpartyRolePeriods.legalEntityId, input.legalEntityId),
+        eq(counterpartyRolePeriods.counterpartyId, input.counterpartyId),
+        eq(counterpartyRolePeriods.rolePeriodId, input.rolePeriodId),
+        eq(counterpartyRolePeriods.state, 'ACTIVE'),
+      ),
+    )
+    .returning()
+    .pipe(Effect.mapError(unavailable));
   if (updated === undefined) {
     return yield* unavailable();
   }
