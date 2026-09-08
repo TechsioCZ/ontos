@@ -1,5 +1,5 @@
 import { expect, it } from '@app/effect-rstest';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Struct } from 'effect';
 import {
   canonicalizeApplicationComposition,
   ApplicationCompositionSchema,
@@ -114,8 +114,11 @@ const federationManifest = (observations: Evidence) =>
 it.effect('defaults the validation error code without changing its encoded contract', () =>
   Effect.gen(function* encodeValidationError() {
     const error = new ApplicationCompositionValidationError({ reason: 'Invalid candidate' });
-    expect(yield* Schema.encodeEffect(ApplicationCompositionValidationError)(error)).toEqual({
-      _tag: 'ApplicationCompositionValidationError',
+    const encodedError = yield* Schema.encodeEffect(ApplicationCompositionValidationError)(error);
+    expect(Schema.is(Schema.toEncoded(ApplicationCompositionValidationError))(encodedError)).toBe(
+      true,
+    );
+    expect(Struct.omit(encodedError, ['_tag'])).toEqual({
       code: 'application_composition_invalid',
       reason: 'Invalid candidate',
     });

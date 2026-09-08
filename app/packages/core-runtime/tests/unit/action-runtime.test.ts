@@ -1,5 +1,16 @@
 import { expect, it } from '@app/effect-rstest';
-import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
+import {
+  Cause,
+  DateTime,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Option,
+  Predicate,
+  Schema,
+  Struct,
+} from 'effect';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 import {
   defineAction,
@@ -31,7 +42,11 @@ import {
   makeActionRepository,
 } from '../../src/actions/repository.ts';
 import type { ActionRuntimeStage } from '../../src/actions/runtime.ts';
-import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
+import {
+  ACTION_RUNTIME_STAGES,
+  ActionCommitOpenSchema,
+  makeActionRuntime,
+} from '../../src/actions/runtime.ts';
 import type { PrincipalManagementRepositoryService } from '../../src/auth/principal-management.ts';
 import { PrincipalManagementRepository } from '../../src/auth/principal-management.ts';
 import { supportRecoveryPrincipalContextResolverFromRepository } from '../../src/auth/support-recovery-principal-context.ts';
@@ -489,15 +504,22 @@ it.effect(
     expect(Reflect.ownKeys(persistenceFailure)).toEqual(Reflect.ownKeys(publicPersistence));
     expectSameJson(transactionFailure, publicTransaction);
     expectSameJson(persistenceFailure, publicPersistence);
-    expect(yield* Schema.encodeEffect(ActionTransactionError)(transactionFailure)).toEqual({
-      _tag: 'ActionTransactionError',
+    const encodedTransactionFailure =
+      yield* Schema.encodeEffect(ActionTransactionError)(transactionFailure);
+    expect(Schema.is(Schema.toEncoded(ActionTransactionError))(encodedTransactionFailure)).toBe(
+      true,
+    );
+    expect(Struct.omit(encodedTransactionFailure, ['_tag'])).toEqual({
       code: transactionFailure.code,
       reason: transactionFailure.reason,
     });
+    const encodedPersistenceFailure = yield* Schema.encodeEffect(ActionInvocationPersistenceError)(
+      persistenceFailure,
+    );
     expect(
-      yield* Schema.encodeEffect(ActionInvocationPersistenceError)(persistenceFailure),
-    ).toEqual({
-      _tag: 'ActionInvocationPersistenceError',
+      Schema.is(Schema.toEncoded(ActionInvocationPersistenceError))(encodedPersistenceFailure),
+    ).toBe(true);
+    expect(Struct.omit(encodedPersistenceFailure, ['_tag'])).toEqual({
       code: persistenceFailure.code,
       reason: persistenceFailure.reason,
     });
@@ -2370,8 +2392,8 @@ it.effect(
       unavailable.runtime.resolveActionCommit({ invocationId, principal }),
     );
 
-    expect(openResolution).toEqual({
-      _tag: 'ActionCommitOpen',
+    expect(Schema.is(ActionCommitOpenSchema)(openResolution)).toBe(true);
+    expect(Struct.omit(openResolution, ['_tag'])).toEqual({
       invocationId,
     });
     expect(Predicate.isTagged(committedResolution, 'ActionAlreadyCommitted')).toBe(true);

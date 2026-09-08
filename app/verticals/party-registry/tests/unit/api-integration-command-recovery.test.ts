@@ -1,5 +1,5 @@
 import { expect, it } from '@app/effect-rstest';
-import { Effect, Match, Result, Schema } from 'effect';
+import { Effect, Match, Result, Schema, Struct } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 import {
   PartyCommandCommitIndeterminateProblemSchema,
@@ -33,9 +33,11 @@ it.effect('already committed is terminal and carries the invocation for governed
       title: 'Already committed',
       type: 'urn:ontos:party:already-committed',
     };
-    expect(
-      yield* Schema.decodeUnknownEffect(PartyCommandAlreadyCommittedProblemSchema)(problem),
-    ).toEqual(problem);
+    const decodedProblem = yield* Schema.decodeUnknownEffect(
+      PartyCommandAlreadyCommittedProblemSchema,
+    )(problem);
+    expect(Schema.is(PartyCommandAlreadyCommittedProblemSchema)(decodedProblem)).toBe(true);
+    expect(Struct.omit(decodedProblem, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
     for (const endpoint of Object.values(partyRegistryCommandsApi.groups.partyCommands.endpoints)) {
       expect([...endpoint.error].some((schema) => Schema.is(schema)(problem))).toBe(true);
     }
@@ -62,9 +64,11 @@ it.effect(
         title: 'Commit outcome unknown',
         type: 'urn:ontos:party:commit-indeterminate',
       };
-      expect(
-        yield* Schema.decodeUnknownEffect(PartyCommandCommitIndeterminateProblemSchema)(problem),
-      ).toEqual(problem);
+      const decodedProblem = yield* Schema.decodeUnknownEffect(
+        PartyCommandCommitIndeterminateProblemSchema,
+      )(problem);
+      expect(Schema.is(PartyCommandCommitIndeterminateProblemSchema)(decodedProblem)).toBe(true);
+      expect(Struct.omit(decodedProblem, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
       for (const endpoint of Object.values(
         partyRegistryCommandsApi.groups.partyCommands.endpoints,
       )) {
@@ -90,14 +94,18 @@ it.effect('recovery is separate from the unchanged set of explicit mutation endp
     const endpoint = partyRegistryCommandRecoveryApi.groups.partyCommandRecovery.endpoints.resolve;
     expect(endpoint.path).toBe('/party-registry/action-commits/resolve');
     for (const state of ['OPEN', 'COMMITTED']) {
-      expect(
-        yield* Schema.decodeUnknownEffect(ResolvePartyCommandCommitResultSchema)({
-          _tag: 'PartyCommandCommitResolution',
-          invocationId,
-          retryCommand: false,
-          state,
-        }),
-      ).toEqual({ _tag: 'PartyCommandCommitResolution', invocationId, retryCommand: false, state });
+      const resolution = yield* Schema.decodeUnknownEffect(ResolvePartyCommandCommitResultSchema)({
+        _tag: 'PartyCommandCommitResolution',
+        invocationId,
+        retryCommand: false,
+        state,
+      });
+      expect(Schema.is(ResolvePartyCommandCommitResultSchema)(resolution)).toBe(true);
+      expect(Struct.omit(resolution, ['_tag'])).toEqual({
+        invocationId,
+        retryCommand: false,
+        state,
+      });
     }
   }),
 );
@@ -130,7 +138,8 @@ it.effect('the command client decodes indeterminate commits without losing recov
     if (!Result.isFailure(result)) {
       throw new Error('Expected truthy value');
     }
-    expect(result.failure).toEqual(problem);
+    expect(Schema.is(PartyCommandCommitIndeterminateProblemSchema)(result.failure)).toBe(true);
+    expect(Struct.omit(result.failure, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
   }),
 );
 
@@ -163,7 +172,8 @@ it.effect('the command client preserves committed invocation metadata across HTT
     if (!Result.isFailure(result)) {
       throw new Error('Expected truthy value');
     }
-    expect(result.failure).toEqual(problem);
+    expect(Schema.is(PartyCommandAlreadyCommittedProblemSchema)(result.failure)).toBe(true);
+    expect(Struct.omit(result.failure, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
   }),
 );
 

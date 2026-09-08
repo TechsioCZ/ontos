@@ -1,5 +1,5 @@
 import { expect, it } from '@app/effect-rstest';
-import { DateTime, Effect, Schema, SchemaAST, Predicate } from 'effect';
+import { DateTime, Effect, Schema, SchemaAST, Predicate, Struct } from 'effect';
 import {
   AuthenticationUnavailableProblemSchema,
   CurrentSessionSchema,
@@ -136,13 +136,19 @@ it('preserves migrated Shell Problem Details wire shapes and ordered membership'
     title: 'Rate limited',
     type: 'https://ontos.dev/problems/shell-rate-limited',
   } as const;
-  expect(Schema.decodeUnknownSync(AuthenticationUnavailableProblemSchema)(unavailable)).toEqual(
+  const decodedUnavailable = Schema.decodeUnknownSync(AuthenticationUnavailableProblemSchema)(
     unavailable,
   );
-  expect(Schema.decodeUnknownSync(TenantCapabilityUnavailableProblemSchema)(retryable)).toEqual(
+  expect(Schema.is(AuthenticationUnavailableProblemSchema)(decodedUnavailable)).toBe(true);
+  expect(Struct.omit(decodedUnavailable, ['_tag'])).toEqual(Struct.omit(unavailable, ['_tag']));
+  const decodedRetryable = Schema.decodeUnknownSync(TenantCapabilityUnavailableProblemSchema)(
     retryable,
   );
-  expect(Schema.decodeUnknownSync(ShellRateLimitedProblemSchema)(rateLimited)).toEqual(rateLimited);
+  expect(Schema.is(TenantCapabilityUnavailableProblemSchema)(decodedRetryable)).toBe(true);
+  expect(Struct.omit(decodedRetryable, ['_tag'])).toEqual(Struct.omit(retryable, ['_tag']));
+  const decodedRateLimited = Schema.decodeUnknownSync(ShellRateLimitedProblemSchema)(rateLimited);
+  expect(Schema.is(ShellRateLimitedProblemSchema)(decodedRateLimited)).toBe(true);
+  expect(Struct.omit(decodedRateLimited, ['_tag'])).toEqual(Struct.omit(rateLimited, ['_tag']));
   expect(() =>
     Schema.decodeUnknownSync(AuthenticationUnavailableProblemSchema, {
       onExcessProperty: 'error',

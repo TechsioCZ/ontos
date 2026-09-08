@@ -1065,10 +1065,21 @@ export const rule = defineRule({
           let compared = node.arguments.slice(0, 2);
           if (assertion.subject !== null)
             compared = [...assertion.subject.arguments.slice(0, 1), ...node.arguments.slice(0, 1)];
-          // Partial-object matchers discriminate by the expected shape, not a tag read.
+          // Object matchers discriminate by the expected shape, not a tag read.
           // Only inspect the expected top-level discriminant; unrelated fields/fixtures are not probes.
-          if (assertion.subject !== null && assertion.method === 'toMatchObject') {
-            const expected = node.arguments[0];
+          if (
+            [
+              'toMatchObject',
+              'toEqual',
+              'toStrictEqual',
+              'toContainEqual',
+              'deepEqual',
+              'deepStrictEqual',
+              'notDeepEqual',
+              'notDeepStrictEqual',
+            ].includes(assertion.method)
+          ) {
+            const expected = node.arguments[assertion.subject === null ? 1 : 0];
             if (expected !== undefined && expected.type !== 'SpreadElement') {
               let shape = unwrap(expected);
               const seenShapes = new Set<ESTree.Node>();
@@ -1096,7 +1107,7 @@ export const rule = defineRule({
                         callee: describe(context, node.callee),
                         text: describe(
                           context,
-                          assertion.subject.arguments[0] ?? assertion.subject,
+                          assertion.subject?.arguments[0] ?? node.arguments[0] ?? node,
                         ),
                       },
                     });

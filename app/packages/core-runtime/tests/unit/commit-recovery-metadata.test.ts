@@ -2,7 +2,7 @@ import { expect, it } from '@app/effect-rstest';
 
 /* oxlint-disable sonarjs/no-undefined-assignment -- Existing compatibility boundary; expires: 2026-12-31. */
 
-import { Effect, Schema, Predicate } from 'effect';
+import { Effect, Schema, Predicate, Struct } from 'effect';
 import { defineAction } from '../../src/actions/definition.ts';
 import { ActionAlreadyCommitted } from '../../src/actions/errors.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -92,7 +92,9 @@ it.effect('committed error schema requires and preserves the recovery invocation
       reason: 'This idempotency key already committed successfully',
     } as const;
     const decoded = yield* Schema.decodeUnknownEffect(ActionAlreadyCommitted)(encoded);
-    expect(yield* decoded.pipe(Schema.encodeEffect(ActionAlreadyCommitted))).toEqual(encoded);
+    const reencoded = yield* decoded.pipe(Schema.encodeEffect(ActionAlreadyCommitted));
+    expect(Schema.is(Schema.toEncoded(ActionAlreadyCommitted))(reencoded)).toBe(true);
+    expect(Struct.omit(reencoded, ['_tag'])).toEqual(Struct.omit(encoded, ['_tag']));
     expect(
       Schema.is(ActionAlreadyCommitted)({
         _tag: 'ActionAlreadyCommitted',

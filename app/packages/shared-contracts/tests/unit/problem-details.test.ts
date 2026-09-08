@@ -8,7 +8,7 @@ import {
   HttpRouter,
   HttpServer,
 } from '@modern-js/plugin-bff/effect-edge';
-import { Context, Effect, Layer, Schema, SchemaAST } from 'effect';
+import { Context, Effect, Layer, Predicate, Schema, SchemaAST, Struct } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 import {
   makeProblemDetailsSchema,
@@ -32,11 +32,19 @@ for (const status of statuses) {
       type: `urn:ontos:test:problem:${status}`,
     } as const;
 
-    expect(Schema.decodeUnknownSync(schema)(problem)).toEqual(problem);
-    expect(Schema.encodeUnknownSync(schema)(problem)).toEqual(problem);
+    const decodedProblem = Schema.decodeUnknownSync(schema)(problem);
+    expect(Schema.is(schema)(decodedProblem)).toBe(true);
+    expect(Struct.omit(decodedProblem, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
+    const encodedProblem = Schema.encodeUnknownSync(schema)(problem);
+    expect(Schema.is(Schema.toEncoded(schema))(encodedProblem)).toBe(true);
+    expect(Struct.omit(encodedProblem, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
     expect(schema.ast.annotations?.['httpApiStatus']).toBe(status);
-    expect(schema.ast.annotations?.['~httpApiEncoding']).toEqual({
-      _tag: 'Json',
+    const encoding = schema.ast.annotations?.['~httpApiEncoding'];
+    expect(Predicate.isTagged(encoding, 'Json')).toBe(true);
+    if (!Predicate.isTagged(encoding, 'Json')) {
+      throw new Error('Expected JSON HTTP API encoding');
+    }
+    expect(Struct.omit(encoding, ['_tag'])).toEqual({
       contentType: 'application/problem+json',
     });
     expect(() => Schema.decodeUnknownSync(schema)({ ...problem, status: 418 })).toThrow();
@@ -63,7 +71,9 @@ it('adds only the deliberate retryable literal marker', () => {
     type: 'urn:ontos:test:retryable',
   } as const;
 
-  expect(Schema.decodeUnknownSync(schema)(problem)).toEqual(problem);
+  const decodedProblem = Schema.decodeUnknownSync(schema)(problem);
+  expect(Schema.is(schema)(decodedProblem)).toBe(true);
+  expect(Struct.omit(decodedProblem, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
   expect(() => Schema.decodeUnknownSync(schema)({ ...problem, retryable: false })).toThrow();
 });
 
@@ -300,7 +310,9 @@ it('accepts concrete JSON literals and schemas with JSON-safe encodings', () => 
   expect(decoded.attachment).toEqual(new Uint8Array([1, 2]));
   expect(decoded.count).toBe(7n);
   expect(decoded.occurredAt.toISOString()).toBe(encoded.occurredAt);
-  expect(Schema.encodeUnknownSync(schema)(decoded)).toEqual(encoded);
+  const reencoded = Schema.encodeUnknownSync(schema)(decoded);
+  expect(Schema.is(Schema.toEncoded(schema))(reencoded)).toBe(true);
+  expect(Struct.omit(reencoded, ['_tag'])).toEqual(Struct.omit(encoded, ['_tag']));
 });
 
 const narrowSchema = makeProblemDetailsSchema('NarrowFixtureProblem', 409, {

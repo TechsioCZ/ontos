@@ -1,5 +1,5 @@
 import { expect, it } from '@app/effect-rstest';
-import { Effect, DateTime, Option, Schema } from 'effect';
+import { Effect, DateTime, Option, Schema, Struct } from 'effect';
 import {
   PartyCandidateSchema,
   IsoTimestampSchema,
@@ -118,8 +118,9 @@ it.effect('Party identity failures retain branded identifiers in encoded JSON', 
       reason: 'The Party does not exist',
     });
 
-    expect(yield* Schema.encodeEffect(PartyNotFound)(failure)).toEqual({
-      _tag: 'PartyNotFound',
+    const encodedFailure = yield* Schema.encodeEffect(PartyNotFound)(failure);
+    expect(Schema.is(Schema.toEncoded(PartyNotFound))(encodedFailure)).toBe(true);
+    expect(Struct.omit(encodedFailure, ['_tag'])).toEqual({
       code: 'party_not_found',
       partyId,
       reason: 'The Party does not exist',

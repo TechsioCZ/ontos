@@ -1,6 +1,6 @@
 import { expect, it } from '@app/effect-rstest';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
-import { Effect, Schema, SchemaAST } from 'effect';
+import { Effect, Schema, SchemaAST, Struct } from 'effect';
 import {
   ApiKeyGatewayHeadersSchema,
   GatewayContextApiGroup,
@@ -176,12 +176,12 @@ it('preserves migrated gateway Problem Details shapes and ordered endpoint membe
     title: 'Gateway unavailable',
     type: 'https://ontos.dev/problems/gateway-unavailable',
   } as const;
-  expect(Schema.decodeUnknownSync(GatewayRateLimitedProblemSchema)(rateLimited)).toEqual(
-    rateLimited,
-  );
-  expect(Schema.decodeUnknownSync(GatewayUnavailableProblemSchema)(unavailable)).toEqual(
-    unavailable,
-  );
+  const decodedRateLimited = Schema.decodeUnknownSync(GatewayRateLimitedProblemSchema)(rateLimited);
+  expect(Schema.is(GatewayRateLimitedProblemSchema)(decodedRateLimited)).toBe(true);
+  expect(Struct.omit(decodedRateLimited, ['_tag'])).toEqual(Struct.omit(rateLimited, ['_tag']));
+  const decodedUnavailable = Schema.decodeUnknownSync(GatewayUnavailableProblemSchema)(unavailable);
+  expect(Schema.is(GatewayUnavailableProblemSchema)(decodedUnavailable)).toBe(true);
+  expect(Struct.omit(decodedUnavailable, ['_tag'])).toEqual(Struct.omit(unavailable, ['_tag']));
   expect(() =>
     Schema.decodeUnknownSync(GatewayRateLimitedProblemSchema, { onExcessProperty: 'error' })({
       ...rateLimited,

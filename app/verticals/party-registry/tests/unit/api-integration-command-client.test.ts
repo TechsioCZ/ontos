@@ -1,5 +1,6 @@
 import { expect, it } from '@app/effect-rstest';
-import { Effect, Result } from 'effect';
+import { Effect, Result, Schema, Struct } from 'effect';
+import { PartyCommandConflictProblemSchema } from '../../shared/command-api.ts';
 import { FetchHttpClient } from 'effect/unstable/http';
 import {
   requestSearchRebuild,
@@ -87,7 +88,8 @@ it.effect('decodes declared errors without weakening their tag or stable conflic
     if (!Result.isFailure(outcome)) {
       throw new Error('Expected truthy value');
     }
-    expect(outcome.failure).toEqual(problem);
+    expect(Schema.is(PartyCommandConflictProblemSchema)(outcome.failure)).toBe(true);
+    expect(Struct.omit(outcome.failure, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
   }),
 );
 

@@ -1,6 +1,6 @@
 import { TestClock } from 'effect/testing';
 import { expect, it } from '@app/effect-rstest';
-import { DateTime, Effect, Predicate } from 'effect';
+import { DateTime, Effect, Predicate, Struct } from 'effect';
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This focused test harness models the narrow Drizzle native Effect query surface used by the owner-local service. expires: 2026-12-31. */
 import type { Table } from 'drizzle-orm';
 import { getTableName } from 'drizzle-orm';
@@ -223,8 +223,8 @@ it.effect('rejects inactivity evidence before persisting a CUSTOMER end', () =>
       endInput('2027-01-01T00:00:00.000Z', 'ENGAGEMENT_INACTIVITY'),
     );
 
-    expect(result).toEqual({
-      _tag: 'evidence_insufficient',
+    expect(Predicate.isTagged(result, 'evidence_insufficient')).toBe(true);
+    expect(Struct.omit(result, ['_tag'])).toEqual({
       method: 'ENGAGEMENT_INACTIVITY',
       roleType: 'CUSTOMER',
     });

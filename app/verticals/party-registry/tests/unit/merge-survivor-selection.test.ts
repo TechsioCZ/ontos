@@ -1,5 +1,5 @@
 import { expect, it } from '@app/effect-rstest';
-import { Match, Predicate } from 'effect';
+import { Match, Predicate, Struct, Schema } from 'effect';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import type {
   MergeSurvivorCandidate,
@@ -9,7 +9,10 @@ import {
   ConfirmedDuplicateDecisionIdSchema,
   DecisionActorPrincipalIdSchema,
 } from '../../shared/domain/merge-selection.ts';
-import { selectCanonicalSurvivor } from '../../src/merge/canonical-survivor-selection.ts';
+import {
+  CanonicalSurvivorSelectionSchema,
+  selectCanonicalSurvivor,
+} from '../../src/merge/canonical-survivor-selection.ts';
 import type { CanonicalSurvivorSelection } from '../../src/merge/canonical-survivor-selection.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -60,8 +63,8 @@ it('blocks survivor selection when authoritative identity truth is unresolved', 
     ]),
   );
 
-  expect(result).toEqual({
-    _tag: 'SurvivorSelectionBlocked',
+  expect(Schema.is(CanonicalSurvivorSelectionSchema.members[1])(result)).toBe(true);
+  expect(Struct.omit(result, ['_tag'])).toEqual({
     blocker: 'AUTHORITATIVE_IDENTITY_CONFLICT',
     conflictingPartyRefs: [party('party-b')],
   });
@@ -125,8 +128,8 @@ it('rejects a cross-tenant merge set before selection', () => {
     ]),
   );
 
-  expect(result).toEqual({
-    _tag: 'SurvivorSelectionBlocked',
+  expect(Schema.is(CanonicalSurvivorSelectionSchema.members[1])(result)).toBe(true);
+  expect(Struct.omit(result, ['_tag'])).toEqual({
     blocker: 'CROSS_TENANT_MERGE_SET',
     conflictingPartyRefs: [
       party('party-a'),
@@ -137,8 +140,9 @@ it('rejects a cross-tenant merge set before selection', () => {
 
 it('rejects selection without an explicit confirmed duplicate decision and matching evidence set', () => {
   const candidates = [candidate('party-a'), candidate('party-b')];
-  expect(selectCanonicalSurvivor({ candidates, confirmation: null })).toEqual({
-    _tag: 'SurvivorSelectionBlocked',
+  const unconfirmedSelection = selectCanonicalSurvivor({ candidates, confirmation: null });
+  expect(Schema.is(CanonicalSurvivorSelectionSchema.members[1])(unconfirmedSelection)).toBe(true);
+  expect(Struct.omit(unconfirmedSelection, ['_tag'])).toEqual({
     blocker: 'DUPLICATE_SET_NOT_CONFIRMED',
     conflictingPartyRefs: [party('party-a'), party('party-b')],
   });

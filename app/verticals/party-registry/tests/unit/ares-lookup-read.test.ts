@@ -2,7 +2,7 @@
 import { assert, expect, it } from '@app/effect-rstest';
 import { readFile, readdir } from 'node:fs/promises';
 
-import { Effect, Schema, SchemaAST, Predicate } from 'effect';
+import { Effect, Schema, SchemaAST, Predicate, Struct } from 'effect';
 import { getReadHandler } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import {
   AresLookupApi,
@@ -204,8 +204,12 @@ it.effect('publishes safe status-matched Problem Details and no provider payload
               type: 'https://ontos.dev/problems/test',
             };
       expect((yield* Schema.decodeUnknownEffect(schema)(fixture)).status).toBe(status);
-      expect(schema.ast.annotations?.['~httpApiEncoding']).toEqual({
-        _tag: 'Json',
+      const encoding = schema.ast.annotations?.['~httpApiEncoding'];
+      expect(Predicate.isTagged(encoding, 'Json')).toBe(true);
+      if (!Predicate.isTagged(encoding, 'Json')) {
+        throw new Error('Expected JSON HTTP API encoding');
+      }
+      expect(Struct.omit(encoding, ['_tag'])).toEqual({
         contentType: 'application/problem+json',
       });
     }

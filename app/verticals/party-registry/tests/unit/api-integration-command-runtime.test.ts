@@ -1,7 +1,7 @@
 import { assert, expect, it } from '@app/effect-rstest';
 import { randomUUID } from 'node:crypto';
 
-import { ConfigProvider, Context, Effect, Layer, Logger, Schema, Predicate } from 'effect';
+import { ConfigProvider, Context, Effect, Layer, Logger, Schema, Predicate, Struct } from 'effect';
 
 import {
   ActionHandlerExecutionError,
@@ -55,7 +55,10 @@ import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 
 import { partyRegistryApi } from '../../shared/api.ts';
 
-import { PartyCommandInvalidRequestProblemSchema } from '../../shared/command-api.ts';
+import {
+  PartyCommandInvalidRequestProblemSchema,
+  ResolvePartyCommandCommitResultSchema,
+} from '../../shared/command-api.ts';
 
 import {
   partyRegistryCommandRecoveryLive,
@@ -1683,8 +1686,9 @@ it.live('an open invocation resolves explicitly without authorizing automatic co
     }
     const resolution = yield* handle(app, recoveryRequest(invocationId, assertion.token));
     expect(resolution.status).toBe(200);
-    expect(yield* Effect.promise(() => resolution.json())).toEqual({
-      _tag: 'PartyCommandCommitResolution',
+    const resolutionBody = yield* Effect.promise(() => resolution.json());
+    expect(Schema.is(ResolvePartyCommandCommitResultSchema)(resolutionBody)).toBe(true);
+    expect(Struct.omit(resolutionBody, ['_tag'])).toEqual({
       invocationId,
       retryCommand: false,
       state: 'OPEN',
@@ -1824,8 +1828,9 @@ it.live(
       expect(deniedRecovery.status).toBe(404);
       const resolution = yield* handle(app, recoveryRequest(invocationId, assertion.token));
       expect(resolution.status).toBe(200);
-      expect(yield* Effect.promise(() => resolution.json())).toEqual({
-        _tag: 'PartyCommandCommitResolution',
+      const resolutionBody = yield* Effect.promise(() => resolution.json());
+      expect(Schema.is(ResolvePartyCommandCommitResultSchema)(resolutionBody)).toBe(true);
+      expect(Struct.omit(resolutionBody, ['_tag'])).toEqual({
         invocationId,
         retryCommand: false,
         state: 'COMMITTED',

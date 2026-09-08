@@ -1,5 +1,5 @@
 import { expect, it } from '@app/effect-rstest';
-import { Match, Predicate } from 'effect';
+import { Match, Predicate, Struct } from 'effect';
 import {
   normalizeCounterpartySearchHits,
   normalizePartySearchHits,
@@ -47,8 +47,9 @@ it('Party Search hides archived hits by default and explicitly labels included a
     { archived: true, canonicalPartyRef: partyRef('archived'), title: 'Archived' },
   ];
 
-  expect(normalizePartySearchHits({ includeArchived: false, tenantId }, hits)).toEqual({
-    _tag: 'SearchResults',
+  const activeResults = normalizePartySearchHits({ includeArchived: false, tenantId }, hits);
+  expect(Predicate.isTagged(activeResults, 'SearchResults')).toBe(true);
+  expect(Struct.omit(activeResults, ['_tag'])).toEqual({
     items: [{ archived: false, matchedViaAlias: false, ref: partyRef('active'), title: 'Active' }],
   });
   const included = normalizePartySearchHits({ includeArchived: true, tenantId }, hits);

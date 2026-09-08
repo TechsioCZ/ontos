@@ -9,7 +9,7 @@ import {
   HttpApiSchema,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
-import { Predicate } from 'effect';
+import { Predicate, Struct } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 const RepresentativeConflictSchema = Schema.TaggedStruct('RepresentativeConflict', {
@@ -247,7 +247,8 @@ it.effect('keeps declared backend failures in the typed Effect error channel', (
       Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
     );
 
-    expect(outcome).toEqual(problem);
+    expect(Schema.is(RepresentativeConflictSchema)(outcome)).toBe(true);
+    expect(Struct.omit(outcome, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
   }),
 );
 

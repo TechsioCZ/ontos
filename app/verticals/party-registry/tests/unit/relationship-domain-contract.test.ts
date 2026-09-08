@@ -1,5 +1,5 @@
 import { expect, it } from '@app/effect-rstest';
-import { Effect, DateTime, Option, Schema } from 'effect';
+import { Effect, DateTime, Option, Schema, Predicate, Struct } from 'effect';
 import {
   ContactPersonOfRelationshipType,
   CreatePartyRelationshipPayloadSchema,
@@ -223,123 +223,126 @@ it('create reuses an exact period and conflicts on a distinct overlap', () => {
     validFrom: presentInstant('2026-09-01T10:00:00.000Z'),
     validTo: presentInstant('2026-10-01T10:00:00.000Z'),
   } as const;
-  expect(decideRelationshipCreate([existing], { ...existing })).toEqual({
-    _tag: 'reuse',
+  const exactPeriodDecision = decideRelationshipCreate([existing], { ...existing });
+  expect(Predicate.isTagged(exactPeriodDecision, 'reuse')).toBe(true);
+  expect(Struct.omit(exactPeriodDecision, ['_tag'])).toEqual({
     relationshipId: relationshipRef.resourceId,
   });
-  expect(
-    decideRelationshipCreate([existing], {
-      relationshipId: 'ignored',
-      validFrom: presentInstant('2026-09-15T10:00:00.000Z'),
-      validTo: absentInstant,
-    }),
-  ).toEqual({ _tag: 'overlap', relationshipId: relationshipRef.resourceId });
-  expect(
-    decideRelationshipCreate([existing], {
-      relationshipId: 'ignored',
-      validFrom: presentInstant('2026-10-01T10:00:00.000Z'),
-      validTo: absentInstant,
-    }),
-  ).toEqual({ _tag: 'create' });
+  const overlappingPeriodDecision = decideRelationshipCreate([existing], {
+    relationshipId: 'ignored',
+    validFrom: presentInstant('2026-09-15T10:00:00.000Z'),
+    validTo: absentInstant,
+  });
+  expect(Predicate.isTagged(overlappingPeriodDecision, 'overlap')).toBe(true);
+  expect(Struct.omit(overlappingPeriodDecision, ['_tag'])).toEqual({
+    relationshipId: relationshipRef.resourceId,
+  });
+  const adjacentPeriodDecision = decideRelationshipCreate([existing], {
+    relationshipId: 'ignored',
+    validFrom: presentInstant('2026-10-01T10:00:00.000Z'),
+    validTo: absentInstant,
+  });
+  expect(Predicate.isTagged(adjacentPeriodDecision, 'create')).toBe(true);
+  expect(Struct.omit(adjacentPeriodDecision, ['_tag'])).toEqual({});
 });
 
 it('only a still-future validity plan is ordinarily updateable', () => {
-  expect(
-    decideRelationshipUpdate(
-      {
-        revision: 2,
-        validFrom: presentInstant('2026-01-01T00:00:00.000Z'),
-        validTo: presentInstant('2026-12-01T00:00:00.000Z'),
-      },
-      {
-        expectedRevision: 2,
-        validFrom: undefined,
-        validTo: presentInstant('2027-01-01T00:00:00.000Z'),
-      },
-      instant('2026-09-03T00:00:00.000Z'),
-    ),
-  ).toEqual({ _tag: 'update' });
-  expect(
-    decideRelationshipUpdate(
-      {
-        revision: 2,
-        validFrom: presentInstant('2026-01-01T00:00:00.000Z'),
-        validTo: presentInstant('2026-08-01T00:00:00.000Z'),
-      },
-      {
-        expectedRevision: 2,
-        validFrom: undefined,
-        validTo: presentInstant('2027-01-01T00:00:00.000Z'),
-      },
-      instant('2026-09-03T00:00:00.000Z'),
-    ),
-  ).toEqual({ _tag: 'correction_required', fact: 'validTo' });
-  expect(
-    decideRelationshipUpdate(
-      {
-        revision: 2,
-        validFrom: presentInstant('2026-01-01T00:00:00.000Z'),
-        validTo: absentInstant,
-      },
-      {
-        expectedRevision: 2,
-        validTo: presentInstant('2026-08-01T00:00:00.000Z'),
-      },
-      instant('2026-09-03T00:00:00.000Z'),
-    ),
-  ).toEqual({ _tag: 'end_required' });
-  expect(
-    decideRelationshipUpdate(
-      {
-        revision: 2,
-        validFrom: presentInstant('2026-01-01T00:00:00.000Z'),
-        validTo: absentInstant,
-      },
-      { expectedRevision: 1, validFrom: undefined, validTo: absentInstant },
-      instant('2026-09-03T00:00:00.000Z'),
-    ),
-  ).toEqual({ _tag: 'revision_conflict', actualRevision: 2 });
-  expect(
-    decideRelationshipUpdate(
-      { revision: 2, validFrom: absentInstant, validTo: absentInstant },
-      {
-        expectedRevision: 2,
-        validFrom: instant('2025-01-01T00:00:00.000Z'),
-        validTo: undefined,
-      },
-      instant('2026-09-03T00:00:00.000Z'),
-    ),
-  ).toEqual({ _tag: 'update' });
-  expect(
-    decideRelationshipUpdate(
-      {
-        revision: 2,
-        validFrom: presentInstant('2027-01-01T00:00:00.000Z'),
-        validTo: absentInstant,
-      },
-      {
-        expectedRevision: 2,
-        validFrom: instant('2027-02-01T00:00:00.000Z'),
-        validTo: undefined,
-      },
-      instant('2026-09-03T00:00:00.000Z'),
-    ),
-  ).toEqual({ _tag: 'update' });
-  expect(
-    decideRelationshipUpdate(
-      {
-        revision: 2,
-        validFrom: presentInstant('2026-01-01T00:00:00.000Z'),
-        validTo: absentInstant,
-      },
-      {
-        expectedRevision: 2,
-        validFrom: instant('2026-02-01T00:00:00.000Z'),
-        validTo: undefined,
-      },
-      instant('2026-09-03T00:00:00.000Z'),
-    ),
-  ).toEqual({ _tag: 'correction_required', fact: 'validFrom' });
+  const futureEndUpdate = decideRelationshipUpdate(
+    {
+      revision: 2,
+      validFrom: presentInstant('2026-01-01T00:00:00.000Z'),
+      validTo: presentInstant('2026-12-01T00:00:00.000Z'),
+    },
+    {
+      expectedRevision: 2,
+      validFrom: undefined,
+      validTo: presentInstant('2027-01-01T00:00:00.000Z'),
+    },
+    instant('2026-09-03T00:00:00.000Z'),
+  );
+  expect(Predicate.isTagged(futureEndUpdate, 'update')).toBe(true);
+  expect(Struct.omit(futureEndUpdate, ['_tag'])).toEqual({});
+  const historicalEndUpdate = decideRelationshipUpdate(
+    {
+      revision: 2,
+      validFrom: presentInstant('2026-01-01T00:00:00.000Z'),
+      validTo: presentInstant('2026-08-01T00:00:00.000Z'),
+    },
+    {
+      expectedRevision: 2,
+      validFrom: undefined,
+      validTo: presentInstant('2027-01-01T00:00:00.000Z'),
+    },
+    instant('2026-09-03T00:00:00.000Z'),
+  );
+  expect(Predicate.isTagged(historicalEndUpdate, 'correction_required')).toBe(true);
+  expect(Struct.omit(historicalEndUpdate, ['_tag'])).toEqual({ fact: 'validTo' });
+  const pastEndUpdate = decideRelationshipUpdate(
+    {
+      revision: 2,
+      validFrom: presentInstant('2026-01-01T00:00:00.000Z'),
+      validTo: absentInstant,
+    },
+    {
+      expectedRevision: 2,
+      validTo: presentInstant('2026-08-01T00:00:00.000Z'),
+    },
+    instant('2026-09-03T00:00:00.000Z'),
+  );
+  expect(Predicate.isTagged(pastEndUpdate, 'end_required')).toBe(true);
+  expect(Struct.omit(pastEndUpdate, ['_tag'])).toEqual({});
+  const staleRevisionUpdate = decideRelationshipUpdate(
+    {
+      revision: 2,
+      validFrom: presentInstant('2026-01-01T00:00:00.000Z'),
+      validTo: absentInstant,
+    },
+    { expectedRevision: 1, validFrom: undefined, validTo: absentInstant },
+    instant('2026-09-03T00:00:00.000Z'),
+  );
+  expect(Predicate.isTagged(staleRevisionUpdate, 'revision_conflict')).toBe(true);
+  expect(Struct.omit(staleRevisionUpdate, ['_tag'])).toEqual({ actualRevision: 2 });
+  const unknownStartUpdate = decideRelationshipUpdate(
+    { revision: 2, validFrom: absentInstant, validTo: absentInstant },
+    {
+      expectedRevision: 2,
+      validFrom: instant('2025-01-01T00:00:00.000Z'),
+      validTo: undefined,
+    },
+    instant('2026-09-03T00:00:00.000Z'),
+  );
+  expect(Predicate.isTagged(unknownStartUpdate, 'update')).toBe(true);
+  expect(Struct.omit(unknownStartUpdate, ['_tag'])).toEqual({});
+  const futureStartUpdate = decideRelationshipUpdate(
+    {
+      revision: 2,
+      validFrom: presentInstant('2027-01-01T00:00:00.000Z'),
+      validTo: absentInstant,
+    },
+    {
+      expectedRevision: 2,
+      validFrom: instant('2027-02-01T00:00:00.000Z'),
+      validTo: undefined,
+    },
+    instant('2026-09-03T00:00:00.000Z'),
+  );
+  expect(Predicate.isTagged(futureStartUpdate, 'update')).toBe(true);
+  expect(Struct.omit(futureStartUpdate, ['_tag'])).toEqual({});
+  const historicalStartUpdate = decideRelationshipUpdate(
+    {
+      revision: 2,
+      validFrom: presentInstant('2026-01-01T00:00:00.000Z'),
+      validTo: absentInstant,
+    },
+    {
+      expectedRevision: 2,
+      validFrom: instant('2026-02-01T00:00:00.000Z'),
+      validTo: undefined,
+    },
+    instant('2026-09-03T00:00:00.000Z'),
+  );
+  expect(Predicate.isTagged(historicalStartUpdate, 'correction_required')).toBe(true);
+  expect(Struct.omit(historicalStartUpdate, ['_tag'])).toEqual({ fact: 'validFrom' });
 });
 
 it('end retry is exact and changed historical evidence requires correction', () => {
@@ -357,21 +360,21 @@ it('end retry is exact and changed historical evidence requires correction', () 
     provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
     reason: 'No longer a contact',
   } as const;
-  expect(decideRelationshipEnd(current, exact, instant('2026-09-03T00:00:00.000Z'))).toEqual({
-    _tag: 'unchanged',
-  });
-  expect(
-    decideRelationshipEnd(
-      current,
-      { ...exact, reason: 'A different historical explanation' },
-      instant('2026-09-03T00:00:00.000Z'),
-    ),
-  ).toEqual({ _tag: 'correction_required', fact: 'validTo' });
-  expect(
-    decideRelationshipEnd(
-      { ...current, endProvenanceMethod: null, endProvenanceSource: null, endReason: null },
-      exact,
-      instant('2026-09-03T00:00:00.000Z'),
-    ),
-  ).toEqual({ _tag: 'attach_end_evidence' });
+  const exactEndRetry = decideRelationshipEnd(current, exact, instant('2026-09-03T00:00:00.000Z'));
+  expect(Predicate.isTagged(exactEndRetry, 'unchanged')).toBe(true);
+  expect(Struct.omit(exactEndRetry, ['_tag'])).toEqual({});
+  const changedEndRetry = decideRelationshipEnd(
+    current,
+    { ...exact, reason: 'A different historical explanation' },
+    instant('2026-09-03T00:00:00.000Z'),
+  );
+  expect(Predicate.isTagged(changedEndRetry, 'correction_required')).toBe(true);
+  expect(Struct.omit(changedEndRetry, ['_tag'])).toEqual({ fact: 'validTo' });
+  const missingEndEvidence = decideRelationshipEnd(
+    { ...current, endProvenanceMethod: null, endProvenanceSource: null, endReason: null },
+    exact,
+    instant('2026-09-03T00:00:00.000Z'),
+  );
+  expect(Predicate.isTagged(missingEndEvidence, 'attach_end_evidence')).toBe(true);
+  expect(Struct.omit(missingEndEvidence, ['_tag'])).toEqual({});
 });

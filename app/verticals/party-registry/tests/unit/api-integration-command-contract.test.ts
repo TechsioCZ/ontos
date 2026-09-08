@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Inspect source files through the Node filesystem boundary; expires: 2026-12-31.
 import { expect, it } from '@app/effect-rstest';
 import { readFile, readdir } from 'node:fs/promises';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Struct } from 'effect';
 import {
   partyRegistryCommandsApi,
   PartyCommandAliasWriteRejectedProblemSchema,
@@ -64,9 +64,11 @@ it.effect('alias conflict preserves both canonical and submitted references', ()
       title: 'Canonical Party required',
       type: 'urn:ontos:party:alias-write-rejected',
     };
-    expect(
-      yield* Schema.decodeUnknownEffect(PartyCommandAliasWriteRejectedProblemSchema)(input),
-    ).toEqual(input);
+    const decodedProblem = yield* Schema.decodeUnknownEffect(
+      PartyCommandAliasWriteRejectedProblemSchema,
+    )(input);
+    expect(Schema.is(PartyCommandAliasWriteRejectedProblemSchema)(decodedProblem)).toBe(true);
+    expect(Struct.omit(decodedProblem, ['_tag'])).toEqual(Struct.omit(input, ['_tag']));
   }),
 );
 

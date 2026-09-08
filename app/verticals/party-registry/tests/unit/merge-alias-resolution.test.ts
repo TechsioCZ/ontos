@@ -1,8 +1,9 @@
 import { expect, it } from '@app/effect-rstest';
 
-import { DateTime, Predicate } from 'effect';
+import { DateTime, Predicate, Struct, Schema } from 'effect';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import {
+  CanonicalPartyResolutionSchema,
   assertCanonicalWriteTarget,
   resolveCanonicalPartyRef,
 } from '../../src/merge/party-alias-resolution.ts';
@@ -32,8 +33,8 @@ it('resolves an historical alias chain to one final canonical Party', () => {
     alias('party-a', 'party-c'),
   ]);
 
-  expect(result).toEqual({
-    _tag: 'CanonicalPartyResolved',
+  expect(Schema.is(CanonicalPartyResolutionSchema.members[1])(result)).toBe(true);
+  expect(Struct.omit(result, ['_tag'])).toEqual({
     canonicalPartyRef: party('party-c'),
     requestedAlias: party('party-b'),
     traversedAliasPartyRefs: [party('party-b'), party('party-a')],
@@ -70,14 +71,20 @@ it('rejects alias cycles, self aliases, and cross-tenant targets', () => {
 });
 
 it('rejects new writes addressed to an absorbed alias instead of forwarding them', () => {
-  expect(assertCanonicalWriteTarget(party('party-b'), [alias('party-b', 'party-a')])).toEqual({
-    _tag: 'AliasWriteRejected',
+  const aliasWriteRejection = assertCanonicalWriteTarget(party('party-b'), [
+    alias('party-b', 'party-a'),
+  ]);
+  expect(Predicate.isTagged(aliasWriteRejection, 'AliasWriteRejected')).toBe(true);
+  expect(Struct.omit(aliasWriteRejection, ['_tag'])).toEqual({
     aliasPartyRef: party('party-b'),
     canonicalPartyRef: party('party-a'),
     code: 'ALIAS_WRITE_FORBIDDEN',
   });
-  expect(assertCanonicalWriteTarget(party('party-a'), [alias('party-b', 'party-a')])).toEqual({
-    _tag: 'CanonicalWriteTargetAccepted',
+  const canonicalWriteAcceptance = assertCanonicalWriteTarget(party('party-a'), [
+    alias('party-b', 'party-a'),
+  ]);
+  expect(Predicate.isTagged(canonicalWriteAcceptance, 'CanonicalWriteTargetAccepted')).toBe(true);
+  expect(Struct.omit(canonicalWriteAcceptance, ['_tag'])).toEqual({
     partyRef: party('party-a'),
   });
 });

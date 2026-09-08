@@ -3,7 +3,7 @@ import { expect, it } from '@app/effect-rstest';
 
 import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
-import { DateTime, Effect, Layer, Match, Option, Result, Schema, Predicate } from 'effect';
+import { DateTime, Effect, Layer, Match, Option, Result, Schema, Predicate, Struct } from 'effect';
 
 import type { AresAppliedEvidence } from '../../shared/domain/ares-application.ts';
 import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
@@ -258,21 +258,21 @@ it.layer(
   );
 
   it('unarchive owner classification distinguishes conflict from ambiguity deterministically', () => {
-    expect(classifyUnarchiveClaimOwners(partyId, [{}, { partyId }])).toEqual({
-      _tag: 'available',
-    });
-    expect(classifyUnarchiveClaimOwners(partyId, [{ partyId: firstOwnerId }])).toEqual({
-      _tag: 'identity_conflict',
+    const availableOwners = classifyUnarchiveClaimOwners(partyId, [{}, { partyId }]);
+    expect(Predicate.isTagged(availableOwners, 'available')).toBe(true);
+    expect(Struct.omit(availableOwners, ['_tag'])).toEqual({});
+    const conflictingOwner = classifyUnarchiveClaimOwners(partyId, [{ partyId: firstOwnerId }]);
+    expect(Predicate.isTagged(conflictingOwner, 'identity_conflict')).toBe(true);
+    expect(Struct.omit(conflictingOwner, ['_tag'])).toEqual({
       conflictingPartyId: firstOwnerId,
     });
-    expect(
-      classifyUnarchiveClaimOwners(partyId, [
-        { partyId: secondOwnerId },
-        { partyId: firstOwnerId },
-        { partyId: secondOwnerId },
-      ]),
-    ).toEqual({
-      _tag: 'identity_ambiguous',
+    const ambiguousOwners = classifyUnarchiveClaimOwners(partyId, [
+      { partyId: secondOwnerId },
+      { partyId: firstOwnerId },
+      { partyId: secondOwnerId },
+    ]);
+    expect(Predicate.isTagged(ambiguousOwners, 'identity_ambiguous')).toBe(true);
+    expect(Struct.omit(ambiguousOwners, ['_tag'])).toEqual({
       candidatePartyIds: [firstOwnerId, secondOwnerId],
     });
   });
@@ -312,8 +312,8 @@ it.layer(
 
         const result = yield* unarchivePartyRecord(harness.transaction, tenantId, partyId, 4);
 
-        expect(result).toEqual({
-          _tag: 'identity_conflict',
+        expect(Predicate.isTagged(result, 'identity_conflict')).toBe(true);
+        expect(Struct.omit(result, ['_tag'])).toEqual({
           conflictingPartyId: firstOwnerId,
         });
         assertTenantLockIsFirst(harness);
@@ -566,8 +566,8 @@ it.layer(
       ]);
 
       const result = yield* unarchivePartyRecord(harness.transaction, tenantId, partyId, 4);
-      expect(result).toEqual({
-        _tag: 'identity_ambiguous',
+      expect(Predicate.isTagged(result, 'identity_ambiguous')).toBe(true);
+      expect(Struct.omit(result, ['_tag'])).toEqual({
         candidatePartyIds: [firstOwnerId, secondOwnerId],
       });
       expect(harness.insertedValues).toEqual([]);
@@ -602,8 +602,8 @@ it.layer(
           [{ candidateCaseId: caseId }],
         ]);
         const result = yield* unarchivePartyRecord(harness.transaction, tenantId, partyId, 4);
-        expect(result).toEqual({
-          _tag: 'review_required',
+        expect(Predicate.isTagged(result, 'review_required')).toBe(true);
+        expect(Struct.omit(result, ['_tag'])).toEqual({
           caseIds: [caseId],
           reasonCode: 'OPEN_DUPLICATE_CASE',
         });
@@ -624,8 +624,8 @@ it.layer(
           [],
         ]);
         const result = yield* unarchivePartyRecord(harness.transaction, tenantId, partyId, 4);
-        expect(result).toEqual({
-          _tag: 'review_required',
+        expect(Predicate.isTagged(result, 'review_required')).toBe(true);
+        expect(Struct.omit(result, ['_tag'])).toEqual({
           caseIds: [],
           reasonCode: 'UNRESOLVED_IDENTITY',
         });
@@ -763,7 +763,8 @@ it.layer(
           partyId,
           'PERSON',
         );
-        expect(result).toEqual({ _tag: 'available', eligibleClaimCount: 0 });
+        expect(Predicate.isTagged(result, 'available')).toBe(true);
+        expect(Struct.omit(result, ['_tag'])).toEqual({ eligibleClaimCount: 0 });
         expect(harness.deletedTargets.length).toBe(1);
         expect(harness.insertedValues).toEqual([]);
         assertTenantLockIsFirst(harness);

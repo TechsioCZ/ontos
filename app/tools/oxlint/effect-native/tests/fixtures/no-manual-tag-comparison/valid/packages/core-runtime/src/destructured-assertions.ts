@@ -28,3 +28,17 @@ export { shadow, shadowExpect };
 
 const field = '_tag';
 expect(error).toMatchObject({ field: 'Missing' });
+
+expect(error).toEqual({ message: 'Missing' });
+expect(error).toStrictEqual({ _tag: 'Failure' });
+expect(error).toEqual({ field: 'Missing' });
+expect([error]).toContainEqual({ _tag: 'Some' });
+assert.deepEqual(error, { message: 'Missing' });
+assert.deepStrictEqual(error, { _tag: 'Failure' });
+assert.notDeepEqual(error, { field: 'Missing' });
+assert.notDeepStrictEqual(error, { _tag: 'None' });
+foreign(error).toEqual(fixture);
+function shadowObjectExpect(expect: typeof import('@app/effect-rstest').expect) {
+  expect(error).toStrictEqual({ _tag: 'Missing' });
+}
+export { shadowObjectExpect };

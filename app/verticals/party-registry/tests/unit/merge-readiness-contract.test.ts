@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Source-only contract checks require reading TypeScript files; remove-when: manifests are importable without TSX loaders.
 import { expect, it } from '@app/effect-rstest';
 import { readFile } from 'node:fs/promises';
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Match, Schema, Struct, Predicate } from 'effect';
 import {
   PartyMergeReadinessRequestSchema,
   PartyMergeReadinessResponseSchema,
@@ -75,8 +75,8 @@ it.effect(
       });
 
       const rejection = rejectProductionMergeExecution();
-      expect(rejection).toEqual({
-        _tag: 'ProductionMergeExecutionRejected',
+      expect(Predicate.isTagged(rejection, 'ProductionMergeExecutionRejected')).toBe(true);
+      expect(Struct.omit(rejection, ['_tag'])).toEqual({
         code: 'PRODUCTION_MERGE_DISABLED',
         detail:
           'Party Merge execution is disabled until consumer reconciliation and wrong-merge recovery are behaviorally proven.',

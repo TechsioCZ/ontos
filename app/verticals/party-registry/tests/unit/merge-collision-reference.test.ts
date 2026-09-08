@@ -1,6 +1,6 @@
 import { expect, it } from '@app/effect-rstest';
 
-import { DateTime, Match } from 'effect';
+import { DateTime, Match, Struct, Predicate } from 'effect';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import { analyzeMergeCollisions } from '../../src/merge/merge-collision-analysis.ts';
 import { planReferencePreservation } from '../../src/merge/reference-preservation-plan.ts';
@@ -295,8 +295,8 @@ it('blocks readiness for unsupported references and incomplete retry contracts',
     ],
   });
 
-  expect(result).toEqual({
-    _tag: 'ReferencePreservationBlocked',
+  expect(Predicate.isTagged(result, 'ReferencePreservationBlocked')).toBe(true);
+  expect(Struct.omit(result, ['_tag'])).toEqual({
     blockers: [
       { code: 'UNSUPPORTED_REFERENCE_CLASS', ownerKey: 'custom-module' },
       { code: 'CONSUMER_PARTIAL_RETRY_UNPROVEN', ownerKey: 'engagement' },
@@ -310,8 +310,8 @@ it('blocks every external reference owner without reconciliation evidence', () =
     references: [{ class: 'COMMERCE_PROFILE', ownerKey: 'commerce', partyRef: party('party-b') }],
   });
 
-  expect(result).toEqual({
-    _tag: 'ReferencePreservationBlocked',
+  expect(Predicate.isTagged(result, 'ReferencePreservationBlocked')).toBe(true);
+  expect(Struct.omit(result, ['_tag'])).toEqual({
     blockers: [{ code: 'CONSUMER_RECONCILIATION_UNPROVEN', ownerKey: 'commerce' }],
   });
 });
