@@ -710,7 +710,9 @@ const executeStep = Effect.fn('qualityAudit.executeStep')(function* executeStepE
     const processHandle = yield* spawner.spawn(
       ChildProcess.make(process.execPath, [binary, ...step.args], {
         cwd: root,
-        env: { NO_COLOR: '1' },
+        // Inherited FORCE_COLOR overrides NO_COLOR and makes Node emit a warning.
+        // Disable forcing at the subprocess boundary; keep real diagnostics intact.
+        env: { FORCE_COLOR: '0', NO_COLOR: '1' },
         extendEnv: true,
         stderr: 'pipe',
         stdin: 'ignore',

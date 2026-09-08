@@ -1,6 +1,5 @@
 import { expect, it } from '@app/effect-rstest';
 
-import { spawnSync } from 'node:child_process';
 import {
   copyFileSync,
   mkdirSync,
@@ -15,7 +14,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Stream } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
 import { auditSteps, runQualityAudit, validateReport } from '../quality-audit.mts';
@@ -26,6 +25,7 @@ const FALLOW_HEALTH = 'fallow-health';
 const CONFIG_DIRECTORY = 'quality-audit';
 const REPORT_DIRECTORY = 'reports';
 const KNIP_CONFIG = 'quality-audit/knip.json';
+const PACKAGE_JSON = 'package.json';
 const CALLER_OWNED_FILE = 'caller-owned.txt';
 const ProvenanceSchema = Schema.fromJsonString(
   Schema.Struct({
@@ -177,7 +177,7 @@ const createFixture = () =>
     writeFileSync(path.join(root, '.codex/caller-owned.txt'), 'keep');
     symlinkSync(path.join(appRoot, 'node_modules'), path.join(root, 'node_modules'), 'dir');
     writeFileSync(
-      path.join(root, 'package.json'),
+      path.join(root, PACKAGE_JSON),
       yield* encodeReport({ name: 'quality-test', private: true, type: 'module' }),
     );
     for (const name of ['scope.json', 'fallow.json', 'jscpd.json', 'knip-reporter.mts']) {
@@ -450,7 +450,7 @@ it.live(
 );
 
 it.live(
-  'the CLI handles escaped paths, foreign cwd and untracked source provenance',
+  'the CLI handles forced CI colors, escaped paths, foreign cwd and untracked source provenance',
   Effect.fn(function* testEffect14() {
     const root = yield* createFixture();
     const output = path.join(root, REPORT_DIRECTORY);
@@ -466,18 +466,32 @@ it.live(
         path.join(root, CONFIG_DIRECTORY, file),
       );
     }
-    const result = spawnSync(process.execPath, [executable, '--tool', 'knip', '--output', output], {
-      cwd: tmpdir(),
-      encoding: 'utf-8',
-      timeout: 60_000,
-    });
-    expect(
-      result.error,
-      `CLI spawn failed: ${String(result.error)}\n${result.stdout}\n${result.stderr}`,
-    ).toBe(undefined);
+    const result = yield* Effect.gen(function* runColoredCli() {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const handle = yield* spawner.spawn(
+        ChildProcess.make(process.execPath, [executable, '--tool', 'knip', '--output', output], {
+          cwd: tmpdir(),
+          env: { CI: 'true', FORCE_COLOR: '1', GITHUB_ACTIONS: 'true', NO_COLOR: '1' },
+          extendEnv: true,
+          stderr: 'pipe',
+          stdin: 'ignore',
+          stdout: 'pipe',
+        }),
+      );
+      const [status, stdout, stderr] = yield* Effect.all(
+        [
+          handle.exitCode.pipe(Effect.map(Number)),
+          handle.stdout.pipe(Stream.decodeText(), Stream.mkString),
+          handle.stderr.pipe(Stream.decodeText(), Stream.mkString),
+        ],
+        { concurrency: 'unbounded' },
+      );
+      return { status, stderr, stdout };
+    }).pipe(Effect.scoped, Effect.timeout('60 seconds'), Effect.provide(NodeServices.layer));
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const report = yield* summary(output);
     expect(report.status).toBe('reported');
+    expect(readFileSync(path.join(report.runDirectory, 'knip/stderr.txt'), 'utf-8')).toBe('');
     const provenance = yield* Schema.decodeUnknownEffect(ProvenanceSchema)(
       readFileSync(path.join(report.runDirectory, 'provenance.json'), 'utf-8'),
     );
@@ -544,7 +558,7 @@ it.live(
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const commands = [
         ['init', '-q'],
-        ['add', '.gitignore', 'package.json', CONFIG_DIRECTORY, 'scripts'],
+        ['add', '.gitignore', PACKAGE_JSON, CONFIG_DIRECTORY, 'scripts'],
         [
           '-c',
           `core.hooksPath=${path.join(root, '.git/no-hooks')}`,
@@ -633,5 +647,57 @@ it.live(
       /Expected knip 6\.34\.0, found 0\.0\.0/u,
     );
     expect(readFileSync(path.join(mismatch.runDirectory, 'knip/stdout.txt'), 'utf-8')).toBe('');
+  }),
+);
+
+it.live(
+  'jscpd accepts only its config banner and preserves additional diagnostics on failure',
+  Effect.fn(function* testAnalyzerDiagnostics() {
+    const root = yield* createFixture();
+    const output = path.join(root, REPORT_DIRECTORY);
+    // Replace only the fixture symlink, retaining the real installed tools unchanged.
+    rmSync(path.join(root, 'node_modules'));
+    const toolDirectory = path.join(root, 'node_modules/jscpd');
+    mkdirSync(toolDirectory, { recursive: true });
+    writeFileSync(
+      path.join(toolDirectory, PACKAGE_JSON),
+      yield* encodeReport({ type: 'module', version: '5.1.2' }),
+    );
+    const report = yield* encodeReport({
+      duplicates: [],
+      statistics: { total: { clones: 0, sources: 2 } },
+    });
+    const warning = 'Warning: unable to parse scripts/dead.ts';
+    for (const diagnostic of ['', `${warning}\n`]) {
+      writeFileSync(
+        path.join(toolDirectory, 'run-jscpd.js'),
+        [
+          "import { writeFileSync } from 'node:fs';",
+          "import path from 'node:path';",
+          "console.error('Using config from ' + process.argv[3]);",
+          `process.stderr.write(${JSON.stringify(diagnostic)});`,
+          `writeFileSync(path.join(process.argv[5], 'jscpd-report.json'), ${JSON.stringify(report)});`,
+        ].join('\n'),
+      );
+      if (diagnostic) {
+        const issue = yield* Effect.flip(runFixture(root, output, 'jscpd'));
+        expect(issue.message).toMatch(/analysis failed/u);
+      } else {
+        yield* runFixture(root, output, 'jscpd');
+      }
+      const result = yield* summary(output);
+      const directory = path.join(result.runDirectory, 'jscpd');
+      expect(result.status).toBe(diagnostic ? 'error' : 'reported');
+      expect(readFileSync(path.join(directory, 'stderr.txt'), 'utf-8')).toBe(
+        `Using config from ${result.runDirectory}/jscpd.config.json\n${diagnostic}`,
+      );
+      expect(readFileSync(path.join(directory, 'jscpd-report.json'), 'utf-8')).toBe(report);
+      if (diagnostic) {
+        expect(result.results[0]?.diagnostic).toMatch(/Analyzer emitted diagnostics/u);
+        expect(readFileSync(path.join(directory, 'validation-error.txt'), 'utf-8')).toMatch(
+          /Analyzer emitted diagnostics/u,
+        );
+      }
+    }
   }),
 );

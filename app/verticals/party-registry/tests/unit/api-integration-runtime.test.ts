@@ -429,7 +429,12 @@ it.live(
       } as const;
       for (const [index, endpoint] of endpoints.entries()) {
         const callsBefore: number = actionCalls + actionCommitCalls + readCalls;
-        const payloadSchema = endpoint.payload.get('application/json')?.schemas[0];
+        const rawPayloadSchema = endpoint.payload.get('application/json')?.schemas[0];
+        // Runtime HTTP descriptors erase codec types. These wire codecs require no services.
+        const payloadSchema =
+          rawPayloadSchema === undefined
+            ? undefined
+            : Schema.make<Schema.Codec<unknown, unknown>>(rawPayloadSchema.ast);
         const manualPayload = Object.entries(manualPayloads).find(
           ([path]) => path === endpoint.path,
         )?.[1];
