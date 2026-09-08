@@ -480,6 +480,21 @@ const resolveProofRoutes = (
   return [configuredSsrRoute?.startsWith('/') === true ? configuredSsrRoute : '/'];
 };
 
+const deriveAppConfiguration = (rawApp: typeof RawAppSchema.Type) => {
+  const cloudflare = rawApp.deploy?.cloudflare;
+  return {
+    apiPrefix: rawApp.api?.prefix?.replace(/\/+$/u, ''),
+    id: rawApp.id,
+    jsonSmokeChecks: cloudflare?.jsonSmokeChecks ?? [],
+    port: rawApp.port,
+    proofRoutes: resolveProofRoutes(
+      cloudflare?.distributedSsrProofRoutes ?? [],
+      cloudflare?.routes?.ssr,
+    ),
+    verticalRefs: rawApp.moduleFederation?.verticalRefs ?? [],
+  };
+};
+
 const loadApps = (workspaceRoot: string): ProofEffect<readonly App[]> =>
   Effect.gen(function* loadAppsEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -504,21 +519,12 @@ const loadApps = (workspaceRoot: string): ProofEffect<readonly App[]> =>
             kind === 'vertical'
               ? yield* readExecutionEnvelope(rawApp.id, outputRoot, rawApp.deliveryUnit?.unitId)
               : undefined;
-          const cloudflare = rawApp.deploy?.cloudflare;
           return {
-            apiPrefix: rawApp.api?.prefix?.replace(/\/+$/u, ''),
+            ...deriveAppConfiguration(rawApp),
             envelope: executedEnvelope?.envelope,
             envelopePath: executedEnvelope?.envelopePath,
-            id: rawApp.id,
-            jsonSmokeChecks: cloudflare?.jsonSmokeChecks ?? [],
             kind,
             outputRoot,
-            port: rawApp.port,
-            proofRoutes: resolveProofRoutes(
-              cloudflare?.distributedSsrProofRoutes ?? [],
-              cloudflare?.routes?.ssr,
-            ),
-            verticalRefs: rawApp.moduleFederation?.verticalRefs ?? [],
             wrangler,
           };
         }),
@@ -566,22 +572,26 @@ const createWorkerConfiguration = (
       boundModules.some((module) => module.logicalPath === mainLogicalPath),
       `${app.id} Miniflare main ${mainLogicalPath} is not in the selected module set`,
     );
-    const apiBackend = app.envelope?.surfaces.apiBackend ?? [];
-    const ssr = app.envelope?.surfaces.ssr ?? [];
-    yield* ensure(
-      app.kind !== 'vertical' ||
-        (apiBackend.length > 0 &&
-          apiBackend.every((logicalPath) =>
-            boundModules.some((module) => module.logicalPath === logicalPath),
-          )),
-      `${app.id} BFF worker surface is not selected by Miniflare`,
-    );
-    yield* ensure(
-      app.kind !== 'vertical' ||
-        (ssr.includes(mainLogicalPath) &&
-          boundModules.every((module) => [...ssr, ...apiBackend].includes(module.logicalPath))),
-      `${app.id} Miniflare main/SSR modules are not envelope-bound SSR surfaces`,
-    );
+    const validateSelectedSurfaces = Effect.gen(function* validateSelectedSurfacesEffect() {
+      const apiBackend = app.envelope?.surfaces.apiBackend ?? [];
+      const ssr = app.envelope?.surfaces.ssr ?? [];
+      const selectedPaths = new Set(boundModules.map((module) => module.logicalPath));
+      yield* ensure(
+        app.kind !== 'vertical' ||
+          (apiBackend.length > 0 &&
+            apiBackend.every((logicalPath) => selectedPaths.has(logicalPath))),
+        `${app.id} BFF worker surface is not selected by Miniflare`,
+      );
+      yield* ensure(
+        app.kind !== 'vertical' ||
+          (ssr.includes(mainLogicalPath) &&
+            boundModules.every((module) => [...ssr, ...apiBackend].includes(module.logicalPath))),
+        `${app.id} Miniflare main/SSR modules are not envelope-bound SSR surfaces`,
+      );
+
+      return { apiBackend };
+    });
+    const { apiBackend } = yield* validateSelectedSurfaces;
     const name = yield* workerName(app);
     const options: ProofWorkerOptions = {
       assets: {

@@ -21,7 +21,7 @@ import type { PartySearchProjectionGatewayService as PartySearchProjectionGatewa
 import { PartySearchProjectionUnavailable } from '../../shared/domain/search-projection-error.ts';
 import { normalizeCounterpartySearchHits } from '../../shared/domain/search-semantics.ts';
 
-export const counterpartiesEntrypoint = defineTenantModuleEntrypoint({
+const counterpartiesEntrypoint = defineTenantModuleEntrypoint({
   authorization: { kind: 'context_permission', permission: 'module.access' },
   access: 'read',
   entrypointKey: 'party.registry.search.counterparties',

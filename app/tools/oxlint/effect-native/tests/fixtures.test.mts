@@ -19,6 +19,42 @@ if (rules.length === 0) {
     assert.fail(`No fixture directories found${onlyRule ? ` for ${onlyRule}` : ''}.`));
 }
 
+function appendValidFailures(
+  fixtureDirectory: string,
+  valid: readonly string[],
+  byFile: ReadonlyMap<string, number>,
+  failures: string[],
+): void {
+  for (const file of valid) {
+    const key = relative(fixtureDirectory, file).replaceAll('\\', '/');
+    const count = byFile.get(key) ?? 0;
+    if (count !== 0) failures.push(`${key} must not report (false positive: ${count})`);
+  }
+}
+
+function fixtureFailures(
+  fixtureDirectory: string,
+  invalid: readonly string[],
+  valid: readonly string[],
+  byFile: ReadonlyMap<string, number>,
+): string[] {
+  const failures: string[] = [];
+  for (const file of invalid) {
+    const key = relative(fixtureDirectory, file).replaceAll('\\', '/');
+    const count = byFile.get(key) ?? 0;
+    const expected = /^\/\/\s*expect-count:\s*(\d+)/u.exec(readFileSync(file, 'utf8'))?.[1];
+    if (expected !== undefined) {
+      if (Number(expected) <= 0 || count !== Number(expected)) {
+        failures.push(`${key} expected ${expected} positive diagnostics, got ${count}`);
+      }
+    } else if (count === 0) {
+      failures.push(`${key} expected at least one diagnostic`);
+    }
+  }
+  appendValidFailures(fixtureDirectory, valid, byFile, failures);
+  return failures;
+}
+
 for (const rule of rules) {
   test(`effect-native/${rule} fixtures`, () => {
     const fixtureDirectory = join(fixturesDirectory, rule);
@@ -49,24 +85,7 @@ for (const rule of rules) {
       invalid.length + valid.length,
       `${rule}: not every fixture was linted`,
     );
-    const failures: string[] = [];
-    for (const file of invalid) {
-      const key = relative(fixtureDirectory, file).replaceAll('\\', '/');
-      const count = byFile.get(key) ?? 0;
-      const expected = /^\/\/\s*expect-count:\s*(\d+)/u.exec(readFileSync(file, 'utf8'))?.[1];
-      if (expected !== undefined) {
-        if (Number(expected) <= 0 || count !== Number(expected)) {
-          failures.push(`${key} expected ${expected} positive diagnostics, got ${count}`);
-        }
-      } else if (count === 0) {
-        failures.push(`${key} expected at least one diagnostic`);
-      }
-    }
-    for (const file of valid) {
-      const key = relative(fixtureDirectory, file).replaceAll('\\', '/');
-      const count = byFile.get(key) ?? 0;
-      if (count !== 0) failures.push(`${key} must not report (false positive: ${count})`);
-    }
+    const failures = fixtureFailures(fixtureDirectory, invalid, valid, byFile);
     assert.deepEqual(failures, [], `${rule}:\n${failures.join('\n')}`);
   });
 }

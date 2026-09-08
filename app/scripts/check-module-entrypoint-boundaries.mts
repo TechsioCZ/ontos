@@ -1,7 +1,18 @@
 #!/usr/bin/env node
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
-import { Config, Console, Effect, FileSystem, Layer, Option, Path, Schema } from 'effect';
+import {
+  Config,
+  Console,
+  Effect,
+  FileSystem,
+  Function as EffectFunction,
+  Layer,
+  Match,
+  Option,
+  Path,
+  Schema,
+} from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 import {
@@ -123,36 +134,69 @@ interface ObjectProperties {
   readonly values: ReadonlyMap<string, string>;
 }
 
+const tokenKindAt = (tokens: readonly SourceToken[], index: number): SyntaxKind | undefined =>
+  tokens[index]?.kind;
+
+const isPropertyValue = (
+  tokens: readonly SourceToken[],
+  index: number,
+  valueKind: SyntaxKind,
+): boolean =>
+  tokenKindAt(tokens, index) === SyntaxKind.Identifier &&
+  tokenKindAt(tokens, index + 1) === SyntaxKind.ColonToken &&
+  tokenKindAt(tokens, index + 2) === valueKind;
+
 const readObjectStringProperties = (
   tokens: readonly SourceToken[],
   openBraceIndex: number,
 ): ObjectProperties => {
   const values = new Map<string, string>();
   let depth = 0;
-  let closeBraceIndex = tokens.length;
-  for (
-    let cursor = openBraceIndex;
-    cursor < tokens.length && closeBraceIndex === tokens.length;
-    cursor += 1
-  ) {
+  for (let cursor = openBraceIndex; cursor < tokens.length; cursor += 1) {
     const current = tokens[cursor];
-    if (current?.kind === SyntaxKind.OpenBraceToken) {
+    if (current === undefined) {
+      continue;
+    }
+    if (current.kind === SyntaxKind.OpenBraceToken) {
       depth += 1;
-    } else if (current?.kind === SyntaxKind.CloseBraceToken) {
+    } else if (current.kind === SyntaxKind.CloseBraceToken) {
       depth -= 1;
       if (depth === 0) {
-        closeBraceIndex = cursor;
+        return { closeBraceIndex: cursor, values };
       }
-    } else if (
-      depth === 1 &&
-      current?.kind === SyntaxKind.Identifier &&
-      tokens[cursor + 1]?.kind === SyntaxKind.ColonToken &&
-      tokens[cursor + 2]?.kind === SyntaxKind.StringLiteral
-    ) {
+    } else if (depth === 1 && isPropertyValue(tokens, cursor, SyntaxKind.StringLiteral)) {
       values.set(current.value, tokens[cursor + 2]?.value ?? '');
     }
   }
-  return { closeBraceIndex, values };
+  return { closeBraceIndex: tokens.length, values };
+};
+
+const readContextPermission = (
+  properties: ReadonlyMap<string, string>,
+): InventoryAuthorization | undefined => {
+  const permission = properties.get('permission');
+  return properties.size === 2 && permission !== undefined
+    ? { kind: 'context_permission', permission }
+    : undefined;
+};
+
+const readActionExecution = (
+  properties: ReadonlyMap<string, string>,
+): InventoryAuthorization | undefined => {
+  const provisioning = properties.get('provisioning');
+  return properties.size === 2 &&
+    (provisioning === 'explicit' || provisioning === 'tenant_membership_default')
+    ? { kind: 'action_execution', provisioning }
+    : undefined;
+};
+
+const readCapabilityIssuance = (
+  properties: ReadonlyMap<string, string>,
+): InventoryAuthorization | undefined => {
+  const credential = properties.get('credential');
+  return properties.size === 2 && (credential === 'api_key' || credential === 'session')
+    ? { credential, kind: 'capability_issuance' }
+    : undefined;
 };
 
 const readAuthorization = (
@@ -160,32 +204,50 @@ const readAuthorization = (
   openBraceIndex: number,
 ): InventoryAuthorization | undefined => {
   const properties = readObjectStringProperties(tokens, openBraceIndex).values;
-  const kind = properties.get('kind');
-  if (
-    kind === 'public' ||
-    kind === 'authenticated_principal' ||
-    kind === 'owner_local_background'
-  ) {
-    return properties.size === 1 ? { kind } : undefined;
+  return Match.value(properties.get('kind')).pipe(
+    Match.when('public', (kind) => (properties.size === 1 ? { kind } : undefined)),
+    Match.when('authenticated_principal', (kind) => (properties.size === 1 ? { kind } : undefined)),
+    Match.when('owner_local_background', (kind) => (properties.size === 1 ? { kind } : undefined)),
+    Match.when('context_permission', () => readContextPermission(properties)),
+    Match.when('action_execution', () => readActionExecution(properties)),
+    Match.when('capability_issuance', () => readCapabilityIssuance(properties)),
+    Match.orElse(EffectFunction.constUndefined),
+  );
+};
+
+const rescanTemplateClose = (
+  scanner: ReturnType<typeof createScanner>,
+  depths: number[],
+): SyntaxKind => {
+  const index = depths.length - 1;
+  const depth = depths[index] ?? 0;
+  if (depth !== 0) {
+    depths[index] = depth - 1;
+    return SyntaxKind.CloseBraceToken;
   }
-  if (kind === 'context_permission') {
-    const permission = properties.get('permission');
-    return properties.size === 2 && permission !== undefined ? { kind, permission } : undefined;
+  const kind = scanner.reScanTemplateToken(false);
+  if (kind === SyntaxKind.TemplateTail) {
+    depths.pop();
   }
-  if (kind === 'action_execution') {
-    const provisioning = properties.get('provisioning');
-    return properties.size === 2 &&
-      (provisioning === 'explicit' || provisioning === 'tenant_membership_default')
-      ? { kind, provisioning }
-      : undefined;
+  return kind;
+};
+
+const updateTemplateToken = (
+  scanner: ReturnType<typeof createScanner>,
+  kind: SyntaxKind,
+  depths: number[],
+): SyntaxKind => {
+  if (kind === SyntaxKind.TemplateHead) {
+    depths.push(0);
+  } else if (depths.length > 0) {
+    const index = depths.length - 1;
+    if (kind === SyntaxKind.OpenBraceToken) {
+      depths[index] = (depths[index] ?? 0) + 1;
+    } else if (kind === SyntaxKind.CloseBraceToken) {
+      return rescanTemplateClose(scanner, depths);
+    }
   }
-  if (kind === 'capability_issuance') {
-    const credential = properties.get('credential');
-    return properties.size === 2 && (credential === 'api_key' || credential === 'session')
-      ? { credential, kind }
-      : undefined;
-  }
-  return undefined;
+  return kind;
 };
 
 const tokenize = (source: string): readonly SourceToken[] => {
@@ -194,64 +256,55 @@ const tokenize = (source: string): readonly SourceToken[] => {
   const templateExpressionBraceDepths: number[] = [];
   let scannedKind = scanner.scan();
   while (scannedKind !== SyntaxKind.EndOfFile) {
-    let tokenKind: SyntaxKind = scannedKind;
-    const templateDepthIndex = templateExpressionBraceDepths.length - 1;
-    if (tokenKind === SyntaxKind.TemplateHead) {
-      templateExpressionBraceDepths.push(0);
-    } else if (tokenKind === SyntaxKind.OpenBraceToken && templateDepthIndex >= 0) {
-      templateExpressionBraceDepths[templateDepthIndex] =
-        (templateExpressionBraceDepths[templateDepthIndex] ?? 0) + 1;
-    } else if (tokenKind === SyntaxKind.CloseBraceToken && templateDepthIndex >= 0) {
-      const braceDepth = templateExpressionBraceDepths[templateDepthIndex] ?? 0;
-      if (braceDepth === 0) {
-        tokenKind = scanner.reScanTemplateToken(false);
-        if (tokenKind === SyntaxKind.TemplateTail) {
-          templateExpressionBraceDepths.pop();
-        }
-      } else {
-        templateExpressionBraceDepths[templateDepthIndex] = braceDepth - 1;
-      }
-    }
-    tokens.push({ kind: tokenKind, value: scanner.getTokenValue() });
+    const kind = updateTemplateToken(scanner, scannedKind, templateExpressionBraceDepths);
+    tokens.push({ kind, value: scanner.getTokenValue() });
     scannedKind = scanner.scan();
   }
   return tokens;
+};
+
+const entrypointScope = (token: SourceToken): ParsedEntrypoint['scope'] | undefined => {
+  if (token.kind !== SyntaxKind.Identifier) {
+    return undefined;
+  }
+  return Match.value(token.value).pipe(
+    Match.when('defineSystemModuleEntrypoint', () => 'System' as const),
+    Match.when('defineTenantModuleEntrypoint', () => 'Tenant' as const),
+    Match.orElse(EffectFunction.constUndefined),
+  );
+};
+
+const readEntrypointAuthorization = (
+  tokens: readonly SourceToken[],
+  start: number,
+  end: number,
+): InventoryAuthorization | undefined => {
+  let authorization: InventoryAuthorization | undefined;
+  for (let cursor = start; cursor < end; cursor += 1) {
+    if (
+      tokens[cursor]?.value === 'authorization' &&
+      isPropertyValue(tokens, cursor, SyntaxKind.OpenBraceToken)
+    ) {
+      authorization = readAuthorization(tokens, cursor + 2);
+    }
+  }
+  return authorization;
 };
 
 const readEntrypoints = (source: string): readonly ParsedEntrypoint[] => {
   const tokens = tokenize(source);
   const entrypoints: ParsedEntrypoint[] = [];
   for (const [index, token] of tokens.entries()) {
-    let scope: ParsedEntrypoint['scope'] | undefined;
-    if (token.kind === SyntaxKind.Identifier && token.value === 'defineSystemModuleEntrypoint') {
-      scope = 'System';
-    } else if (
-      token.kind === SyntaxKind.Identifier &&
-      token.value === 'defineTenantModuleEntrypoint'
-    ) {
-      scope = 'Tenant';
-    }
+    const scope = entrypointScope(token);
     if (
       scope !== undefined &&
-      tokens[index + 1]?.kind === SyntaxKind.OpenParenToken &&
-      tokens[index + 2]?.kind === SyntaxKind.OpenBraceToken
+      tokenKindAt(tokens, index + 1) === SyntaxKind.OpenParenToken &&
+      tokenKindAt(tokens, index + 2) === SyntaxKind.OpenBraceToken
     ) {
       const properties = readObjectStringProperties(tokens, index + 2);
-      let authorization: InventoryAuthorization | undefined;
-      for (let cursor = index + 3; cursor < properties.closeBraceIndex; cursor += 1) {
-        const current = tokens[cursor];
-        if (
-          current?.kind === SyntaxKind.Identifier &&
-          current.value === 'authorization' &&
-          tokens[cursor + 1]?.kind === SyntaxKind.ColonToken &&
-          tokens[cursor + 2]?.kind === SyntaxKind.OpenBraceToken
-        ) {
-          authorization = readAuthorization(tokens, cursor + 2);
-        }
-      }
       entrypoints.push({
         access: properties.values.get('access'),
-        authorization,
+        authorization: readEntrypointAuthorization(tokens, index + 3, properties.closeBraceIndex),
         entrypointKey: properties.values.get('entrypointKey'),
         moduleKey: properties.values.get('moduleKey'),
         role: properties.values.get('role'),
@@ -296,6 +349,16 @@ const containsIdentifier = (source: string, identifiers: ReadonlySet<string>): b
     (token) => token.kind === SyntaxKind.Identifier && identifiers.has(token.value),
   );
 
+const isModuleSpecifierPosition = (tokens: readonly SourceToken[], index: number): boolean => {
+  const previous = tokenKindAt(tokens, index - 1);
+  return (
+    previous === SyntaxKind.FromKeyword ||
+    previous === SyntaxKind.ImportKeyword ||
+    (previous === SyntaxKind.OpenParenToken &&
+      tokenKindAt(tokens, index - 2) === SyntaxKind.ImportKeyword)
+  );
+};
+
 const readImportedModuleSpecifiers = (source: string): readonly string[] => {
   const tokens = tokenize(source);
   const specifiers: string[] = [];
@@ -303,14 +366,7 @@ const readImportedModuleSpecifiers = (source: string): readonly string[] => {
     if (token.kind !== SyntaxKind.StringLiteral) {
       continue;
     }
-    const previous = tokens[index - 1];
-    const previousPrevious = tokens[index - 2];
-    if (
-      previous?.kind === SyntaxKind.FromKeyword ||
-      previous?.kind === SyntaxKind.ImportKeyword ||
-      (previous?.kind === SyntaxKind.OpenParenToken &&
-        previousPrevious?.kind === SyntaxKind.ImportKeyword)
-    ) {
+    if (isModuleSpecifierPosition(tokens, index)) {
       specifiers.push(token.value);
     }
   }
@@ -561,16 +617,28 @@ const validateRouteSource = (state: BoundaryCheckState, file: string, source: st
     });
   });
 
-const validateVerticalSource = (
+const validateGovernedSource = (file: string, source: string) =>
+  Effect.gen(function* validateGovernedSourceEffect() {
+    const category = /\/src\/(?<category>components|search|reports)\//u.exec(`/${file}`)?.groups
+      ?.category;
+    const expectedHeader = governedSourceHeader(category);
+    const invalidGovernedSource =
+      /\/src\/public-components\//u.test(`/${file}`) ||
+      (expectedHeader !== undefined && !source.startsWith(expectedHeader));
+    if (invalidGovernedSource) {
+      yield* fail(
+        file,
+        'public components, search, and reports require an approved Codesmith generator and reserved runtime registration first',
+      );
+    }
+  });
+
+const validateVerticalApiSource = (
   sourceMap: ReadonlyMap<string, string>,
   file: string,
   source: string,
-  importedModuleSpecifiers: readonly string[],
 ) =>
-  Effect.gen(function* validateVerticalSourceEffect() {
-    if (!file.includes('/verticals/') && !file.startsWith('verticals/')) {
-      return;
-    }
+  Effect.gen(function* validateVerticalApiSourceEffect() {
     if (
       file.endsWith('/shared/api.ts') &&
       source.includes('HttpApiEndpoint') &&
@@ -591,18 +659,20 @@ const validateVerticalSource = (
     ) {
       yield* fail(file, 'module APIs must be created with scaffold:module-api');
     }
-    const category = /\/src\/(?<category>components|search|reports)\//u.exec(`/${file}`)?.groups
-      ?.category;
-    const expectedHeader = governedSourceHeader(category);
-    const invalidGovernedSource =
-      /\/src\/public-components\//u.test(`/${file}`) ||
-      (expectedHeader !== undefined && !source.startsWith(expectedHeader));
-    if (invalidGovernedSource) {
-      yield* fail(
-        file,
-        'public components, search, and reports require an approved Codesmith generator and reserved runtime registration first',
-      );
+  });
+
+const validateVerticalSource = (
+  sourceMap: ReadonlyMap<string, string>,
+  file: string,
+  source: string,
+  importedModuleSpecifiers: readonly string[],
+) =>
+  Effect.gen(function* validateVerticalSourceEffect() {
+    if (!file.includes('/verticals/') && !file.startsWith('verticals/')) {
+      return;
     }
+    yield* validateVerticalApiSource(sourceMap, file, source);
+    yield* validateGovernedSource(file, source);
     const privateImport = importedModuleSpecifiers.some((specifier) =>
       /(?:verticals\/|@app\/).*\/(?:src|vertical\.registration|workers|search|reports|db)(?:\/|$)/u.test(
         specifier,
@@ -613,6 +683,79 @@ const validateVerticalSource = (
         file,
         'cross-vertical private imports are forbidden; use a public descriptor/client and the Shell/Core gateway',
       );
+    }
+  });
+
+const validatePrivateHandlerAccess = (file: string, source: string) =>
+  Effect.gen(function* validatePrivateHandlerAccessEffect() {
+    const unauthorizedActionHandler =
+      callsIdentifier(source, 'getActionHandler') &&
+      file !== 'packages/core-runtime/src/actions/runtime.ts' &&
+      file !== 'packages/core-runtime/src/actions/definition.ts';
+    const unauthorizedWorkerHandler =
+      callsIdentifier(source, 'getOutboxWorkerHandler') &&
+      file !== 'packages/core-runtime/src/outbox/runtime.ts' &&
+      file !== 'packages/core-runtime/src/outbox/definition.ts';
+    if (unauthorizedActionHandler || unauthorizedWorkerHandler) {
+      yield* fail(
+        file,
+        'private handler accessors may only be called by their Core runtime after the module-state gate',
+      );
+    }
+  });
+
+const validatePackageExports = (file: string, source: string) =>
+  Effect.gen(function* validatePackageExportsEffect() {
+    if (file.startsWith('verticals/') && file.endsWith('package.json')) {
+      const packageJson = yield* decodeVerticalPackageJson(source);
+      const privateExport = Object.values(packageJson.exports ?? {}).some((target) =>
+        /(?:vertical\.registration|\/src\/(?:handlers|workers|routes|search|reports|db))/u.test(
+          target,
+        ),
+      );
+      if (privateExport) {
+        yield* fail(
+          file,
+          'package exports must not publish private entrypoint implementations or registrations',
+        );
+      }
+    }
+  });
+
+const validateRegistrationSlots = (file: string, source: string) =>
+  Effect.gen(function* validateRegistrationSlotsEffect() {
+    if (file.endsWith('/vertical.registration.ts')) {
+      for (const marker of [
+        'generated-public-component-registrations',
+        'generated-search-registrations',
+        'generated-report-registrations',
+      ]) {
+        if (!source.includes(`<${marker}>`) || !source.includes(`</${marker}>`)) {
+          yield* fail(
+            file,
+            `Vertical Runtime Registration is missing reserved ${marker} slots; extend Codesmith first`,
+          );
+        }
+      }
+    }
+  });
+
+const validateCoreExports = (file: string, source: string) =>
+  Effect.gen(function* validateCoreExportsEffect() {
+    if (file === 'packages/core-runtime/src/index.ts') {
+      const forbiddenGateExports = new Set([
+        'checkModuleEntrypoint',
+        'makeModuleEntrypointGateway',
+        'makeModuleStateGate',
+        'makeModuleStateSnapshot',
+        'prepareModuleStateSnapshot',
+      ]);
+      if (containsIdentifier(source, forbiddenGateExports)) {
+        yield* fail(
+          file,
+          'Core may export only module-entrypoint descriptors, service/gateway contracts and live layers, and typed gate failures',
+        );
+      }
     }
   });
 
@@ -634,75 +777,23 @@ const validateGeneralSource = (
         'eager remote implementation imports are forbidden; pass a lazy thunk to the gateway',
       );
     }
-    const unauthorizedActionHandler =
-      callsIdentifier(source, 'getActionHandler') &&
-      file !== 'packages/core-runtime/src/actions/runtime.ts' &&
-      file !== 'packages/core-runtime/src/actions/definition.ts';
-    const unauthorizedWorkerHandler =
-      callsIdentifier(source, 'getOutboxWorkerHandler') &&
-      file !== 'packages/core-runtime/src/outbox/runtime.ts' &&
-      file !== 'packages/core-runtime/src/outbox/definition.ts';
-    if (unauthorizedActionHandler || unauthorizedWorkerHandler) {
-      yield* fail(
-        file,
-        'private handler accessors may only be called by their Core runtime after the module-state gate',
-      );
-    }
-    if (file.startsWith('verticals/') && file.endsWith('package.json')) {
-      const packageJson = yield* decodeVerticalPackageJson(source);
-      const privateExport = Object.values(packageJson.exports ?? {}).some((target) =>
-        /(?:vertical\.registration|\/src\/(?:handlers|workers|routes|search|reports|db))/u.test(
-          target,
-        ),
-      );
-      if (privateExport) {
-        yield* fail(
-          file,
-          'package exports must not publish private entrypoint implementations or registrations',
-        );
-      }
-    }
-    if (file.endsWith('/vertical.registration.ts')) {
-      for (const marker of [
-        'generated-public-component-registrations',
-        'generated-search-registrations',
-        'generated-report-registrations',
-      ]) {
-        if (!source.includes(`<${marker}>`) || !source.includes(`</${marker}>`)) {
-          yield* fail(
-            file,
-            `Vertical Runtime Registration is missing reserved ${marker} slots; extend Codesmith first`,
-          );
-        }
-      }
-    }
-    if (file === 'packages/core-runtime/src/index.ts') {
-      const forbiddenGateExports = new Set([
-        'checkModuleEntrypoint',
-        'makeModuleEntrypointGateway',
-        'makeModuleStateGate',
-        'makeModuleStateSnapshot',
-        'prepareModuleStateSnapshot',
-      ]);
-      if (containsIdentifier(source, forbiddenGateExports)) {
-        yield* fail(
-          file,
-          'Core may export only module-entrypoint descriptors, service/gateway contracts and live layers, and typed gate failures',
-        );
-      }
-    }
+    yield* validatePrivateHandlerAccess(file, source);
+    yield* validatePackageExports(file, source);
+    yield* validateRegistrationSlots(file, source);
+    yield* validateCoreExports(file, source);
   });
+
+const isInventoryDescriptorSource = (file: string): boolean =>
+  file.endsWith('.action.ts') ||
+  (file.endsWith('.worker.ts') && file.includes('/src/workers/')) ||
+  file.endsWith('/route.meta.ts') ||
+  (file.endsWith('.read.ts') && file.includes('/src/api/')) ||
+  file === 'apps/shell-super-app/api/modules/shell-governed-reads.ts' ||
+  file === 'packages/core-runtime/src/auth/principal-administration-reads.ts';
 
 const appendInventoryEntries = (state: BoundaryCheckState, file: string, source: string) =>
   Effect.gen(function* appendInventoryEntriesEffect() {
-    const isInventoryDescriptorSource =
-      file.endsWith('.action.ts') ||
-      (file.endsWith('.worker.ts') && file.includes('/src/workers/')) ||
-      file.endsWith('/route.meta.ts') ||
-      (file.endsWith('.read.ts') && file.includes('/src/api/')) ||
-      file === 'apps/shell-super-app/api/modules/shell-governed-reads.ts' ||
-      file === 'packages/core-runtime/src/auth/principal-administration-reads.ts';
-    if (!isInventoryDescriptorSource) {
+    if (!isInventoryDescriptorSource(file)) {
       return;
     }
     const deployment =
@@ -748,13 +839,8 @@ const validateProductionSource = (state: BoundaryCheckState, file: string, sourc
     yield* appendInventoryEntries(state, file, source);
   });
 
-const validateRouteManifests = (
-  path: Path.Path,
-  files: readonly string[],
-  root: string,
-  state: BoundaryCheckState,
-) =>
-  Effect.gen(function* validateRouteManifestsEffect() {
+const collectRouteSourceKeys = (state: BoundaryCheckState) =>
+  Effect.gen(function* collectRouteSourceKeysEffect() {
     const routeSourceKeysByDeployment = new Map<string, Set<string>>();
     for (const route of state.routeEntrypoints) {
       const sourceKeys = routeSourceKeysByDeployment.get(route.deployment) ?? new Set<string>();
@@ -764,6 +850,37 @@ const validateRouteManifests = (
       sourceKeys.add(route.entrypointKey);
       routeSourceKeysByDeployment.set(route.deployment, sourceKeys);
     }
+    return routeSourceKeysByDeployment;
+  });
+
+const validateManifestKeys = (
+  state: BoundaryCheckState,
+  normalizedFile: string,
+  sourceKeys: ReadonlySet<string>,
+) =>
+  Effect.gen(function* validateManifestKeysEffect() {
+    const manifestSource = state.sourceMap.get(normalizedFile) ?? '';
+    const manifestKeys = readStringProperties(manifestSource, 'entrypointKey');
+    const missing = [...sourceKeys].filter((entrypointKey) => !manifestKeys.has(entrypointKey));
+    const stale = [...manifestKeys].filter((entrypointKey) => !sourceKeys.has(entrypointKey));
+    if (missing.length > 0 || stale.length > 0) {
+      const missingLabel = missing.length === 0 ? 'none' : sortStrings(missing).join(', ');
+      const staleLabel = stale.length === 0 ? 'none' : sortStrings(stale).join(', ');
+      yield* fail(
+        normalizedFile,
+        `generated route manifest is stale (missing: ${missingLabel}; orphaned: ${staleLabel}); rerun the route generator`,
+      );
+    }
+  });
+
+const validateRouteManifests = (
+  path: Path.Path,
+  files: readonly string[],
+  root: string,
+  state: BoundaryCheckState,
+) =>
+  Effect.gen(function* validateRouteManifestsEffect() {
+    const routeSourceKeysByDeployment = yield* collectRouteSourceKeys(state);
     const routeManifests = files.filter((file) => file.endsWith('/ultramodern-route-metadata.ts'));
     const seenManifestDeployments = new Set<string>();
     for (const manifestFile of routeManifests) {
@@ -783,19 +900,11 @@ const validateRouteManifests = (
         );
       }
       seenManifestDeployments.add(deployment);
-      const manifestSource = state.sourceMap.get(normalizedFile) ?? '';
-      const manifestKeys = readStringProperties(manifestSource, 'entrypointKey');
-      const sourceKeys = routeSourceKeysByDeployment.get(deployment) ?? new Set<string>();
-      const missing = [...sourceKeys].filter((entrypointKey) => !manifestKeys.has(entrypointKey));
-      const stale = [...manifestKeys].filter((entrypointKey) => !sourceKeys.has(entrypointKey));
-      if (missing.length > 0 || stale.length > 0) {
-        const missingLabel = missing.length === 0 ? 'none' : sortStrings(missing).join(', ');
-        const staleLabel = stale.length === 0 ? 'none' : sortStrings(stale).join(', ');
-        yield* fail(
-          normalizedFile,
-          `generated route manifest is stale (missing: ${missingLabel}; orphaned: ${staleLabel}); rerun the route generator`,
-        );
-      }
+      yield* validateManifestKeys(
+        state,
+        normalizedFile,
+        routeSourceKeysByDeployment.get(deployment) ?? new Set<string>(),
+      );
     }
     for (const deployment of routeSourceKeysByDeployment.keys()) {
       if (!seenManifestDeployments.has(deployment)) {
@@ -807,12 +916,8 @@ const validateRouteManifests = (
     }
   });
 
-const validateGatewayContract = (state: BoundaryCheckState) =>
-  Effect.gen(function* validateGatewayContractEffect() {
-    const gatewayContract =
-      state.sourceMap.get('packages/shared-contracts/src/gateway-context.ts') ?? '';
-    const shellApiContract = state.sourceMap.get('apps/shell-super-app/shared/api.ts') ?? '';
-    const shellApiRuntime = state.sourceMap.get('apps/shell-super-app/api/index.ts') ?? '';
+const validateIssuerCredentials = () =>
+  Effect.gen(function* validateIssuerCredentialsEffect() {
     const issuerCredentials = new Set(
       gatewayContextAuthorizationEntrypoints.map(({ authorization }) => authorization.credential),
     );
@@ -826,24 +931,15 @@ const validateGatewayContract = (state: BoundaryCheckState) =>
         'gateway authorization contract must classify exactly the session and API-key issuers',
       );
     }
-    for (const issuer of gatewayContextAuthorizationEntrypoints) {
-      if (
-        !gatewayContract.includes(`'${issuer.path}'`) ||
-        !shellApiContract.includes(`'${issuer.path}'`)
-      ) {
-        yield* fail(
-          'apps/shell-super-app/shared/api.ts',
-          `capability issuer ${issuer.path} is missing from the mounted gateway contract`,
-        );
-      }
-      state.inventoryEntries.push(issuer);
-    }
-    const missingApiKeyHandler =
-      !shellApiRuntime.includes(".handle('issueApiKeyGatewayContext'") &&
-      !containsIdentifier(shellApiRuntime, new Set(['issueApiKeyGatewayContext']));
-    const missingSessionHandler =
-      !shellApiRuntime.includes(".handle('issueGatewayContext'") &&
-      !containsIdentifier(shellApiRuntime, new Set(['issueGatewayContext']));
+  });
+
+const hasIssuerHandler = (source: string, name: string): boolean =>
+  source.includes(`.handle('${name}'`) || containsIdentifier(source, new Set([name]));
+
+const validateGatewayRuntime = (shellApiContract: string, shellApiRuntime: string) =>
+  Effect.gen(function* validateGatewayRuntimeEffect() {
+    const missingApiKeyHandler = !hasIssuerHandler(shellApiRuntime, 'issueApiKeyGatewayContext');
+    const missingSessionHandler = !hasIssuerHandler(shellApiRuntime, 'issueGatewayContext');
     if (
       !shellApiContract.includes('.add(GatewayContextApiGroup)') ||
       shellGatewayContextContract.issueGatewayContextPath !==
@@ -858,6 +954,50 @@ const validateGatewayContract = (state: BoundaryCheckState) =>
         'both classified capability issuers must be mounted by the Shell API runtime',
       );
     }
+  });
+
+const hasMountedIssuerPath = (
+  source: string,
+  issuer: (typeof gatewayContextAuthorizationEntrypoints)[number],
+): boolean => {
+  if (source.includes(`'${issuer.path}'`)) {
+    return true;
+  }
+  const name =
+    issuer.authorization.credential === 'session'
+      ? 'issueGatewayContext'
+      : 'issueApiKeyGatewayContext';
+  return (
+    source.includes("import { GatewayContextApiGroup } from '@app/shared-contracts'") &&
+    source.includes('.add(GatewayContextApiGroup)') &&
+    source.includes(`\`/shell-super-app-api\${endpoint.path}\``) &&
+    new RegExp(
+      `${name}Path:\\s*authenticationEndpointPath\\(\\s*ShellAuthenticationApi\\.groups\\.gatewayContext\\.endpoints\\.${name}\\s*,?\\s*\\)`,
+      'u',
+    ).test(source)
+  );
+};
+
+const validateGatewayContract = (state: BoundaryCheckState) =>
+  Effect.gen(function* validateGatewayContractEffect() {
+    const gatewayContract =
+      state.sourceMap.get('packages/shared-contracts/src/gateway-context.ts') ?? '';
+    const shellApiContract = state.sourceMap.get('apps/shell-super-app/shared/api.ts') ?? '';
+    const shellApiRuntime = state.sourceMap.get('apps/shell-super-app/api/index.ts') ?? '';
+    yield* validateIssuerCredentials();
+    for (const issuer of gatewayContextAuthorizationEntrypoints) {
+      if (
+        !gatewayContract.includes(`'${issuer.path}'`) ||
+        !hasMountedIssuerPath(shellApiContract, issuer)
+      ) {
+        yield* fail(
+          'apps/shell-super-app/shared/api.ts',
+          `capability issuer ${issuer.path} is missing from the mounted gateway contract`,
+        );
+      }
+      state.inventoryEntries.push(issuer);
+    }
+    yield* validateGatewayRuntime(shellApiContract, shellApiRuntime);
   });
 
 const checkModuleEntrypointBoundariesEffect = (root: string) =>

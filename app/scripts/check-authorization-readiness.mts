@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /// <reference types="node" />
 import { createHash } from 'node:crypto';
-import { createRequire } from 'node:module';
+import { loadCoreNodeServices } from './shared/core-node-services.mts';
 import {
   Clock,
   Config,
@@ -10,7 +10,6 @@ import {
   Duration,
   Effect,
   FileSystem,
-  Layer,
   Option,
   Path,
   Result,
@@ -209,8 +208,24 @@ const validateFixedContext = (input: AuthorizationReadinessInput): void => {
   }
 };
 
-const validateEvidenceIdentity = (input: AuthorizationReadinessInput): void => {
+const validateEvidenceFreshness = (input: AuthorizationReadinessInput): void => {
   const { impact, inventory, negativeSmoke, observation } = input;
+  if (
+    impact.schemaVersion !== 1 ||
+    impact.inventoryHash !== inventory.inventoryHash ||
+    impact.sourceRevision !== inventory.sourceRevision ||
+    impact.totalWouldDeny !== 0 ||
+    observation.inventoryHash !== inventory.inventoryHash ||
+    observation.sourceRevision !== inventory.sourceRevision ||
+    negativeSmoke.inventoryHash !== inventory.inventoryHash ||
+    negativeSmoke.sourceRevision !== inventory.sourceRevision
+  ) {
+    fail('inventory, impact, observation, or smoke evidence is stale or unresolved');
+  }
+};
+
+const validateEvidenceIdentity = (input: AuthorizationReadinessInput): void => {
+  const { inventory } = input;
   if (
     !validRevision(inventory.sourceRevision) ||
     !validHash(inventory.inventoryHash) ||
@@ -229,18 +244,7 @@ const validateEvidenceIdentity = (input: AuthorizationReadinessInput): void => {
     inventoryHash: inventory.inventoryHash,
     nowEpochMs: input.nowEpochMs,
   });
-  if (
-    impact.schemaVersion !== 1 ||
-    impact.inventoryHash !== inventory.inventoryHash ||
-    impact.sourceRevision !== inventory.sourceRevision ||
-    impact.totalWouldDeny !== 0 ||
-    observation.inventoryHash !== inventory.inventoryHash ||
-    observation.sourceRevision !== inventory.sourceRevision ||
-    negativeSmoke.inventoryHash !== inventory.inventoryHash ||
-    negativeSmoke.sourceRevision !== inventory.sourceRevision
-  ) {
-    fail('inventory, impact, observation, or smoke evidence is stale or unresolved');
-  }
+  validateEvidenceFreshness(input);
 };
 
 const timestampMillis = (value: string): number =>
@@ -577,7 +581,7 @@ const authorizationReadinessCommand = Command.make(
       const nowEpochMs = yield* Clock.currentTimeMillis;
       const evidence = yield* Effect.try({
         catch: (error) =>
-          error instanceof AuthorizationReadinessError
+          Schema.is(AuthorizationReadinessError)(error)
             ? error
             : new AuthorizationReadinessError({ reason: 'authorization evidence is invalid' }),
         try: () =>
@@ -609,20 +613,7 @@ const authorizationReadinessCommand = Command.make(
 const [, invokedModule] = process.argv;
 const isMain = invokedModule !== undefined && import.meta.url.endsWith(invokedModule);
 if (isMain) {
-  const loadFromCoreRuntime = createRequire(
-    new URL('../packages/core-runtime/package.json', import.meta.url),
-  );
-  const nodePlatform: unknown = loadFromCoreRuntime('@effect/platform-node');
-  const AnyLayerSchema = Schema.declare(Layer.isLayer);
-  const NodeServicesLayerSchema = Schema.declare<Layer.Layer<Command.Environment>>(
-    (value): value is Layer.Layer<Command.Environment> => Schema.is(AnyLayerSchema)(value),
-  );
-  const NodePlatformSchema = Schema.Struct({
-    NodeServices: Schema.Struct({ layer: NodeServicesLayerSchema }),
-  });
-  const { NodeServices } = Result.getOrThrow(
-    Schema.decodeUnknownResult(NodePlatformSchema)(nodePlatform),
-  );
+  const NodeServices = loadCoreNodeServices();
   await Effect.runPromise(
     Command.run(authorizationReadinessCommand, { version: '1.0.0' }).pipe(
       Effect.provide(NodeServices.layer),

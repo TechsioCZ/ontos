@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **B5** — "Adopt Effect's ADTs and temporal model consistently" ("Closed
  * vocabularies and timestamps are repeatedly re-declared", "Highest-value targets are service
@@ -82,14 +83,9 @@ import {
   effectMember,
   type EffectBindings,
 } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production defaults instead of forcing the
- * fixture config to pass loosened options (which `run-on-repo.mts` reuses against the real repo).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
+import { booleanOption as boolean, positiveInteger, stringArray } from '../shared/options.ts';
+import { asNode as sharedAsNode } from '../shared/ast.ts';
 
 /** A2/B5 apply everywhere first-party TypeScript is authored. */
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
@@ -116,26 +112,8 @@ interface RuleOptions {
   readonly allowedNames: readonly string[];
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
-function boolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
-function positiveInteger(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 1 ? value : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     minMembers: positiveInteger(record.minMembers, DEFAULT_MIN_MEMBERS),
     include: stringArray(record.include, DEFAULT_INCLUDE),
@@ -148,24 +126,9 @@ function readOptions(context: Context): RuleOptions {
   };
 }
 
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
 type AnyNode = Record<string, unknown> & { readonly type: string };
 
-function asNode(value: unknown): AnyNode | null {
-  return typeof value === 'object' &&
-    value !== null &&
-    typeof (value as { type?: unknown }).type === 'string'
-    ? (value as AnyNode)
-    : null;
-}
+const asNode: (value: unknown) => AnyNode | null = sharedAsNode;
 
 /** Strip `TSParenthesizedType` wrappers (`('a') | ('b')`). */
 function unwrap(node: AnyNode): AnyNode {
@@ -178,39 +141,28 @@ function unwrap(node: AnyNode): AnyNode {
   return current;
 }
 
-/** The literal text of a string-literal type member, or `null` when the member is not one. */
+/** Preserve raw template spelling and the rule’s empty-text fallback for malformed quasis. */
+function rawTemplateText(node: AnyNode, interpolationKey: 'expressions' | 'types'): string | null {
+  const interpolations = Array.isArray(node[interpolationKey]) ? node[interpolationKey] : [];
+  if (interpolations.length > 0) return null;
+  const quasis = Array.isArray(node.quasis) ? node.quasis : [];
+  const value = asNode(quasis[0])?.value;
+  const raw =
+    typeof value === 'object' && value !== null ? (value as { raw?: unknown }).raw : undefined;
+  return typeof raw === 'string' ? raw : '';
+}
+
+function stringExpression(node: AnyNode | null): string | null {
+  if (node === null) return null;
+  if (node.type === 'Literal' || node.type === 'StringLiteral') {
+    return typeof node.value === 'string' ? node.value : null;
+  }
+  return node.type === 'TemplateLiteral' ? rawTemplateText(node, 'expressions') : null;
+}
+
 function stringLiteralMember(node: AnyNode): string | null {
-  if (node.type === 'TSLiteralType') {
-    const literal = asNode(node.literal);
-    if (literal === null) return null;
-    if (literal.type === 'Literal' || literal.type === 'StringLiteral') {
-      return typeof literal.value === 'string' ? literal.value : null;
-    }
-    // `` type A = `abc` `` — a template literal with no interpolation is a closed literal.
-    if (literal.type === 'TemplateLiteral') {
-      const expressions = Array.isArray(literal.expressions) ? literal.expressions : [];
-      if (expressions.length > 0) return null;
-      const quasis = Array.isArray(literal.quasis) ? literal.quasis : [];
-      const cooked = asNode(quasis[0])?.value;
-      const raw =
-        typeof cooked === 'object' && cooked !== null
-          ? (cooked as { raw?: unknown }).raw
-          : undefined;
-      return typeof raw === 'string' ? raw : '';
-    }
-    return null;
-  }
-  // Some parsers surface a bare `` `abc` `` type as TSTemplateLiteralType instead.
-  if (node.type === 'TSTemplateLiteralType') {
-    const types = Array.isArray(node.types) ? node.types : [];
-    if (types.length > 0) return null;
-    const quasis = Array.isArray(node.quasis) ? node.quasis : [];
-    const cooked = asNode(quasis[0])?.value;
-    const raw =
-      typeof cooked === 'object' && cooked !== null ? (cooked as { raw?: unknown }).raw : undefined;
-    return typeof raw === 'string' ? raw : '';
-  }
-  return null;
+  if (node.type === 'TSLiteralType') return stringExpression(asNode(node.literal));
+  return node.type === 'TSTemplateLiteralType' ? rawTemplateText(node, 'types') : null;
 }
 
 function isNullish(node: AnyNode): boolean {
@@ -309,21 +261,10 @@ function collectSchemaLiteralNames(
   if (!bindings.importsEffect) return names;
   const addDeclarator = (value: unknown): void => {
     const declarator = asNode(value);
-    if (declarator === null || declarator.type !== 'VariableDeclarator') return;
-    const id = asNode(declarator.id);
-    const init = asNode(declarator.init);
-    if (id?.type !== 'Identifier' || typeof id.name !== 'string' || init?.type !== 'CallExpression')
-      return;
-    const callee = asNode(init.callee);
-    if (callee === null) return;
-    const member = effectMember(callee as unknown as ESTree.Node, bindings);
-    if (
-      member !== null &&
-      member.namespace === SCHEMA_NAMESPACE &&
-      SCHEMA_LITERAL_MEMBERS.has(member.member)
-    ) {
-      names.add(id.name);
-    }
+    if (declarator?.type !== 'VariableDeclarator') return;
+    const name = identifierName(declarator.id);
+    if (name === null || !isSchemaLiteralCall(declarator.init, bindings)) return;
+    names.add(name);
   };
   for (const statement of program.body) {
     const node = asNode(statement);
@@ -342,40 +283,56 @@ function collectSchemaLiteralNames(
  * *not* this finding: their runtime values are not the vocabulary, so `Schema.Literals` is not the
  * mechanical replacement.
  */
-function stringEnumMembers(node: AnyNode): readonly string[] | null {
+function enumMembers(node: AnyNode): readonly unknown[] {
+  if (Array.isArray(node.members)) return node.members;
   const body = asNode(node.body);
-  const rawMembers = Array.isArray(node.members)
-    ? node.members
-    : body !== null && Array.isArray(body.members)
-      ? body.members
-      : null;
-  if (rawMembers === null || rawMembers.length === 0) return null;
+  return Array.isArray(body?.members) ? body.members : [];
+}
+
+function stringEnumMembers(node: AnyNode): readonly string[] | null {
+  const members = enumMembers(node);
+  if (members.length === 0) return null;
   const values: string[] = [];
-  for (const entry of rawMembers) {
-    const member = asNode(entry);
-    if (member === null) return null;
-    const initializer = asNode(member.initializer);
-    if (initializer === null) return null;
-    if (initializer.type === 'Literal' || initializer.type === 'StringLiteral') {
-      if (typeof initializer.value !== 'string') return null;
-      values.push(initializer.value);
-      continue;
-    }
-    if (initializer.type === 'TemplateLiteral') {
-      const expressions = Array.isArray(initializer.expressions) ? initializer.expressions : [];
-      if (expressions.length > 0) return null;
-      const quasis = Array.isArray(initializer.quasis) ? initializer.quasis : [];
-      const cooked = asNode(quasis[0])?.value;
-      const raw =
-        typeof cooked === 'object' && cooked !== null
-          ? (cooked as { raw?: unknown }).raw
-          : undefined;
-      values.push(typeof raw === 'string' ? raw : '');
-      continue;
-    }
-    return null;
+  for (const entry of members) {
+    const value = stringExpression(asNode(asNode(entry)?.initializer));
+    if (value === null) return null;
+    values.push(value);
   }
   return values;
+}
+
+function identifierName(value: unknown): string | null {
+  const id = asNode(value);
+  return id?.type === 'Identifier' && typeof id.name === 'string' ? id.name : null;
+}
+
+function isSchemaLiteralCall(value: unknown, bindings: EffectBindings): boolean {
+  const init = asNode(value);
+  if (init?.type !== 'CallExpression') return false;
+  const callee = asNode(init.callee);
+  if (callee === null) return false;
+  const member = effectMember(callee as unknown as ESTree.Node, bindings);
+  return (
+    member !== null &&
+    member.namespace === SCHEMA_NAMESPACE &&
+    SCHEMA_LITERAL_MEMBERS.has(member.member)
+  );
+}
+
+function eligibleName(node: ESTree.Node, options: RuleOptions): string | null {
+  if (options.ignoreAmbient && isAmbient(node)) return null;
+  const name = identifierName((node as unknown as AnyNode).id);
+  return name !== null && !options.allowedNames.includes(name) ? name : null;
+}
+
+function aliasLiterals(raw: AnyNode, options: RuleOptions): readonly string[] | null {
+  if (raw.typeParameters !== null && raw.typeParameters !== undefined) return null;
+  const annotation = asNode(raw.typeAnnotation);
+  if (annotation === null) return null;
+  const union = unwrap(annotation);
+  if (union.type !== 'TSUnionType') return null;
+  const { literals, closed } = analyseUnion(union, options.ignoreNullishMembers);
+  return closed && literals.length >= options.minMembers ? literals : null;
 }
 
 /** Candidate const names that would own the same vocabulary as an alias called `name`. */
@@ -462,20 +419,10 @@ export const rule = defineRule({
     return {
       TSTypeAliasDeclaration(node) {
         const raw = node as unknown as AnyNode;
-        if (raw.typeParameters !== null && raw.typeParameters !== undefined) return;
-        if (options.ignoreAmbient && isAmbient(node)) return;
-
-        const id = asNode(raw.id);
-        const name = id?.type === 'Identifier' && typeof id.name === 'string' ? id.name : null;
-        if (name === null || options.allowedNames.includes(name)) return;
-
-        const annotation = asNode(raw.typeAnnotation);
-        if (annotation === null) return;
-        const union = unwrap(annotation);
-        if (union.type !== 'TSUnionType') return;
-
-        const { literals, closed } = analyseUnion(union, options.ignoreNullishMembers);
-        if (!closed || literals.length < options.minMembers) return;
+        const name = eligibleName(node, options);
+        if (name === null) return;
+        const literals = aliasLiterals(raw, options);
+        if (literals === null) return;
 
         schemaOwners ??= collectSchemaLiteralNames(program, bindings);
         const owner = schemaOwnerCandidates(name).find(
@@ -483,7 +430,7 @@ export const rule = defineRule({
         );
 
         context.report({
-          node: (id ?? raw) as unknown as ESTree.Node,
+          node: (asNode(raw.id) ?? raw) as unknown as ESTree.Node,
           messageId: owner === undefined ? 'literalUnionAlias' : 'duplicatesSchemaLiterals',
           data: {
             name,
@@ -497,17 +444,14 @@ export const rule = defineRule({
       TSEnumDeclaration(node) {
         if (!options.includeEnums) return;
         const raw = node as unknown as AnyNode;
-        if (options.ignoreAmbient && isAmbient(node)) return;
-
-        const id = asNode(raw.id);
-        const name = id?.type === 'Identifier' && typeof id.name === 'string' ? id.name : null;
-        if (name === null || options.allowedNames.includes(name)) return;
+        const name = eligibleName(node, options);
+        if (name === null) return;
 
         const values = stringEnumMembers(raw);
         if (values === null || values.length < options.minMembers) return;
 
         context.report({
-          node: (id ?? raw) as unknown as ESTree.Node,
+          node: (asNode(raw.id) ?? raw) as unknown as ESTree.Node,
           messageId: 'literalEnum',
           data: { name, count: String(values.length), members: preview(values) },
         });

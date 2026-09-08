@@ -411,14 +411,16 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
         assert.equal(persisted.contacts.length, 1);
         const identifierEvidence = persisted.identifiers[0]?.externalEvidence;
         const contactEvidence = persisted.contacts[0]?.externalEvidence;
-        assert.equal(identifierEvidence?.queryIco, '27074358');
-        assert.equal(identifierEvidence?.observedAt, encodedObservation.observedAt);
-        assert.equal(identifierEvidence?.servedAt, encodedObservation.servedAt);
-        assert.equal(identifierEvidence?.providerChangedOn, encodedObservation.providerChangedOn);
-        assert.equal(identifierEvidence?.providerRecordRef, encodedObservation.providerRecordRef);
-        assert.equal(contactEvidence?.observedAt, encodedObservation.observedAt);
-        assert.equal(contactEvidence?.providerChangedOn, encodedObservation.providerChangedOn);
-        assert.equal(contactEvidence?.providerRecordRef, encodedObservation.providerRecordRef);
+        assert.ok(identifierEvidence);
+        assert.ok(contactEvidence);
+        assert.equal(identifierEvidence.queryIco, '27074358');
+        assert.equal(identifierEvidence.observedAt, encodedObservation.observedAt);
+        assert.equal(identifierEvidence.servedAt, encodedObservation.servedAt);
+        assert.equal(identifierEvidence.providerChangedOn, encodedObservation.providerChangedOn);
+        assert.equal(identifierEvidence.providerRecordRef, encodedObservation.providerRecordRef);
+        assert.equal(contactEvidence.observedAt, encodedObservation.observedAt);
+        assert.equal(contactEvidence.providerChangedOn, encodedObservation.providerChangedOn);
+        assert.equal(contactEvidence.providerRecordRef, encodedObservation.providerRecordRef);
         assert.equal(
           persisted.assertions.find((item) => item.factKind === 'DISPLAY_NAME')?.externalEvidence
             ?.decidedAt,

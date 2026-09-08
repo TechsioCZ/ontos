@@ -1,27 +1,14 @@
-/* eslint-disable unicorn/prefer-export-from -- Generated action aliases intentionally bind stable action-specific names. expires: 2026-12-31. */
 import type { OutboxMessage } from '@app/core-runtime';
 import {
-  OutboxPayloadSchema,
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/party-registry/outbox/party-registry-relationship-updated-v1';
-import type {
-  OutboxPayload,
-  OutboxPayloadJson,
-} from '@app/party-registry/outbox/party-registry-relationship-updated-v1';
-
-export const UpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxPayloadSchema =
-  OutboxPayloadSchema;
-export type UpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxPayload = OutboxPayload;
-export const UpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxProducerModuleKey =
-  outboxProducerModuleKey;
-export const UpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxTopic = outboxTopic;
+import type { OutboxPayloadJson } from '@app/party-registry/outbox/party-registry-relationship-updated-v1';
 
 export const createUpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxMessage = (
   payload: OutboxPayloadJson,
 ): OutboxMessage => ({
   payloadJson: payload,
-  producerModuleKey:
-    UpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxProducerModuleKey,
-  topic: UpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxTopic,
+  producerModuleKey: outboxProducerModuleKey,
+  topic: outboxTopic,
 });

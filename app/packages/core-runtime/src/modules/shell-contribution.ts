@@ -190,6 +190,114 @@ const referenceIssue = (
 ): string | undefined =>
   set.has(key) ? undefined : `${label} references undeclared manifest key ${key}`;
 
+const validatePageReferences = (
+  contributions: OntosShellContributions,
+  references: ShellContributionReferenceSets,
+): string | undefined => {
+  const pageKeys = new Set(contributions.pages.map(({ contributionKey: key }) => key));
+  for (const contribution of contributions.navigation) {
+    const issue = referenceIssue(pageKeys, contribution.pageKey, 'navigation contribution');
+    if (issue !== undefined) {
+      return issue;
+    }
+  }
+  for (const contribution of [...contributions.pages, ...contributions.publicComponents]) {
+    const issue = referenceIssue(
+      references.componentKeys,
+      contribution.componentKey,
+      'component contribution',
+    );
+    if (issue !== undefined) {
+      return issue;
+    }
+  }
+
+  return undefined;
+};
+
+const validateDiscoveryReferences = (
+  contributions: OntosShellContributions,
+  references: ShellContributionReferenceSets,
+): string | undefined => {
+  for (const contribution of contributions.search) {
+    const issue = referenceIssue(
+      references.searchKeys,
+      contribution.searchKey,
+      'search contribution',
+    );
+    if (issue !== undefined) {
+      return issue;
+    }
+  }
+  for (const contribution of contributions.reports) {
+    const issue = referenceIssue(
+      references.reportKeys,
+      contribution.reportKey,
+      'report contribution',
+    );
+    if (issue !== undefined) {
+      return issue;
+    }
+  }
+
+  return undefined;
+};
+
+const validateResourceReferences = (
+  contributions: OntosShellContributions,
+  references: ShellContributionReferenceSets,
+): string | undefined => {
+  for (const contribution of [...contributions.resourceDetails, ...contributions.timelines]) {
+    const apiIssue = referenceIssue(
+      references.apiKeys,
+      contribution.apiKey,
+      'resource contribution',
+    );
+    if (apiIssue !== undefined) {
+      return apiIssue;
+    }
+    const resourceIssue = referenceIssue(
+      references.resourceTypeKeys,
+      contribution.resourceType,
+      'resource contribution',
+    );
+    if (resourceIssue !== undefined) {
+      return resourceIssue;
+    }
+  }
+
+  return undefined;
+};
+
+const validateMediaReferences = (
+  contributions: OntosShellContributions,
+  references: ShellContributionReferenceSets,
+): string | undefined => {
+  for (const contribution of contributions.mediaAttachments) {
+    const actionIssue = referenceIssue(
+      references.actionKeys,
+      contribution.actionKey,
+      'media contribution',
+    );
+    if (actionIssue !== undefined) {
+      return actionIssue;
+    }
+    const apiIssue = referenceIssue(references.apiKeys, contribution.apiKey, 'media contribution');
+    if (apiIssue !== undefined) {
+      return apiIssue;
+    }
+    const resourceIssue = referenceIssue(
+      references.resourceTypeKeys,
+      contribution.resourceType,
+      'media contribution',
+    );
+    if (resourceIssue !== undefined) {
+      return resourceIssue;
+    }
+  }
+  return undefined;
+};
+
 const validateReferences = (
   contributions: OntosShellContributions,
   references: ShellContributionReferenceSets,
@@ -216,84 +324,12 @@ const validateReferences = (
       return 'Shell contribution entrypoint owner must match the manifest module';
     }
   }
-  const pageKeys = new Set(contributions.pages.map(({ contributionKey: key }) => key));
-  for (const contribution of contributions.navigation) {
-    const issue = referenceIssue(pageKeys, contribution.pageKey, 'navigation contribution');
-    if (issue !== undefined) {
-      return issue;
-    }
-  }
-  for (const contribution of [...contributions.pages, ...contributions.publicComponents]) {
-    const issue = referenceIssue(
-      references.componentKeys,
-      contribution.componentKey,
-      'component contribution',
-    );
-    if (issue !== undefined) {
-      return issue;
-    }
-  }
-  for (const contribution of contributions.search) {
-    const issue = referenceIssue(
-      references.searchKeys,
-      contribution.searchKey,
-      'search contribution',
-    );
-    if (issue !== undefined) {
-      return issue;
-    }
-  }
-  for (const contribution of contributions.reports) {
-    const issue = referenceIssue(
-      references.reportKeys,
-      contribution.reportKey,
-      'report contribution',
-    );
-    if (issue !== undefined) {
-      return issue;
-    }
-  }
-  for (const contribution of [...contributions.resourceDetails, ...contributions.timelines]) {
-    const apiIssue = referenceIssue(
-      references.apiKeys,
-      contribution.apiKey,
-      'resource contribution',
-    );
-    if (apiIssue !== undefined) {
-      return apiIssue;
-    }
-    const resourceIssue = referenceIssue(
-      references.resourceTypeKeys,
-      contribution.resourceType,
-      'resource contribution',
-    );
-    if (resourceIssue !== undefined) {
-      return resourceIssue;
-    }
-  }
-  for (const contribution of contributions.mediaAttachments) {
-    const actionIssue = referenceIssue(
-      references.actionKeys,
-      contribution.actionKey,
-      'media contribution',
-    );
-    if (actionIssue !== undefined) {
-      return actionIssue;
-    }
-    const apiIssue = referenceIssue(references.apiKeys, contribution.apiKey, 'media contribution');
-    if (apiIssue !== undefined) {
-      return apiIssue;
-    }
-    const resourceIssue = referenceIssue(
-      references.resourceTypeKeys,
-      contribution.resourceType,
-      'media contribution',
-    );
-    if (resourceIssue !== undefined) {
-      return resourceIssue;
-    }
-  }
-  return undefined;
+  return (
+    validatePageReferences(contributions, references) ??
+    validateDiscoveryReferences(contributions, references) ??
+    validateResourceReferences(contributions, references) ??
+    validateMediaReferences(contributions, references)
+  );
 };
 
 export const validateShellContributions = <Input>(

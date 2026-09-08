@@ -1,3 +1,4 @@
+import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off preferSchemaOverJson:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { expect, test } from '@rstest/core';
@@ -9,53 +10,20 @@ import {
   makeInstalledModuleCatalogLoader,
 } from '../../api/modules/installed-module-catalog.ts';
 
-const contract = (appId: string, moduleId: string) => ({
-  deployment: { appId, buildMarker: `${appId}-build` },
-  manifest: {
-    activation: {
-      defaultState: 'inactive',
-      preservesHistoryWhenInactive: true,
-      scope: 'tenant',
-      supportedStates: [
-        'inactive',
-        'active',
-        'read_only',
-        'suspended',
-        'quarantined',
-        'deprecated',
-        'archived',
-      ],
-    },
-    module: {
-      description: `${moduleId} module`,
-      displayName: moduleId,
-      id: moduleId,
-      implementedAs: 'ultramodern_microvertical',
-      kind: 'business_module',
-    },
-    publicSurface: {
-      actions: [],
-      api: [],
-      components: [],
-      events: [],
-      reports: [],
-      resourceTypes: [],
-      search: [],
-      shellContributions: {
-        mediaAttachments: [],
-        navigation: [],
-        pages: [],
-        publicComponents: [],
-        reports: [],
-        resourceDetails: [],
-        search: [],
-        timelines: [],
-      },
-    },
-  },
-  runtime: { outboxSubscriptions: [] },
-  schemaVersion: '2',
-});
+const contract = (appId: string, moduleId: string) =>
+  makeModuleContractFixture({
+    appId,
+    moduleId,
+    supportedStates: [
+      'inactive',
+      'active',
+      'read_only',
+      'suspended',
+      'quarantined',
+      'deprecated',
+      'archived',
+    ],
+  });
 
 const allowlist = (entries: DeploymentAllowlist['entries']): DeploymentAllowlist =>
   Object.freeze({ entries: Object.freeze([...entries]), revision: JSON.stringify(entries) });

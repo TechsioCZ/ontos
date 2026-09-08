@@ -1,3 +1,4 @@
+import { collectNamedImports } from '../shared/imports.ts';
 /**
  * effect-native/no-effect-run-in-tests
  *
@@ -170,21 +171,13 @@ function collectBarrelBindings(
   program: ESTree.Program,
   sources: readonly string[],
 ): Map<string, string> {
-  const namespaces = new Map<string, string>();
   const patterns = sources.map(globToRegExp);
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    if (statement.importKind === 'type') continue;
-    if (!patterns.some((pattern) => pattern.test(statement.source.value))) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type !== 'ImportSpecifier') continue;
-      if (specifier.importKind === 'type') continue;
-      const imported = moduleExportName(specifier.imported);
-      if (imported === null) continue;
-      namespaces.set(specifier.local.name, imported);
-    }
-  }
-  return namespaces;
+  return collectNamedImports(
+    program,
+    (source) => patterns.some((pattern) => pattern.test(source)),
+    undefined,
+    { valueOnly: true },
+  );
 }
 
 /**
@@ -357,6 +350,14 @@ export const rule = defineRule({
         return isRootBarrel(target.object, hops + 1);
       }
       if (target.type !== 'Identifier') return false;
+      if (isImportedEffectNamespace(target)) return true;
+      const alias = aliasInitialiser(target, target.name);
+      return alias === null ? false : isEffectNamespace(alias, hops + 1);
+    }
+
+    function isImportedEffectNamespace(
+      target: Extract<ESTree.Node, { type: 'Identifier' }>,
+    ): boolean {
       const dynamic = dynamicNamespaces.get(target.name);
       if (
         dynamic !== undefined &&
@@ -372,8 +373,7 @@ export const rule = defineRule({
       ) {
         return true;
       }
-      const alias = aliasInitialiser(target, target.name);
-      return alias === null ? false : isEffectNamespace(alias, hops + 1);
+      return false;
     }
 
     /** `Effect.runPromise` / `Effect["runPromise"]` / `E?.runSync` → the run member name. */
@@ -396,6 +396,37 @@ export const rule = defineRule({
       if (target.type === 'AwaitExpression') target = unwrapErased(target.argument);
       if (target.type !== 'ImportExpression') return null;
       return staticStringValue(target.source);
+    }
+
+    function collectRunProperties(pattern: ESTree.ObjectPattern, sites: RunSite[]): void {
+      for (const property of pattern.properties) {
+        if (property.type !== 'Property') continue;
+        const member = staticKey(property.key, property.computed);
+        if (member !== null && RUN_MEMBER.test(member)) sites.push({ node: property, member });
+      }
+    }
+
+    function collectRootProperties(pattern: ESTree.ObjectPattern): void {
+      for (const property of pattern.properties) {
+        if (property.type !== 'Property') continue;
+        const key = staticKey(property.key, property.computed);
+        if (key === null || !options.effectModules.includes(key)) continue;
+        if (property.value.type !== 'Identifier') continue;
+        dynamicNamespaces.set(property.value.name, { namespace: key, declaration: property.value });
+      }
+    }
+
+    function collectDynamicBinding(id: ESTree.VariableDeclarator['id'], source: string): void {
+      const submodule = SUBMODULE_SOURCE.exec(source)?.[1];
+      if (submodule !== undefined && options.effectModules.includes(submodule)) {
+        if (id.type === 'Identifier')
+          dynamicNamespaces.set(id.name, { namespace: submodule, declaration: id });
+        else if (id.type === 'ObjectPattern') collectRunProperties(id, dynamicSites);
+        return;
+      }
+      if (source !== 'effect') return;
+      if (id.type === 'Identifier') dynamicRootNamespaces.set(id.name, id);
+      else if (id.type === 'ObjectPattern') collectRootProperties(id);
     }
 
     return {
@@ -464,49 +495,13 @@ export const rule = defineRule({
       },
 
       VariableDeclarator(node) {
-        const dynamicSource = dynamicImportSource(node.init);
-        if (dynamicSource !== null) {
-          const submodule = SUBMODULE_SOURCE.exec(dynamicSource)?.[1];
-          const isRoot = dynamicSource === 'effect';
-          if (submodule !== undefined && options.effectModules.includes(submodule)) {
-            if (node.id.type === 'Identifier')
-              dynamicNamespaces.set(node.id.name, { namespace: submodule, declaration: node.id });
-            else if (node.id.type === 'ObjectPattern') {
-              for (const property of node.id.properties) {
-                if (property.type !== 'Property') continue;
-                const member = staticKey(property.key, property.computed);
-                if (member === null || !RUN_MEMBER.test(member)) continue;
-                dynamicSites.push({ node: property, member });
-              }
-            }
-            return;
-          }
-          if (isRoot) {
-            if (node.id.type === 'Identifier') dynamicRootNamespaces.set(node.id.name, node.id);
-            else if (node.id.type === 'ObjectPattern') {
-              for (const property of node.id.properties) {
-                if (property.type !== 'Property') continue;
-                const key = staticKey(property.key, property.computed);
-                if (key === null || !options.effectModules.includes(key)) continue;
-                if (property.value.type === 'Identifier')
-                  dynamicNamespaces.set(property.value.name, {
-                    namespace: key,
-                    declaration: property.value,
-                  });
-              }
-            }
-          }
+        const source = dynamicImportSource(node.init);
+        if (source !== null) {
+          collectDynamicBinding(node.id, source);
           return;
         }
-        if (node.id.type !== 'ObjectPattern' || node.init === null || node.init === undefined)
-          return;
-        if (!isEffectNamespace(node.init)) return;
-        for (const property of node.id.properties) {
-          if (property.type !== 'Property') continue;
-          const member = staticKey(property.key, property.computed);
-          if (member === null || !RUN_MEMBER.test(member)) continue;
-          referenceSites.push({ node: property, member });
-        }
+        if (node.id.type !== 'ObjectPattern' || node.init == null) return;
+        if (isEffectNamespace(node.init)) collectRunProperties(node.id, referenceSites);
       },
 
       'Program:exit'() {

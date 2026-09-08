@@ -21,11 +21,7 @@ import {
 } from '../../shared/actions/match-party.ts';
 import type { MatchPartyPayload } from '../../shared/actions/match-party.ts';
 
-export {
-  MatchPartyPayloadSchema,
-  MatchPartyResultSchema,
-} from '../../shared/actions/match-party.ts';
-export type { MatchPartyPayload, MatchPartyResult } from '../../shared/actions/match-party.ts';
+export type { MatchPartyPayload } from '../../shared/actions/match-party.ts';
 
 interface Services {
   readonly match: (

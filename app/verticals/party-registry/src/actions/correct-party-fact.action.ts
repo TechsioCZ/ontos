@@ -20,14 +20,6 @@ import {
   CorrectPartyFactResultSchema,
 } from '../../shared/actions/correct-party-fact.ts';
 
-export {
-  CorrectPartyFactPayloadSchema,
-  CorrectPartyFactResultSchema,
-} from '../../shared/actions/correct-party-fact.ts';
-export type {
-  CorrectPartyFactPayload,
-  CorrectPartyFactResult,
-} from '../../shared/actions/correct-party-fact.ts';
 const ErrorSchema = Schema.Union([
   PartyCorrectionConflict,
   PartyPersistenceUnavailable,
@@ -114,10 +106,3 @@ export const correctPartyFactAction = defineAction(
         }),
     }),
 );
-export { createCorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxMessage } from './correct-party-fact.party-registry-party-fact-corrected-v1.outbox-message.ts';
-export {
-  CorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxPayloadSchema,
-  CorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxProducerModuleKey,
-  CorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxTopic,
-} from './correct-party-fact.party-registry-party-fact-corrected-v1.outbox-message.ts';
-export type { CorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxPayload } from './correct-party-fact.party-registry-party-fact-corrected-v1.outbox-message.ts';

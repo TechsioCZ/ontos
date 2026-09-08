@@ -19,7 +19,7 @@ import type {
 import { findOrganizationEngagementProfile } from '../services/engagement-profile-persistence.service.ts';
 import type { LookupResult } from '../services/engagement-profile-persistence.service.ts';
 
-export const organizationEngagementProfileEntrypoint = defineTenantModuleEntrypoint({
+const organizationEngagementProfileEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'party.registry.api.organization-engagement-profile',

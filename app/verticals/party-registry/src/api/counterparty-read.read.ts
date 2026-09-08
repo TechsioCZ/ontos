@@ -19,7 +19,7 @@ import type { CounterpartyPersistenceUnavailable } from '../../shared/domain/cou
 import { findCounterpartyRecord } from '../services/counterparty-persistence.service.ts';
 import type { LookupResult } from '../services/counterparty-persistence.service.ts';
 
-export const counterpartyReadEntrypoint = defineTenantModuleEntrypoint({
+const counterpartyReadEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'party.registry.api.counterparty-read',

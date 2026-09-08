@@ -320,6 +320,10 @@ const requireReadAuthorization = (
     return { authorization: flags.authorizationMode };
   });
 
+const isActionProvisioning = Schema.is(Schema.Literals(['tenant_membership_default', 'explicit']));
+const isAccessFiltering = Schema.is(Schema.Literals(['resource_permission', 'tenant_scope']));
+const isSearchLegalEntityScope = Schema.is(Schema.Literals(['required', 'optional']));
+
 const commandDefinitions = {
   action: defineCommand({
     flags: [
@@ -364,10 +368,7 @@ Options:
         if (flags.authorizationMode !== 'action_execution') {
           return yield* failScaffolding('--authorization must be action_execution for Actions');
         }
-        if (
-          flags.provisioning !== 'tenant_membership_default' &&
-          flags.provisioning !== 'explicit'
-        ) {
+        if (!isActionProvisioning(flags.provisioning)) {
           return yield* failScaffolding(
             '--provisioning must be tenant_membership_default or explicit',
           );
@@ -820,15 +821,15 @@ Options:
       Effect.gen(function* searchProviderAccessConfigEffect() {
         const { accessFiltering, legalEntityScope, tenantPermission } = flags;
         const filters = (flags.requestFilters ?? '').split(',').filter((value) => value !== '');
-        if (accessFiltering !== 'resource_permission' && accessFiltering !== 'tenant_scope') {
+        if (!isAccessFiltering(accessFiltering)) {
           return yield* failScaffolding(
             '--access-filtering must be resource_permission or tenant_scope',
           );
         }
-        if (legalEntityScope !== 'required' && legalEntityScope !== 'optional') {
+        if (!isSearchLegalEntityScope(legalEntityScope)) {
           return yield* failScaffolding('--legal-entity-scope must be required or optional');
         }
-        if (filters.some((filter) => filter !== 'includeArchived' && filter !== 'role')) {
+        if (!filters.every(isRequestFilter)) {
           return yield* failScaffolding(
             '--request-filters may contain only includeArchived and role',
           );
@@ -856,6 +857,36 @@ export const isScaffoldCommand = Schema.is(ScaffoldCommandSchema);
 
 export const getHelpText = (command: ScaffoldCommand): string => commandDefinitions[command].help;
 
+const isFlagArgument = (flag: string): boolean =>
+  flag.startsWith('--') && flag !== '--' && !flag.includes('=');
+
+const parseFlagPair = (
+  command: ScaffoldCommand,
+  allowed: ReadonlySet<string>,
+  parsed: Map<string, string>,
+  flag: string | undefined,
+  value: string | undefined,
+) =>
+  Effect.gen(function* parseFlagPairEffect() {
+    if (flag === undefined || !isFlagArgument(flag)) {
+      return yield* failScaffolding(
+        `invalid argument ${flag ?? '<missing>'}; use separate --flag value pairs`,
+      );
+    }
+    const name = flag.slice(2);
+    if (!allowed.has(name)) {
+      return yield* failScaffolding(`unknown flag --${name} for scaffold:${command}`);
+    }
+    if (parsed.has(name)) {
+      return yield* failScaffolding(`flag --${name} may be supplied only once`);
+    }
+    if (value === undefined || value.startsWith('--') || value.trim().length === 0) {
+      return yield* failScaffolding(`flag --${name} requires one non-empty value`);
+    }
+    parsed.set(name, value);
+    return yield* Effect.void;
+  });
+
 const normalizeForwardedArguments = (argumentsList: readonly string[]): readonly string[] => {
   if (argumentsList[0] === '--') {
     return argumentsList.slice(1);
@@ -874,22 +905,7 @@ const parseFlags = (
     for (let index = 0; index < argumentsList.length; index += 2) {
       const flag = argumentsList[index];
       const value = argumentsList[index + 1];
-      if (flag === undefined || !flag.startsWith('--') || flag === '--' || flag.includes('=')) {
-        return yield* failScaffolding(
-          `invalid argument ${flag ?? '<missing>'}; use separate --flag value pairs`,
-        );
-      }
-      const name = flag.slice(2);
-      if (!allowed.has(name)) {
-        return yield* failScaffolding(`unknown flag --${name} for scaffold:${command}`);
-      }
-      if (parsed.has(name)) {
-        return yield* failScaffolding(`flag --${name} may be supplied only once`);
-      }
-      if (value === undefined || value.startsWith('--') || value.trim().length === 0) {
-        return yield* failScaffolding(`flag --${name} requires one non-empty value`);
-      }
-      parsed.set(name, value);
+      yield* parseFlagPair(command, allowed, parsed, flag, value);
     }
     for (const required of definition.requiredFlags) {
       if (!parsed.has(required)) {

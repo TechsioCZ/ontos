@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import nodeTest from 'node:test';
@@ -767,6 +767,75 @@ test('rejects missing, orphaned, and cross-owner route manifest entries', async 
       `export const routes = [{ entrypoint: { entrypointKey: 'inventory.stock.page.orders' } }];`,
     );
     await assert.rejects(checkModuleEntrypointBoundaries(root), /manifest is stale/u);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+for (const [module, operation] of [
+  ['governed-read-handler', 'governedReadHandler'],
+  ['governed-detail-read-execution', 'executeGovernedRead'],
+] as const) {
+  test(`shared ${module} requires connected authentication and read registration`, async () => {
+    const root = await makeFixture();
+    const handlerFile = `verticals/inventory-stock/api/${module}.ts`;
+    const serverFile = 'verticals/inventory-stock/api/stock-list-read-server.ts';
+    const handler = await readFile(
+      new URL(`../../verticals/party-registry/api/${module}.ts`, import.meta.url),
+      'utf-8',
+    );
+    const server = `import { ${operation} } from './${module}.ts';
+export const live = HttpApiBuilder.group(StockListApi, 'reads', () => ${operation}({ registration: stockListRead, }));`;
+    try {
+      await writeGovernedModuleApi(root);
+      await write(root, serverFile, server);
+      await assert.rejects(checkModuleEntrypointBoundaries(root), /module APIs require/u);
+      await write(root, handlerFile, handler);
+      await checkModuleEntrypointBoundaries(root);
+      await write(
+        root,
+        handlerFile,
+        handler.replace('yield* authenticateOperationPrincipal(', 'yield* disconnectedPrincipal('),
+      );
+      await assert.rejects(checkModuleEntrypointBoundaries(root), /module APIs require/u);
+      await write(root, handlerFile, handler);
+      await write(
+        root,
+        serverFile,
+        server.replace(`from './${module}.ts'`, "from './unused-neighbor.ts'"),
+      );
+      await assert.rejects(checkModuleEntrypointBoundaries(root), /module APIs require/u);
+      await write(
+        root,
+        serverFile,
+        server.replace('registration: stockListRead,', 'registration: unrelatedRead,'),
+      );
+      await assert.rejects(checkModuleEntrypointBoundaries(root), /module APIs require/u);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+}
+
+test('typed issuer paths require the mounted gateway group and exact endpoint references', async () => {
+  const root = await makeFixture();
+  const contractFile = 'apps/shell-super-app/shared/api.ts';
+  const source = await readFile(new URL(`../../${contractFile}`, import.meta.url), 'utf-8');
+  try {
+    await write(root, contractFile, source);
+    await checkModuleEntrypointBoundaries(root);
+    await write(
+      root,
+      contractFile,
+      source.replace('.add(GatewayContextApiGroup)', '.add(UnrelatedApiGroup)'),
+    );
+    await assert.rejects(checkModuleEntrypointBoundaries(root), /mounted gateway contract/u);
+    await write(
+      root,
+      contractFile,
+      source.replace('endpoints.issueGatewayContext', 'endpoints.unusedNeighbor'),
+    );
+    await assert.rejects(checkModuleEntrypointBoundaries(root), /mounted gateway contract/u);
   } finally {
     await rm(root, { force: true, recursive: true });
   }

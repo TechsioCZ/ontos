@@ -73,13 +73,33 @@ const redactedPayloadPolicyFields = (
     redactionProfile: policy.redactionProfile,
   }) as const;
 
+const hasIncompleteRedactedEvidence = (event: DataAccessEvent): boolean =>
+  event.evidenceCaptureMode === 'redacted_payload' &&
+  (event.redactionProfile === undefined || event.evidencePayloadJson === undefined);
+
+const hasUnexpectedRedactionProfile = (event: DataAccessEvent): boolean =>
+  event.evidenceCaptureMode !== 'redacted_payload' && event.redactionProfile !== undefined;
+
+const hasMetadataResultEvidence = (event: DataAccessEvent): boolean =>
+  event.evidenceCaptureMode === 'metadata_only' &&
+  (event.evidencePayloadJson !== undefined ||
+    event.resultFingerprintHash !== undefined ||
+    event.resultFingerprintSchema !== undefined);
+
+const hasInvalidHashEvidence = (event: DataAccessEvent): boolean =>
+  event.evidenceCaptureMode === 'hash_only' &&
+  (event.evidencePayloadJson !== undefined ||
+    (event.resultFingerprintHash === undefined) !== (event.resultFingerprintSchema === undefined));
+
+const hasUnsupportedResultEvidence = (event: DataAccessEvent): boolean =>
+  event.evidenceCaptureMode === 'stored_artifact' ||
+  (event.evidenceCaptureMode === 'redacted_payload' &&
+    (event.resultFingerprintHash !== undefined || event.resultFingerprintSchema !== undefined));
+
 const validateDataAccessInvariant = (
   event: DataAccessEvent,
 ): Effect.Effect<DataAccessEvent, ActionCollectorError> => {
-  if (
-    event.evidenceCaptureMode === 'redacted_payload' &&
-    (event.redactionProfile === undefined || event.evidencePayloadJson === undefined)
-  ) {
+  if (hasIncompleteRedactedEvidence(event)) {
     return Effect.fail(
       invalidCollectorInput(
         'A redacted Data Access Event requires a redaction profile and evidence payload',
@@ -87,28 +107,19 @@ const validateDataAccessInvariant = (
     );
   }
 
-  if (event.evidenceCaptureMode !== 'redacted_payload' && event.redactionProfile !== undefined) {
+  if (hasUnexpectedRedactionProfile(event)) {
     return Effect.fail(
       invalidCollectorInput('A redaction profile is allowed only for redacted Data Access Events'),
     );
   }
 
-  if (
-    event.evidenceCaptureMode === 'metadata_only' &&
-    (event.evidencePayloadJson !== undefined ||
-      event.resultFingerprintHash !== undefined ||
-      event.resultFingerprintSchema !== undefined)
-  ) {
+  if (hasMetadataResultEvidence(event)) {
     return Effect.fail(
       invalidCollectorInput('Metadata-only Data Access evidence cannot contain result evidence'),
     );
   }
 
-  if (
-    event.evidenceCaptureMode === 'hash_only' &&
-    (event.evidencePayloadJson !== undefined ||
-      (event.resultFingerprintHash === undefined) !== (event.resultFingerprintSchema === undefined))
-  ) {
+  if (hasInvalidHashEvidence(event)) {
     return Effect.fail(
       invalidCollectorInput(
         'Hash-only Data Access evidence requires a paired result fingerprint and schema',
@@ -116,11 +127,7 @@ const validateDataAccessInvariant = (
     );
   }
 
-  if (
-    event.evidenceCaptureMode === 'stored_artifact' ||
-    (event.evidenceCaptureMode === 'redacted_payload' &&
-      (event.resultFingerprintHash !== undefined || event.resultFingerprintSchema !== undefined))
-  ) {
+  if (hasUnsupportedResultEvidence(event)) {
     return Effect.fail(
       invalidCollectorInput('The Action runtime does not accept this result evidence shape'),
     );

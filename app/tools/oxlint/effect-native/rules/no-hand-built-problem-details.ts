@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-hand-built-problem-details
  *
@@ -74,16 +75,10 @@ import { defineRule } from '@oxlint/plugins';
 
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { collectEffectBindings } from '../shared/effect-imports.ts';
-import type { EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isScriptFile, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production `include` defaults instead of
- * forcing the fixture config to pass loosened options (which `run-on-repo.mts` reuses).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { unwrapNode } from '../shared/ast.ts';
+import { effectOrigin } from '../shared/effect-identity.ts';
+import { compile, stringArray } from '../shared/options.ts';
+import { isScriptFile, isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
 const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
 
@@ -142,12 +137,6 @@ interface RuleOptions {
   readonly reportRawDriverMessages: boolean;
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
 function statusRange(
   value: unknown,
   fallback: readonly [number, number],
@@ -159,22 +148,8 @@ function statusRange(
   return [low, high];
 }
 
-function errorPattern(value: unknown): RegExp {
-  if (typeof value !== 'string' || value.length === 0)
-    return new RegExp(DEFAULT_ERROR_IDENTIFIER_PATTERN, 'iu');
-  try {
-    return new RegExp(value, 'iu');
-  } catch {
-    return new RegExp(DEFAULT_ERROR_IDENTIFIER_PATTERN, 'iu');
-  }
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
@@ -184,42 +159,15 @@ function readOptions(context: Context): RuleOptions {
     schemaNamespaces: stringArray(record.schemaNamespaces, DEFAULT_SCHEMA_NAMESPACES),
     tagSuffixes: stringArray(record.tagSuffixes, DEFAULT_TAG_SUFFIXES),
     messageKeys: stringArray(record.messageKeys, DEFAULT_MESSAGE_KEYS),
-    errorIdentifier: errorPattern(record.errorIdentifierPattern),
+    errorIdentifier: compile(record.errorIdentifierPattern, DEFAULT_ERROR_IDENTIFIER_PATTERN, 'iu'),
     reportTagOnlyLiterals: record.reportTagOnlyLiterals !== false,
     reportRawDriverMessages: record.reportRawDriverMessages !== false,
   };
 }
 
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-/** Strip `as const`, `satisfies`, `!`, `<T>x` and parentheses so the underlying literal is visible. */
+/** Preserve the rule's bounded expression-wrapper traversal. */
 function unwrap(node: ESTree.Node): ESTree.Node {
-  let current: ESTree.Node = node;
-  for (let depth = 0; depth < MAX_EXPRESSION_DEPTH; depth += 1) {
-    if (
-      current.type === 'ParenthesizedExpression' ||
-      current.type === 'TSAsExpression' ||
-      current.type === 'TSSatisfiesExpression' ||
-      current.type === 'TSTypeAssertion' ||
-      current.type === 'TSNonNullExpression' ||
-      current.type === 'TSInstantiationExpression' ||
-      current.type === 'ChainExpression'
-    ) {
-      const inner: ESTree.Node | undefined = (current as { expression?: ESTree.Node }).expression;
-      if (inner === undefined) return current;
-      current = inner;
-      continue;
-    }
-    return current;
-  }
-  return current;
+  return unwrapNode(node, { maxDepth: MAX_EXPRESSION_DEPTH });
 }
 
 /** Static name of a non-computed object-literal property key (`status`, `'status'`). */
@@ -291,36 +239,40 @@ function isSchemaCallee(context: Context, callee: ESTree.Node, options: RuleOpti
  * hand-built wire payload. The walk stops at function/class/program boundaries so that a literal
  * *returned from a callback* passed to a Schema combinator is still reported.
  */
+const EXEMPT_WALK_BOUNDARIES: ReadonlySet<string> = new Set([
+  'ArrowFunctionExpression',
+  'FunctionExpression',
+  'FunctionDeclaration',
+  'ClassBody',
+  'Program',
+  'BlockStatement',
+]);
+
+function isSchemaArgument(
+  context: Context,
+  node: ESTree.Node,
+  argument: ESTree.Node,
+  options: RuleOptions,
+): boolean {
+  if (node.type !== 'CallExpression' && node.type !== 'NewExpression') return false;
+  return (
+    node.arguments.some((candidate) => Object.is(candidate, argument)) &&
+    isSchemaCallee(context, node.callee, options)
+  );
+}
+
 function isExemptContext(
   context: Context,
   node: ESTree.ObjectExpression,
   options: RuleOptions,
-  bindings: EffectBindings,
 ): boolean {
   let previous: ESTree.Node = node;
   let current: ESTree.Node | null | undefined = node.parent;
   for (let depth = 0; depth < MAX_ANCESTOR_DEPTH; depth += 1) {
     if (current === null || current === undefined) return false;
-    switch (current.type) {
-      case 'ArrowFunctionExpression':
-      case 'FunctionExpression':
-      case 'FunctionDeclaration':
-      case 'ClassBody':
-      case 'Program':
-      case 'BlockStatement':
-        return false;
-      case 'JSXAttribute':
-      case 'JSXSpreadAttribute':
-        return true;
-      case 'CallExpression':
-      case 'NewExpression': {
-        const isArgument = current.arguments.some((argument) => Object.is(argument, previous));
-        if (isArgument && isSchemaCallee(context, current.callee, options)) return true;
-        break;
-      }
-      default:
-        break;
-    }
+    if (EXEMPT_WALK_BOUNDARIES.has(current.type)) return false;
+    if (current.type === 'JSXAttribute' || current.type === 'JSXSpreadAttribute') return true;
+    if (isSchemaArgument(context, current, previous, options)) return true;
     previous = current;
     current = current.parent;
   }
@@ -367,161 +319,156 @@ function leaksDriverMessage(node: ESTree.Node, options: RuleOptions, depth: numb
   switch (target.type) {
     case 'Identifier':
       return options.errorIdentifier.test(target.name);
-    case 'MemberExpression': {
-      const property = memberPropertyName(target);
-      if (property !== 'message' && property !== 'stack' && property !== 'cause') return false;
-      const root = rootIdentifier(target.object);
-      return root !== null && options.errorIdentifier.test(root);
-    }
-    case 'CallExpression': {
-      const callee = unwrap(target.callee);
-      const isJsonStringify =
-        callee.type === 'MemberExpression' &&
-        memberPropertyName(callee) === 'stringify' &&
-        unwrap(callee.object).type === 'Identifier' &&
-        (unwrap(callee.object) as ESTree.IdentifierReference).name === 'JSON';
-      const isStringify =
-        isJsonStringify ||
-        (callee.type === 'Identifier' && (callee.name === 'String' || callee.name === 'inspect')) ||
-        (callee.type === 'MemberExpression' &&
-          !callee.computed &&
-          callee.property.type === 'Identifier' &&
-          (callee.property.name === 'toString' || callee.property.name === 'inspect'));
-      if (!isStringify) return false;
-      if (callee.type === 'MemberExpression' && !isJsonStringify)
-        return leaksDriverMessage(callee.object, options, depth + 1);
-      return target.arguments.some(
-        (argument) =>
-          argument.type !== 'SpreadElement' &&
-          (isErrorIdentifier(argument, options) ||
-            leaksDriverMessage(argument, options, depth + 1)),
-      );
-    }
-    case 'TemplateLiteral':
-      return target.expressions.some((expression) =>
+    case 'MemberExpression':
+      return leaksMemberMessage(target, options);
+    case 'CallExpression':
+      return leaksCallMessage(target, options, depth);
+    default:
+      return messageExpressions(target).some((expression) =>
         leaksDriverMessage(expression, options, depth + 1),
       );
-    case 'BinaryExpression':
-      if (target.operator !== '+') return false;
-      return (
-        leaksDriverMessage(target.left, options, depth + 1) ||
-        leaksDriverMessage(target.right, options, depth + 1)
-      );
-    case 'LogicalExpression':
-      return (
-        leaksDriverMessage(target.left, options, depth + 1) ||
-        leaksDriverMessage(target.right, options, depth + 1)
-      );
-    case 'ConditionalExpression':
-      return (
-        leaksDriverMessage(target.consequent, options, depth + 1) ||
-        leaksDriverMessage(target.alternate, options, depth + 1)
-      );
-    default:
-      return false;
   }
 }
 
-// Resolve runtime identity, not spelling. Only immutable same-file aliases are followed;
-// dynamic imports, mutable rebinding and arbitrary cross-module re-exports remain unknown.
-function effectOrigin(
-  context: Context,
-  input: ESTree.Node,
-  barrels: readonly string[],
-  depth = 0,
-): readonly string[] | null {
-  if (depth > 24) return null;
-  let node = input;
-  while (
-    [
-      'ParenthesizedExpression',
-      'ChainExpression',
-      'TSAsExpression',
-      'TSSatisfiesExpression',
-      'TSNonNullExpression',
-      'TSInstantiationExpression',
-      'TSTypeAssertion',
-    ].includes(node.type)
-  ) {
-    node = (node as { expression: ESTree.Node }).expression;
+function messageExpressions(node: ESTree.Node): readonly ESTree.Node[] {
+  switch (node.type) {
+    case 'TemplateLiteral':
+      return node.expressions;
+    case 'BinaryExpression':
+      return node.operator === '+' ? [node.left, node.right] : [];
+    case 'LogicalExpression':
+      return [node.left, node.right];
+    case 'ConditionalExpression':
+      return [node.consequent, node.alternate];
+    default:
+      return [];
   }
-  const keyOf = (key: ESTree.Node, computed: boolean): string | null => {
-    if (!computed && key.type === 'Identifier') return key.name;
-    if (key.type === 'Literal' && typeof key.value === 'string') return key.value;
-    if (key.type === 'TemplateLiteral' && key.expressions.length === 0)
-      return key.quasis[0]?.value.cooked ?? null;
-    return null;
+}
+
+function leaksMemberMessage(node: ESTree.MemberExpression, options: RuleOptions): boolean {
+  const property = memberPropertyName(node);
+  if (property === null || !['message', 'stack', 'cause'].includes(property)) return false;
+  const root = rootIdentifier(node.object);
+  return root !== null && options.errorIdentifier.test(root);
+}
+
+function isJsonStringify(node: ESTree.Node): boolean {
+  if (node.type !== 'MemberExpression' || memberPropertyName(node) !== 'stringify') return false;
+  const object = unwrap(node.object);
+  return object.type === 'Identifier' && object.name === 'JSON';
+}
+
+function isStringifyCallee(node: ESTree.Node): boolean {
+  if (node.type === 'Identifier') return node.name === 'String' || node.name === 'inspect';
+  return (
+    node.type === 'MemberExpression' &&
+    !node.computed &&
+    node.property.type === 'Identifier' &&
+    ['toString', 'inspect'].includes(node.property.name)
+  );
+}
+
+function leaksCallMessage(
+  node: ESTree.CallExpression,
+  options: RuleOptions,
+  depth: number,
+): boolean {
+  const callee = unwrap(node.callee);
+  const jsonStringify = isJsonStringify(callee);
+  if (!jsonStringify && !isStringifyCallee(callee)) return false;
+  if (callee.type === 'MemberExpression' && !jsonStringify)
+    return leaksDriverMessage(callee.object, options, depth + 1);
+  return node.arguments.some(
+    (argument) =>
+      argument.type !== 'SpreadElement' &&
+      (isErrorIdentifier(argument, options) || leaksDriverMessage(argument, options, depth + 1)),
+  );
+}
+
+type Properties = ReadonlyMap<string, ESTree.Node>;
+
+function indexedValue(properties: Properties, key: string): ESTree.Node | null {
+  const property = properties.get(key);
+  return property === undefined ? null : propertyValue(property);
+}
+
+function problemFields(properties: Properties, options: RuleOptions) {
+  const tag = stringLiteralValue(indexedValue(properties, '_tag'));
+  const hasProblemType = isUriLike(indexedValue(properties, 'type'));
+  const hasTitle = properties.has('title');
+  const hasDetail = properties.has('detail');
+  return {
+    tag,
+    taggedProblem: tag !== null && endsWithAny(tag, options.tagSuffixes),
+    hasProblemType,
+    hasTitle,
+    hasProse: hasTitle || hasDetail,
   };
-  if (node.type === 'MemberExpression') {
-    const key = keyOf(node.property, node.computed);
-    const base = effectOrigin(context, node.object, barrels, depth + 1);
-    return base && key !== null ? [...base, key] : null;
+}
+
+function problemShape(properties: Properties, options: RuleOptions) {
+  const fields = problemFields(properties, options);
+  const status = integerLiteral(indexedValue(properties, 'status'));
+  const inRange =
+    status !== null && status >= options.statusRange[0] && status <= options.statusRange[1];
+  const corroborated = fields.taggedProblem || (fields.hasProblemType && fields.hasProse);
+  const reportStatus = inRange && corroborated;
+  const reportTag = shouldReportTag(fields, reportStatus, options);
+  return {
+    tag: fields.tag,
+    status,
+    reportStatus,
+    reportTag,
+    statusProperty: properties.get('status'),
+    tagProperty: properties.get('_tag'),
+    problemShaped: reportStatus || reportTag || (fields.hasTitle && fields.hasProblemType),
+  };
+}
+
+function shouldReportTag(
+  fields: ReturnType<typeof problemFields>,
+  reportStatus: boolean,
+  options: RuleOptions,
+): boolean {
+  return (
+    !reportStatus &&
+    options.reportTagOnlyLiterals &&
+    fields.taggedProblem &&
+    (fields.hasProse || fields.hasProblemType)
+  );
+}
+
+function reportProblemShape(context: Context, shape: ReturnType<typeof problemShape>): void {
+  if (shape.reportStatus && shape.statusProperty !== undefined) {
+    context.report({
+      node: shape.statusProperty,
+      messageId: 'handBuiltProblem',
+      data: {
+        status: String(shape.status),
+        tagged: shape.tag === null ? '' : ` for \`${shape.tag}\``,
+      },
+    });
+  } else if (shape.reportTag && shape.tagProperty !== undefined) {
+    context.report({
+      node: shape.tagProperty,
+      messageId: 'handBuiltProblemTag',
+      data: { tag: shape.tag ?? '' },
+    });
   }
-  if (node.type !== 'Identifier') return null;
-  let scope: ReturnType<Context['sourceCode']['getScope']> | null =
-    context.sourceCode.getScope(node);
-  while (scope) {
-    const variable = scope.set.get(node.name);
-    const defs = variable?.defs.filter(
-      (def) =>
-        !['TSInterfaceDeclaration', 'TSTypeAliasDeclaration', 'TSTypeParameter'].includes(
-          def.node.type,
-        ),
-    );
-    if (!variable || !defs?.length) {
-      scope = scope.upper;
-      continue;
-    }
-    if (defs.length !== 1) return null;
-    const def = defs[0]!;
-    if (def.type === 'ImportBinding') {
-      const spec = def.node;
-      const declaration = def.parent?.type === 'ImportDeclaration' ? def.parent : spec.parent;
-      if (
-        declaration?.type !== 'ImportDeclaration' ||
-        declaration.importKind === 'type' ||
-        (spec as { importKind?: string }).importKind === 'type'
-      )
-        return null;
-      const source = declaration.source.value;
-      const root = source === 'effect' || barrels.some((glob) => globToRegExp(glob).test(source));
-      if (!root && !source.startsWith('effect/')) return null;
-      const base = root ? [] : [source.split('/').at(-1)!];
-      if (spec.type === 'ImportNamespaceSpecifier' || spec.type === 'ImportDefaultSpecifier')
-        return base;
-      if (spec.type !== 'ImportSpecifier') return null;
-      return [
-        ...base,
-        spec.imported.type === 'Identifier' ? spec.imported.name : spec.imported.value,
-      ];
-    }
-    const declaration = def.node;
-    if (
-      declaration.type !== 'VariableDeclarator' ||
-      !declaration.init ||
-      declaration.parent?.type !== 'VariableDeclaration' ||
-      declaration.parent.kind !== 'const'
-    )
-      return null;
-    if (variable.references.some((reference) => reference.isWrite() && !reference.init))
-      return null;
-    const base = effectOrigin(context, declaration.init, barrels, depth + 1);
-    if (!base) return null;
-    if (declaration.id.type === 'Identifier') return base;
-    if (declaration.id.type !== 'ObjectPattern') return null;
-    for (const property of declaration.id.properties) {
-      if (
-        property.type !== 'Property' ||
-        property.value.type !== 'Identifier' ||
-        property.value.name !== node.name
-      )
-        continue;
-      const key = keyOf(property.key, property.computed);
-      return key === null ? null : [...base, key];
-    }
-    return null;
+}
+
+function reportDriverMessages(
+  context: Context,
+  properties: Properties,
+  options: RuleOptions,
+): void {
+  for (const key of options.messageKeys) {
+    const property = properties.get(key);
+    if (property === undefined) continue;
+    const value = propertyValue(property);
+    if (value === null || !leaksDriverMessage(value, options, 0)) continue;
+    context.report({ node: property, messageId: 'rawDriverMessage', data: { key } });
   }
-  return null;
 }
 
 export const rule = defineRule({
@@ -593,67 +540,14 @@ export const rule = defineRule({
     if (!options.includeTests && isTestFile(path)) return {};
     if (isScriptFile(path)) return {};
 
-    let bindings: EffectBindings = { namespaces: new Map<string, string>(), importsEffect: false };
-
     return {
-      Program(node) {
-        bindings = collectEffectBindings(node);
-      },
-
       ObjectExpression(node) {
-        if (node.properties.length === 0) return;
+        if (node.properties.length === 0 || isExemptContext(context, node, options)) return;
         const properties = indexProperties(node);
-        const statusProperty = properties.get('status') ?? null;
-        const status =
-          statusProperty === null ? null : integerLiteral(propertyValue(statusProperty));
-        const inRange =
-          status !== null && status >= options.statusRange[0] && status <= options.statusRange[1];
-
-        const tagProperty = properties.get('_tag') ?? null;
-        const tag = tagProperty === null ? null : stringLiteralValue(propertyValue(tagProperty));
-        const taggedProblem = tag !== null && endsWithAny(tag, options.tagSuffixes);
-
-        const typeProperty = properties.get('type') ?? null;
-        const hasProblemType = typeProperty !== null && isUriLike(propertyValue(typeProperty));
-        const hasTitle = properties.has('title');
-        const hasRetryable = properties.has('retryable');
-        const hasDetail = properties.has('detail');
-
-        const corroborated = taggedProblem || (hasProblemType && (hasTitle || hasDetail));
-        const reportStatus = inRange && corroborated;
-        const reportTag =
-          !reportStatus &&
-          options.reportTagOnlyLiterals &&
-          taggedProblem &&
-          (hasTitle || hasProblemType || hasDetail);
-        // A problem payload for the raw-message check: either of the two report shapes, or the
-        // RFC 9457 `title` + `type` pair without a tag.
-        const problemShaped = reportStatus || reportTag || (hasTitle && hasProblemType);
-
-        if (isExemptContext(context, node, options, bindings)) return;
-
-        if (reportStatus && statusProperty !== null) {
-          context.report({
-            node: statusProperty,
-            messageId: 'handBuiltProblem',
-            data: { status: String(status), tagged: tag === null ? '' : ` for \`${tag}\`` },
-          });
-        } else if (reportTag && tagProperty !== null) {
-          context.report({
-            node: tagProperty,
-            messageId: 'handBuiltProblemTag',
-            data: { tag: tag ?? '' },
-          });
-        }
-
-        if (!problemShaped || !options.reportRawDriverMessages) return;
-        for (const key of options.messageKeys) {
-          const property = properties.get(key);
-          if (property === undefined) continue;
-          const value = propertyValue(property);
-          if (value === null || !leaksDriverMessage(value, options, 0)) continue;
-          context.report({ node: property, messageId: 'rawDriverMessage', data: { key } });
-        }
+        const shape = problemShape(properties, options);
+        reportProblemShape(context, shape);
+        if (shape.problemShaped && options.reportRawDriverMessages)
+          reportDriverMessages(context, properties, options);
       },
     };
   },

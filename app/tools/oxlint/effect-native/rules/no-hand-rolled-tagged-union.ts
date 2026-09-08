@@ -84,14 +84,9 @@ import type { Context, ESTree } from '@oxlint/plugins';
 
 import { collectEffectBindings } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production `include` defaults instead of
- * forcing the fixture config to pass loosened options (which `run-on-repo.mts` reuses).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
+import { optionRecord, stringArray } from '../shared/options.ts';
+import { keyName } from '../shared/ast.ts';
 
 const DEFAULT_DISCRIMINANT_KEYS: readonly string[] = ['_tag'];
 
@@ -128,18 +123,8 @@ interface RuleOptions {
   readonly ignoreAmbient: boolean;
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     discriminantKeys: stringArray(record.discriminantKeys, DEFAULT_DISCRIMINANT_KEYS),
     include: stringArray(record.include, DEFAULT_INCLUDE),
@@ -152,21 +137,9 @@ function readOptions(context: Context): RuleOptions {
   };
 }
 
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-/** Static string name of a property-signature key (`_tag`, `"_tag"`, `["_tag"]`). */
+/** Static property-signature keys allow computed string literals, not templates or computed identifiers. */
 function propertyKeyName(node: ESTree.TSPropertySignature): string | null {
-  const key = node.key;
-  if (key.type === 'Identifier') return node.computed ? null : key.name;
-  if (key.type === 'Literal' && typeof key.value === 'string') return key.value;
-  return null;
+  return keyName(node.key, node.computed, { templates: false });
 }
 
 /**
@@ -190,33 +163,33 @@ function noSubstitutionTemplate(
  * not a closed set of string literals (`string`, a type reference, a *substituting* template-literal
  * type, a generic parameter, …).
  */
+function singletonTag(value: string | null): readonly string[] | null {
+  return value === null ? null : [value];
+}
+
+function literalTags(literal: ESTree.Node): readonly string[] | null {
+  if (literal.type === 'Literal') return typeof literal.value === 'string' ? [literal.value] : null;
+  if (literal.type === 'TemplateLiteral')
+    return singletonTag(noSubstitutionTemplate(literal.quasis, literal.expressions.length));
+  return null;
+}
+
+function unionTags(types: readonly ESTree.Node[]): readonly string[] | null {
+  const values: string[] = [];
+  for (const member of types) {
+    const nested = tagLiterals(member);
+    if (nested === null) return null;
+    values.push(...nested);
+  }
+  return values.length > 0 ? values : null;
+}
+
 function tagLiterals(type: ESTree.Node): readonly string[] | null {
   if (type.type === 'TSParenthesizedType') return tagLiterals(type.typeAnnotation);
-  if (type.type === 'TSLiteralType') {
-    const literal = type.literal;
-    if (literal.type === 'Literal')
-      return typeof literal.value === 'string' ? [literal.value] : null;
-    // oxc parses a no-substitution template in type position as a `TemplateLiteral` literal.
-    if (literal.type === 'TemplateLiteral') {
-      const cooked = noSubstitutionTemplate(literal.quasis, literal.expressions.length);
-      return cooked === null ? null : [cooked];
-    }
-    return null;
-  }
-  // Belt and braces: some parses spell the same thing as a zero-substitution template-literal type.
-  if (type.type === 'TSTemplateLiteralType') {
-    const cooked = noSubstitutionTemplate(type.quasis, type.types.length);
-    return cooked === null ? null : [cooked];
-  }
-  if (type.type === 'TSUnionType') {
-    const values: string[] = [];
-    for (const member of type.types) {
-      const nested = tagLiterals(member);
-      if (nested === null) return null;
-      values.push(...nested);
-    }
-    return values.length > 0 ? values : null;
-  }
+  if (type.type === 'TSLiteralType') return literalTags(type.literal);
+  if (type.type === 'TSTemplateLiteralType')
+    return singletonTag(noSubstitutionTemplate(type.quasis, type.types.length));
+  if (type.type === 'TSUnionType') return unionTags(type.types);
   return null;
 }
 
@@ -284,6 +257,64 @@ function expressionReferenceName(
  * `null` (the signature belongs to a query, a conditional, a generic constraint, a function
  * signature, a value annotation, … and must not report).
  */
+const TRANSPARENT_TYPE_ANCESTORS: ReadonlySet<string> = new Set([
+  'TSInterfaceBody',
+  'TSTypeLiteral',
+  'TSUnionType',
+  'TSIntersectionType',
+  'TSParenthesizedType',
+  'TSArrayType',
+  'TSTupleType',
+  'TSNamedTupleMember',
+  'TSOptionalType',
+  'TSRestType',
+  'TSInterfaceHeritage',
+  'TSTypeReference',
+]);
+
+function hasTransparentParameterOwner(
+  node: ESTree.Node,
+  options: RuleOptions,
+  bindings: EffectBindings,
+): boolean {
+  const owner = node.parent;
+  if (owner == null) return false;
+  if (owner.type === 'TSTypeReference') return isTransparentWrapper(owner, options, bindings);
+  if (owner.type === 'TSInterfaceHeritage') return isTransparentHeritage(owner, options, bindings);
+  return false;
+}
+
+function isTransparentAncestor(
+  current: ESTree.Node,
+  previous: ESTree.Node,
+  options: RuleOptions,
+  bindings: EffectBindings,
+): boolean {
+  if (TRANSPARENT_TYPE_ANCESTORS.has(current.type)) return true;
+  switch (current.type) {
+    case 'TSTypeOperator':
+      return current.operator === 'readonly';
+    case 'TSTypeAnnotation':
+      return current.typeAnnotation === previous;
+    case 'TSPropertySignature':
+      return options.includeNestedTypes;
+    case 'TSTypeParameterInstantiation':
+      return hasTransparentParameterOwner(current, options, bindings);
+    default:
+      return false;
+  }
+}
+
+function declarationName(current: ESTree.Node, previous: ESTree.Node): string | null {
+  if (current.type === 'TSInterfaceDeclaration') {
+    const owns = current.body === previous || previous.type === 'TSInterfaceHeritage';
+    return owns ? current.id.name : null;
+  }
+  if (current.type === 'TSTypeAliasDeclaration')
+    return current.typeAnnotation === previous ? current.id.name : null;
+  return null;
+}
+
 function owningDeclaration(
   signature: ESTree.TSPropertySignature,
   options: RuleOptions,
@@ -292,53 +323,10 @@ function owningDeclaration(
   let previous: ESTree.Node = signature;
   let current: ESTree.Node | null | undefined = signature.parent;
   for (let depth = 0; depth < MAX_ANCESTOR_DEPTH; depth += 1) {
-    if (current === null || current === undefined) return null;
-    switch (current.type) {
-      case 'TSInterfaceDeclaration':
-        // Either the interface body itself, or an `extends Readonly<{ … }>` heritage clause that the
-        // `TSTypeParameterInstantiation` arm below already proved transparent.
-        if (current.body === previous) return current.id.name;
-        return previous.type === 'TSInterfaceHeritage' ? current.id.name : null;
-      case 'TSTypeAliasDeclaration':
-        return current.typeAnnotation === previous ? current.id.name : null;
-      case 'TSInterfaceBody':
-      case 'TSTypeLiteral':
-      case 'TSUnionType':
-      case 'TSIntersectionType':
-      case 'TSParenthesizedType':
-      case 'TSArrayType':
-      case 'TSTupleType':
-      case 'TSNamedTupleMember':
-      case 'TSOptionalType':
-      case 'TSRestType':
-      case 'TSInterfaceHeritage':
-      case 'TSTypeReference':
-        break;
-      case 'TSTypeOperator':
-        if (current.operator !== 'readonly') return null;
-        break;
-      case 'TSTypeAnnotation':
-        if (current.typeAnnotation !== previous) return null;
-        break;
-      case 'TSPropertySignature':
-        if (!options.includeNestedTypes) return null;
-        break;
-      case 'TSTypeParameterInstantiation': {
-        const owner = current.parent;
-        if (owner === null || owner === undefined) return null;
-        if (owner.type === 'TSTypeReference') {
-          if (!isTransparentWrapper(owner, options, bindings)) return null;
-          break;
-        }
-        if (owner.type === 'TSInterfaceHeritage') {
-          if (!isTransparentHeritage(owner, options, bindings)) return null;
-          break;
-        }
-        return null;
-      }
-      default:
-        return null;
-    }
+    if (current == null) return null;
+    const name = declarationName(current, previous);
+    if (name !== null) return name;
+    if (!isTransparentAncestor(current, previous, options, bindings)) return null;
     previous = current;
     current = current.parent;
   }
@@ -348,10 +336,7 @@ function owningDeclaration(
 /** Static string name of a class member key (`_tag`, `"_tag"`), or `null` for computed/private keys. */
 function classKeyName(node: ESTree.PropertyDefinition): string | null {
   if (node.computed) return null;
-  const key = node.key;
-  if (key.type === 'Identifier') return key.name;
-  if (key.type === 'Literal' && typeof key.value === 'string') return key.value;
-  return null;
+  return keyName(node.key);
 }
 
 /**
@@ -386,21 +371,28 @@ function enclosingClass(node: ESTree.PropertyDefinition): ESTree.Class | null {
  * *blessed* form; only a base resolved through a tracked `effect` / `effect/*` binding counts, so a
  * same-named local helper class stays in scope.
  */
+function baseExpression(node: ESTree.Node): ESTree.Node | null {
+  switch (node.type) {
+    case 'CallExpression':
+    case 'NewExpression':
+      return node.callee;
+    case 'TSInstantiationExpression':
+    case 'ParenthesizedExpression':
+    case 'TSNonNullExpression':
+    case 'TSAsExpression':
+      return node.expression;
+    default:
+      return null;
+  }
+}
+
 function derivesFromEffectBase(node: ESTree.Class, bindings: EffectBindings): boolean {
   let base: ESTree.Node | null | undefined = node.superClass;
   for (let depth = 0; depth < MAX_ANCESTOR_DEPTH; depth += 1) {
     if (base === null || base === undefined) return false;
-    if (base.type === 'CallExpression' || base.type === 'NewExpression') {
-      base = base.callee;
-      continue;
-    }
-    if (
-      base.type === 'TSInstantiationExpression' ||
-      base.type === 'ParenthesizedExpression' ||
-      base.type === 'TSNonNullExpression' ||
-      base.type === 'TSAsExpression'
-    ) {
-      base = base.expression;
+    const inner = baseExpression(base);
+    if (inner !== null) {
+      base = inner;
       continue;
     }
     const resolved = expressionReferenceName(base);
@@ -428,6 +420,16 @@ function isAmbient(node: ESTree.Node): boolean {
     current = current.parent;
   }
   return false;
+}
+
+function shouldCheckClassField(node: ESTree.PropertyDefinition, options: RuleOptions): boolean {
+  return options.includeClassFields && !(options.ignoreAmbient && isAmbient(node));
+}
+
+function classFieldTags(node: ESTree.PropertyDefinition): readonly string[] | null {
+  if (node.typeAnnotation != null) return tagLiterals(node.typeAnnotation.typeAnnotation);
+  if (node.value == null) return null;
+  return singletonTag(initialiserTag(node.value));
 }
 
 export const rule = defineRule({
@@ -501,18 +503,10 @@ export const rule = defineRule({
     let bindings: EffectBindings = { namespaces: new Map<string, string>(), importsEffect: false };
 
     function reportClassField(node: ESTree.PropertyDefinition): void {
-      if (!options.includeClassFields || (options.ignoreAmbient && isAmbient(node))) return;
+      if (!shouldCheckClassField(node, options)) return;
       const key = classKeyName(node);
       if (key === null || !options.discriminantKeys.includes(key)) return;
-      const annotation = node.typeAnnotation;
-      const literals =
-        annotation === null || annotation === undefined
-          ? ((): readonly string[] | null => {
-              if (node.value === null || node.value === undefined) return null;
-              const tag = initialiserTag(node.value);
-              return tag === null ? null : [tag];
-            })()
-          : tagLiterals(annotation.typeAnnotation);
+      const literals = classFieldTags(node);
       if (literals === null) return;
       const owner = enclosingClass(node);
       if (owner === null) return;

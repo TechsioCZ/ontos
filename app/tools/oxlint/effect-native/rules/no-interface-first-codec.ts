@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * Audit finding: **A2** — "Make Schema the sole authority for contracts and domain models"
  * (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`). A2 counts "approximately 119
@@ -58,25 +59,17 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree } from '@oxlint/plugins';
 
-import {
-  collectEffectBindings,
-  effectMember,
-  type EffectBindings,
-} from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
+import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+import { booleanOption as boolean, stringArray } from '../shared/options.ts';
+import { memberName, typeNameSegments, unwrapNode as unwrapExpression } from '../shared/ast.ts';
+import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
+import { collectSchemaLocals } from '../shared/imports.ts';
+import { isNonReferencePosition } from '../shared/reference-positions.ts';
 
 const SCHEMA_NAMESPACE = 'Schema';
-const EFFECT_ROOT_MODULE = 'effect';
-const EFFECT_SCHEMA_MODULE = /^effect\/(?:.*\/)?Schema$/u;
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production `include` defaults instead of
- * forcing the fixture config to pass loosened options (which `run-on-repo.mts` reuses verbatim).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
@@ -118,22 +111,8 @@ interface RuleOptions {
   readonly reexportModules: readonly string[];
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
-function boolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
@@ -149,114 +128,6 @@ function readOptions(context: Context): RuleOptions {
     checkClassProperties: boolean(record.checkClassProperties, true),
     reexportModules: stringArray(record.reexportModules, DEFAULT_REEXPORT_MODULES),
   };
-}
-
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-function importedName(specifier: ESTree.ImportSpecifier): string {
-  return specifier.imported.type === 'Identifier'
-    ? specifier.imported.name
-    : specifier.imported.value;
-}
-
-interface SchemaLocals {
-  /** Locals standing for Effect's `Schema` namespace (`Schema`, `S`, `import * as Schema from "effect/Schema"`). */
-  readonly schema: ReadonlySet<string>;
-  /** Locals standing for the whole Effect barrel (`import * as Effect from "effect"` → `Effect.Schema.Codec`). */
-  readonly barrel: ReadonlySet<string>;
-  /** Locals bound directly from `effect/Schema` (`import { Struct, suspend } from "effect/Schema"`). */
-  readonly direct: ReadonlyMap<string, string>;
-}
-
-function collectSchemaLocals(
-  program: ESTree.Program,
-  bindings: EffectBindings,
-  reexportModules: readonly string[],
-): SchemaLocals {
-  const schema = new Set<string>();
-  const barrel = new Set<string>();
-  const direct = new Map<string, string>();
-  for (const [local, namespace] of bindings.namespaces) {
-    if (namespace === SCHEMA_NAMESPACE) schema.add(local);
-  }
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    const source = statement.source.value;
-    if (EFFECT_SCHEMA_MODULE.test(source)) {
-      for (const specifier of statement.specifiers) {
-        if (specifier.type === 'ImportSpecifier')
-          direct.set(specifier.local.name, importedName(specifier));
-        else if (specifier.type === 'ImportNamespaceSpecifier') schema.add(specifier.local.name);
-      }
-      continue;
-    }
-    const isEffectRoot = source === EFFECT_ROOT_MODULE;
-    const isReexport = matchesGlobs(source, reexportModules);
-    if (!isEffectRoot && !isReexport) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportNamespaceSpecifier') barrel.add(specifier.local.name);
-      else if (
-        specifier.type === 'ImportSpecifier' &&
-        importedName(specifier) === SCHEMA_NAMESPACE
-      ) {
-        schema.add(specifier.local.name);
-      }
-    }
-  }
-  return { schema, barrel, direct };
-}
-
-/** Flatten `Schema.Codec` / `Effect.Schema.Codec` / `Codec` into its dotted segments. */
-function typeNameSegments(name: ESTree.TSTypeName): readonly string[] | null {
-  if (name.type === 'Identifier') return [name.name];
-  if (name.type === 'TSQualifiedName') {
-    const left = typeNameSegments(name.left);
-    return left === null ? null : [...left, name.right.name];
-  }
-  return null;
-}
-
-/** Non-computed `.pipe`, or computed `["pipe"]`. */
-function memberName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
-  const property = node.property;
-  if (property.type === 'Literal' && typeof property.value === 'string') return property.value;
-  return null;
-}
-
-function lookupVariable(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(identifier);
-  while (scope !== null) {
-    const variable = scope.set.get(identifier.name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
-}
-
-/**
- * `true` when the identifier still resolves to an `import` binding. Unresolved names fall back to
- * `true` because the module-level import declaration already proved the binding exists; only a local
- * shadow (parameter, `const`, catch clause, …) rejects the match.
- */
-function resolvesToImport(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): boolean {
-  const variable = lookupVariable(context, identifier);
-  if (variable === null) return true;
-  if (variable.defs.length === 0) return true;
-  return variable.defs.some((definition) => definition.type === 'ImportBinding');
 }
 
 interface Candidate {
@@ -348,12 +219,16 @@ export const rule = defineRule({
     const locals = collectSchemaLocals(program, bindings, options.reexportModules);
     if (locals.schema.size === 0 && locals.barrel.size === 0 && locals.direct.size === 0) return {};
 
-    const codecTypeLocals = new Set<string>();
-    const suspendLocals = new Set<string>();
-    for (const [local, imported] of locals.direct) {
-      if (options.codecTypes.includes(imported)) codecTypeLocals.add(local);
-      if (imported === SUSPEND_MEMBER) suspendLocals.add(local);
-    }
+    const codecTypeLocals = new Set(
+      [...locals.direct]
+        .filter(([, imported]) => options.codecTypes.includes(imported))
+        .map(([local]) => local),
+    );
+    const suspendLocals = new Set(
+      [...locals.direct]
+        .filter(([, imported]) => imported === SUSPEND_MEMBER)
+        .map(([local]) => local),
+    );
 
     const candidates: Candidate[] = [];
     const suspendSpans: Array<{ start: number; end: number }> = [];
@@ -365,26 +240,6 @@ export const rule = defineRule({
       let current = type;
       while (current.type === 'TSParenthesizedType') current = current.typeAnnotation;
       return current;
-    };
-
-    /** Strip value-level wrappers that never change what the expression *is*. */
-    const unwrapExpression = (expression: ESTree.Node): ESTree.Node => {
-      let current = expression;
-      for (;;) {
-        if (
-          current.type === 'ParenthesizedExpression' ||
-          current.type === 'ChainExpression' ||
-          current.type === 'TSAsExpression' ||
-          current.type === 'TSSatisfiesExpression' ||
-          current.type === 'TSNonNullExpression' ||
-          current.type === 'TSTypeAssertion' ||
-          current.type === 'TSInstantiationExpression'
-        ) {
-          current = current.expression;
-          continue;
-        }
-        return current;
-      }
     };
 
     /** `Schema.X` / `S.X` / `Effect.Schema.X` / `Schema["X"]`, with the shared `effectMember` matcher first. */
@@ -402,6 +257,10 @@ export const rule = defineRule({
         if (!locals.schema.has(object.name)) return null;
         return resolvesToImport(context, object) ? member : null;
       }
+      return barrelMemberName(object, member);
+    };
+
+    const barrelMemberName = (object: ESTree.Node, member: string): string | null => {
       if (object.type !== 'MemberExpression') return null;
       if (memberName(object) !== SCHEMA_NAMESPACE) return null;
       if (object.object.type !== 'Identifier') return null;
@@ -441,6 +300,13 @@ export const rule = defineRule({
       }
       if (current.type === 'MemberExpression') return schemaMemberName(current) !== null;
       if (current.type !== 'CallExpression' && current.type !== 'NewExpression') return false;
+      return isSchemaCall(current, depth);
+    };
+
+    const isSchemaCall = (
+      current: ESTree.CallExpression | ESTree.NewExpression,
+      depth: number,
+    ): boolean => {
       const callee = unwrapExpression(current.callee);
       // ANY instance-method chain, not just `.pipe`: Effect v4 Schemas carry `.annotate(...)`,
       // `.check(...)`, `.pipe(...)` and friends, so the receiver — never the method name — decides.
@@ -469,32 +335,12 @@ export const rule = defineRule({
       seen.add(current);
       if (options.allowDerivedTypeArguments && current.type === 'TSTypeQuery') return true;
       if (current.type !== 'TSTypeReference') return false;
-      if (current.typeName.type === 'Identifier') {
-        const name = current.typeName.name;
-        const variable = lookupVariable(context, current.typeName);
-        for (const definition of variable?.defs ?? []) {
-          const declaration = definition.node as ESTree.Node;
-          if (declaration.type === 'TSTypeParameter') return true;
-          if (declaration.type === 'TSTypeAliasDeclaration') {
-            return (
-              options.allowDerivedTypeArguments &&
-              derivedOrGeneric(declaration.typeAnnotation, seen)
-            );
-          }
-        }
-        // Some scope providers do not expose type-parameter definitions. Check only enclosing
-        // binders; an unrelated generic elsewhere in the file must not exempt a prior interface.
-        if (variable === null || variable.defs.length === 0) {
-          let ancestor: ESTree.Node | null | undefined = current.parent;
-          while (ancestor != null) {
-            const parameters = (
-              ancestor as { typeParameters?: ESTree.TSTypeParameterDeclaration | null }
-            ).typeParameters;
-            if (parameters?.params.some((parameter) => parameter.name.name === name)) return true;
-            ancestor = ancestor.parent;
-          }
-        }
-      }
+      const named = namedDerivation(current, seen);
+      if (named !== null) return named;
+      return derivedArguments(current, seen);
+    };
+
+    const derivedArguments = (current: ESTree.TSTypeReference, seen: Set<ESTree.Node>): boolean => {
       // Schema.Type<typeof S>, ReturnType<typeof factory>, etc. remain derived rather than
       // introducing a shape of their own. Mixed handwritten arguments are not waived.
       const arguments_ = current.typeArguments?.params ?? [];
@@ -503,6 +349,48 @@ export const rule = defineRule({
         arguments_.length > 0 &&
         arguments_.every((argument) => derivedOrGeneric(argument, new Set(seen)))
       );
+    };
+
+    const enclosingParameter = (current: ESTree.Node, name: string): boolean => {
+      let ancestor = current.parent;
+      while (ancestor != null) {
+        const parameters = (
+          ancestor as { typeParameters?: ESTree.TSTypeParameterDeclaration | null }
+        ).typeParameters;
+        if (parameters?.params.some((parameter) => parameter.name.name === name)) return true;
+        ancestor = ancestor.parent;
+      }
+      return false;
+    };
+
+    const namedDerivation = (
+      current: ESTree.TSTypeReference,
+      seen: Set<ESTree.Node>,
+    ): boolean | null => {
+      if (current.typeName.type !== 'Identifier') return null;
+      const variable = lookupVariable(context, current.typeName);
+      if (variable === null)
+        return enclosingParameter(current, current.typeName.name) ? true : null;
+      for (const definition of variable.defs) {
+        const declaration = definition.node as ESTree.Node;
+        if (declaration.type === 'TSTypeParameter') return true;
+        if (declaration.type === 'TSTypeAliasDeclaration') {
+          return (
+            options.allowDerivedTypeArguments && derivedOrGeneric(declaration.typeAnnotation, seen)
+          );
+        }
+      }
+      if (variable.defs.length > 0) return null;
+      return enclosingParameter(current, current.typeName.name) ? true : null;
+    };
+
+    const isCodecName = (segments: readonly string[]): boolean => {
+      const root = segments[0] ?? '';
+      if (segments.length === 1) return codecTypeLocals.has(root);
+      const member = segments.at(-1) ?? '';
+      if (!options.codecTypes.includes(member)) return false;
+      if (segments.length === 2) return locals.schema.has(root);
+      return segments.length === 3 && locals.barrel.has(root) && segments[1] === SCHEMA_NAMESPACE;
     };
 
     /**
@@ -515,20 +403,15 @@ export const rule = defineRule({
       const segments = typeNameSegments(reference.typeName);
       if (segments === null || segments.length === 0) return null;
       const member = segments[segments.length - 1] ?? '';
-      if (segments.length === 1) {
-        // A single segment is a *local* name (`Codec`, or `SchemaCodec` from
-        // `import type { Codec as SchemaCodec } from "effect/Schema"`). `codecTypeLocals` is keyed by
-        // local name and built from the *imported* name, so it must be consulted before — never after —
-        // any test against the codec-type list, otherwise every alias escapes.
-        if (!codecTypeLocals.has(segments[0] ?? '')) return null;
-      } else if (segments.length === 2) {
-        if (!options.codecTypes.includes(member)) return null;
-        if (!locals.schema.has(segments[0] ?? '')) return null;
-      } else if (segments.length === 3) {
-        if (!options.codecTypes.includes(member)) return null;
-        if (!locals.barrel.has(segments[0] ?? '') || segments[1] !== SCHEMA_NAMESPACE) return null;
-      } else return null;
+      if (!isCodecName(segments)) return null;
 
+      return codecArguments(reference, member);
+    };
+
+    const codecArguments = (
+      reference: ESTree.TSTypeReference,
+      member: string,
+    ): { annotation: string; type: string } | null => {
       const parameters = reference.typeArguments?.params ?? [];
       const first = parameters[0];
       if (first === undefined)
@@ -566,6 +449,25 @@ export const rule = defineRule({
       return { name: 'this schema', start: node.start, end: node.end };
     };
 
+    const collectExpressionCandidate = (
+      node: ESTree.TSSatisfiesExpression | ESTree.TSAsExpression | ESTree.TSTypeAssertion,
+      messageId: 'satisfies' | 'cast',
+    ): void => {
+      const match = codecAnnotation(node.typeAnnotation);
+      if (match === null || !isSchemaExpression(node.expression, 0)) return;
+      const owner = ownerOf(node);
+      if (annotatedOwners.has(owner.start)) return;
+      candidates.push({
+        node: node.typeAnnotation,
+        ownerStart: owner.start,
+        ownerEnd: owner.end,
+        messageId,
+        name: owner.name,
+        annotation: match.annotation,
+        type: match.type,
+      });
+    };
+
     return {
       VariableDeclarator(node) {
         if (node.init === null || node.init === undefined) return;
@@ -575,10 +477,7 @@ export const rule = defineRule({
         if (annotation === null || annotation === undefined) return;
         const match = codecAnnotation(annotation.typeAnnotation);
         if (match === null) return;
-        if (options.requireSchemaInitializer) {
-          if (node.init === null || node.init === undefined) return;
-          if (!isSchemaExpression(node.init, 0)) return;
-        }
+        if (options.requireSchemaInitializer && !isSchemaExpression(node.init, 0)) return;
         annotatedOwners.add(node.start);
         candidates.push({
           node: annotation.typeAnnotation,
@@ -591,56 +490,13 @@ export const rule = defineRule({
         });
       },
       TSSatisfiesExpression(node) {
-        if (!options.checkSatisfies) return;
-        const match = codecAnnotation(node.typeAnnotation);
-        if (match === null) return;
-        if (!isSchemaExpression(node.expression, 0)) return;
-        const owner = ownerOf(node);
-        if (annotatedOwners.has(owner.start)) return;
-        candidates.push({
-          node: node.typeAnnotation,
-          ownerStart: owner.start,
-          ownerEnd: owner.end,
-          messageId: 'satisfies',
-          name: owner.name,
-          annotation: match.annotation,
-          type: match.type,
-        });
+        if (options.checkSatisfies) collectExpressionCandidate(node, 'satisfies');
       },
       TSAsExpression(node) {
-        if (!options.checkAsExpressions) return;
-        const match = codecAnnotation(node.typeAnnotation);
-        if (match === null) return;
-        if (!isSchemaExpression(node.expression, 0)) return;
-        const owner = ownerOf(node);
-        if (annotatedOwners.has(owner.start)) return;
-        candidates.push({
-          node: node.typeAnnotation,
-          ownerStart: owner.start,
-          ownerEnd: owner.end,
-          messageId: 'cast',
-          name: owner.name,
-          annotation: match.annotation,
-          type: match.type,
-        });
+        if (options.checkAsExpressions) collectExpressionCandidate(node, 'cast');
       },
-      /** `<Schema.Codec<Foo>>Schema.Struct({...})` — the angle-bracket spelling of the same cast. */
       TSTypeAssertion(node) {
-        if (!options.checkAsExpressions) return;
-        const match = codecAnnotation(node.typeAnnotation);
-        if (match === null) return;
-        if (!isSchemaExpression(node.expression, 0)) return;
-        const owner = ownerOf(node);
-        if (annotatedOwners.has(owner.start)) return;
-        candidates.push({
-          node: node.typeAnnotation,
-          ownerStart: owner.start,
-          ownerEnd: owner.end,
-          messageId: 'cast',
-          name: owner.name,
-          annotation: match.annotation,
-          type: match.type,
-        });
+        if (options.checkAsExpressions) collectExpressionCandidate(node, 'cast');
       },
       /**
        * `class Repo { private readonly rows: Schema.Codec<Row> = Schema.Struct({...}) }`. The Schema
@@ -682,12 +538,7 @@ export const rule = defineRule({
       Identifier(node) {
         if (!options.allowSuspend || suspendLocals.size === 0) return;
         if (!suspendLocals.has(node.name)) return;
-        const parent = node.parent;
-        if (parent === null || parent === undefined) return;
-        if (parent.type === 'ImportSpecifier' || parent.type === 'ImportDefaultSpecifier') return;
-        if (parent.type === 'ImportNamespaceSpecifier' || parent.type === 'ExportSpecifier') return;
-        if (parent.type === 'MemberExpression' && parent.property === node && !parent.computed)
-          return;
+        if (isNonReferencePosition(node, { keyParents: new Set() })) return;
         if (!resolvesToImport(context, node)) return;
         suspendSpans.push({ start: node.start, end: node.end });
       },

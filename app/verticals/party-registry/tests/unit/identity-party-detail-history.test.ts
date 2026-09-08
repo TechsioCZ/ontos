@@ -118,12 +118,13 @@ test('Party Detail persistence reads safe current and immutable historical asser
         [tenantId, partyId],
         [tenantId, partyId, 'ACTIVE', true],
       ]);
-      assert.match(queries[0] ?? '', /"tenant_id" = \$1/u);
-      assert.match(queries[0] ?? '', /"party_id" = \$2/u);
-      assert.doesNotMatch(queries[0] ?? '', /provenance|principal|invocation|verification/u);
-      assert.doesNotMatch(queries[1] ?? '', /external_evidence/u);
-      assert.match(queries[1] ?? '', /"state" = \$3/u);
-      assert.match(queries[1] ?? '', /"is_current" = \$4/u);
+      const [historyQuery = '', currentQuery = ''] = queries;
+      assert.match(historyQuery, /"tenant_id" = \$1/u);
+      assert.match(historyQuery, /"party_id" = \$2/u);
+      assert.doesNotMatch(historyQuery, /provenance|principal|invocation|verification/u);
+      assert.doesNotMatch(currentQuery, /external_evidence/u);
+      assert.match(currentQuery, /"state" = \$3/u);
+      assert.match(currentQuery, /"is_current" = \$4/u);
       const detail = yield* readPartyDetailFromServices(
         partyRef,
         tenantId,

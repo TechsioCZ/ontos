@@ -38,7 +38,7 @@ const instantAsDate = (instant: string | DateTime.Utc): Date =>
 
 export const PARTY_EXACT_CLAIM_RULE_VERSION = 'party-exact-claims.v1';
 
-export const endedOfficialIdentifierTransition = {
+const endedOfficialIdentifierTransition = {
   isCurrent: false,
   state: 'ENDED',
 } as const;
@@ -114,6 +114,59 @@ const lockIdentifierWriteTarget = Effect.fn(
   return current === undefined
     ? ({ _tag: 'not_found' } as const)
     : ({ _tag: 'found', current, party: matchedParty.result.value } as const);
+});
+
+const matchIdentifierWriteTarget = (
+  transaction: Pick<PartyTransaction, 'select'>,
+  tenantId: string,
+  officialIdentifierId: string,
+) =>
+  lockIdentifierWriteTarget(transaction, tenantId, officialIdentifierId).pipe(
+    Effect.map((target) =>
+      Match.value(target).pipe(
+        Match.tag('found', (result) => ({ matched: true, result }) as const),
+        Match.tag('conflict', 'not_found', (result) => ({ matched: false, result }) as const),
+        Match.exhaustive,
+      ),
+    ),
+  );
+
+const verificationTargetChanged = (
+  current: typeof partyOfficialIdentifiers.$inferSelect,
+  expectedVerification: IdentifierVerification,
+) =>
+  current.state !== 'ACTIVE' ||
+  !current.isCurrent ||
+  current.validTo !== null ||
+  current.verificationState !== expectedVerification;
+
+const resolveVerificationClaim = Effect.fn(
+  'PartyOfficialIdentifierPersistenceService.resolveVerificationClaim',
+)(function* resolveVerificationClaim(
+  transaction: Pick<PartyTransaction, 'select'>,
+  tenantId: string,
+  candidate: NormalizedOfficialIdentifier,
+  current: typeof partyOfficialIdentifiers.$inferSelect,
+  partyType: PartyType,
+  matchRuleVersion: string,
+) {
+  const claimEligible = qualifiesForExclusiveClaim(candidate, partyType, matchRuleVersion);
+  const previouslyClaimEligible = qualifiesForExclusiveClaim(
+    // SAFETY: the database CHECK constrains verification to this contract.
+    { ...candidate, verification: current.verificationState as IdentifierVerification },
+    partyType,
+    matchRuleVersion,
+  );
+  if (!claimEligible && !previouslyClaimEligible) {
+    return { claimEligible, claimOwner: undefined, conflict: false };
+  }
+  const [claim] = yield* lockAndResolveClaims(transaction, tenantId, [candidate]);
+  const claimOwner = claim?.partyId;
+  return {
+    claimEligible,
+    claimOwner,
+    conflict: claimEligible && claimOwner !== undefined && claimOwner !== current.partyId,
+  };
 });
 
 export const addOfficialIdentifierRecord = Effect.fn(
@@ -208,11 +261,10 @@ export const endOfficialIdentifierRecord = Effect.fn(
   officialIdentifierId: string,
   validTo: string,
 ) {
-  const target = yield* lockIdentifierWriteTarget(transaction, tenantId, officialIdentifierId);
-  const matchedTarget = Match.value(target).pipe(
-    Match.tag('found', (result) => ({ matched: true, result }) as const),
-    Match.tag('conflict', 'not_found', (result) => ({ matched: false, result }) as const),
-    Match.exhaustive,
+  const matchedTarget = yield* matchIdentifierWriteTarget(
+    transaction,
+    tenantId,
+    officialIdentifierId,
   );
   if (!matchedTarget.matched) {
     return matchedTarget.result;
@@ -286,22 +338,16 @@ export const updateOfficialIdentifierVerificationRecord = Effect.fn(
     readonly verification: IdentifierVerification;
   },
 ) {
-  const target = yield* lockIdentifierWriteTarget(transaction, tenantId, officialIdentifierId);
-  const matchedTarget = Match.value(target).pipe(
-    Match.tag('found', (result) => ({ matched: true, result }) as const),
-    Match.tag('conflict', 'not_found', (result) => ({ matched: false, result }) as const),
-    Match.exhaustive,
+  const matchedTarget = yield* matchIdentifierWriteTarget(
+    transaction,
+    tenantId,
+    officialIdentifierId,
   );
   if (!matchedTarget.matched) {
     return matchedTarget.result;
   }
   const { current, party } = matchedTarget.result;
-  if (
-    current.state !== 'ACTIVE' ||
-    !current.isCurrent ||
-    current.validTo !== null ||
-    current.verificationState !== input.expectedVerification
-  ) {
+  if (verificationTargetChanged(current, input.expectedVerification)) {
     return { _tag: 'conflict' } as const;
   }
 
@@ -313,26 +359,17 @@ export const updateOfficialIdentifierVerificationRecord = Effect.fn(
     normalizedValue: current.normalizedValue,
     verification: input.verification,
   };
-  const claimEligible = qualifiesForExclusiveClaim(
+  const { claimEligible, claimOwner, conflict } = yield* resolveVerificationClaim(
+    transaction,
+    tenantId,
     candidate,
+    current,
     // SAFETY: the Party database CHECK constrains currentType to the PartyType union.
     party.currentType as PartyType,
     input.matchRuleVersion,
   );
-  let claimOwner: string | undefined;
-  const previouslyClaimEligible = qualifiesForExclusiveClaim(
-    // SAFETY: the database CHECK constrains verification to this contract.
-    { ...candidate, verification: current.verificationState as IdentifierVerification },
-    // SAFETY: the Party database CHECK constrains currentType to the PartyType union.
-    party.currentType as PartyType,
-    input.matchRuleVersion,
-  );
-  if (claimEligible || previouslyClaimEligible) {
-    const [claim] = yield* lockAndResolveClaims(transaction, tenantId, [candidate]);
-    claimOwner = claim?.partyId;
-    if (claimEligible && claimOwner !== undefined && claimOwner !== current.partyId) {
-      return { _tag: 'claim_conflict' } as const;
-    }
+  if (conflict) {
+    return { _tag: 'claim_conflict' } as const;
   }
 
   const now = yield* DateTime.nowAsDate;
@@ -380,12 +417,6 @@ export const updateOfficialIdentifierVerificationRecord = Effect.fn(
   }
 
   return { _tag: 'found', previous: current, value: updated } as const;
-});
-
-export const partyOfficialIdentifierPersistenceService = Effect.succeed({
-  addOfficialIdentifierRecord,
-  endOfficialIdentifierRecord,
-  updateOfficialIdentifierVerificationRecord,
 });
 
 const identifierDto = (

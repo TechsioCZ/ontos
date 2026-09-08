@@ -1,18 +1,8 @@
+import { loadEnvironmentFileProvider } from './environment-file-provider.ts';
 import { APP_ENV_PATH } from '@app/core-runtime/workspace-environment';
-import { NodeFileSystem } from '@effect/platform-node';
-import {
-  Config,
-  ConfigProvider,
-  Context,
-  Effect,
-  FileSystem,
-  Layer,
-  Predicate,
-  Redacted,
-  Schema,
-} from 'effect';
+import { Config, ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
 
-export const AuthConfigError = Schema.TaggedError<unknown>()('AuthConfigError', {
+const AuthConfigError = Schema.TaggedError<unknown>()('AuthConfigError', {
   reason: Schema.String,
 });
 type AuthConfigFailure = InstanceType<typeof AuthConfigError>;
@@ -152,26 +142,10 @@ export interface LoadAuthConfigOptions {
   readonly envPath?: string;
 }
 
-const loadFileProvider = (
-  envPath: string,
-): Effect.Effect<ConfigProvider.ConfigProvider, AuthConfigFailure> =>
-  Effect.scoped(
-    Layer.build(NodeFileSystem.layer).pipe(
-      Effect.map((services) => Context.get(services, FileSystem.FileSystem)),
-      Effect.flatMap((fileSystem) => fileSystem.readFileString(envPath)),
-      Effect.catchIf(
-        (error) => Predicate.isTagged(error.reason, 'NotFound'),
-        () => Effect.succeed(''),
-      ),
-      Effect.catchTag('PlatformError', () => Effect.fail(unableToLoadEnvironment())),
-      Effect.map((contents) => ConfigProvider.fromDotEnvContents(contents)),
-    ),
-  );
-
 export const loadAuthConfig = (
   options: LoadAuthConfigOptions = {},
 ): Effect.Effect<AuthConfigValue, AuthConfigFailure> =>
-  loadFileProvider(options.envPath ?? ROOT_ENV_PATH).pipe(
+  loadEnvironmentFileProvider(options.envPath ?? ROOT_ENV_PATH, unableToLoadEnvironment).pipe(
     Effect.flatMap((fileProvider) =>
       parseAuthConfigFromProvider(
         (options.environment === undefined

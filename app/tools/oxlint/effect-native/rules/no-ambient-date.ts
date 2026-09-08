@@ -78,8 +78,17 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree } from '@oxlint/plugins';
 
+import {
+  parentOf,
+  skipWrappers,
+  unwrapNode,
+  memberName,
+  keyName as staticKeyName,
+} from '../shared/ast.ts';
+import { resolveVariable } from '../shared/bindings.ts';
+import { stringList } from '../shared/options.ts';
 import { collectEffectBindings } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
 import { isScriptFile, isTestFile, matchesAny, normalisePath } from '../shared/paths.ts';
@@ -201,12 +210,6 @@ const DEFAULTS: RuleOptions = {
   browserEvaluatedMethods: DEFAULT_BROWSER_EVALUATED_METHODS,
 };
 
-function stringList(value: unknown, fallback: readonly string[]): readonly string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
-    ? (value as readonly string[])
-    : fallback;
-}
-
 function readOptions(raw: unknown): RuleOptions {
   const given = (raw ?? {}) as Partial<Record<keyof RuleOptions, unknown>>;
   const includePaths = stringList(given.includePaths, DEFAULTS.includePaths);
@@ -234,53 +237,26 @@ function readOptions(raw: unknown): RuleOptions {
   };
 }
 
-function parentOf(node: AnyNode): AnyNode | null {
-  return (node as { parent?: AnyNode | null }).parent ?? null;
-}
-
-/** Strip parentheses / `as` / `!` / optional-chain wrappers from an expression. */
 function unwrap(node: AnyNode, depth: number): AnyNode {
-  if (depth > 8 || !TRANSPARENT_PARENTS.has(node.type)) return node;
-  const inner = (node as { expression?: AnyNode }).expression;
-  return inner === undefined ? node : unwrap(inner, depth + 1);
-}
-
-/** Climb through parentheses/type wrappers; returns the outermost equivalent node and its parent. */
-function skipWrappers(node: AnyNode): { readonly node: AnyNode; readonly parent: AnyNode | null } {
-  let current = node;
-  let parent = parentOf(current);
-  while (parent !== null && TRANSPARENT_PARENTS.has(parent.type)) {
-    current = parent;
-    parent = parentOf(current);
-  }
-  return { node: current, parent };
-}
-
-function resolveVariable(context: Context, name: string, from: AnyNode): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(from);
-  while (scope !== null) {
-    const variable = scope.set.get(name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
+  return unwrapNode(node, { wrappers: TRANSPARENT_PARENTS, maxDepth: Math.max(0, 9 - depth) });
 }
 
 function staticPropertyName(node: ESTree.MemberExpression): string | null {
-  const property = node.property as AnyNode;
-  if (!node.computed)
-    return property.type === 'Identifier' ? (property as ESTree.IdentifierName).name : null;
-  if (property.type === 'Literal') {
-    const value = (property as { value?: unknown }).value;
-    return typeof value === 'string' ? value : null;
-  }
-  // `at[`toISOString`]()` — a template literal with no interpolation is still a static key.
-  if (property.type === 'TemplateLiteral') {
-    const template = property as ESTree.TemplateLiteral;
-    if (template.expressions.length !== 0 || template.quasis.length !== 1) return null;
-    return template.quasis[0]?.value.cooked ?? null;
-  }
-  return null;
+  return memberName(node, { templates: true, singleQuasi: true });
+}
+
+function aliasInitializer(
+  context: Context,
+  node: Extract<AnyNode, { type: 'Identifier' }>,
+): AnyNode | null {
+  const variable = resolveVariable(context, node.name, node);
+  if (variable?.defs.length !== 1) return null;
+  if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
+  const definition = variable.defs[0];
+  if (definition === undefined) return null;
+  const declaration = definition.node;
+  if (declaration.type !== 'VariableDeclarator') return null;
+  return declaration.init ?? null;
 }
 
 /**
@@ -291,25 +267,28 @@ function staticPropertyName(node: ESTree.MemberExpression): string | null {
  *   - `const AmbientDate = Date` (a `const` whose sole initialiser is the global),
  * while a plain property of a user object (`registry.Date`) stays `null`.
  */
+function identifierGlobalName(
+  context: Context,
+  node: Extract<AnyNode, { type: 'Identifier' }>,
+  depth: number,
+): string | null {
+  const name = (node as ESTree.IdentifierReference).name;
+  const variable = resolveVariable(context, name, node);
+  if (variable === null || variable.defs.length === 0) return name;
+  const definition = variable.defs.length === 1 ? variable.defs[0] : undefined;
+  if (definition?.type !== 'Variable') return null;
+  if (definition.node.type !== 'VariableDeclarator' || definition.node.id.type !== 'Identifier')
+    return null;
+  const init = aliasInitializer(context, node as ESTree.IdentifierReference);
+  if (init === null) return null;
+  return resolveGlobalName(context, init, depth + 1);
+}
+
 function resolveGlobalName(context: Context, raw: AnyNode, depth = 0): string | null {
   if (depth > 6) return null;
   const node = unwrap(raw, 0);
   if (node.type === 'Identifier') {
-    const name = (node as ESTree.IdentifierReference).name;
-    const variable = resolveVariable(context, name, node);
-    if (variable === null || variable.defs.length === 0) return name;
-    if (variable.defs.length !== 1) return null;
-    if (variable.references.some((reference) => reference.isWrite() && !reference.init))
-      return null;
-    const def = variable.defs[0];
-    if (def === undefined || def.type !== 'Variable') return null;
-    const declarator = def.node as AnyNode;
-    if (declarator.type !== 'VariableDeclarator') return null;
-    const id = (declarator as ESTree.VariableDeclarator).id as AnyNode;
-    if (id.type !== 'Identifier') return null;
-    const init = (declarator as ESTree.VariableDeclarator).init as AnyNode | null | undefined;
-    if (init === null || init === undefined) return null;
-    return resolveGlobalName(context, init, depth + 1);
+    return identifierGlobalName(context, node, depth);
   }
   if (node.type === 'MemberExpression') {
     const member = node as ESTree.MemberExpression;
@@ -374,30 +353,31 @@ function isInsideDurationChain(node: AnyNode): boolean {
 }
 
 function keyName(key: AnyNode): string | null {
-  if (key.type === 'Identifier') return (key as ESTree.IdentifierName).name;
-  if (key.type === 'Literal') {
-    const value = (key as { value?: unknown }).value;
-    return typeof value === 'string' ? value : null;
-  }
-  return null;
+  return staticKeyName(key, false, { templates: false });
 }
+
+function durationName(name: string | null): string | null {
+  return name !== null && DURATION_NAME.test(name) ? name : null;
+}
+
+const DURATION_WRAPPERS = new Set([
+  'ParenthesizedExpression',
+  'TSAsExpression',
+  'TSNonNullExpression',
+]);
 
 /** Duration-suffixed identifier / property name appearing as a factor of the chain. */
 function operandDurationName(node: AnyNode, depth: number): string | null {
   if (depth > 8) return null;
   if (node.type === 'Identifier') {
     const name = (node as ESTree.IdentifierReference).name;
-    return DURATION_NAME.test(name) ? name : null;
+    return durationName(name);
   }
   if (node.type === 'MemberExpression') {
     const name = staticPropertyName(node as ESTree.MemberExpression);
-    return name !== null && DURATION_NAME.test(name) ? name : null;
+    return durationName(name);
   }
-  if (
-    node.type === 'ParenthesizedExpression' ||
-    node.type === 'TSAsExpression' ||
-    node.type === 'TSNonNullExpression'
-  ) {
+  if (DURATION_WRAPPERS.has(node.type)) {
     const inner = (node as { expression?: AnyNode }).expression;
     return inner === undefined ? null : operandDurationName(inner, depth + 1);
   }
@@ -435,56 +415,104 @@ function isEffectCallArgument(node: AnyNode, bindings: EffectBindings): boolean 
 }
 
 /** Name of the binding / property / assignment target / enclosing function this expression flows into. */
+const OWNER_PARENTS = new Set([
+  'ArrowFunctionExpression',
+  'ReturnStatement',
+  'BlockStatement',
+  'BinaryExpression',
+  'LogicalExpression',
+  'ConditionalExpression',
+  'UnaryExpression',
+  'ParenthesizedExpression',
+  'TSAsExpression',
+  'TSSatisfiesExpression',
+  'TSNonNullExpression',
+]);
+
+function identifierName(node: AnyNode | null | undefined): string | null {
+  return node?.type === 'Identifier' ? node.name : null;
+}
+
+function assignmentName(node: ESTree.AssignmentExpression): string | null {
+  return node.left.type === 'MemberExpression'
+    ? staticPropertyName(node.left)
+    : identifierName(node.left);
+}
+
+const OWNER_NAMES: ReadonlyMap<string, (node: AnyNode) => string | null> = new Map([
+  ['VariableDeclarator', (node) => identifierName((node as ESTree.VariableDeclarator).id)],
+  ...['Property', 'PropertyDefinition', 'MethodDefinition'].map(
+    (kind): [string, (node: AnyNode) => string | null] => [
+      kind,
+      (node) => keyName((node as { key: AnyNode }).key),
+    ],
+  ),
+  ['AssignmentExpression', (node) => assignmentName(node as ESTree.AssignmentExpression)],
+  ['AssignmentPattern', (node) => identifierName((node as ESTree.AssignmentPattern).left)],
+]);
+
 function ownerName(node: AnyNode): string | null {
   let current: AnyNode | null = parentOf(node);
   for (let depth = 0; current !== null && depth < 12; depth += 1) {
-    switch (current.type) {
-      case 'VariableDeclarator': {
-        const id = (current as ESTree.VariableDeclarator).id as AnyNode;
-        return id.type === 'Identifier' ? (id as ESTree.BindingIdentifier).name : null;
-      }
-      case 'Property':
-      case 'PropertyDefinition':
-      case 'MethodDefinition':
-        return keyName((current as { key: AnyNode }).key);
-      case 'AssignmentExpression': {
-        const left = (current as ESTree.AssignmentExpression).left as AnyNode;
-        if (left.type === 'Identifier') return (left as ESTree.IdentifierReference).name;
-        if (left.type === 'MemberExpression')
-          return staticPropertyName(left as ESTree.MemberExpression);
-        return null;
-      }
-      case 'AssignmentPattern': {
-        const left = (current as { left: AnyNode }).left;
-        return left.type === 'Identifier' ? (left as ESTree.BindingIdentifier).name : null;
-      }
-      // `export const leaseMs = (): number => 5 * 60 * 1000` / `function claimTimeoutMs() { return … }`:
-      // the duration name sits on the function, not on the initialiser.
-      case 'FunctionDeclaration':
-      case 'FunctionExpression': {
-        const id = (current as { id?: AnyNode | null }).id ?? null;
-        if (id !== null && id.type === 'Identifier') return (id as ESTree.BindingIdentifier).name;
-        current = parentOf(current);
-        continue;
-      }
-      case 'ArrowFunctionExpression':
-      case 'ReturnStatement':
-      case 'BlockStatement':
-      case 'BinaryExpression':
-      case 'LogicalExpression':
-      case 'ConditionalExpression':
-      case 'UnaryExpression':
-      case 'ParenthesizedExpression':
-      case 'TSAsExpression':
-      case 'TSSatisfiesExpression':
-      case 'TSNonNullExpression':
-        current = parentOf(current);
-        continue;
-      default:
-        return null;
-    }
+    const resolve = OWNER_NAMES.get(current.type);
+    if (resolve !== undefined) return resolve(current);
+    if (current.type === 'FunctionDeclaration' || current.type === 'FunctionExpression') {
+      const name = identifierName(current.id);
+      if (name !== null) return name;
+    } else if (!OWNER_PARENTS.has(current.type)) return null;
+    current = parentOf(current);
   }
   return null;
+}
+
+function fileIsTest(filename: string, options: RuleOptions): boolean {
+  if (matchesAny(filename, options.testPaths)) return true;
+  if (matchesAny(filename, options.productionPaths)) return false;
+  return isTestFile(filename);
+}
+
+function browserFunction(node: AnyNode, methods: ReadonlySet<string>): boolean {
+  if (!FUNCTION_TYPES.has(node.type)) return false;
+  const parent = parentOf(node);
+  if (parent?.type !== 'CallExpression' || !(parent.arguments as readonly AnyNode[]).includes(node))
+    return false;
+  const callee = unwrap(parent.callee, 0);
+  if (callee.type !== 'MemberExpression') return false;
+  const name = staticPropertyName(callee);
+  return name !== null && methods.has(name);
+}
+
+function typeMembers(type: AnyNode | null) {
+  if (type?.type === 'TSTypeLiteral') return type.members;
+  if (type?.type === 'TSInterfaceBody') return type.body;
+  return [];
+}
+
+function clockSite(node: ESTree.MemberExpression, global: string): AnyNode {
+  if (global !== 'process') return node;
+  const outer = skipWrappers(node);
+  const parent = outer.parent;
+  if (parent?.type !== 'MemberExpression' || parent.object !== outer.node) return node;
+  return staticPropertyName(parent) === 'bigint' ? parent : node;
+}
+
+function ignoredReceiver(
+  node: AnyNode,
+  ignored: ReadonlySet<string>,
+  bindings: EffectBindings,
+): boolean {
+  if (node.type === 'ThisExpression') return ignored.has('this');
+  if (node.type === 'Super') return ignored.has('super');
+  return (
+    node.type === 'Identifier' && (ignored.has(node.name) || bindings.namespaces.has(node.name))
+  );
+}
+
+function durationIsNamed(node: ESTree.BinaryExpression): boolean {
+  return (
+    durationName(ownerName(node)) !== null ||
+    (node.operator === '*' && operandDurationName(node, 0) !== null)
+  );
 }
 
 /** Effect-native rule: instants come from `DateTime`/`Clock`, intervals from `Duration`. */
@@ -592,11 +620,7 @@ export const rule = defineRule({
     if (matchesAny(filename, options.ignore)) return {};
     if (options.ignoreScripts && isScriptFile(filename)) return {};
 
-    const inTest = matchesAny(filename, options.testPaths)
-      ? true
-      : matchesAny(filename, options.productionPaths)
-        ? false
-        : isTestFile(filename);
+    const inTest = fileIsTest(filename, options);
     if (inTest && options.testMode === 'off') return {};
     /** `clock-only`: report just the wall-clock reads `TestClock` must own. */
     const clockOnly = inTest && options.testMode === 'clock-only';
@@ -622,18 +646,7 @@ export const rule = defineRule({
     const isBrowserEvaluated = (node: AnyNode): boolean => {
       let current: AnyNode | null = node;
       for (let depth = 0; current !== null && depth < 40; depth += 1) {
-        if (FUNCTION_TYPES.has(current.type)) {
-          const parent = parentOf(current);
-          if (parent !== null && parent.type === 'CallExpression') {
-            const call = parent as ESTree.CallExpression;
-            const isArgument = (call.arguments as readonly AnyNode[]).includes(current);
-            const callee = unwrap(call.callee as AnyNode, 0);
-            if (isArgument && callee.type === 'MemberExpression') {
-              const name = staticPropertyName(callee as ESTree.MemberExpression);
-              if (name !== null && browserEvaluated.has(name)) return true;
-            }
-          }
-        }
+        if (browserFunction(current, browserEvaluated)) return true;
         current = parentOf(current);
       }
       return false;
@@ -662,6 +675,42 @@ export const rule = defineRule({
       return null;
     };
 
+    const identifierType = (
+      node: Extract<AnyNode, { type: 'Identifier' }>,
+      depth: number,
+    ): ESTree.TSType | null => {
+      const variable = resolveVariable(context, node.name, node);
+      if (variable?.references.some((reference) => reference.isWrite() && !reference.init))
+        return null;
+      const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
+      if (definition === undefined) return null;
+      const declared = (definition.name as { typeAnnotation?: ESTree.TSTypeAnnotation })
+        .typeAnnotation;
+      if (declared != null) return declared.typeAnnotation;
+      if (definition.node.type === 'VariableDeclarator' && definition.node.init !== null)
+        return declaredType(definition.node.init, depth + 1);
+      return null;
+    };
+
+    const memberType = (node: ESTree.MemberExpression, depth: number): ESTree.TSType | null => {
+      const name = staticPropertyName(node);
+      const owner = declaredType(node.object, depth + 1);
+      const resolved = owner === null ? null : resolveType(owner);
+      for (const member of typeMembers(resolved)) {
+        if (member.type === 'TSPropertySignature' && keyName(member.key) === name)
+          return member.typeAnnotation?.typeAnnotation ?? null;
+      }
+      return null;
+    };
+
+    const dateAnnotation = (raw: AnyNode): ESTree.IdentifierReference | null => {
+      const type = declaredType(raw);
+      const resolved = type === null ? null : resolveType(type);
+      if (resolved?.type !== 'TSTypeReference' || resolved.typeName.type !== 'Identifier')
+        return null;
+      return resolved.typeName.name === 'Date' ? resolved.typeName : null;
+    };
+
     const declaredType = (raw: AnyNode, depth = 0): ESTree.TSType | null => {
       if (depth > 12) return null;
       if (
@@ -673,61 +722,22 @@ export const rule = defineRule({
       const node = unwrap(raw, 0);
       const annotation = (node as { typeAnnotation?: ESTree.TSTypeAnnotation }).typeAnnotation;
       if (annotation?.type === 'TSTypeAnnotation') return annotation.typeAnnotation;
-      if (node.type === 'Identifier') {
-        const variable = resolveVariable(context, node.name, node);
-        if (variable?.references.some((reference) => reference.isWrite() && !reference.init))
-          return null;
-        const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
-        if (definition === undefined) return null;
-        const declared = (definition.name as { typeAnnotation?: ESTree.TSTypeAnnotation })
-          .typeAnnotation;
-        if (declared != null) return declared.typeAnnotation;
-        if (definition.node.type === 'VariableDeclarator' && definition.node.init !== null)
-          return declaredType(definition.node.init, depth + 1);
-      }
-      if (node.type === 'MemberExpression') {
-        const name = staticPropertyName(node);
-        const owner = declaredType(node.object, depth + 1);
-        const resolved = owner === null ? null : resolveType(owner);
-        const members =
-          resolved?.type === 'TSTypeLiteral'
-            ? resolved.members
-            : resolved?.type === 'TSInterfaceBody'
-              ? resolved.body
-              : [];
-        for (const member of members) {
-          if (member.type === 'TSPropertySignature' && keyName(member.key) === name)
-            return member.typeAnnotation?.typeAnnotation ?? null;
-        }
-      }
+      if (node.type === 'Identifier') return identifierType(node, depth);
+      if (node.type === 'MemberExpression') return memberType(node, depth);
       return null;
     };
 
     const isDateReceiver = (raw: AnyNode, depth = 0): boolean => {
       if (depth > 12) return false;
-      const type = declaredType(raw);
-      const resolved = type === null ? null : resolveType(type);
-      if (
-        resolved?.type === 'TSTypeReference' &&
-        resolved.typeName.type === 'Identifier' &&
-        resolved.typeName.name === 'Date'
-      ) {
-        return resolveGlobalName(context, resolved.typeName) === 'Date';
-      }
+      const annotation = dateAnnotation(raw);
+      if (annotation !== null) return resolveGlobalName(context, annotation) === 'Date';
       const node = unwrap(raw, 0);
       if (node.type === 'NewExpression') return resolveGlobalName(context, node.callee) === 'Date';
       if (node.type === 'MemberExpression' && staticPropertyName(node) === 'prototype')
         return resolveGlobalName(context, node.object) === 'Date';
       if (node.type !== 'Identifier') return false;
-      const variable = resolveVariable(context, node.name, node);
-      if (variable?.references.some((reference) => reference.isWrite() && !reference.init))
-        return false;
-      const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
-      return (
-        definition?.node.type === 'VariableDeclarator' &&
-        definition.node.init !== null &&
-        isDateReceiver(definition.node.init, depth + 1)
-      );
+      const init = aliasInitializer(context, node);
+      return init !== null && isDateReceiver(init, depth + 1);
     };
 
     /**
@@ -742,6 +752,15 @@ export const rule = defineRule({
       if ((member.object as AnyNode) !== reference) return false;
       const name = staticPropertyName(member);
       return name !== null && dateMethods.has(name);
+    };
+
+    const reportClockProperty = (
+      property: ESTree.ObjectPattern['properties'][number],
+      members: ReadonlySet<string>,
+    ): void => {
+      if (property.type !== 'Property' || property.computed) return;
+      const name = keyName(property.key);
+      if (name !== null && members.has(name)) report(property, 'ambientClockRead');
     };
 
     return {
@@ -767,39 +786,16 @@ export const rule = defineRule({
         // (2) `Date.now` / `Date.parse` / `Date.UTC` / `performance.now` / `process.hrtime[.bigint]`,
         // including `globalThis.`-qualified and locally aliased forms.
         const global = resolveGlobalName(context, node.object as AnyNode);
-        if (global !== null) {
-          const members = clockTable.get(global);
-          if (members !== undefined && members.has(member)) {
-            // `process.hrtime.bigint()` reports once, on the outer call.
-            let site: AnyNode = node as unknown as AnyNode;
-            if (global === 'process') {
-              const outer = skipWrappers(site);
-              if (
-                outer.parent !== null &&
-                outer.parent.type === 'MemberExpression' &&
-                (outer.parent as ESTree.MemberExpression).object === outer.node &&
-                staticPropertyName(outer.parent as ESTree.MemberExpression) === 'bigint'
-              ) {
-                site = outer.parent;
-              }
-            }
-            report(callSiteOf(site), 'ambientClockRead');
-            return;
-          }
+        if (global !== null && clockTable.get(global)?.has(member)) {
+          report(callSiteOf(clockSite(node, global)), 'ambientClockRead');
+          return;
         }
 
         // (3) hand serialisation / hand calendar arithmetic on a `Date` receiver.
         if (clockOnly) return;
         if (!dateMethods.has(member)) return;
         const receiver = unwrap(node.object as AnyNode, 0);
-        if (receiver.type === 'ThisExpression' && ignoreReceivers.has('this')) return;
-        if (receiver.type === 'Super' && ignoreReceivers.has('super')) return;
-        if (receiver.type === 'Identifier') {
-          const receiverName = (receiver as ESTree.IdentifierReference).name;
-          if (ignoreReceivers.has(receiverName)) return;
-          // Effect's own temporal/schema API is never a hand-rolled `Date` call.
-          if (bindings.namespaces.has(receiverName)) return;
-        }
+        if (ignoredReceiver(receiver, ignoreReceivers, bindings)) return;
         if (!isDateReceiver(node.object)) return;
         report(callSiteOf(node as unknown as AnyNode), 'dateMethodCall');
       },
@@ -815,12 +811,8 @@ export const rule = defineRule({
         if (global === null) return;
         const members = clockTable.get(global);
         if (members === undefined) return;
-        for (const property of (id as ESTree.ObjectPattern).properties as readonly AnyNode[]) {
-          if (property.type !== 'Property') continue;
-          const key = (property as { key: AnyNode; computed: boolean }).key;
-          const name = (property as { computed: boolean }).computed ? null : keyName(key);
-          if (name !== null && members.has(name)) report(property, 'ambientClockRead');
-        }
+        for (const property of (id as ESTree.ObjectPattern).properties)
+          reportClockProperty(property, members);
       },
 
       // (4) a Duration spelled out as magic millisecond arithmetic.
@@ -831,12 +823,7 @@ export const rule = defineRule({
         if (isInsideDurationChain(site)) return;
         if (!containsDurationLiteral(site, 0)) return;
         if (isEffectCallArgument(site, bindings)) return;
-        const owner = ownerName(site);
-        const owned = owner !== null && DURATION_NAME.test(owner);
-        // Without an owning name, only a multiplication *up* to milliseconds is a hand-rolled
-        // Duration; a division is normally a unit conversion at an edge (`Math.floor(ms / 1000)`).
-        const named = owned || (node.operator === '*' && operandDurationName(site, 0) !== null);
-        if (!named) return;
+        if (!durationIsNamed(node)) return;
         report(site, 'handDurationArithmetic');
       },
     };

@@ -1,10 +1,10 @@
 import { Schema } from 'effect';
 
-export const PartyRegistryResourceIdSchema = Schema.String.check(
+const PartyRegistryResourceIdSchema = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(300),
 ).pipe(Schema.brand('PartyRegistryResourceId'));
-export const PartyRegistryTenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+const PartyRegistryTenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('TenantId'),
 );
 

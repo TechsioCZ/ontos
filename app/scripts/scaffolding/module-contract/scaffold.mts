@@ -1,4 +1,4 @@
-import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect';
+import { Array as EffectArray, Effect, FileSystem, Option, Schema, Predicate } from 'effect';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   MODULE_CONTRACT_GENERATOR_HEADER,
@@ -89,10 +89,10 @@ const scaffoldError = (message: string, cause?: unknown): ModuleContractScaffold
 const trySync = <Value,>(operation: () => Value) =>
   Effect.try({
     catch: (cause) =>
-      cause instanceof ModuleContractScaffoldError
+      Schema.is(ModuleContractScaffoldError)(cause)
         ? cause
         : scaffoldError(
-            cause instanceof Error ? cause.message : 'module contract update failed',
+            Predicate.isError(cause) ? cause.message : 'module contract update failed',
             cause,
           ),
     try: operation,
@@ -429,7 +429,7 @@ const patchTsconfig = (
     );
   });
 
-export const planModuleContractScaffold = (
+const planModuleContractScaffold = (
   workspaceRoot: string,
   config: ModuleContractScaffoldConfig,
 ): Effect.Effect<

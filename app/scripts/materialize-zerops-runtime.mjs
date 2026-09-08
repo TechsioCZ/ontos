@@ -666,27 +666,29 @@ const materializeCommand = Command.make(
       );
 
       const appPackage = yield* readRuntimePackage(pathService.join(appRoot, packageJsonFile));
-      if (appPackage.name !== packageName) {
-        yield* fail(`--package must match ${packageDir}/package.json name`);
-      }
-      if (!worker && !(yield* fileSystem.exists(appOutputDir))) {
-        yield* fail(
-          `Modern.js package build must produce ${pathService.relative(workspaceRoot, appOutputDir)} before runtime materialization`,
-        );
-      }
+      const prepareRuntimeDirectory = Effect.gen(function* prepareRuntimeDirectoryEffect() {
+        if (appPackage.name !== packageName) {
+          yield* fail(`--package must match ${packageDir}/package.json name`);
+        }
+        if (!worker && !(yield* fileSystem.exists(appOutputDir))) {
+          yield* fail(
+            `Modern.js package build must produce ${pathService.relative(workspaceRoot, appOutputDir)} before runtime materialization`,
+          );
+        }
 
-      yield* fileSystem.remove(runtimeDir, { force: true, recursive: true });
-      yield* fileSystem.makeDirectory(pathService.dirname(runtimeDir), { recursive: true });
-      yield* worker
-        ? fileSystem.makeDirectory(runtimeDir, { recursive: true })
-        : fileSystem.copy(appOutputDir, runtimeDir);
-      const entryPath = pathService.join(runtimeDir, 'index.js');
-      if (!worker && !(yield* fileSystem.exists(entryPath))) {
-        yield* fail(
-          `Modern.js Node deploy output is missing ${pathService.relative(workspaceRoot, entryPath)}`,
-        );
-      }
-
+        yield* fileSystem.remove(runtimeDir, { force: true, recursive: true });
+        yield* fileSystem.makeDirectory(pathService.dirname(runtimeDir), { recursive: true });
+        yield* worker
+          ? fileSystem.makeDirectory(runtimeDir, { recursive: true })
+          : fileSystem.copy(appOutputDir, runtimeDir);
+        const entryPath = pathService.join(runtimeDir, 'index.js');
+        if (!worker && !(yield* fileSystem.exists(entryPath))) {
+          yield* fail(
+            `Modern.js Node deploy output is missing ${pathService.relative(workspaceRoot, entryPath)}`,
+          );
+        }
+      });
+      yield* prepareRuntimeDirectory;
       const packageJsonPath = pathService.join(runtimeDir, packageJsonFile);
       /** @type {RuntimePackage} */
       let runtimePackage = (yield* readOptionalRuntimePackage(packageJsonPath)) ?? {};

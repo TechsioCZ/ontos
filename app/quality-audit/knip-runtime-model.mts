@@ -1,3 +1,4 @@
+import { hasUltramodernDispatch } from '../scripts/shared/ultramodern-wrapper-source.mts';
 import { Effect, FileSystem, Path, Schema } from 'effect';
 import { parse as parseJsonc } from 'jsonc-parser';
 import type { ParseError } from 'jsonc-parser';
@@ -325,7 +326,11 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         'node_modules/@modern-js/create/templates/workspace-scripts/ultramodern-typecheck.mjs',
       );
       const usesTsgo =
-        typecheck?.includes("['ultramodern', 'typecheck', ...forwardedArgs]") === true &&
+        hasUltramodernDispatch(
+          typecheck,
+          'typecheck',
+          yield* read('scripts/shared/ultramodern-command.mts'),
+        ) &&
         vendorTypecheck?.includes('resolveEffectTsgoCompiler({') === true &&
         vendorTypecheck.includes("from: pathToFileURL(join(workspaceRoot, 'package.json'))");
       if (usesTsgo && typecheck !== undefined) {
@@ -378,8 +383,11 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
           'node_modules/@modern-js/create/templates/workspace-scripts/ultramodern-performance-readiness.mjs';
         const vendor = yield* read(vendorFile);
         if (
-          readiness?.includes("['ultramodern', 'performance-readiness', ...forwardedArgs]") ===
-            true &&
+          hasUltramodernDispatch(
+            readiness,
+            'performance-readiness',
+            yield* read('scripts/shared/ultramodern-command.mts'),
+          ) &&
           vendor?.includes('pathToFileURL(path.join(root, configPath)).href') === true &&
           vendor.includes('import(moduleUrl)')
         ) {

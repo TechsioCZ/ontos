@@ -75,7 +75,7 @@ type FixtureUserProvision = (
 const revealAuthenticationSecret = (input: AuthenticationSecretInput): string =>
   Redacted.isRedacted(input) ? Redacted.value(input) : input;
 
-export interface SafeTenantIdentity {
+interface SafeTenantIdentity {
   readonly displayName: string;
   readonly email: string;
   readonly impersonating?: true;
@@ -83,17 +83,17 @@ export interface SafeTenantIdentity {
   readonly tenantId: string;
 }
 
-export interface SafeAuthenticatedIdentity extends SafeTenantIdentity {
+interface SafeAuthenticatedIdentity extends SafeTenantIdentity {
   readonly legalEntityId: string;
   readonly legalName: string;
 }
 
-export interface AuthenticationResult {
+interface AuthenticationResult {
   readonly identity: SafeTenantIdentity;
   readonly setCookieHeaders: readonly string[];
 }
 
-export type TenantContextResult =
+type TenantContextResult =
   | {
       readonly setCookieHeaders: readonly string[];
       readonly state: 'anonymous';
@@ -105,21 +105,21 @@ export type TenantContextResult =
       readonly state: 'authenticated';
     };
 
-export interface CurrentSessionResult {
+interface CurrentSessionResult {
   readonly identity: SafeTenantIdentity | null;
   readonly setCookieHeaders: readonly string[];
 }
 
-export interface SignOutResult {
+interface SignOutResult {
   readonly setCookieHeaders: readonly string[];
 }
 
-export interface AvailableTenantsResult {
+interface AvailableTenantsResult {
   readonly setCookieHeaders: readonly string[];
   readonly tenants: readonly AvailableTenant[];
 }
 
-export interface SwitchTenantResult {
+interface SwitchTenantResult {
   readonly selectedTenantId: string;
   readonly setCookieHeaders: readonly string[];
 }
@@ -312,23 +312,44 @@ const toSafeIdentity = (
   tenantId: principal.tenantId,
 });
 
+const isInvalidImpersonationLifecycle = (
+  target: ResolvedPrincipalIdentity,
+  original: ResolvedPrincipalIdentity,
+  lifecycle: SupportImpersonationLifecycle,
+): boolean =>
+  target.principalId === original.principalId ||
+  target.principalId !== lifecycle.targetPrincipalId ||
+  original.principalId !== lifecycle.originalPrincipalId ||
+  original.authBindingId !== lifecycle.originalAuthBindingId ||
+  lifecycle.originalSessionId.length === 0 ||
+  lifecycle.reason.trim().length === 0 ||
+  lifecycle.reason.length > 500;
+
+const mapApiError = (error: APIError): AuthenticationRuntimeError | undefined => {
+  const code =
+    Predicate.isObjectKeyword(error.body) && error.body !== null && 'code' in error.body
+      ? error.body.code
+      : undefined;
+
+  if (code === FORBIDDEN_IDENTITY_CODE) {
+    return new OntosIdentityForbiddenError();
+  }
+
+  if (code === IDENTITY_UNAVAILABLE_CODE || error.statusCode === 503) {
+    return new AuthenticationUnavailableError();
+  }
+
+  if (error.statusCode === 400 || error.statusCode === 401 || error.statusCode === 403) {
+    return new InvalidCredentialsError();
+  }
+  return undefined;
+};
+
 const mapKnownRuntimeError = <Failure>(error: Failure): AuthenticationRuntimeError | undefined => {
   if (isAPIError(error)) {
-    const code =
-      Predicate.isObjectKeyword(error.body) && error.body !== null && 'code' in error.body
-        ? error.body.code
-        : undefined;
-
-    if (code === FORBIDDEN_IDENTITY_CODE) {
-      return new OntosIdentityForbiddenError();
-    }
-
-    if (code === IDENTITY_UNAVAILABLE_CODE || error.statusCode === 503) {
-      return new AuthenticationUnavailableError();
-    }
-
-    if (error.statusCode === 400 || error.statusCode === 401 || error.statusCode === 403) {
-      return new InvalidCredentialsError();
+    const known = mapApiError(error);
+    if (known !== undefined) {
+      return known;
     }
   }
 
@@ -590,15 +611,7 @@ const assembleAuthenticationService = (
     const original = yield* resolver
       .resolveBetterAuthUserForTenant(originalBetterAuthUserId, target.tenantId)
       .pipe(Effect.mapError(mapResolverError));
-    if (
-      target.principalId === original.principalId ||
-      target.principalId !== lifecycle.targetPrincipalId ||
-      original.principalId !== lifecycle.originalPrincipalId ||
-      original.authBindingId !== lifecycle.originalAuthBindingId ||
-      lifecycle.originalSessionId.length === 0 ||
-      lifecycle.reason.trim().length === 0 ||
-      lifecycle.reason.length > 500
-    ) {
+    if (isInvalidImpersonationLifecycle(target, original, lifecycle)) {
       return yield* new OntosIdentityForbiddenError();
     }
     const { verifySupportImpersonationStarted } = resolver;

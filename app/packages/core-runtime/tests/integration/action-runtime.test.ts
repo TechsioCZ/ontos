@@ -1,3 +1,4 @@
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { runEffectTestPromise, runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import { ConnectionError, SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 import assert from 'node:assert/strict';
@@ -101,53 +102,22 @@ const transport = (idempotencyKey: string, targetResourceId = 'primary') => ({
   targetResourceType: 'test-state',
 });
 
-const inventoryStockContract: OntosModuleDeploymentContract = {
-  deployment: { appId: 'inventory-stock', buildMarker: 'integration-test' },
-  manifest: {
-    activation: {
-      defaultState: 'inactive',
-      preservesHistoryWhenInactive: true,
-      scope: 'tenant',
-      supportedStates: [
-        'inactive',
-        'active',
-        'read_only',
-        'suspended',
-        'quarantined',
-        'deprecated',
-        'archived',
-      ],
-    },
-    module: {
-      description: 'Inventory integration fixture',
-      displayName: 'Inventory',
-      id: 'inventory.stock',
-      implementedAs: 'ultramodern_microvertical',
-      kind: 'business_module',
-    },
-    publicSurface: {
-      actions: [],
-      api: [],
-      components: [],
-      events: [],
-      reports: [],
-      resourceTypes: [],
-      search: [],
-      shellContributions: {
-        mediaAttachments: [],
-        navigation: [],
-        pages: [],
-        publicComponents: [],
-        reports: [],
-        resourceDetails: [],
-        search: [],
-        timelines: [],
-      },
-    },
-  },
-  runtime: { outboxSubscriptions: [] },
-  schemaVersion: '2',
-};
+const inventoryStockContract: OntosModuleDeploymentContract = makeModuleContractFixture({
+  appId: 'inventory-stock',
+  buildMarker: 'integration-test',
+  description: 'Inventory integration fixture',
+  displayName: 'Inventory',
+  moduleId: 'inventory.stock',
+  supportedStates: [
+    'inactive',
+    'active',
+    'read_only',
+    'suspended',
+    'quarantined',
+    'deprecated',
+    'archived',
+  ],
+});
 
 const inventoryInstalledCatalog: InstalledModuleCatalog = Object.freeze({
   contracts: Object.freeze([inventoryStockContract]),

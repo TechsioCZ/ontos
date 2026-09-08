@@ -560,6 +560,14 @@ const snapshotTree = async (root: string): Promise<Readonly<Record<string, strin
 const readFixtureFile = async (root: string, relativePath: string): Promise<string> =>
   await readFile(path.join(root, relativePath), 'utf-8');
 
+const contextPermissionCommands = new Set<ScaffoldCommand>([
+  scaffoldCommand.microverticalPage,
+  scaffoldCommand.moduleApi,
+  scaffoldCommand.publicComponent,
+  'report',
+  scaffoldCommand.searchProvider,
+]);
+
 const run = async (
   fixture: Fixture,
   command: ScaffoldCommand,
@@ -588,13 +596,7 @@ const run = async (
           ];
         } else if (command === scaffoldCommand.outboxWorker) {
           flags = [...flags, scaffoldFlag.authorization, 'owner_local_background'];
-        } else if (
-          command === scaffoldCommand.microverticalPage ||
-          command === scaffoldCommand.moduleApi ||
-          command === scaffoldCommand.publicComponent ||
-          command === 'report' ||
-          command === scaffoldCommand.searchProvider
-        ) {
+        } else if (contextPermissionCommands.has(command)) {
           flags = [
             ...flags,
             scaffoldFlag.authorization,

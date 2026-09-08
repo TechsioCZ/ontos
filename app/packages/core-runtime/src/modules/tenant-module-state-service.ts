@@ -58,7 +58,7 @@ export const TenantModuleStateRecordSchema = Schema.Struct({
 });
 export type TenantModuleStateRecord = Schema.Schema.Type<typeof TenantModuleStateRecordSchema>;
 
-export const TenantModuleStateChangeSourceSchema = Schema.Literals(['support', 'system', 'user']);
+const TenantModuleStateChangeSourceSchema = Schema.Literals(['support', 'system', 'user']);
 export type TenantModuleStateChangeSource = typeof TenantModuleStateChangeSourceSchema.Type;
 
 export const validateTenantModuleStateTransition = (

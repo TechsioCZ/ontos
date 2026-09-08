@@ -477,20 +477,31 @@ const renderGovernedServer = (
   name: string,
 ): string => {
   const type = toPascalCase(name);
-  const isModuleApi = kind === MODULE_API_KIND;
-  /* eslint-disable no-nested-ternary, unicorn/no-nested-ternary -- Preserve the compact established generator-name mapping. */
-  const suffix = kind === REPORT_KIND ? REPORT_KIND : kind === SEARCH_PROVIDER_KIND ? 'search' : '';
-  const contract = isModuleApi ? name : `${name}-${suffix}`;
-  const apiValue = isModuleApi
-    ? `${type}Api`
-    : `${type}${kind === REPORT_KIND ? 'Report' : 'Search'}Api`;
-  const group = isModuleApi ? toCamelCase(name) : kind === REPORT_KIND ? 'reports' : 'search';
+  const names = {
+    [MODULE_API_KIND]: {
+      apiValue: `${type}Api`,
+      contract: name,
+      group: toCamelCase(name),
+      problemStem: type,
+      readImport: `../src/api/${name}.read.ts`,
+    },
+    [REPORT_KIND]: {
+      apiValue: `${type}ReportApi`,
+      contract: `${name}-report`,
+      group: 'reports',
+      problemStem: `${type}Provider`,
+      readImport: `../src/reports/${name}.provider.ts`,
+    },
+    [SEARCH_PROVIDER_KIND]: {
+      apiValue: `${type}SearchApi`,
+      contract: `${name}-search`,
+      group: 'search',
+      problemStem: `${type}Provider`,
+      readImport: `../src/search/${name}.provider.ts`,
+    },
+  };
+  const { apiValue, contract, group, problemStem, readImport } = names[kind];
   const readValue = `${toCamelCase(name)}Read`;
-  const readImport = isModuleApi
-    ? `../src/api/${name}.read.ts`
-    : `../src/${kind === REPORT_KIND ? 'reports' : 'search'}/${name}.provider.ts`;
-  /* eslint-enable no-nested-ternary, unicorn/no-nested-ternary */
-  const problemStem = `${type}${isModuleApi ? '' : 'Provider'}`;
   return `${generatedHeader(kind)}
 import { ReadRuntime } from '@app/core-runtime';
 import type { ReadCoreError } from '@app/core-runtime';
@@ -767,63 +778,23 @@ const patchFederationExposure = Effect.fn('GovernedContributionScaffold.patchFed
   },
 );
 
-/* eslint-disable no-nested-ternary, unicorn/no-nested-ternary -- Existing kind dispatch is kept behaviorally unchanged while the standalone lint gate is enforced. */
-export const planGovernedContributionScaffold = Effect.fn('GovernedContributionScaffold.plan')(
-  function* planGovernedContributionScaffold(
+const planGovernedTransport = Effect.fn('GovernedContributionScaffold.transport')(
+  function* planGovernedTransport(
     workspaceRoot: string,
     kind: GovernedContributionKind,
-    config: GovernedContributionScaffoldConfig,
+    vertical: OntosVerticalMetadata,
+    name: string,
   ) {
-    const name = yield* tryScaffold('governed contribution name is invalid', () =>
-      requireCanonicalSlug(config.name, kind),
-    );
-    const resource =
-      config.resource === undefined
-        ? undefined
-        : yield* tryScaffold('governed contribution resource is invalid', () =>
-            requireCanonicalSlug(config.resource ?? '', 'resource'),
-          );
-    const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical);
-    const isComponent = kind === PUBLIC_COMPONENT_KIND;
     const isApi = kind === MODULE_API_KIND;
-    const directory =
-      kind === REPORT_KIND ? 'reports' : kind === SEARCH_PROVIDER_KIND ? 'search' : '';
-    const artifactPath = yield* tryScaffold('failed to resolve governed contribution path', () =>
-      resolveContainedPath(
-        vertical.directory,
-        ...(isComponent
-          ? ['src', 'components', `${name}.tsx`]
-          : isApi
-            ? ['shared', 'apis', `${name}.ts`]
-            : ['src', directory, `${name}.provider.ts`]),
-      ),
-    );
-    const artifact = yield* tryScaffold('failed to render governed contribution', () => {
-      if (isComponent) {
-        return renderPublicComponent(name);
-      }
-      if (isApi) {
-        return renderApiContract(name);
-      }
-      if (isProviderContribution(kind)) {
-        return renderProvider(kind, vertical, name, config);
-      }
-      return raiseScaffoldFailure('unsupported governed contribution', kind);
-    });
-    const mutations: Mutation[] = [yield* createMutationEffect(artifactPath, artifact)];
-    if (isApi) {
-      const readPath = yield* tryScaffold('failed to resolve governed read path', () =>
-        resolveContainedPath(vertical.directory, 'src', 'api', `${name}.read.ts`),
-      );
-      const readSource = yield* tryScaffold('failed to render governed read', () =>
-        renderModuleApiRead(vertical, name, config),
-      );
-      mutations.push(yield* createMutationEffect(readPath, readSource));
-    }
+    const mutations: Mutation[] = [];
     let clientPath: string | undefined;
     let serverPath: string | undefined;
-    if (kind === MODULE_API_KIND || isProviderContribution(kind)) {
-      const suffix = isApi ? 'client' : kind === REPORT_KIND ? 'report-client' : 'search-client';
+    if (kind !== PUBLIC_COMPONENT_KIND) {
+      const suffix = {
+        [MODULE_API_KIND]: 'client',
+        [REPORT_KIND]: 'report-client',
+        [SEARCH_PROVIDER_KIND]: 'search-client',
+      }[kind];
       clientPath = yield* tryScaffold('failed to resolve governed client path', () =>
         resolveContainedPath(vertical.directory, 'src', 'api', `${name}-${suffix}.ts`),
       );
@@ -855,7 +826,7 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
         resolveContainedPath(
           vertical.directory,
           'api',
-          `${name}-${isApi ? 'read' : kind === REPORT_KIND ? REPORT_KIND : 'search'}-server.ts`,
+          `${name}-${{ [MODULE_API_KIND]: 'read', [REPORT_KIND]: REPORT_KIND, [SEARCH_PROVIDER_KIND]: 'search' }[kind]}-server.ts`,
         ),
       );
       mutations.push(yield* createMutationEffect(serverPath, renderGovernedServer(kind, name)));
@@ -864,6 +835,62 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
       });
       mutations.push(...boundary.mutations);
     }
+    return { clientPath, mutations, serverPath };
+  },
+);
+
+export const planGovernedContributionScaffold = Effect.fn('GovernedContributionScaffold.plan')(
+  function* planGovernedContributionScaffold(
+    workspaceRoot: string,
+    kind: GovernedContributionKind,
+    config: GovernedContributionScaffoldConfig,
+  ) {
+    const name = yield* tryScaffold('governed contribution name is invalid', () =>
+      requireCanonicalSlug(config.name, kind),
+    );
+    const resource =
+      config.resource === undefined
+        ? undefined
+        : yield* tryScaffold('governed contribution resource is invalid', () =>
+            requireCanonicalSlug(config.resource ?? '', 'resource'),
+          );
+    const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical);
+    const isComponent = kind === PUBLIC_COMPONENT_KIND;
+    const isApi = kind === MODULE_API_KIND;
+    const artifactSegments = {
+      [MODULE_API_KIND]: ['shared', 'apis', `${name}.ts`],
+      [PUBLIC_COMPONENT_KIND]: ['src', 'components', `${name}.tsx`],
+      [REPORT_KIND]: ['src', 'reports', `${name}.provider.ts`],
+      [SEARCH_PROVIDER_KIND]: ['src', 'search', `${name}.provider.ts`],
+    };
+    const artifactPath = yield* tryScaffold('failed to resolve governed contribution path', () =>
+      resolveContainedPath(vertical.directory, ...artifactSegments[kind]),
+    );
+    const artifact = yield* tryScaffold('failed to render governed contribution', () => {
+      if (isComponent) {
+        return renderPublicComponent(name);
+      }
+      if (isApi) {
+        return renderApiContract(name);
+      }
+      if (isProviderContribution(kind)) {
+        return renderProvider(kind, vertical, name, config);
+      }
+      return raiseScaffoldFailure('unsupported governed contribution', kind);
+    });
+    const mutations: Mutation[] = [yield* createMutationEffect(artifactPath, artifact)];
+    if (isApi) {
+      const readPath = yield* tryScaffold('failed to resolve governed read path', () =>
+        resolveContainedPath(vertical.directory, 'src', 'api', `${name}.read.ts`),
+      );
+      const readSource = yield* tryScaffold('failed to render governed read', () =>
+        renderModuleApiRead(vertical, name, config),
+      );
+      mutations.push(yield* createMutationEffect(readPath, readSource));
+    }
+    const transport = yield* planGovernedTransport(workspaceRoot, kind, vertical, name);
+    const { clientPath, serverPath } = transport;
+    mutations.push(...transport.mutations);
     const ownerImport = manifestImport(kind, name);
     let manifest = vertical.manifestContent;
     if (ownerImport !== undefined) {
@@ -909,4 +936,3 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
     return { mutations, result };
   },
 );
-/* eslint-enable no-nested-ternary, unicorn/no-nested-ternary */

@@ -661,7 +661,7 @@ export const CoreSearchProjectionStoreLive = Layer.effect(
 /** Fully composed production query layer; owner adapters never import Core database capabilities. */
 export const CoreSearchQueryRuntimeLive = Layer.effect(
   CoreSearchQueryRuntime,
-  Effect.gen(function* makeCoreSearchQueryRuntimeLive() {
+  Effect.gen(function* createCoreSearchQueryRuntimeLive() {
     const database = yield* CoreDatabase;
     const store = makePostgresCoreSearchProjectionStore(database);
     return createCoreSearchQueryRuntime(store);

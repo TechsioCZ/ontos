@@ -19,7 +19,7 @@ import type { CounterpartyPersistenceUnavailable } from '../../shared/domain/cou
 import { listCounterpartyRoleHistory } from '../services/counterparty-persistence.service.ts';
 import type { LookupResult } from '../services/counterparty-persistence.service.ts';
 
-export const counterpartyRoleHistoryEntrypoint = defineTenantModuleEntrypoint({
+const counterpartyRoleHistoryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'party.registry.api.counterparty-role-history',

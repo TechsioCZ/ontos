@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * Audit finding: **A1** — "Establish one process-level Layer and ManagedRuntime composition model"
  * (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`). A1 counts 12 `Layer.orDie` sites while the
@@ -39,21 +40,18 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree } from '@oxlint/plugins';
 
 import { collectEffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
+import { stringArray } from '../shared/options.ts';
+import { importedName } from '../shared/imports.ts';
+import { lookupVariable } from '../shared/bindings.ts';
+import { asNode, keyName as staticKeyName, memberName } from '../shared/ast.ts';
 
 const LAYER_NAMESPACE = 'Layer';
 const EFFECT_ROOT_MODULE = 'effect';
 const EFFECT_LAYER_MODULE = /^effect\/(?:.*\/)?Layer$/u;
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production `include`/`rootFiles` defaults
- * instead of forcing the fixture config to pass loosened options (which `run-on-repo.mts` reuses).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
@@ -96,18 +94,8 @@ interface RuleOptions {
   readonly allowTestFiles: boolean;
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   const maxPerRoot = record.maxPerRoot;
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
@@ -121,21 +109,6 @@ function readOptions(context: Context): RuleOptions {
     reexportModules: stringArray(record.reexportModules, DEFAULT_REEXPORT_MODULES),
     allowTestFiles: record.allowTestFiles === true,
   };
-}
-
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-function importedName(specifier: ESTree.ImportSpecifier): string {
-  return specifier.imported.type === 'Identifier'
-    ? specifier.imported.name
-    : specifier.imported.value;
 }
 
 /** Strip erased TS value wrappers and parentheses: `(Layer as X)!` → `Layer`. */
@@ -163,34 +136,9 @@ function isTypePosition(node: ESTree.Node): boolean {
   return !TS_VALUE_WRAPPERS.has(parent.type);
 }
 
-/** Non-computed `.orDie`, or computed `["orDie"]`. */
-function memberName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
-  const property = node.property;
-  if (property.type === 'Literal' && typeof property.value === 'string') return property.value;
-  return null;
-}
-
-/** Non-computed object-pattern / object-literal key name. */
+/** Object-pattern computed keys are deliberately excluded. */
 function keyName(node: { computed: boolean; key: ESTree.Node }): string | null {
-  if (node.computed) return null;
-  const key = node.key as { type: string; name?: string; value?: unknown };
-  if (key.type === 'Identifier' && typeof key.name === 'string') return key.name;
-  if (key.type === 'Literal' && typeof key.value === 'string') return key.value;
-  return null;
-}
-
-function lookupVariable(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(identifier);
-  while (scope !== null) {
-    const variable = scope.set.get(identifier.name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
+  return node.computed ? null : staticKeyName(node.key, false, { templates: false });
 }
 
 /**
@@ -206,20 +154,27 @@ function collectDeclarators(program: ESTree.Program): ESTree.VariableDeclarator[
     if (current === null || typeof current !== 'object') continue;
     if (seen.has(current)) continue;
     seen.add(current);
-    if (Array.isArray(current)) {
-      for (const item of current) stack.push(item);
-      continue;
-    }
-    const record = current as Record<string, unknown>;
-    if (record.type === 'VariableDeclarator')
-      found.push(current as unknown as ESTree.VariableDeclarator);
-    for (const key of Object.keys(record)) {
-      if (key === 'parent' || key === 'comments' || key === 'tokens') continue;
-      const value = record[key];
-      if (value !== null && typeof value === 'object') stack.push(value);
-    }
+    collectDeclaratorChildren(current, stack, found);
   }
   return found;
+}
+
+function collectDeclaratorChildren(
+  current: object,
+  stack: unknown[],
+  found: ESTree.VariableDeclarator[],
+): void {
+  if (Array.isArray(current)) {
+    for (const item of current) stack.push(item);
+    return;
+  }
+  const record = current as Record<string, unknown>;
+  if (record.type === 'VariableDeclarator') found.push(current as ESTree.VariableDeclarator);
+  for (const key of Object.keys(record)) {
+    if (['parent', 'comments', 'tokens'].includes(key)) continue;
+    const value = record[key];
+    if (value !== null && typeof value === 'object') stack.push(value);
+  }
 }
 
 /** name → start offsets of every binding site that makes that name stand for the tracked thing. */
@@ -234,6 +189,84 @@ function addBinding(map: BindingMap, name: string, start: number): boolean {
   if (existing.has(start)) return false;
   existing.add(start);
   return true;
+}
+
+type BindingKind = 'layer' | 'barrel' | 'member';
+type BindingMaps = Record<BindingKind, BindingMap>;
+
+function collectImportBindings(
+  program: ESTree.Program,
+  options: RuleOptions,
+  namespaces: ReadonlyMap<string, string>,
+  maps: BindingMaps,
+): void {
+  for (const statement of program.body) {
+    if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') continue;
+    const source = statement.source.value;
+    const isRoot = source === EFFECT_ROOT_MODULE || matchesGlobs(source, options.reexportModules);
+    const isLayer = EFFECT_LAYER_MODULE.test(source);
+    for (const specifier of statement.specifiers) {
+      collectImportSpecifier(specifier, isRoot, isLayer, namespaces, options.members, maps);
+    }
+  }
+}
+
+function isLayerNamespace(
+  namespaces: ReadonlyMap<string, string>,
+  name: string,
+  isLayer: boolean,
+): boolean {
+  return namespaces.get(name) === LAYER_NAMESPACE || isLayer;
+}
+
+function isInScope(path: string, options: RuleOptions): boolean {
+  if (matchesGlobs(path, options.exclude)) return false;
+  if (!matchesGlobs(path, options.include)) return false;
+  return options.allowTestFiles || !isTestFile(path);
+}
+
+function collectImportSpecifier(
+  specifier: ESTree.ImportDeclaration['specifiers'][number],
+  isRoot: boolean,
+  isLayer: boolean,
+  namespaces: ReadonlyMap<string, string>,
+  members: readonly string[],
+  maps: BindingMaps,
+): void {
+  const local = specifier.local;
+  if (specifier.type === 'ImportNamespaceSpecifier') {
+    if (isRoot) addBinding(maps.barrel, local.name, local.start);
+    else if (isLayerNamespace(namespaces, local.name, isLayer))
+      addBinding(maps.layer, local.name, local.start);
+    return;
+  }
+  if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') return;
+  const imported = importedName(specifier);
+  if (isRoot && imported === LAYER_NAMESPACE) addBinding(maps.layer, local.name, local.start);
+  if (isLayer && members.includes(imported)) addBinding(maps.member, local.name, local.start);
+}
+
+function isIdentifierNamePosition(node: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
+  const parent = node.parent;
+  if (parent == null) return true;
+  if (
+    [
+      'ImportSpecifier',
+      'ImportDefaultSpecifier',
+      'ImportNamespaceSpecifier',
+      'ExportSpecifier',
+    ].includes(parent.type)
+  )
+    return true;
+  if (parent.type === 'MemberExpression')
+    return !parent.computed && parent.property.start === node.start;
+  if (
+    parent.type === 'Property' ||
+    parent.type === 'PropertyDefinition' ||
+    parent.type === 'MethodDefinition'
+  )
+    return !parent.computed && parent.key.start === node.start;
+  return false;
 }
 
 export const rule = defineRule({
@@ -284,9 +317,7 @@ export const rule = defineRule({
   create(context) {
     const options = readOptions(context);
     const path = scopePath(context.filename);
-    if (matchesGlobs(path, options.exclude)) return {};
-    if (!matchesGlobs(path, options.include)) return {};
-    if (!options.allowTestFiles && isTestFile(path)) return {};
+    if (!isInScope(path, options)) return {};
 
     const program = context.sourceCode.ast;
     const bindings = collectEffectBindings(program);
@@ -298,34 +329,11 @@ export const rule = defineRule({
     /** Locals standing for `Layer.orDie` itself (`import { orDie } from "effect/Layer"`). */
     const memberBindings: BindingMap = new Map();
 
-    for (const statement of program.body) {
-      if (statement.type !== 'ImportDeclaration') continue;
-      // `import type { Layer } from "effect"` is erased: it can never produce a defect.
-      if ((statement as { importKind?: string }).importKind === 'type') continue;
-      const source = statement.source.value;
-      const isEffectRoot = source === EFFECT_ROOT_MODULE;
-      const isReexport = matchesGlobs(source, options.reexportModules);
-      const isLayerModule = EFFECT_LAYER_MODULE.test(source);
-      for (const specifier of statement.specifiers) {
-        const local = specifier.local;
-        if (specifier.type === 'ImportNamespaceSpecifier') {
-          if (isEffectRoot || isReexport) addBinding(barrelBindings, local.name, local.start);
-          else if (bindings.namespaces.get(local.name) === LAYER_NAMESPACE || isLayerModule) {
-            addBinding(layerBindings, local.name, local.start);
-          }
-          continue;
-        }
-        if (specifier.type !== 'ImportSpecifier') continue;
-        if ((specifier as { importKind?: string }).importKind === 'type') continue;
-        const imported = importedName(specifier);
-        if ((isEffectRoot || isReexport) && imported === LAYER_NAMESPACE) {
-          addBinding(layerBindings, local.name, local.start);
-        }
-        if (isLayerModule && options.members.includes(imported)) {
-          addBinding(memberBindings, local.name, local.start);
-        }
-      }
-    }
+    collectImportBindings(program, options, bindings.namespaces, {
+      layer: layerBindings,
+      barrel: barrelBindings,
+      member: memberBindings,
+    });
 
     const declarators = collectDeclarators(program);
 
@@ -390,74 +398,73 @@ export const rule = defineRule({
       return variable.defs.some((definition) => definition.name.start === identifier.start);
     };
 
-    /** Bind every name introduced by `pattern` to `kind`; returns whether anything was new. */
-    const bindPattern = (pattern: unknown, kind: 'layer' | 'barrel' | 'member'): boolean => {
-      const target = pattern as
-        | { type?: string; name?: string; start?: number; properties?: unknown[]; left?: unknown }
-        | null
-        | undefined;
-      if (target === null || target === undefined || typeof target.type !== 'string') return false;
-      if (target.type === 'AssignmentPattern') return bindPattern(target.left, kind);
-      if (
-        target.type === 'Identifier' &&
-        typeof target.name === 'string' &&
-        typeof target.start === 'number'
-      ) {
-        const map =
-          kind === 'layer' ? layerBindings : kind === 'barrel' ? barrelBindings : memberBindings;
-        return addBinding(map, target.name, target.start);
-      }
-      if (target.type !== 'ObjectPattern' || !Array.isArray(target.properties)) return false;
-      if (kind === 'member') return false;
-      let changed = false;
-      for (const property of target.properties) {
-        const entry = property as {
-          type?: string;
-          computed?: boolean;
-          key?: ESTree.Node;
-          value?: unknown;
-        };
-        if (entry.type !== 'Property' || entry.key === undefined) continue;
-        const name = keyName({ computed: entry.computed === true, key: entry.key });
-        if (name === null) continue;
-        if (kind === 'barrel' && name === LAYER_NAMESPACE)
-          changed = bindPattern(entry.value, 'layer') || changed;
-        else if (kind === 'layer' && options.members.includes(name)) {
-          changed = bindPattern(entry.value, 'member') || changed;
-        }
-      }
-      return changed;
+    const maps: BindingMaps = {
+      layer: layerBindings,
+      barrel: barrelBindings,
+      member: memberBindings,
     };
 
-    /** One alias-propagation pass over every declarator; returns whether anything was learned. */
+    const propertyKind = (name: string | null, kind: BindingKind): BindingKind | null => {
+      if (kind === 'barrel' && name === LAYER_NAMESPACE) return 'layer';
+      if (kind === 'layer' && name !== null && options.members.includes(name)) return 'member';
+      return null;
+    };
+
+    const bindProperty = (property: unknown, kind: BindingKind): boolean => {
+      const entry = asNode(property);
+      if (entry?.type !== 'Property' || entry.key === undefined) return false;
+      const nextKind = propertyKind(
+        keyName({ computed: entry.computed === true, key: entry.key }),
+        kind,
+      );
+      return nextKind === null ? false : bindPattern(entry.value, nextKind);
+    };
+
+    /** Bind names while preserving assignment and nested object-pattern semantics. */
+    const bindPattern = (pattern: unknown, kind: BindingKind): boolean => {
+      const target = asNode(pattern);
+      if (target === null) return false;
+      if (target.type === 'AssignmentPattern') return bindPattern(target.left, kind);
+      if (target.type === 'Identifier') {
+        if (typeof target.name !== 'string' || typeof target.start !== 'number') return false;
+        return addBinding(maps[kind], target.name, target.start);
+      }
+      if (target.type !== 'ObjectPattern' || !Array.isArray(target.properties) || kind === 'member')
+        return false;
+      return target.properties.reduce(
+        (changed: boolean, property: unknown) => bindProperty(property, kind) || changed,
+        false,
+      );
+    };
+
+    const identifierKind = (
+      node: Extract<ESTree.Node, { type: 'Identifier' }>,
+    ): BindingKind | null => {
+      if (resolvesTo(layerBindings, node)) return 'layer';
+      if (resolvesTo(barrelBindings, node)) return 'barrel';
+      return resolvesTo(memberBindings, node) ? 'member' : null;
+    };
+
+    const aliasKind = (init: ESTree.Node): BindingKind | null => {
+      if (init.type === 'Identifier') return identifierKind(init);
+      if (init.type !== 'MemberExpression') return null;
+      const name = memberName(init);
+      if (name === null) return null;
+      const object = unwrapValue(init.object);
+      if (object?.type !== 'Identifier') return null;
+      if (name === LAYER_NAMESPACE && resolvesTo(barrelBindings, object)) return 'layer';
+      if (options.members.includes(name) && resolvesTo(layerBindings, object)) return 'member';
+      return null;
+    };
+
+    /** One pass; evaluate every declarator even after an earlier binding changed. */
     const propagateAliases = (): boolean => {
       let changed = false;
       for (const declarator of declarators) {
         const init = unwrapValue(declarator.init);
         if (init === null) continue;
-        if (init.type === 'Identifier') {
-          if (resolvesTo(layerBindings, init))
-            changed = bindPattern(declarator.id, 'layer') || changed;
-          else if (resolvesTo(barrelBindings, init))
-            changed = bindPattern(declarator.id, 'barrel') || changed;
-          else if (resolvesTo(memberBindings, init))
-            changed = bindPattern(declarator.id, 'member') || changed;
-          continue;
-        }
-        if (init.type !== 'MemberExpression') continue;
-        const name = memberName(init);
-        if (name === null) continue;
-        const object = unwrapValue(init.object);
-        if (object === null || object.type !== 'Identifier') continue;
-        // `const L = Effect.Layer` / `const { orDie } = Effect.Layer`
-        if (name === LAYER_NAMESPACE && resolvesTo(barrelBindings, object)) {
-          changed = bindPattern(declarator.id, 'layer') || changed;
-          continue;
-        }
-        // `const die = Layer.orDie`
-        if (options.members.includes(name) && resolvesTo(layerBindings, object)) {
-          changed = bindPattern(declarator.id, 'member') || changed;
-        }
+        const kind = aliasKind(init);
+        if (kind !== null) changed = bindPattern(declarator.id, kind) || changed;
       }
       return changed;
     };
@@ -508,31 +515,7 @@ export const rule = defineRule({
       Identifier(node) {
         if (!candidateMemberNames.has(node.name)) return;
         if (isTypePosition(node)) return;
-        const parent = node.parent;
-        if (parent === null || parent === undefined) return;
-        // Declaration sites and non-reference positions are not calls.
-        if (parent.type === 'ImportSpecifier' || parent.type === 'ImportDefaultSpecifier') return;
-        if (parent.type === 'ImportNamespaceSpecifier' || parent.type === 'ExportSpecifier') return;
-        if (
-          parent.type === 'MemberExpression' &&
-          !parent.computed &&
-          parent.property.start === node.start
-        )
-          return;
-        if (parent.type === 'Property' && !parent.computed && parent.key.start === node.start)
-          return;
-        if (
-          parent.type === 'PropertyDefinition' &&
-          !parent.computed &&
-          parent.key.start === node.start
-        )
-          return;
-        if (
-          parent.type === 'MethodDefinition' &&
-          !parent.computed &&
-          parent.key.start === node.start
-        )
-          return;
+        if (isIdentifierNamePosition(node)) return;
         if (isDeclarationSite(node)) return;
         candidates.push({
           node,

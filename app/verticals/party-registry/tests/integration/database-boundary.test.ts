@@ -464,13 +464,12 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
     const [scheduledContactEnd] = await runEffectTestPromise(
       admin.select().from(partyContactPoints).where(eq(partyContactPoints.contactPointId, emailA2)),
     );
-    assert.equal(scheduledContactEnd?.isCurrent, true);
-    assert.equal(scheduledContactEnd?.endReason, 'Future email retirement scheduled');
-    assert.equal(scheduledContactEnd?.evidenceReference, 'evidence:original-contact:1');
-    assert.deepEqual(scheduledContactEnd?.additionalEvidenceRefs, [
-      'evidence:additional-contact:1',
-    ]);
-    assert.deepEqual(scheduledContactEnd?.endEvidenceRefs, []);
+    assert.ok(scheduledContactEnd);
+    assert.equal(scheduledContactEnd.isCurrent, true);
+    assert.equal(scheduledContactEnd.endReason, 'Future email retirement scheduled');
+    assert.equal(scheduledContactEnd.evidenceReference, 'evidence:original-contact:1');
+    assert.deepEqual(scheduledContactEnd.additionalEvidenceRefs, ['evidence:additional-contact:1']);
+    assert.deepEqual(scheduledContactEnd.endEvidenceRefs, []);
     const [scheduledPurposeEnd] = await runEffectTestPromise(
       admin
         .select()

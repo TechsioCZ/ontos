@@ -2,10 +2,10 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Cause, Clock, Effect, Exit, Schema, Stream } from 'effect';
+import { Cause, Clock, Effect, Exit, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { Reactivity } from 'effect/unstable/reactivity';
-import type { Connection } from 'effect/unstable/sql/SqlConnection';
+import { testSqlConnection } from '../../../../packages/core-runtime/tests/support/sql-connection.ts';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -26,16 +26,7 @@ const makeRedemptionFixture = (
   execute: (sql: string, params: readonly unknown[]) => Effect.Effect<readonly object[], SqlError>,
 ) =>
   Effect.gen(function* makeRedemptionFixtureEffect() {
-    const values = (sql: string, params: readonly unknown[]) =>
-      execute(sql, params).pipe(Effect.map((rows) => rows.map(Object.values)));
-    const connection: Connection = {
-      execute,
-      executeRaw: execute,
-      executeStream: (sql, params) => Stream.fromIterableEffect(execute(sql, params)),
-      executeUnprepared: execute,
-      executeValues: values,
-      executeValuesUnprepared: values,
-    };
+    const connection = testSqlConnection(execute);
     const reactivity = yield* Reactivity.make;
     const client = yield* PgClient.makeWith({
       acquirer: Effect.succeed(connection),

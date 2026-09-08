@@ -14,6 +14,27 @@ const decodePostgresFailureCode = Schema.decodeUnknownOption(PostgresFailureCode
 const decodePostgresFailureConstraint = Schema.decodeUnknownOption(PostgresFailureConstraintSchema);
 const decodeCauseWrapper = Schema.decodeUnknownOption(CauseWrapperSchema);
 
+const enqueueFailureReasons = (cause: Cause.Cause<unknown>, pending: unknown[]): void => {
+  for (const reason of cause.reasons.toReversed()) {
+    if (Cause.isFailReason(reason)) {
+      pending.push(reason.error);
+    } else if (Cause.isDieReason(reason)) {
+      pending.push(reason.defect);
+    }
+  }
+};
+
+const decodeFailureMetadata = (
+  current: PostgresFailureInput,
+): Option.Option<Readonly<PostgresFailureMetadata>> =>
+  Option.map(decodePostgresFailureCode(current), ({ code }) => {
+    const constraint = decodePostgresFailureConstraint(current);
+    const metadata: PostgresFailureMetadata = Option.isSome(constraint)
+      ? { code, constraint: constraint.value.constraint }
+      : { code };
+    return Object.freeze(metadata);
+  });
+
 /**
  * Finds sanitized technical PostgreSQL metadata without assigning it domain meaning.
  * PostgreSQL code 23505 is a uniqueness signal, not a universal public conflict.
@@ -32,24 +53,11 @@ export const findPostgresFailure = (
     }
     visited.add(current);
     if (Cause.isCause(current)) {
-      for (const reason of current.reasons.toReversed()) {
-        if (Cause.isFailReason(reason)) {
-          pending.push(reason.error);
-        } else if (Cause.isDieReason(reason)) {
-          pending.push(reason.defect);
-        }
-      }
+      enqueueFailureReasons(current, pending);
     } else {
-      const code = decodePostgresFailureCode(current);
-      if (Option.isSome(code)) {
-        const constraint = decodePostgresFailureConstraint(current);
-        const metadata: PostgresFailureMetadata = Option.isSome(constraint)
-          ? { code: code.value.code, constraint: constraint.value.constraint }
-          : { code: code.value.code };
-        const sanitizedMetadata = Object.freeze(metadata);
-        if (predicate(sanitizedMetadata)) {
-          return Option.some(sanitizedMetadata);
-        }
+      const metadata = Option.filter(decodeFailureMetadata(current), predicate);
+      if (Option.isSome(metadata)) {
+        return metadata;
       }
 
       const wrapper = decodeCauseWrapper(current);

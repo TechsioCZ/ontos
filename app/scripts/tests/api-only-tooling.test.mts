@@ -12,11 +12,12 @@ import type { TestContext } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { Predicate, Schema } from 'effect';
-import { transform } from 'esbuild';
+import { build as bundleSource, transform } from 'esbuild';
 import { format } from 'oxfmt';
 
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 const partyId = 'party-registry';
+const partyDirectory = 'verticals/party-registry';
 const mfManifestPath = '/mf-manifest.json';
 const readinessPath = '/party-registry-api/party-registry/readiness';
 const localePath = '/locales/en/party-registry.json';
@@ -525,8 +526,10 @@ const evaluatePartyBuildGlobalVars = async (shellOrigin: string) => {
     await writeFile(
       harnessPath,
       `import * as effect from ${JSON.stringify(effectModuleUrl)};
+import * as sharedBuild from ${JSON.stringify(pathToFileURL(path.join(workspaceRoot, 'packages/shared-contracts/tooling/modern-config.ts')).href)};
 import { runInNewContext } from 'node:vm';
 const framework = {
+  ...sharedBuild,
   appTools: () => ({}),
   bffPlugin: () => ({}),
   createRequire: () => () => ({}),
@@ -564,7 +567,7 @@ void test('Party build configuration injects the exact nonlocal Shell origin int
 void test('compiled Party CORS reader uses the nonlocal DefinePlugin origin without a runtime global', async () => {
   const shellOrigin = 'https://operations.example.test';
   const globalVars = await evaluatePartyBuildGlobalVars(shellOrigin);
-  const partyRoot = path.join(workspaceRoot, 'verticals/party-registry');
+  const partyRoot = path.join(workspaceRoot, partyDirectory);
   const source = await readFile(path.join(partyRoot, 'api/index.ts'), 'utf-8');
   const reader =
     /(?<reader>declare const ULTRAMODERN_SHELL_ORIGIN[\s\S]+?const shellOrigin = readShellOrigin\(\);)/u.exec(
@@ -572,7 +575,8 @@ void test('compiled Party CORS reader uses the nonlocal DefinePlugin origin with
     )?.groups?.reader;
   assert.notEqual(reader, undefined, 'compile the actual API origin-reader boundary');
   const appToolsPath = require.resolve('@modern-js/app-tools/config', { paths: [partyRoot] });
-  const rspackModule: unknown = require(require.resolve('@rspack/core', { paths: [appToolsPath] }));
+  const rsbuildPath = require.resolve('@rsbuild/core', { paths: [appToolsPath] });
+  const rspackModule: unknown = require(require.resolve('@rspack/core', { paths: [rsbuildPath] }));
   const rspackFixture = Schema.decodeUnknownSync(RspackModuleFixtureSchema)(rspackModule);
   const temporaryRoot = await mkdtemp(path.join(partyRoot, 'node_modules/.ontos-compiled-cors-'));
   try {
@@ -639,7 +643,104 @@ const normalizedGeneratedSource = async (fileName: string, source: string) => {
   return result.code.replaceAll(/^\s*\n/gmu, '');
 };
 
-void test('all published scaffold formats retain lint-safe Party infrastructure parity', async () => {
+const evaluatedInfrastructureSource = async (
+  fileName: string,
+  source: string,
+  cloudflare: boolean,
+): Promise<string> => {
+  const partyRoot = path.join(workspaceRoot, partyDirectory);
+  const result = await bundleSource({
+    bundle: true,
+    define: {
+      'import.meta.resolve': '__resolve',
+      'import.meta.url': JSON.stringify(pathToFileURL(path.join(partyRoot, fileName)).href),
+    },
+    external: ['./src/routes/ultramodern-route-metadata'],
+    format: 'cjs',
+    packages: 'external',
+    platform: 'node',
+    stdin: {
+      contents: source,
+      loader: 'ts',
+      resolveDir: path.dirname(path.join(partyRoot, fileName)),
+    },
+    write: false,
+  });
+  const code = result.outputFiles[0]?.text;
+  assert.ok(code);
+  const effectUrl = pathToFileURL(require.resolve('effect')).href;
+  return runNode([
+    '--input-type=module',
+    '-e',
+    `
+import * as effect from ${JSON.stringify(effectUrl)};
+import * as nodeModule from 'node:module';
+import * as nodePath from 'node:path';
+import * as nodeUrl from 'node:url';
+import { runInNewContext } from 'node:vm';
+const environment = {
+  MODERNJS_DEPLOY: ${JSON.stringify(cloudflare ? 'cloudflare' : 'node')},
+  ULTRAMODERN_MF_DEV_ORIGIN: 'https://shell.example.test',
+  ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: 'https://party.example.test',
+  ZE_CI_TOKEN: 'proof-token',
+};
+const plugin = name => options => ({ name, options });
+const framework = {
+  appTools: plugin('appTools'), bffPlugin: plugin('bff'), i18nPlugin: plugin('i18n'),
+  moduleFederationPlugin: plugin('moduleFederation'), pluginTailwindcss: plugin('tailwind'),
+  tanstackRouterPlugin: plugin('tanstack'), withZephyr: plugin('zephyr'),
+  defineConfig: value => value, presetUltramodern: (value, identity) => ({ ...value, identity }),
+  getBuildConfigEnvironment: name => environment[name],
+  withBuildConfigEnvironment: (_name, _value, configuration) => configuration,
+  ultramodernLocalisedUrls: {},
+};
+const moduleShim = { ...nodeModule, createRequire: () => Object.assign(() => ({}), { resolve: name => '/dependencies/' + name }) };
+const module = { exports: {} };
+runInNewContext(${JSON.stringify(code)}, {
+  exports: module.exports, module, URL,
+  ULTRAMODERN_BUILD_MARKER: 'injected-build', ULTRAMODERN_SOURCE_REVISION: 'injected-revision',
+  __resolve: name => 'file:///dependencies/' + name,
+  require: name => ({ effect, 'node:module': moduleShim, 'node:path': nodePath, 'node:url': nodeUrl }[name] ?? framework),
+});
+const configuration = module.exports.default;
+const observations = {};
+if (configuration?.tools) {
+  const chainValues = [];
+  const output = { uniqueName: name => { chainValues.push(name); return output; }, chunkLoadingGlobal: name => { chainValues.push(name); return output; } };
+  configuration.tools.bundlerChain?.({ output });
+  observations.chain = chainValues;
+  observations.plugins = [];
+  for (const entry of configuration.plugins ?? []) entry.setup?.({ modifyRspackConfig: value => observations.plugins.push(value) });
+  const plugins = {
+    DefinePlugin: class { constructor(definitions) { this.definitions = definitions; } },
+    NormalModuleReplacementPlugin: class { constructor(pattern, replace) {
+      this.pattern = pattern;
+      this.results = ['./handler.ts', './handler.ts?loaderId=x&retain=false', './other.ts?modern-bff-runtime-source'].map(request => {
+        const resource = { context: ${JSON.stringify(path.join(partyRoot, 'api'))}, request }; replace(resource); return resource;
+      });
+    } },
+  };
+  observations.rspack = ['client', 'workerSSR'].map(name => {
+    const config = { resolve: {}, externals: [], plugins: [], node: {} };
+    configuration.tools.rspack?.(config, { environment: { name }, rspack: plugins });
+    const externalResults = [];
+    for (const external of config.externals) for (const request of ['node:fs', 'fs', 'cloudflare:sockets', 'unrelated']) {
+      external({ request, dependencyType: 'commonjs' }, (...args) => externalResults.push(args));
+    }
+    return { config, externalResults };
+  });
+}
+const normalize = (_key, value) => {
+  if (typeof value === 'function') return '[Function]';
+  if (Object.prototype.toString.call(value) === '[object RegExp]') return String(value);
+  return value;
+};
+process.stdout.write(JSON.stringify({ exported: module.exports, observations }, normalize));
+`,
+  ]);
+};
+
+void test('all published scaffold formats retain Party infrastructure behavior and source parity', async () => {
   await Promise.all(
     ['esm', 'esm-node', 'cjs'].map(async (moduleFormat) => {
       const extension = moduleFormat === 'cjs' ? 'cjs' : 'js';
@@ -697,9 +798,26 @@ void test('all published scaffold formats retain lint-safe Party infrastructure 
       await Promise.all(
         Object.entries(generated).map(async ([fileName, source]) => {
           const actual = await readFile(
-            path.join(workspaceRoot, 'verticals/party-registry', fileName),
+            path.join(workspaceRoot, partyDirectory, fileName),
             'utf-8',
           );
+          if (fileName === 'modern.config.ts' || fileName === 'shared/ultramodern-build.ts') {
+            await Promise.all(
+              [false, true].map(async (cloudflare) => {
+                const [expected, evaluated] = await Promise.all([
+                  evaluatedInfrastructureSource(fileName, source, cloudflare),
+                  evaluatedInfrastructureSource(fileName, actual, cloudflare),
+                ]);
+                const decode = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json));
+                assert.deepEqual(
+                  decode(expected),
+                  decode(evaluated),
+                  `${moduleFormat}: ${fileName} must preserve evaluated configuration, build identity and plugin behavior`,
+                );
+              }),
+            );
+            return;
+          }
           assert.equal(
             await normalizedGeneratedSource(fileName, source),
             await normalizedGeneratedSource(fileName, actual),

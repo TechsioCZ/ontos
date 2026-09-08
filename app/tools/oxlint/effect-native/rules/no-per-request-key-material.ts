@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **A1** — "Establish one process-level Layer and ManagedRuntime composition model"
  * ("Move Bearer/JWK verification and imported key material into long-lived services rather than
@@ -84,17 +85,15 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
 import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production defaults instead of forcing the
- * fixture config to pass loosened options (which `run-on-repo.mts` reuses verbatim).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+import { stringArray } from '../shared/options.ts';
+import { memberName, keyName } from '../shared/ast.ts';
+import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
+import { importedName, collectNamespaceLocals } from '../shared/imports.ts';
+import { isNonReferencePosition } from '../shared/reference-positions.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 const DEFAULT_IGNORE: readonly string[] = [];
@@ -145,7 +144,6 @@ const DEFAULT_GENERATOR_FILES = [
   '**/templates/**',
 ];
 
-const EFFECT_ROOT_MODULE = 'effect';
 const LAYER_NAMESPACE = 'Layer';
 const EFFECT_NAMESPACE = 'Effect';
 
@@ -154,11 +152,6 @@ const FUNCTION_TYPES = new Set([
   'FunctionExpression',
   'ArrowFunctionExpression',
 ]);
-
-/** Dotted object path of a `…subtle.importKey` chain: the part before `.importKey`. */
-const SUBTLE_ROOT = /(?:^|\.)(?:crypto|webcrypto)\.subtle$/u;
-/** Dotted path of a WebCrypto root object (`crypto`, `globalThis.crypto`, `webcrypto`). */
-const CRYPTO_ROOT = /(?:^|\.)(?:crypto|webcrypto)$/u;
 
 /** Lexical markers that prove an emitted snippet already builds the key once. */
 const TEMPLATE_WRAPPER_MARKER =
@@ -181,18 +174,8 @@ interface RuleOptions {
   readonly generatorFiles: readonly string[];
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
@@ -211,42 +194,9 @@ function readOptions(context: Context): RuleOptions {
   };
 }
 
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-function importedName(specifier: ESTree.ImportSpecifier): string {
-  return specifier.imported.type === 'Identifier'
-    ? specifier.imported.name
-    : specifier.imported.value;
-}
-
-/** Non-computed `.member`, or computed `["member"]`. */
-function memberName(node: ESTree.MemberExpression): string | null {
-  if (node.type !== 'MemberExpression') return null;
-  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
-  const property = node.property;
-  if (property.type === 'Literal' && typeof property.value === 'string') return property.value;
-  return null;
-}
-
 /** Static key of an object-pattern / object-literal property (`{ subtle }`, `{ "importKey": k }`). */
 function propertyKeyName(property: ESTree.Node): string | null {
-  if (property.type !== 'Property') return null;
-  if (property.computed) {
-    return property.key.type === 'Literal' && typeof property.key.value === 'string'
-      ? property.key.value
-      : null;
-  }
-  if (property.key.type === 'Identifier') return property.key.name;
-  if (property.key.type === 'Literal' && typeof property.key.value === 'string')
-    return property.key.value;
-  return null;
+  return property.type === 'Property' ? keyName(property.key, property.computed) : null;
 }
 
 /** `globalThis.crypto.subtle` → `"globalThis.crypto.subtle"`; `null` for any dynamic segment. */
@@ -259,38 +209,30 @@ function dottedPath(node: ESTree.Node): string | null {
   return object === null ? null : `${object}.${property}`;
 }
 
-function lookupVariable(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(identifier);
-  while (scope !== null) {
-    const variable = scope.set.get(identifier.name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
-}
-
-/**
- * `true` when the identifier still resolves to an `import` binding, or to nothing at all (a global
- * such as `crypto`). Only a local shadow — parameter, `const`, catch clause, class name — rejects.
- */
-function resolvesToImport(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): boolean {
-  const variable = lookupVariable(context, identifier);
-  if (variable === null) return true;
-  if (variable.defs.length === 0) return true;
-  return variable.defs.some((definition) => definition.type === 'ImportBinding');
-}
-
 interface KeyBindings {
   /** `import { importJWK } from "jose"` / `import { createSecretKey } from "node:crypto"`. */
   readonly direct: Map<string, string>;
   /** `import * as jose from "jose"` (namespace or default) → allowed member list. */
   readonly namespaces: Map<string, readonly string[]>;
+}
+
+function recordKeyImport(
+  specifier: ESTree.ImportDeclaration['specifiers'][number],
+  members: readonly string[],
+  direct: Map<string, string>,
+  namespaces: Map<string, readonly string[]>,
+): void {
+  if (specifier.type === 'ImportSpecifier') {
+    if (specifier.importKind === 'type') return;
+    const imported = importedName(specifier);
+    if (members.includes(imported)) direct.set(specifier.local.name, imported);
+  } else if (
+    specifier.type === 'ImportNamespaceSpecifier' ||
+    specifier.type === 'ImportDefaultSpecifier'
+  ) {
+    const existing = namespaces.get(specifier.local.name) ?? [];
+    namespaces.set(specifier.local.name, [...existing, ...members]);
+  }
 }
 
 function collectKeyBindings(program: ESTree.Program, options: RuleOptions): KeyBindings {
@@ -304,19 +246,8 @@ function collectKeyBindings(program: ESTree.Program, options: RuleOptions): KeyB
     const isNodeCrypto = matchesGlobs(source, options.nodeCryptoModules);
     if (!isJose && !isNodeCrypto) continue;
     const members = isJose ? options.joseMembers : options.nodeCryptoMembers;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportSpecifier') {
-        if (specifier.importKind === 'type') continue;
-        const imported = importedName(specifier);
-        if (members.includes(imported)) direct.set(specifier.local.name, imported);
-      } else if (
-        specifier.type === 'ImportNamespaceSpecifier' ||
-        specifier.type === 'ImportDefaultSpecifier'
-      ) {
-        const existing = namespaces.get(specifier.local.name) ?? [];
-        namespaces.set(specifier.local.name, [...existing, ...members]);
-      }
-    }
+    for (const specifier of statement.specifiers)
+      recordKeyImport(specifier, members, direct, namespaces);
   }
   return { direct, namespaces };
 }
@@ -352,25 +283,17 @@ function collectWrapperLocals(
   bindings: EffectBindings,
   options: RuleOptions,
 ): { layer: ReadonlySet<string>; effect: ReadonlySet<string>; barrel: ReadonlySet<string> } {
+  const { namespaced, barrel } = collectNamespaceLocals(
+    program,
+    bindings,
+    new Set([LAYER_NAMESPACE, EFFECT_NAMESPACE]),
+    options.reexportModules,
+  );
   const layer = new Set<string>();
   const effect = new Set<string>();
-  const barrel = new Set<string>();
-  for (const [local, namespace] of bindings.namespaces) {
+  for (const [local, namespace] of namespaced) {
     if (namespace === LAYER_NAMESPACE) layer.add(local);
     else if (namespace === EFFECT_NAMESPACE) effect.add(local);
-  }
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    const source = statement.source.value;
-    if (source !== EFFECT_ROOT_MODULE && !matchesGlobs(source, options.reexportModules)) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportNamespaceSpecifier') barrel.add(specifier.local.name);
-      else if (specifier.type === 'ImportSpecifier') {
-        const imported = importedName(specifier);
-        if (imported === LAYER_NAMESPACE) layer.add(specifier.local.name);
-        else if (imported === EFFECT_NAMESPACE) effect.add(specifier.local.name);
-      }
-    }
   }
   return { layer, effect, barrel };
 }
@@ -489,12 +412,21 @@ export const rule = defineRule({
       if (member === null) return false;
       const object = callee.object;
 
-      if (object.type === 'Identifier') {
-        if (wrappers.layer.has(object.name) && layerMembers.includes(member)) return true;
-        if (wrappers.effect.has(object.name) && options.effectWrappers.includes(member))
-          return true;
-        return false;
-      }
+      return isWrapperMember(object, member, layerMembers);
+    };
+    const isDirectWrapper = (
+      name: string,
+      member: string,
+      layerMembers: readonly string[],
+    ): boolean =>
+      (wrappers.layer.has(name) && layerMembers.includes(member)) ||
+      (wrappers.effect.has(name) && options.effectWrappers.includes(member));
+    const isWrapperMember = (
+      object: ESTree.Node,
+      member: string,
+      layerMembers: readonly string[],
+    ): boolean => {
+      if (object.type === 'Identifier') return isDirectWrapper(object.name, member, layerMembers);
       // `E.Layer.effect(…)` through `import * as E from "effect"`.
       if (object.type !== 'MemberExpression') return false;
       const namespace = memberName(object);
@@ -515,21 +447,26 @@ export const rule = defineRule({
      * The `crypto` segment of a `<…>.subtle.<member>` chain must be a global or an import; a
      * parameter, local `const` or DI port named `crypto` is not WebCrypto.
      */
+    const isImportedCryptoIdentifier = (
+      node: Extract<ESTree.Node, { type: 'Identifier' }>,
+    ): boolean => {
+      const variable = lookupVariable(context, node);
+      if (variable === null || variable.defs.length === 0) return node.name === 'crypto';
+      return variable.defs.some((definition) => {
+        if (definition.type !== 'ImportBinding') return false;
+        const specifier = definition.node;
+        const declaration = definition.parent;
+        return (
+          declaration?.type === 'ImportDeclaration' &&
+          matchesGlobs(declaration.source.value, options.nodeCryptoModules) &&
+          specifier.type === 'ImportSpecifier' &&
+          importedName(specifier) === 'webcrypto'
+        );
+      });
+    };
     const isCryptoObject = (node: ESTree.Node): boolean => {
       if (node.type === 'Identifier') {
-        const variable = lookupVariable(context, node);
-        if (variable === null || variable.defs.length === 0) return node.name === 'crypto';
-        return variable.defs.some((definition) => {
-          if (definition.type !== 'ImportBinding') return false;
-          const specifier = definition.node;
-          const declaration = definition.parent;
-          return (
-            declaration?.type === 'ImportDeclaration' &&
-            matchesGlobs(declaration.source.value, options.nodeCryptoModules) &&
-            specifier.type === 'ImportSpecifier' &&
-            importedName(specifier) === 'webcrypto'
-          );
-        });
+        return isImportedCryptoIdentifier(node);
       }
       if (node.type !== 'MemberExpression') return false;
       const member = memberName(node);
@@ -589,22 +526,20 @@ export const rule = defineRule({
      * `require("jose")`, `await import("jose")`, `import("node:crypto")` — the CommonJS/dynamic
      * spellings of the same import, which a static `ImportDeclaration` scan would miss entirely.
      */
-    const dynamicKeyModuleMembers = (node: ESTree.Node): readonly string[] | null => {
+    const literalModuleSource = (node: ESTree.Node | undefined): string | null =>
+      node?.type === 'Literal' && typeof node.value === 'string' ? node.value : null;
+    const dynamicModuleSource = (node: ESTree.Node): string | null => {
       let current: ESTree.Node = node;
       if (current.type === 'AwaitExpression') current = current.argument;
-      let source: string | null = null;
-      if (current.type === 'ImportExpression') {
-        const specifier = current.source;
-        if (specifier.type === 'Literal' && typeof specifier.value === 'string')
-          source = specifier.value;
-      } else if (current.type === 'CallExpression' && current.callee.type === 'Identifier') {
-        if (current.callee.name !== 'require') return null;
-        const requireVariable = lookupVariable(context, current.callee);
-        if (requireVariable !== null && requireVariable.defs.length > 0) return null;
-        const first = current.arguments[0];
-        if (first !== undefined && first.type === 'Literal' && typeof first.value === 'string')
-          source = first.value;
-      }
+      if (current.type === 'ImportExpression') return literalModuleSource(current.source);
+      if (current.type !== 'CallExpression' || current.callee.type !== 'Identifier') return null;
+      if (current.callee.name !== 'require') return null;
+      const variable = lookupVariable(context, current.callee);
+      if (variable !== null && variable.defs.length > 0) return null;
+      return literalModuleSource(current.arguments[0]);
+    };
+    const dynamicKeyModuleMembers = (node: ESTree.Node): readonly string[] | null => {
+      const source = dynamicModuleSource(node);
       if (source === null) return null;
       if (matchesGlobs(source, options.joseModules)) return options.joseMembers;
       if (matchesGlobs(source, options.nodeCryptoModules)) return options.nodeCryptoMembers;
@@ -612,6 +547,23 @@ export const rule = defineRule({
     };
 
     /** Display name when `node` denotes key-material construction, otherwise `null`. */
+    const resolveSubtleReference = (
+      node: ESTree.MemberExpression,
+      member: string,
+      objectPath: string | null,
+    ): string | null => {
+      if (options.subtleMembers.includes(member)) {
+        // `subtle.importKey` where `subtle` was destructured/aliased off WebCrypto.
+        if (node.object.type === 'Identifier' && bindsTo(node.object, subtleVariables)) {
+          return `${node.object.name}.${member}`;
+        }
+        // `crypto.subtle.importKey`, `globalThis.crypto.subtle.generateKey`, `webcrypto.subtle.importKey`.
+        if (objectPath !== null && cryptoRootIsAmbient(node.object)) {
+          return `${objectPath}.${member}`;
+        }
+      }
+      return null;
+    };
     const resolveKeyReference = (node: ESTree.Node): string | null => {
       if (node.type === 'Identifier') {
         if (keys.direct.has(node.name) && resolvesToImport(context, node)) return node.name;
@@ -623,17 +575,15 @@ export const rule = defineRule({
       if (member === null) return null;
       const objectPath = dottedPath(node.object);
 
-      if (options.subtleMembers.includes(member)) {
-        // `subtle.importKey` where `subtle` was destructured/aliased off WebCrypto.
-        if (node.object.type === 'Identifier' && bindsTo(node.object, subtleVariables)) {
-          return `${node.object.name}.${member}`;
-        }
-        // `crypto.subtle.importKey`, `globalThis.crypto.subtle.generateKey`, `webcrypto.subtle.importKey`.
-        if (objectPath !== null && cryptoRootIsAmbient(node.object)) {
-          return `${objectPath}.${member}`;
-        }
-      }
-
+      const subtle = resolveSubtleReference(node, member, objectPath);
+      if (subtle !== null) return subtle;
+      return resolveNamespaceReference(node, member, objectPath);
+    };
+    const resolveNamespaceReference = (
+      node: ESTree.MemberExpression,
+      member: string,
+      objectPath: string | null,
+    ): string | null => {
       if (objectPath === null) return null;
       if (node.object.type !== 'Identifier') return null;
       const dynamic = dynamicMembers(node.object);
@@ -676,6 +626,13 @@ export const rule = defineRule({
     const candidates: Candidate[] = [];
 
     /** Report unless the site is module scope, lexically inside a wrapper, or one hop from one. */
+    const enclosingBindingName = (node: ESTree.Node): string | null => {
+      if (node.type === 'FunctionDeclaration') return node.id?.name ?? null;
+      if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier') return node.id.name;
+      return null;
+    };
+    const isReferencedBuilder = (name: string | null): boolean =>
+      name !== null && moduleNames.has(name) && builderReferenced.has(name);
     const evaluate = (candidate: Candidate): void => {
       const callee = resolveKeyReference(candidate.target);
       if (callee === null) return;
@@ -685,26 +642,13 @@ export const rule = defineRule({
       while (current !== null && current !== undefined) {
         if (isEnclosingWrapper(current)) return;
         if (FUNCTION_TYPES.has(current.type)) sawFunction = true;
-        if (
-          current.type === 'FunctionDeclaration' &&
-          current.id !== null &&
-          current.id !== undefined
-        ) {
-          outermostName = current.id.name;
-        } else if (current.type === 'VariableDeclarator' && current.id.type === 'Identifier') {
-          outermostName = current.id.name;
-        }
+        outermostName = enclosingBindingName(current) ?? outermostName;
         current = current.parent;
       }
       if (!sawFunction) return;
       // The repo's `Context.Service` idiom: the build effect lives in a named module-level factory
       // that is handed to `Layer.effect`/`Effect.cached*` by reference. Built once per Layer build.
-      if (
-        outermostName !== null &&
-        moduleNames.has(outermostName) &&
-        builderReferenced.has(outermostName)
-      )
-        return;
+      if (isReferencedBuilder(outermostName)) return;
       context.report({ node: candidate.report, messageId: candidate.messageId, data: { callee } });
     };
 
@@ -716,34 +660,93 @@ export const rule = defineRule({
       return false;
     };
 
-    /** Identifier positions that are declarations, keys or types rather than value references. */
-    const isNonReferencePosition = (
-      node: Extract<ESTree.Node, { type: 'Identifier' }>,
-    ): boolean => {
-      const parent = node.parent;
-      if (parent === null || parent === undefined) return true;
-      switch (parent.type) {
-        case 'ImportSpecifier':
-        case 'ImportDefaultSpecifier':
-        case 'ImportNamespaceSpecifier':
-        case 'ExportSpecifier':
-        case 'TSTypeReference':
-        case 'TSQualifiedName':
-        case 'TSTypeQuery':
-          return true;
-        case 'MemberExpression':
-          return parent.property === node && !parent.computed;
-        case 'Property':
-        case 'PropertyDefinition':
-        case 'MethodDefinition':
-          return parent.key === node && !parent.computed;
-        default:
-          return false;
+    const registerIdentifierBinding = (
+      id: ESTree.Node,
+      init: Extract<ESTree.Node, { type: 'Identifier' }>,
+    ): void => {
+      const namespaceMembers = keys.namespaces.get(init.name);
+      const isTrackedNamespace = namespaceMembers !== undefined && resolvesToImport(context, init);
+      const isTrackedDirect =
+        (keys.direct.has(init.name) && resolvesToImport(context, init)) ||
+        bindsTo(init, aliasVariables);
+      const isTrackedSubtle = bindsTo(init, subtleVariables) || isCryptoObject(init);
+
+      if (isTrackedDirect && id.type === 'Identifier') {
+        registerAlias(id);
+        bindingNodes.add(init);
+        return;
+      }
+      if (isTrackedNamespace) {
+        eachPatternProperty(id, (key, value) => {
+          if (namespaceMembers.includes(key)) registerAlias(value);
+        });
+        return;
+      }
+      if (isTrackedSubtle) {
+        eachPatternProperty(id, (key, value) => {
+          if (key === 'subtle' && isCryptoObject(init)) registerSubtle(value);
+          else if (options.subtleMembers.includes(key)) registerAlias(value);
+        });
+      }
+      return;
+    };
+    const cryptoBindingRootAllowed = (node: ESTree.Node): boolean =>
+      node.type !== 'Identifier' || resolvesToImport(context, node);
+    const registerMemberBinding = (id: ESTree.Node, init: ESTree.MemberExpression): void => {
+      const member = memberName(init);
+      const initPath = dottedPath(init);
+
+      // `const subtle = crypto.subtle` / `const { importKey } = globalThis.crypto.subtle`.
+      if (initPath !== null && cryptoRootIsAmbient(init)) {
+        if (id.type === 'Identifier') registerSubtle(id);
+        else {
+          eachPatternProperty(id, (key, value) => {
+            if (options.subtleMembers.includes(key)) registerAlias(value);
+          });
+        }
+        return;
+      }
+      // `const { subtle } = globalThis.crypto`.
+      if (isCryptoObject(init) && id.type === 'ObjectPattern') {
+        const rootOk = cryptoBindingRootAllowed(init.object);
+        if (rootOk) {
+          eachPatternProperty(id, (key, value) => {
+            if (key === 'subtle') registerSubtle(value);
+          });
+        }
+        return;
+      }
+      // `const load = jose.importJWK`.
+      if (member !== null && id.type === 'Identifier' && resolveKeyReference(init) !== null) {
+        registerAlias(id);
       }
     };
-
     const templateElements: Array<{ start: number; end: number }> = [];
     const templateLiterals: Array<{ start: number; end: number }> = [];
+
+    const reportTemplateMatch = (match: RegExpExecArray, text: string, seen: Set<number>): void => {
+      const member = match[1] ?? '';
+      const index = match.index + match[0].lastIndexOf(member);
+      const inTemplate = templateElements.some(
+        (entry) => index >= entry.start && index < entry.end,
+      );
+      if (inTemplate && !seen.has(index)) {
+        // Scan back to the start of the *whole* template literal, not a character window, so a
+        // realistically sized emitted `Layer.effect(…)` body still counts as already fixed.
+        const literal = templateLiterals
+          .filter((entry) => index >= entry.start && index < entry.end)
+          .sort((a, b) => b.start - a.start)[0];
+        const from = literal === undefined ? 0 : literal.start;
+        if (!TEMPLATE_WRAPPER_MARKER.test(text.slice(from, index))) {
+          seen.add(index);
+          context.report({
+            node: { range: [index, index + member.length] },
+            messageId: 'generatedPerRequest',
+            data: { callee: member },
+          });
+        }
+      }
+    };
 
     return {
       /**
@@ -768,68 +771,8 @@ export const rule = defineRule({
           return;
         }
 
-        if (init.type === 'Identifier') {
-          const namespaceMembers = keys.namespaces.get(init.name);
-          const isTrackedNamespace =
-            namespaceMembers !== undefined && resolvesToImport(context, init);
-          const isTrackedDirect =
-            (keys.direct.has(init.name) && resolvesToImport(context, init)) ||
-            bindsTo(init, aliasVariables);
-          const isTrackedSubtle = bindsTo(init, subtleVariables) || isCryptoObject(init);
-
-          if (isTrackedDirect && node.id.type === 'Identifier') {
-            registerAlias(node.id);
-            bindingNodes.add(init);
-            return;
-          }
-          if (isTrackedNamespace) {
-            eachPatternProperty(node.id, (key, value) => {
-              if (namespaceMembers.includes(key)) registerAlias(value);
-            });
-            return;
-          }
-          if (isTrackedSubtle) {
-            eachPatternProperty(node.id, (key, value) => {
-              if (key === 'subtle' && isCryptoObject(init)) registerSubtle(value);
-              else if (options.subtleMembers.includes(key)) registerAlias(value);
-            });
-          }
-          return;
-        }
-
-        if (init.type !== 'MemberExpression') return;
-        const member = memberName(init);
-        const initPath = dottedPath(init);
-
-        // `const subtle = crypto.subtle` / `const { importKey } = globalThis.crypto.subtle`.
-        if (initPath !== null && cryptoRootIsAmbient(init)) {
-          if (node.id.type === 'Identifier') registerSubtle(node.id);
-          else {
-            eachPatternProperty(node.id, (key, value) => {
-              if (options.subtleMembers.includes(key)) registerAlias(value);
-            });
-          }
-          return;
-        }
-        // `const { subtle } = globalThis.crypto`.
-        if (isCryptoObject(init) && node.id.type === 'ObjectPattern') {
-          const rootOk =
-            init.object.type !== 'Identifier' || resolvesToImport(context, init.object);
-          if (rootOk) {
-            eachPatternProperty(node.id, (key, value) => {
-              if (key === 'subtle') registerSubtle(value);
-            });
-          }
-          return;
-        }
-        // `const load = jose.importJWK`.
-        if (
-          member !== null &&
-          node.id.type === 'Identifier' &&
-          resolveKeyReference(init) !== null
-        ) {
-          registerAlias(node.id);
-        }
+        if (init.type === 'Identifier') registerIdentifierBinding(node.id, init);
+        else if (init.type === 'MemberExpression') registerMemberBinding(node.id, init);
       },
       CallExpression(node) {
         const callee = node.callee;
@@ -858,7 +801,12 @@ export const rule = defineRule({
           }
         }
         if (isCalleePosition(node)) return;
-        if (isNonReferencePosition(node)) return;
+        if (
+          isNonReferencePosition(node, {
+            nonReferenceParents: new Set(['TSTypeReference', 'TSQualifiedName', 'TSTypeQuery']),
+          })
+        )
+          return;
         if (!watched.has(node.name)) return;
         candidates.push({ report: node, target: node, messageId: 'perRequestReference' });
       },
@@ -912,27 +860,7 @@ export const rule = defineRule({
         for (const pattern of patterns) {
           let match = pattern.exec(text);
           while (match !== null) {
-            const member = match[1] ?? '';
-            const index = match.index + match[0].lastIndexOf(member);
-            const inTemplate = templateElements.some(
-              (entry) => index >= entry.start && index < entry.end,
-            );
-            if (inTemplate && !seen.has(index)) {
-              // Scan back to the start of the *whole* template literal, not a character window, so a
-              // realistically sized emitted `Layer.effect(…)` body still counts as already fixed.
-              const literal = templateLiterals
-                .filter((entry) => index >= entry.start && index < entry.end)
-                .sort((a, b) => b.start - a.start)[0];
-              const from = literal === undefined ? 0 : literal.start;
-              if (!TEMPLATE_WRAPPER_MARKER.test(text.slice(from, index))) {
-                seen.add(index);
-                context.report({
-                  node: { range: [index, index + member.length] },
-                  messageId: 'generatedPerRequest',
-                  data: { callee: member },
-                });
-              }
-            }
+            reportTemplateMatch(match, text, seen);
             match = pattern.exec(text);
           }
         }

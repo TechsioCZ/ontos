@@ -252,83 +252,167 @@ export const rule = defineRule({
     ]);
     // Provenance is local and scope-resolved, not type inference. Unknown writes invalidate
     // aliases; object fields, function returns and cross-file re-exports are not followed.
+    function isTypeSpecifier(spec: ESTree.Node): boolean {
+      return spec.type === 'ImportSpecifier' && spec.importKind === 'type';
+    }
+    function importOrigin(def: Variable['defs'][number]): string | null {
+      const spec = def.node;
+      const declaration = def.parent;
+      if (declaration?.type !== 'ImportDeclaration' || declaration.importKind === 'type')
+        return null;
+      if (isTypeSpecifier(spec)) return null;
+      const source = declaration.source.value;
+      const name = spec.type === 'ImportSpecifier' ? staticKey(spec.imported, false) : '*';
+      if (source === 'node:module' || source === 'module') return moduleMemberOrigin(name);
+      if (!isServerModule(source)) return null;
+      return name === '*' ? 'namespace' : factoryOrigin(name);
+    }
+    function moduleMemberOrigin(name: string | null): string | null {
+      if (name === 'createRequire') return 'createRequire';
+      return name === '*' ? 'module' : null;
+    }
+    function factoryOrigin(key: string | null): string | null {
+      return key !== null && factoryNames.has(key) ? 'factory' : null;
+    }
+    function destructuredOrigin(
+      pattern: ESTree.ObjectPattern,
+      name: string,
+      value: string | null,
+    ): string | null {
+      const property = pattern.properties.find(
+        (p) => p.type === 'Property' && p.value.type === 'Identifier' && p.value.name === name,
+      );
+      if (property?.type !== 'Property' || value !== 'namespace') return null;
+      return factoryOrigin(staticKey(property.key, property.computed));
+    }
+    function variableOrigin(
+      node: Extract<ESTree.Node, { type: 'Identifier' }>,
+      binding: Variable,
+      next: Set<ESTree.Node>,
+    ): string | null {
+      const values: string[] = [];
+      for (const def of binding.defs) {
+        if (def.type === 'ImportBinding') return importOrigin(def);
+        if (def.type !== 'Variable' || def.node.type !== 'VariableDeclarator') return null;
+        if (def.node.init === null) continue;
+        let value = origin(def.node.init, next);
+        if (def.node.id.type === 'ObjectPattern')
+          value = destructuredOrigin(def.node.id, node.name, value);
+        if (value === null) return null;
+        values.push(value);
+      }
+      return writtenOrigin(binding, values, next);
+    }
+    function writtenOrigin(
+      binding: Variable,
+      values: string[],
+      next: Set<ESTree.Node>,
+    ): string | null {
+      for (const write of writes.get(binding) ?? []) {
+        const value = origin(write, next);
+        if (value === null) return null;
+        values.push(value);
+      }
+      return values.length > 0 && values.every((value) => value === values[0]) ? values[0]! : null;
+    }
+    function identifierOrigin(
+      node: Extract<ESTree.Node, { type: 'Identifier' }>,
+      next: Set<ESTree.Node>,
+    ): string | null {
+      const binding = variable(node);
+      if (binding === undefined || binding.defs.length === 0)
+        return node.name === 'require' ? 'require' : null;
+      return variableOrigin(node, binding, next);
+    }
+    function memberOrigin(node: ESTree.MemberExpression, next: Set<ESTree.Node>): string | null {
+      const owner = origin(node.object, next);
+      const key = staticKey(node.property, node.computed);
+      if (owner === 'namespace') return factoryOrigin(key);
+      return owner === 'module' && key === 'createRequire' ? 'createRequire' : null;
+    }
+    function sourceOrigin(node: ESTree.Node): string | null {
+      const source = literalSource(node);
+      return source !== null && isServerModule(source) ? 'namespace' : null;
+    }
+    function callOrigin(
+      node: ESTree.CallExpression | ESTree.NewExpression,
+      next: Set<ESTree.Node>,
+    ): string | null {
+      const callee = origin(node.callee, next);
+      if (callee === 'factory') return 'server';
+      if (callee === 'createRequire') return 'require';
+      if (callee === 'require' && node.arguments[0] !== undefined)
+        return sourceOrigin(unwrap(node.arguments[0]));
+      return null;
+    }
     function origin(input: ESTree.Node, seen = new Set<ESTree.Node>()): string | null {
       const node = unwrap(input);
       if (seen.has(node)) return null;
       const next = new Set(seen).add(node);
-      if (node.type === 'AwaitExpression') return origin(node.argument as ESTree.Node, next);
-      if (node.type === 'Identifier') {
-        const binding = variable(node);
-        if (binding === undefined || binding.defs.length === 0) {
-          return node.name === 'require' ? 'require' : null;
-        }
-        const values: string[] = [];
-        for (const def of binding.defs) {
-          if (def.type === 'ImportBinding') {
-            const spec = def.node;
-            const declaration = def.parent;
-            if (declaration?.type !== 'ImportDeclaration' || declaration.importKind === 'type')
-              return null;
-            if (spec.type === 'ImportSpecifier' && spec.importKind === 'type') return null;
-            const source = declaration.source.value;
-            const name = spec.type === 'ImportSpecifier' ? staticKey(spec.imported, false) : '*';
-            if (source === 'node:module' || source === 'module')
-              return name === 'createRequire' ? 'createRequire' : name === '*' ? 'module' : null;
-            if (!isServerModule(source)) return null;
-            return name === '*'
-              ? 'namespace'
-              : name !== null && factoryNames.has(name)
-                ? 'factory'
-                : null;
-          }
-          if (def.type !== 'Variable' || def.node.type !== 'VariableDeclarator') return null;
-          if (def.node.init === null) continue;
-          let value = origin(def.node.init as ESTree.Node, next);
-          if (def.node.id.type === 'ObjectPattern') {
-            const property = def.node.id.properties.find(
-              (p) =>
-                p.type === 'Property' &&
-                p.value.type === 'Identifier' &&
-                p.value.name === node.name,
-            );
-            if (property?.type !== 'Property') return null;
-            const key = staticKey(property.key as ESTree.Node, property.computed);
-            value =
-              value === 'namespace' && key !== null && factoryNames.has(key) ? 'factory' : null;
-          }
-          if (value === null) return null;
-          values.push(value);
-        }
-        for (const write of writes.get(binding) ?? []) {
-          const value = origin(write, next);
-          if (value === null) return null;
-          values.push(value);
-        }
-        return values.length > 0 && values.every((value) => value === values[0])
-          ? values[0]!
-          : null;
+      switch (node.type) {
+        case 'AwaitExpression':
+          return origin(node.argument, next);
+        case 'Identifier':
+          return identifierOrigin(node, next);
+        case 'MemberExpression':
+          return memberOrigin(node, next);
+        case 'ImportExpression':
+          return sourceOrigin(node.source);
+        case 'CallExpression':
+        case 'NewExpression':
+          return callOrigin(node, next);
+        default:
+          return null;
       }
-      if (node.type === 'MemberExpression') {
-        const owner = origin(node.object as ESTree.Node, next);
-        const key = staticKey(node.property as ESTree.Node, node.computed);
-        if (owner === 'namespace' && key !== null && factoryNames.has(key)) return 'factory';
-        if (owner === 'module' && key === 'createRequire') return 'createRequire';
-        return null;
+    }
+    function inspectMemberCall(
+      node: ESTree.CallExpression | ESTree.NewExpression,
+      callee: ESTree.MemberExpression,
+    ): void {
+      const member = staticKey(callee.property as ESTree.Node, callee.computed);
+      const object = unwrap(callee.object as ESTree.Node);
+      if (member === 'listen' && object.type === 'Identifier' && origin(object) === 'server') {
+        reports.push({ node, messageId: 'serverListen', data: { name: object.name } });
       }
-      if (node.type === 'ImportExpression') {
-        const source = literalSource(node.source as ESTree.Node);
-        return source !== null && isServerModule(source) ? 'namespace' : null;
+      if (
+        options.includeFetch &&
+        member === 'fetch' &&
+        object.type === 'Identifier' &&
+        ['globalThis', 'global'].includes(object.name) &&
+        isAmbientGlobal(context, object, object.name)
+      ) {
+        reports.push({ node, messageId: 'ambientFetch', data: {} });
       }
-      if (node.type === 'CallExpression' || node.type === 'NewExpression') {
-        const callee = origin(node.callee as ESTree.Node, next);
-        if (callee === 'factory') return 'server';
-        if (callee === 'createRequire') return 'require';
-        if (callee === 'require' && node.arguments[0] !== undefined) {
-          const source = literalSource(unwrap(node.arguments[0] as ESTree.Node));
-          return source !== null && isServerModule(source) ? 'namespace' : null;
-        }
+    }
+    function isAmbientFetch(callee: ESTree.Node): boolean {
+      return (
+        options.includeFetch &&
+        callee.type === 'Identifier' &&
+        callee.name === 'fetch' &&
+        isAmbientGlobal(context, callee, 'fetch')
+      );
+    }
+    function inspectCall(node: ESTree.CallExpression | ESTree.NewExpression): void {
+      const callee = unwrap(node.callee as ESTree.Node);
+      const identity = origin(callee);
+      if (identity === 'factory') {
+        reports.push({
+          node,
+          messageId: 'serverFactoryCall',
+          data: { name: context.sourceCode.getText(callee) },
+        });
+        return;
       }
-      return null;
+      if (identity === 'require' && node.arguments[0] !== undefined) {
+        const source = literalSource(unwrap(node.arguments[0] as ESTree.Node));
+        if (source !== null && isServerModule(source))
+          reports.push({ node, messageId: 'dynamicServerModuleImport', data: { source } });
+      }
+      if (callee.type === 'MemberExpression') {
+        inspectMemberCall(node, callee);
+      } else if (isAmbientFetch(callee)) {
+        reports.push({ node, messageId: 'ambientFetch', data: {} });
+      }
     }
     function exported(node: ESTree.ExportNamedDeclaration | ESTree.ExportAllDeclaration): void {
       if (node.source === null || node.exportKind === 'type' || !isServerModule(node.source.value))
@@ -384,50 +468,7 @@ export const rule = defineRule({
         calls.push(node);
       },
       'Program:exit'() {
-        for (const node of calls) {
-          const callee = unwrap(node.callee as ESTree.Node);
-          const identity = origin(callee);
-          if (identity === 'factory') {
-            reports.push({
-              node,
-              messageId: 'serverFactoryCall',
-              data: { name: context.sourceCode.getText(callee) },
-            });
-            continue;
-          }
-          if (identity === 'require' && node.arguments[0] !== undefined) {
-            const source = literalSource(unwrap(node.arguments[0] as ESTree.Node));
-            if (source !== null && isServerModule(source))
-              reports.push({ node, messageId: 'dynamicServerModuleImport', data: { source } });
-          }
-          if (callee.type === 'MemberExpression') {
-            const member = staticKey(callee.property as ESTree.Node, callee.computed);
-            const object = unwrap(callee.object as ESTree.Node);
-            if (
-              member === 'listen' &&
-              object.type === 'Identifier' &&
-              origin(object) === 'server'
-            ) {
-              reports.push({ node, messageId: 'serverListen', data: { name: object.name } });
-            }
-            if (
-              options.includeFetch &&
-              member === 'fetch' &&
-              object.type === 'Identifier' &&
-              ['globalThis', 'global'].includes(object.name) &&
-              isAmbientGlobal(context, object, object.name)
-            ) {
-              reports.push({ node, messageId: 'ambientFetch', data: {} });
-            }
-          } else if (
-            options.includeFetch &&
-            callee.type === 'Identifier' &&
-            callee.name === 'fetch' &&
-            isAmbientGlobal(context, callee, 'fetch')
-          ) {
-            reports.push({ node, messageId: 'ambientFetch', data: {} });
-          }
-        }
+        for (const node of calls) inspectCall(node);
         for (const report of reports.sort((a, b) => a.node.start - b.node.start))
           context.report(report);
       },

@@ -14,7 +14,6 @@ import {
   UpdatePartyRelationshipPayloadSchema,
 } from '../../shared/domain/relationship-contract.ts';
 import type {
-  ChangePartyRelationshipResult as Result,
   PartyRelationshipLifecycleEventPayload,
   UpdatePartyRelationshipPayload as Payload,
 } from '../../shared/domain/relationship-contract.ts';
@@ -25,9 +24,7 @@ import type {
 } from '../services/party-relationship-persistence.service.ts';
 import { createUpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxMessage } from './update-party-relationship.party-registry-relationship-updated-v1.outbox-message.ts';
 
-export type UpdatePartyRelationshipPayload = Payload;
-export const UpdatePartyRelationshipResultSchema = ChangePartyRelationshipResultSchema;
-export type UpdatePartyRelationshipResult = Result;
+const UpdatePartyRelationshipResultSchema = ChangePartyRelationshipResultSchema;
 
 const eventPayload = (
   result: RelationshipChangeResult,
@@ -149,11 +146,3 @@ export const updatePartyRelationshipAction = defineAction(
         ),
     }),
 );
-
-// <generated-outbox-message-exports>
-export { createUpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxMessage } from './update-party-relationship.party-registry-relationship-updated-v1.outbox-message.ts';
-export { UpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxPayloadSchema } from './update-party-relationship.party-registry-relationship-updated-v1.outbox-message.ts';
-export { UpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxProducerModuleKey } from './update-party-relationship.party-registry-relationship-updated-v1.outbox-message.ts';
-export { UpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxTopic } from './update-party-relationship.party-registry-relationship-updated-v1.outbox-message.ts';
-export type { UpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxPayload } from './update-party-relationship.party-registry-relationship-updated-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

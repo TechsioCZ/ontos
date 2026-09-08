@@ -100,17 +100,17 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree } from '@oxlint/plugins';
+import type { ESTree } from '@oxlint/plugins';
 
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production defaults instead of forcing the
- * fixture config to pass loosened options (`run-on-repo.mts` reuses that fixture config verbatim
- * against the real repository).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
+import { booleanOption, compilePatterns, stringArray } from '../shared/options.ts';
+import { snippet } from '../shared/reporting.ts';
+import {
+  driverText as sharedDriverText,
+  emittedText,
+  reportNode,
+} from '../shared/scaffold-text.ts';
+import type { StringNode } from '../shared/scaffold-text.ts';
 
 /** Files whose template literals are emitted as source code into someone else's module. */
 const DEFAULT_TEMPLATE_PATHS: readonly string[] = [
@@ -162,8 +162,6 @@ const DEFAULT_ROUTE_PARAMS: readonly string[] = [
 /** The `routeParams` group only scans templates that actually declare route parameters. */
 const ROUTE_PARAMS_GATE = /(?:Route|Search)Params/u;
 
-const INTERPOLATION = '_';
-
 /** Longest snippet echoed back in a diagnostic message. */
 const SNIPPET_LIMIT = 72;
 
@@ -185,16 +183,6 @@ interface Match {
   readonly group: Group;
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
-function boolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
 function readOptions(raw: unknown): RuleOptions {
   const record: Record<string, unknown> =
     typeof raw === 'object' && raw !== null && !Array.isArray(raw)
@@ -205,107 +193,42 @@ function readOptions(raw: unknown): RuleOptions {
     promiseFirstPatterns: stringArray(record.promiseFirstPatterns, DEFAULT_PROMISE_FIRST),
     perCallClientPatterns: stringArray(record.perCallClientPatterns, DEFAULT_PER_CALL_CLIENT),
     routeParamPatterns: stringArray(record.routeParamPatterns, DEFAULT_ROUTE_PARAMS),
-    strictPerCallClient: boolean(record.strictPerCallClient, false),
+    strictPerCallClient: booleanOption(record.strictPerCallClient, false),
     exclude: stringArray(record.exclude, DEFAULT_EXCLUDE),
   };
 }
 
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real scaffold paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-/** Compile option sources once per file; a source that does not compile disables itself, not the rule. */
-function compilePatterns(sources: readonly string[]): readonly RegExp[] {
-  const compiled: RegExp[] = [];
-  for (const source of sources) {
-    try {
-      compiled.push(new RegExp(source, 'gu'));
-    } catch {
-      // A malformed user-supplied pattern must never take the whole lint run down.
-    }
-  }
-  return compiled;
-}
-
-/** Collapse matched template text to one short, readable line for the diagnostic. */
-function snippetOf(text: string): string {
-  const flat = text.replace(/\s+/gu, ' ').trim();
-  return flat.length > SNIPPET_LIMIT ? `${flat.slice(0, SNIPPET_LIMIT - 1)}…` : flat;
-}
-
-type StringNode = Extract<ESTree.Node, { type: 'TemplateLiteral' | 'Literal' }>;
-/** Cooked text is scanned; interpolation expressions remain opaque. */
-function emittedText(node: StringNode): string {
-  return node.type === 'TemplateLiteral'
-    ? node.quasis.map((q) => q.value.cooked ?? q.value.raw).join(INTERPOLATION)
-    : typeof node.value === 'string'
-      ? node.value
-      : '';
-}
-/** Quasi-level location is intentional: escaped/CRLF text has no 1:1 raw offset mapping. */
-function reportNode(node: StringNode, start: number, end: number): ESTree.Node {
-  if (node.type !== 'TemplateLiteral') return node;
-  let offset = 0;
-  for (const quasi of node.quasis) {
-    const length = (quasi.value.cooked ?? quasi.value.raw).length;
-    if (start >= offset && end <= offset + length) return quasi;
-    offset += length + INTERPOLATION.length;
-  }
-  return node;
-}
-/** This is a lexical scanner, not a generated JS parser. Regex literals and arbitrary dynamic
- * fragments are not reconstructed. Comments and quoted emitted data are not executable code. */
-function maskText(text: string, strings = true): string {
+/** Keep UTF-16 offsets; the shared masker currently collapses surrogate pairs. */
+function maskText(text: string, strings: boolean): string {
   return text.replace(
     /\/\*[\s\S]*?\*\/|\/\/[^\r\n]*|'(?:\\[\s\S]|[^'\\])*'|"(?:\\[\s\S]|[^"\\])*"|`(?:\\[\s\S]|[^`\\])*`/gu,
     (part) => (strings || part.startsWith('/') ? part.replace(/[^\r\n]/g, ' ') : part),
   );
 }
+/** Keep function/class boundaries: shared driver filtering also serves broader scanners. */
 function driverText(node: ESTree.Node): boolean {
+  // Module sources remain driver text even inside a function boundary.
+  let parent = node.parent;
   if (
-    node.parent !== null &&
-    node.parent !== undefined &&
+    parent &&
     [
       'ImportDeclaration',
       'ImportExpression',
       'ExportNamedDeclaration',
       'ExportAllDeclaration',
-    ].includes(node.parent.type)
+    ].includes(parent.type)
   )
-    return true;
-  let current = node;
-  while (current.parent !== null && current.parent !== undefined) {
-    const parent = current.parent;
+    return sharedDriverText(node);
+  while (parent) {
     if (/Function/u.test(parent.type) || parent.type === 'ClassBody') return false;
-    if (parent.type === 'CallExpression' || parent.type === 'NewExpression') {
-      const callee = parent.callee;
-      if (
-        callee.type === 'Identifier' &&
-        /^(?:Error|TypeError|exec|execSync|execFile|execFileSync|spawn|spawnSync)$/u.test(
-          callee.name,
-        )
-      )
-        return true;
-      if (
-        callee.type === 'MemberExpression' &&
-        callee.object.type === 'Identifier' &&
-        callee.object.name === 'console'
-      )
-        return true;
-      return false;
-    }
+    if (parent.type === 'CallExpression' || parent.type === 'NewExpression') break;
     if (
       ['VariableDeclarator', 'ReturnStatement', 'TemplateLiteral', 'Program'].includes(parent.type)
     )
-      return false;
-    current = parent;
+      break;
+    parent = parent.parent;
   }
-  return false;
+  return sharedDriverText(node);
 }
 interface Span {
   readonly start: number;
@@ -314,14 +237,23 @@ interface Span {
 /** End of a balanced expression/block. Whitespace (including blank lines) is never a boundary. */
 function expressionEnd(text: string, start: number): number {
   const closes: string[] = [];
+  const delimiters = new Map([
+    ['(', ')'],
+    ['[', ']'],
+    ['{', '}'],
+  ]);
+  const block = text[start] === '{';
   for (let i = start; i < text.length; i += 1) {
     const char = text[i]!;
     if (closes.length === 0 && /[;,)\]}]/u.test(char)) return i;
-    if (char === '(' || char === '[' || char === '{')
-      closes.push(char === '(' ? ')' : char === '[' ? ']' : '}');
-    else if (char === closes.at(-1)) {
+    const closing = delimiters.get(char);
+    if (closing !== undefined) {
+      closes.push(closing);
+      continue;
+    }
+    if (char === closes.at(-1)) {
       closes.pop();
-      if (closes.length === 0 && start === text.indexOf('{', start)) return i + 1;
+      if (closes.length === 0 && block) return i + 1;
     }
   }
   return text.length;
@@ -358,6 +290,23 @@ function operationSpans(text: string): { functions: Span[]; layers: Span[] } {
   }
   return { functions, layers };
 }
+/** Collect named emitted imports without treating arbitrary receivers as Effect. */
+function collectRunnerImports(
+  entries: string,
+  source: string,
+  names: string[],
+  namespace: string[],
+): void {
+  for (const entry of entries.split(',')) {
+    const binding = /^\s*([\w$]+)(?:\s+as\s+([\w$]+))?\s*$/u.exec(entry);
+    if (binding === null) continue;
+    const imported = binding[1]!;
+    const local = binding[2] ?? imported;
+    if (source === 'effect' && imported === 'Effect') namespace.push(local);
+    if (source === 'effect/Effect' && /^run(?:Promise|Sync|Fork)(?:Exit)?$/u.test(imported))
+      names.push(local);
+  }
+}
 /** Resolve only explicit emitted Effect import aliases, never arbitrary *.runPromise receivers. */
 function runnerPatterns(text: string): readonly RegExp[] {
   const names: string[] = [];
@@ -366,14 +315,7 @@ function runnerPatterns(text: string): readonly RegExp[] {
     /\bimport\s+(?:\*\s+as\s+([\w$]+)|\{([^}]+)\})\s+from\s+['"](effect(?:\/Effect)?)['"]/gu;
   for (const match of text.matchAll(imports)) {
     if (match[1] !== undefined && match[3] === 'effect/Effect') namespace.push(match[1]);
-    for (const entry of (match[2] ?? '').split(',')) {
-      const binding = /^\s*([\w$]+)(?:\s+as\s+([\w$]+))?\s*$/u.exec(entry);
-      if (binding === null) continue;
-      const local = binding[2] ?? binding[1]!;
-      if (match[3] === 'effect' && binding[1] === 'Effect') namespace.push(local);
-      if (match[3] === 'effect/Effect' && /^run(?:Promise|Sync|Fork)(?:Exit)?$/u.test(binding[1]!))
-        names.push(local);
-    }
+    collectRunnerImports(match[2] ?? '', match[3]!, names, namespace);
   }
   const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
   return [
@@ -515,7 +457,7 @@ export const rule = defineRule({
       const text = emittedText(node);
       // Single-line package-manager commands are generator instructions, not JS source.
       if (/^\s*(?:pnpm|npm|npx|yarn|bun)\s+[^\r\n]*$/u.test(text)) return;
-      const syntax = maskText(text);
+      const syntax = maskText(text, true);
       const found: Match[] = [];
       scan(syntax, promiseFirst, 'promiseFirst', found);
       if (
@@ -546,7 +488,7 @@ export const rule = defineRule({
         context.report({
           node: reportNode(node, match.start, match.end),
           messageId: match.group,
-          data: { snippet: snippetOf(text.slice(match.start, match.end)) },
+          data: { snippet: snippet(text.slice(match.start, match.end), SNIPPET_LIMIT) },
         });
       }
     }

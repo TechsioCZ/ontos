@@ -883,33 +883,86 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   )
   .add(GatewayContextApiGroup);
 
+const authenticationEndpointPath = (endpoint: { readonly path: string }) =>
+  `/shell-super-app-api${endpoint.path}` as const;
+
 export const shellAuthenticationApiContract = {
   apiPrefix: '/shell-super-app-api',
-  availableLegalEntitiesPath: '/shell-super-app-api/auth/legal-entities',
-  availableTenantsPath: '/shell-super-app-api/auth/tenants',
-  changePrincipalStatusPath: '/shell-super-app-api/auth/identity/principal-status',
-  compositionPath: '/shell-super-app-api/shell/composition',
-  createNonHumanPrincipalPath: '/shell-super-app-api/auth/identity/principals',
-  currentSessionPath: '/shell-super-app-api/auth/session',
-  issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context',
-  issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',
-  issueManagedApiKeyPath: '/shell-super-app-api/auth/identity/api-keys/managed',
-  issueSelfApiKeyPath: '/shell-super-app-api/auth/identity/api-keys/self',
-  listManagedApiKeysPath: '/shell-super-app-api/auth/identity/api-keys/managed/list',
-  listSelfApiKeysPath: '/shell-super-app-api/auth/identity/api-keys/self/list',
-  mediaAttachmentPath: '/shell-super-app-api/shell/resource/media-attachment',
+  availableLegalEntitiesPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.legalEntities.endpoints.availableLegalEntities,
+  ),
+  availableTenantsPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.tenants.endpoints.availableTenants,
+  ),
+  changePrincipalStatusPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.identity.endpoints.changePrincipalStatus,
+  ),
+  compositionPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.composition.endpoints.shellComposition,
+  ),
+  createNonHumanPrincipalPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.identity.endpoints.createNonHumanPrincipal,
+  ),
+  currentSessionPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.authentication.endpoints.currentSession,
+  ),
+  issueApiKeyGatewayContextPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.gatewayContext.endpoints.issueApiKeyGatewayContext,
+  ),
+  issueGatewayContextPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.gatewayContext.endpoints.issueGatewayContext,
+  ),
+  issueManagedApiKeyPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.identity.endpoints.issueManagedApiKey,
+  ),
+  issueSelfApiKeyPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.identity.endpoints.issueSelfApiKey,
+  ),
+  listManagedApiKeysPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.identity.endpoints.listManagedApiKeys,
+  ),
+  listSelfApiKeysPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.identity.endpoints.listSelfApiKeys,
+  ),
+  mediaAttachmentPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.resources.endpoints.attachMedia,
+  ),
   ownerId: 'shell-super-app',
-  resolveModuleTargetPath: '/shell-super-app-api/shell/module-target',
-  resourceDetailPath: '/shell-super-app-api/shell/resource',
-  rotateManagedApiKeyPath: '/shell-super-app-api/auth/identity/api-keys/managed/rotate',
-  rotateSelfApiKeyPath: '/shell-super-app-api/auth/identity/api-keys/self/rotate',
-  searchPath: '/shell-super-app-api/shell/search',
-  setManagedApiKeyStatusPath: '/shell-super-app-api/auth/identity/api-keys/managed/status',
-  setSelfApiKeyStatusPath: '/shell-super-app-api/auth/identity/api-keys/self/status',
-  signInPath: '/shell-super-app-api/auth/sign-in',
-  signOutPath: '/shell-super-app-api/auth/sign-out',
-  startSupportImpersonationPath: '/shell-super-app-api/auth/identity/impersonation/start',
-  stopSupportImpersonationPath: '/shell-super-app-api/auth/identity/impersonation/stop',
-  switchLegalEntityPath: '/shell-super-app-api/auth/legal-entity/switch',
-  switchTenantPath: '/shell-super-app-api/auth/tenant/switch',
+  resolveModuleTargetPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.composition.endpoints.resolveModuleTarget,
+  ),
+  resourceDetailPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.resources.endpoints.resourceDetail,
+  ),
+  rotateManagedApiKeyPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.identity.endpoints.rotateManagedApiKey,
+  ),
+  rotateSelfApiKeyPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.identity.endpoints.rotateSelfApiKey,
+  ),
+  searchPath: authenticationEndpointPath(ShellAuthenticationApi.groups.resources.endpoints.search),
+  setManagedApiKeyStatusPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.identity.endpoints.setManagedApiKeyStatus,
+  ),
+  setSelfApiKeyStatusPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.identity.endpoints.setSelfApiKeyStatus,
+  ),
+  signInPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.authentication.endpoints.signIn,
+  ),
+  signOutPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.authentication.endpoints.signOut,
+  ),
+  startSupportImpersonationPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.identity.endpoints.startSupportImpersonation,
+  ),
+  stopSupportImpersonationPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.identity.endpoints.stopSupportImpersonation,
+  ),
+  switchLegalEntityPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.legalEntities.endpoints.switchLegalEntity,
+  ),
+  switchTenantPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.tenants.endpoints.switchTenant,
+  ),
 } as const;

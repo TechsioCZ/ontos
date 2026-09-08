@@ -13,7 +13,7 @@ import {
 } from '../../shared/apis/duplicate-candidate-detail.ts';
 import { findDuplicateCandidateCase } from '../services/party-matching-persistence.service.ts';
 
-export const duplicateCandidateDetailEntrypoint = defineTenantModuleEntrypoint({
+const duplicateCandidateDetailEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'party.registry.api.duplicate-candidate-detail',

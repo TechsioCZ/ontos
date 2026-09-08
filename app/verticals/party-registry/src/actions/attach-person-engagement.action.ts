@@ -25,9 +25,9 @@ import {
   validatePartyRegistryReferences,
 } from '../services/engagement-reference-validation.service.ts';
 
-export const AttachPersonEngagementPayload = AttachPersonEngagementPayloadSchema;
-export const AttachPersonEngagementResult = PersonEngagementProfileSchema;
-export const AttachPersonEngagementError = Schema.Union([
+const AttachPersonEngagementPayload = AttachPersonEngagementPayloadSchema;
+const AttachPersonEngagementResult = PersonEngagementProfileSchema;
+const AttachPersonEngagementError = Schema.Union([
   EngagementProfileConflict,
   EngagementProfilePersistenceUnavailable,
   PartyRegistryReferenceUnavailable,

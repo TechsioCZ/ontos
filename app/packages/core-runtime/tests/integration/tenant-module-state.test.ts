@@ -1,3 +1,4 @@
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { and, asc, eq, inArray } from 'drizzle-orm';
@@ -40,53 +41,23 @@ const tenantIds = [tenantOne, tenantTwo] as const;
 
 type DatabaseService = Parameters<typeof makeActionRuntime>[0];
 
-const installedContract = (moduleId: string): OntosModuleDeploymentContract => ({
-  deployment: { appId: 'test-module', buildMarker: 'test-build' },
-  manifest: {
-    activation: {
-      defaultState: 'inactive',
-      preservesHistoryWhenInactive: true,
-      scope: 'tenant',
-      supportedStates: [
-        'inactive',
-        'active',
-        'read_only',
-        'suspended',
-        'quarantined',
-        'deprecated',
-        'archived',
-      ],
-    },
-    module: {
-      description: 'Integration test module',
-      displayName: 'Integration test module',
-      id: moduleId,
-      implementedAs: 'ultramodern_microvertical',
-      kind: 'business_module',
-    },
-    publicSurface: {
-      actions: [],
-      api: [],
-      components: [],
-      events: [],
-      reports: [],
-      resourceTypes: [],
-      search: [],
-      shellContributions: {
-        mediaAttachments: [],
-        navigation: [],
-        pages: [],
-        publicComponents: [],
-        reports: [],
-        resourceDetails: [],
-        search: [],
-        timelines: [],
-      },
-    },
-  },
-  runtime: { outboxSubscriptions: [] },
-  schemaVersion: '2',
-});
+const installedContract = (moduleId: string): OntosModuleDeploymentContract =>
+  makeModuleContractFixture({
+    appId: 'test-module',
+    buildMarker: 'test-build',
+    description: 'Integration test module',
+    displayName: 'Integration test module',
+    moduleId,
+    supportedStates: [
+      'inactive',
+      'active',
+      'read_only',
+      'suspended',
+      'quarantined',
+      'deprecated',
+      'archived',
+    ],
+  });
 
 const noInstalledContracts: readonly OntosModuleDeploymentContract[] = Object.freeze([]);
 

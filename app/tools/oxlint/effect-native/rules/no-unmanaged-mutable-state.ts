@@ -25,9 +25,13 @@
 import { defineRule } from '@oxlint/plugins';
 import { fileURLToPath } from 'node:url';
 
-import type { Context, ESTree, Reference, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree, Reference, Variable } from '@oxlint/plugins';
 
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
+import { matchesGlobs as matchesAny, isTestFile, normalisePath } from '../shared/paths.ts';
+
+import { staticString, skipWrappers, unwrapNode } from '../shared/ast.ts';
+import { isUnshadowedGlobal, resolveVariable } from '../shared/bindings.ts';
+import { booleanOption as boolean, stringList } from '../shared/options.ts';
 
 type AnyNode = ESTree.Node;
 
@@ -40,10 +44,6 @@ function workspacePath(filename: string): string {
   const root = fileURLToPath(new URL('../../../../', import.meta.url)).replaceAll('\\', '/');
   return unified.startsWith(root) ? unified.slice(root.length) : normalisePath(unified);
 }
-function matchesAny(path: string, patterns: readonly string[]): boolean {
-  return patterns.some((pattern) => globToRegExp(pattern).test(path));
-}
-
 /** Generated output is never source; not overridable through options. */
 const ALWAYS_IGNORED: readonly string[] = [
   '**/dist/**',
@@ -56,17 +56,6 @@ const ALWAYS_IGNORED: readonly string[] = [
 
 /** Globals that can be used to reach a constructor indirectly (`globalThis.WeakMap`). */
 const CONTAINER_GLOBALS = new Set(['globalThis', 'global', 'window', 'self']);
-
-/** Wrappers that do not change what an expression *is*. */
-const TRANSPARENT_PARENTS = new Set([
-  'ParenthesizedExpression',
-  'ChainExpression',
-  'TSAsExpression',
-  'TSSatisfiesExpression',
-  'TSNonNullExpression',
-  'TSInstantiationExpression',
-  'TSTypeAssertion',
-]);
 
 /** Identity-keyed collections that carry data beside the typed model. */
 const WEAK_CONSTRUCTORS: readonly string[] = ['WeakMap', 'WeakSet'];
@@ -114,16 +103,6 @@ const DEFAULTS: RuleOptions = {
   mutatingMembers: DEFAULT_MUTATING_MEMBERS,
 };
 
-function stringList(value: unknown, fallback: readonly string[]): readonly string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
-    ? (value as readonly string[])
-    : fallback;
-}
-
-function boolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
 function readOptions(raw: unknown): RuleOptions {
   const given = (raw ?? {}) as Partial<Record<keyof RuleOptions, unknown>>;
   const include = stringList(given.include, DEFAULTS.include);
@@ -138,61 +117,43 @@ function readOptions(raw: unknown): RuleOptions {
   };
 }
 
-function parentOf(node: AnyNode): AnyNode | null {
-  return (node as { parent?: AnyNode | null }).parent ?? null;
-}
-
-/** Climb through parentheses / type wrappers; returns the outermost equivalent node and its parent. */
-function skipWrappers(node: AnyNode): { readonly node: AnyNode; readonly parent: AnyNode | null } {
-  let current = node;
-  let parent = parentOf(current);
-  while (parent !== null && TRANSPARENT_PARENTS.has(parent.type)) {
-    current = parent;
-    parent = parentOf(current);
-  }
-  return { node: current, parent };
-}
-
-/** Strip wrappers *inwards*: `[] as const` / `(new Map())` → the container expression itself. */
 function unwrap(node: AnyNode): AnyNode {
-  let current = node;
-  for (let depth = 0; depth < 10; depth += 1) {
-    if (!TRANSPARENT_PARENTS.has(current.type)) return current;
-    const inner = (current as { expression?: AnyNode }).expression;
-    if (inner === undefined || inner === null) return current;
-    current = inner;
-  }
-  return current;
+  return unwrapNode(node, { maxDepth: 10 });
 }
 
-/** `x.name` / `x["name"]` → `"name"`; a dynamic key → `null`. */
 function staticPropertyName(node: ESTree.MemberExpression): string | null {
-  const property = unwrap(node.property);
-  if (!node.computed)
-    return property.type === 'Identifier' ? (property as ESTree.IdentifierName).name : null;
-  if (property.type === 'TemplateLiteral' && property.expressions.length === 0)
-    return property.quasis[0]?.value.cooked ?? null;
-  if (property.type !== 'Literal') return null;
-  const value = (property as { value?: unknown }).value;
-  return typeof value === 'string' ? value : null;
+  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
+  return staticString(unwrap(node.property), { templates: true });
 }
 
-function resolveVariable(context: Context, name: string, from: AnyNode): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(from);
-  while (scope !== null) {
-    const variable = scope.set.get(name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
+function immutableVariable(
+  context: Context,
+  node: AnyNode & { readonly name: string },
+  seen: Set<Variable>,
+): Variable | null {
+  const variable = resolveVariable(context, node.name, node);
+  if (!variable || seen.has(variable)) return null;
+  if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
+  seen.add(variable);
+  return variable;
 }
 
-/** `true` when `node` is the ambient global `name` — not a local, parameter, class or import. */
-function isUnshadowedGlobal(context: Context, node: AnyNode, name: string): boolean {
-  if (node.type !== 'Identifier') return false;
-  if ((node as ESTree.IdentifierReference).name !== name) return false;
-  const variable = resolveVariable(context, name, node);
-  return variable === null || variable.defs.length === 0;
+function variableInitializer(variable: Variable | null): AnyNode | null {
+  const definition = variable?.defs[0];
+  return definition?.type === 'Variable' && definition.node.type === 'VariableDeclarator'
+    ? (definition.node.init ?? null)
+    : null;
+}
+
+function constructorAlias(variable: Variable): AnyNode | null {
+  const initial = variableInitializer(variable);
+  if (initial) return initial;
+  const definition = variable.defs[0];
+  if (definition?.type !== 'ClassName') return null;
+  const node = definition.node;
+  return node.type === 'ClassDeclaration' || node.type === 'ClassExpression'
+    ? node.superClass
+    : null;
 }
 
 /**
@@ -210,28 +171,10 @@ function globalConstructorName(
   if (node.type === 'Identifier') {
     const name = (node as ESTree.IdentifierReference).name;
     if (isUnshadowedGlobal(context, node, name)) return name;
-    const variable = resolveVariable(context, name, node);
-    if (
-      !variable ||
-      seen.has(variable) ||
-      variable.references.some((reference) => reference.isWrite() && !reference.init)
-    )
-      return null;
-    seen.add(variable);
-    const definition = variable.defs[0];
-    if (
-      definition?.type === 'Variable' &&
-      definition.node.type === 'VariableDeclarator' &&
-      definition.node.init
-    )
-      return globalConstructorName(context, definition.node.init, seen);
-    if (
-      definition?.type === 'ClassName' &&
-      (definition.node.type === 'ClassDeclaration' || definition.node.type === 'ClassExpression') &&
-      definition.node.superClass
-    )
-      return globalConstructorName(context, definition.node.superClass, seen);
-    return null;
+    const variable = immutableVariable(context, node, seen);
+    if (!variable) return null;
+    const alias = constructorAlias(variable);
+    return alias ? globalConstructorName(context, alias, seen) : null;
   }
   if (node.type !== 'MemberExpression') return null;
   const member = node as ESTree.MemberExpression;
@@ -261,6 +204,33 @@ function moduleDeclarations(program: ESTree.Program): readonly ESTree.VariableDe
     declarations.push(candidate as ESTree.VariableDeclaration);
   }
   return declarations;
+}
+
+function inScope(path: string, options: RuleOptions): boolean {
+  const include = options.includeScripts ? [...options.include, 'scripts/**'] : options.include;
+  if (!matchesAny(path, include)) return false;
+  if (
+    [ALWAYS_IGNORED, options.ignore, options.allowPaths].some((patterns) =>
+      matchesAny(path, patterns),
+    )
+  )
+    return false;
+  if (!options.includeTests && isTestFile(path)) return false;
+  return options.includeScripts || !/(?:^|\/)scripts\//u.test(path);
+}
+
+function moduleClassOwner(node: ESTree.PropertyDefinition) {
+  const body = node.parent;
+  const owner = body?.type === 'ClassBody' ? body.parent : null;
+  if (owner?.type !== 'ClassDeclaration' || !owner.id) return null;
+  const ancestor =
+    owner.parent?.type === 'ExportNamedDeclaration' ? owner.parent.parent : owner.parent;
+  return ancestor?.type === 'Program' ? owner : null;
+}
+
+function staticFieldKey(node: ESTree.PropertyDefinition): string | null {
+  if (node.key.type === 'Identifier' || node.key.type === 'PrivateIdentifier') return node.key.name;
+  return node.key.type === 'Literal' ? String(node.key.value) : null;
 }
 
 export const rule = defineRule({
@@ -338,13 +308,7 @@ export const rule = defineRule({
     const options = readOptions(context.options[0]);
     const path = workspacePath(context.filename);
 
-    const include = options.includeScripts ? [...options.include, 'scripts/**'] : options.include;
-    if (!matchesAny(path, include)) return {};
-    if (matchesAny(path, ALWAYS_IGNORED)) return {};
-    if (matchesAny(path, options.ignore)) return {};
-    if (matchesAny(path, options.allowPaths)) return {};
-    if (!options.includeTests && isTestFile(path)) return {};
-    if (!options.includeScripts && /(?:^|\/)scripts\//u.test(path)) return {};
+    if (!inScope(path, options)) return {};
 
     const weakConstructors = new Set<string>(
       options.includeWeakRef ? [...WEAK_CONSTRUCTORS, ...WEAK_REF_CONSTRUCTORS] : WEAK_CONSTRUCTORS,
@@ -374,23 +338,24 @@ export const rule = defineRule({
         const name = globalConstructorName(context, value.callee);
         return name && CONTAINER_CONSTRUCTORS.has(name) ? 'collection' : null;
       }
-      if (value.type !== 'CallExpression') return null;
+      return value.type === 'CallExpression' ? factoryContainerKind(value, depth) : null;
+    };
+    const factoryContainerKind = (
+      value: ESTree.CallExpression,
+      depth: number,
+    ): 'object' | 'collection' | null => {
       const callee = unwrap(value.callee);
       if (callee.type !== 'MemberExpression') return null;
-      const method = staticPropertyName(callee);
+      const method = staticPropertyName(callee) ?? '';
       const object = unwrap(callee.object);
       if (isUnshadowedGlobal(context, object, 'Object')) {
-        if (method === 'create' || method === 'fromEntries') return 'object';
-        if (['entries', 'keys', 'values'].includes(method ?? '')) return 'collection';
+        if (['create', 'fromEntries'].includes(method)) return 'object';
+        if (['entries', 'keys', 'values'].includes(method)) return 'collection';
       }
-      if (isUnshadowedGlobal(context, object, 'Array') && (method === 'from' || method === 'of'))
+      if (isUnshadowedGlobal(context, object, 'Array') && ['from', 'of'].includes(method))
         return 'collection';
-      if (
-        ['slice', 'concat', 'map', 'filter', 'flat', 'flatMap'].includes(method ?? '') &&
-        containerKind(object, depth + 1) === 'collection'
-      )
-        return 'collection';
-      return null;
+      if (!['slice', 'concat', 'map', 'filter', 'flat', 'flatMap'].includes(method)) return null;
+      return containerKind(object, depth + 1) === 'collection' ? 'collection' : null;
     };
     const propertyValue = (input: AnyNode | null, key: string | null): AnyNode | null => {
       const value = valueOf(input);
@@ -425,21 +390,23 @@ export const rule = defineRule({
         current = outer.node;
         parent = outer.parent;
       }
-      if (parent?.type === 'AssignmentExpression' && parent.left === current) return true;
-      if (
-        parent?.type === 'UpdateExpression' ||
-        (parent?.type === 'UnaryExpression' && parent.operator === 'delete')
-      )
-        return true;
-      if (parent?.type === 'CallExpression' && parent.arguments[0] === current) {
-        const callee = unwrap(parent.callee);
-        return (
-          callee.type === 'MemberExpression' &&
-          staticPropertyName(callee) === 'assign' &&
-          isUnshadowedGlobal(context, unwrap(callee.object), 'Object')
-        );
-      }
-      return false;
+      return directlyMutated(current, parent);
+    };
+    const directlyMutated = (current: AnyNode, parent: AnyNode | null): boolean => {
+      if (!parent) return false;
+      if (parent.type === 'AssignmentExpression' && parent.left === current) return true;
+      if (parent.type === 'UpdateExpression') return true;
+      if (parent.type === 'UnaryExpression' && parent.operator === 'delete') return true;
+      if (parent.type !== 'CallExpression' || parent.arguments[0] !== current) return false;
+      return isObjectAssign(parent.callee);
+    };
+    const isObjectAssign = (input: AnyNode): boolean => {
+      const callee = unwrap(input);
+      return (
+        callee.type === 'MemberExpression' &&
+        staticPropertyName(callee) === 'assign' &&
+        isUnshadowedGlobal(context, unwrap(callee.object), 'Object')
+      );
     };
     const isMutatingReference = (reference: Reference, init: AnyNode | null): boolean => {
       if (reference.init) return false;
@@ -453,21 +420,8 @@ export const rule = defineRule({
         isUnshadowedGlobal(context, node, node.name)
       )
         return true;
-      const variable = resolveVariable(context, node.name, node);
-      if (
-        !variable ||
-        seen.has(variable) ||
-        variable.references.some((reference) => reference.isWrite() && !reference.init)
-      )
-        return false;
-      seen.add(variable);
-      const definition = variable.defs[0];
-      return (
-        definition?.type === 'Variable' &&
-        definition.node.type === 'VariableDeclarator' &&
-        !!definition.node.init &&
-        globalContainer(definition.node.init, seen)
-      );
+      const initial = variableInitializer(immutableVariable(context, node, seen));
+      return initial !== null && globalContainer(initial, seen);
     };
 
     const reportDeclarator = (declarator: ESTree.VariableDeclarator): void => {
@@ -487,6 +441,25 @@ export const rule = defineRule({
       }
     };
 
+    const inspectDeclarator = (
+      declarator: ESTree.VariableDeclarator,
+      kind: ESTree.VariableDeclaration['kind'],
+    ): void => {
+      if (kind === 'let' || kind === 'var') {
+        reportDeclarator(declarator);
+        return;
+      }
+      if (kind !== 'const' || declarator.id.type !== 'Identifier') return;
+      if (!containerKind(declarator.init ?? null)) return;
+      const variables = context.sourceCode.getDeclaredVariables(declarator);
+      const mutated = variables.some((variable) =>
+        variable.references.some((reference) =>
+          isMutatingReference(reference, declarator.init ?? null),
+        ),
+      );
+      if (mutated) reportDeclarator(declarator);
+    };
+
     return {
       AssignmentExpression(node) {
         const left = unwrap(node.left);
@@ -499,18 +472,9 @@ export const rule = defineRule({
       },
       PropertyDefinition(node) {
         if (!node.static || node.declare || !node.value) return;
-        const body = node.parent;
-        const owner = body?.type === 'ClassBody' ? body.parent : null;
-        if (owner?.type !== 'ClassDeclaration' || !owner.id) return;
-        let ancestor = owner.parent;
-        if (ancestor?.type === 'ExportNamedDeclaration') ancestor = ancestor.parent;
-        if (ancestor?.type !== 'Program') return;
-        const key =
-          node.key.type === 'Identifier' || node.key.type === 'PrivateIdentifier'
-            ? node.key.name
-            : node.key.type === 'Literal'
-              ? String(node.key.value)
-              : null;
+        const owner = moduleClassOwner(node);
+        if (!owner?.id) return;
+        const key = staticFieldKey(node);
         if (key === null) return;
         const variables = context.sourceCode.getDeclaredVariables(owner);
         const mutated = variables.some((variable) =>
@@ -553,25 +517,8 @@ export const rule = defineRule({
       // (2) module-scope `let`/`var`, and mutated module-scope container `const`s.
       Program(node) {
         for (const declaration of moduleDeclarations(node)) {
-          const mutableBinding = declaration.kind === 'let' || declaration.kind === 'var';
-          for (const declarator of declaration.declarations) {
-            if (mutableBinding) {
-              reportDeclarator(declarator);
-              continue;
-            }
-            if (declaration.kind !== 'const') continue;
-            if ((declarator.id as AnyNode).type !== 'Identifier') continue;
-            if (!containerKind(declarator.init ?? null)) continue;
-            const variables = context.sourceCode.getDeclaredVariables(
-              declarator as unknown as AnyNode,
-            );
-            const mutated = variables.some((variable) =>
-              variable.references.some((reference) =>
-                isMutatingReference(reference, declarator.init ?? null),
-              ),
-            );
-            if (mutated) reportDeclarator(declarator);
-          }
+          for (const declarator of declaration.declarations)
+            inspectDeclarator(declarator, declaration.kind);
         }
       },
     };

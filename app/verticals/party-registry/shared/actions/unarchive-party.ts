@@ -11,7 +11,7 @@ export const UnarchivePartyPayloadSchema = Schema.Struct({
   reason: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
 });
 export type UnarchivePartyPayload = typeof UnarchivePartyPayloadSchema.Type;
-export const UnarchivePartyBlockedSchema = Schema.Struct({
+const UnarchivePartyBlockedSchema = Schema.Struct({
   caseRef: DuplicateCandidateCaseRefSchema,
   decisionRef: PartyMatchDecisionRefSchema,
   outcome: Schema.Literal('BLOCKED'),
@@ -28,4 +28,3 @@ export const UnarchivePartyResultSchema = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal('UNARCHIVED'), party: PartySchema }),
   UnarchivePartyBlockedSchema,
 ]);
-export type UnarchivePartyResult = typeof UnarchivePartyResultSchema.Type;

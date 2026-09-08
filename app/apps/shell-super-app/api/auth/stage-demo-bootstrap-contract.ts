@@ -100,46 +100,29 @@ const stageDemoBootstrapSource = Config.all({
   siamparkPassword: Config.schema(StageDemoPasswordSchema, 'STAGE_SIAMPARK_PASSWORD'),
 });
 
+const configurationRequirements = [
+  ['STAGE_DEMO_PASSWORD', 'must contain at least 8 characters'],
+  ['STAGE_SIAMPARK_PASSWORD', 'must contain at least 8 characters'],
+  ['BETTER_AUTH_SECRET', 'must contain at least 32 characters'],
+  ['BETTER_AUTH_URL', 'must be an HTTP origin'],
+  ['DATABASE_ADMIN_URL', 'must use PostgreSQL'],
+] as const;
+
 const configurationFailureFromConfigError = (
   error: Config.ConfigError,
 ): StageDemoBootstrapError => {
   const { message } = error;
-  const missing = message.includes('Expected string');
   if (message.includes('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')) {
     return configurationFailure('The demo bootstrap can run only in the stage environment');
   }
-  if (message.includes('STAGE_DEMO_PASSWORD')) {
-    return configurationFailure(
-      missing
-        ? 'STAGE_DEMO_PASSWORD is required'
-        : 'STAGE_DEMO_PASSWORD must contain at least 8 characters',
-    );
+  const requirement = configurationRequirements.find(([key]) => message.includes(key));
+  if (requirement === undefined) {
+    return configurationFailure('The stage demo configuration is invalid');
   }
-  if (message.includes('STAGE_SIAMPARK_PASSWORD')) {
-    return configurationFailure(
-      missing
-        ? 'STAGE_SIAMPARK_PASSWORD is required'
-        : 'STAGE_SIAMPARK_PASSWORD must contain at least 8 characters',
-    );
-  }
-  if (message.includes('BETTER_AUTH_SECRET')) {
-    return configurationFailure(
-      missing
-        ? 'BETTER_AUTH_SECRET is required'
-        : 'BETTER_AUTH_SECRET must contain at least 32 characters',
-    );
-  }
-  if (message.includes('BETTER_AUTH_URL')) {
-    return configurationFailure(
-      missing ? 'BETTER_AUTH_URL is required' : 'BETTER_AUTH_URL must be an HTTP origin',
-    );
-  }
-  if (message.includes('DATABASE_ADMIN_URL')) {
-    return configurationFailure(
-      missing ? 'DATABASE_ADMIN_URL is required' : 'DATABASE_ADMIN_URL must use PostgreSQL',
-    );
-  }
-  return configurationFailure('The stage demo configuration is invalid');
+  const [key, invalidReason] = requirement;
+  return configurationFailure(
+    `${key} ${message.includes('Expected string') ? 'is required' : invalidReason}`,
+  );
 };
 
 const environmentProvider = (environment: StageDemoEnvironment): ConfigProvider.ConfigProvider =>

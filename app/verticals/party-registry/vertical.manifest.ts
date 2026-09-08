@@ -18,7 +18,7 @@ import { AresLookupApi } from './shared/apis/ares-lookup.ts';
 import { attachOrganizationEngagementAction } from './src/actions/attach-organization-engagement.action.ts';
 import { attachPersonEngagementAction } from './src/actions/attach-person-engagement.action.ts';
 import { confirmDuplicatePartiesAction } from './src/actions/confirm-duplicate-parties.action.ts';
-import { ContactsPage } from './src/routes/[lang]/contacts/page.tsx';
+import ContactsPage from './src/routes/[lang]/contacts/page.tsx';
 import { correctPartyFactAction } from './src/actions/correct-party-fact.action.ts';
 import { counterpartyCreateAction } from './src/actions/counterparty-create.action.ts';
 import { CounterpartyReadApi } from './shared/apis/counterparty-read.ts';

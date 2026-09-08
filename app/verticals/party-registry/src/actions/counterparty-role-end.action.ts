@@ -34,12 +34,9 @@ export {
   CounterpartyRoleEndPayloadSchema,
   CounterpartyRoleEndResultSchema,
 } from '../../shared/actions/counterparty-role-end.ts';
-export type {
-  CounterpartyRoleEndPayload,
-  CounterpartyRoleEndResult,
-} from '../../shared/actions/counterparty-role-end.ts';
+export type { CounterpartyRoleEndPayload } from '../../shared/actions/counterparty-role-end.ts';
 
-export const CounterpartyRoleEndError = Schema.Union([
+const CounterpartyRoleEndError = Schema.Union([
   CounterpartyEvidenceInsufficient,
   CounterpartyNotFound,
   CounterpartyPersistenceUnavailable,
@@ -235,11 +232,3 @@ export const counterpartyRoleEndAction = defineAction(
     });
   },
 );
-
-// <generated-outbox-message-exports>
-export { CounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxPayloadSchema } from './counterparty-role-end.party-registry-counterparty-role-ended-v1.outbox-message.ts';
-export { CounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxProducerModuleKey } from './counterparty-role-end.party-registry-counterparty-role-ended-v1.outbox-message.ts';
-export { CounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxTopic } from './counterparty-role-end.party-registry-counterparty-role-ended-v1.outbox-message.ts';
-export { createCounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxMessage } from './counterparty-role-end.party-registry-counterparty-role-ended-v1.outbox-message.ts';
-export type { CounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxPayload } from './counterparty-role-end.party-registry-counterparty-role-ended-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

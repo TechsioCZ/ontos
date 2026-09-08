@@ -27,7 +27,7 @@ const OntosDeploymentAppIdSchema = StringSchema.check(isPattern(deploymentIdPatt
 );
 type OntosDeploymentAppId = typeof OntosDeploymentAppIdSchema.Type;
 
-export class DeploymentAllowlistConfigurationError extends TaggedError<DeploymentAllowlistConfigurationError>()(
+class DeploymentAllowlistConfigurationError extends TaggedError<DeploymentAllowlistConfigurationError>()(
   'DeploymentAllowlistConfigurationError',
   {
     cause: StringSchema,
@@ -36,7 +36,7 @@ export class DeploymentAllowlistConfigurationError extends TaggedError<Deploymen
   },
 ) {}
 
-export interface DeploymentAllowlistEntry {
+interface DeploymentAllowlistEntry {
   readonly appId: OntosDeploymentAppId;
   readonly contractUrl: string;
 }
@@ -82,21 +82,46 @@ const isLoopback = (hostname: string): boolean =>
   hostname === '[::1]' ||
   hostname.endsWith('.localhost');
 
+const isContractDocumentUrl = (url: URL): boolean =>
+  url.username === '' &&
+  url.password === '' &&
+  url.hash === '' &&
+  url.search === '' &&
+  url.pathname === ONTOS_MODULE_CONTRACT_PATH;
+
 const normalizedContractUrl = (value: string, environment: string): string | undefined => {
   const url = URL.parse(value);
-  if (
-    url === null ||
-    url.username !== '' ||
-    url.password !== '' ||
-    url.hash !== '' ||
-    url.search !== '' ||
-    url.pathname !== ONTOS_MODULE_CONTRACT_PATH
-  ) {
+  if (url === null || !isContractDocumentUrl(url)) {
     return undefined;
   }
   const developmentLoopback =
     environment === 'development' && url.protocol === 'http:' && isLoopback(url.hostname);
   return url.protocol === 'https:' || developmentLoopback ? url.href : undefined;
+};
+
+const contractUrlIssues = (
+  overlay: DeploymentAllowlistOverlay,
+  environment: string,
+): FilterIssue[] => {
+  const issues: FilterIssue[] = [];
+  const normalizedUrls = new Set<string>();
+  for (const [appId, contractUrl] of Object.entries(overlay.ontosModuleManifests)) {
+    const normalized = normalizedContractUrl(contractUrl, environment);
+    if (normalized === undefined) {
+      issues.push({
+        issue: 'contract URL is invalid for this deployment environment',
+        path: ['overlay', 'ontosModuleManifests', appId],
+      });
+    } else if (normalizedUrls.has(normalized)) {
+      issues.push({
+        issue: 'allowlist contains duplicate normalized URLs',
+        path: ['overlay', 'ontosModuleManifests', appId],
+      });
+    } else {
+      normalizedUrls.add(normalized);
+    }
+  }
+  return issues;
 };
 
 const DeploymentAllowlistInputSchema = Struct({
@@ -139,23 +164,7 @@ const DeploymentAllowlistInputSchema = Struct({
       }
     }
 
-    const normalizedUrls = new Set<string>();
-    for (const [appId, contractUrl] of Object.entries(input.overlay.ontosModuleManifests)) {
-      const normalized = normalizedContractUrl(contractUrl, input.environment);
-      if (normalized === undefined) {
-        issues.push({
-          issue: 'contract URL is invalid for this deployment environment',
-          path: ['overlay', 'ontosModuleManifests', appId],
-        });
-      } else if (normalizedUrls.has(normalized)) {
-        issues.push({
-          issue: 'allowlist contains duplicate normalized URLs',
-          path: ['overlay', 'ontosModuleManifests', appId],
-        });
-      } else {
-        normalizedUrls.add(normalized);
-      }
-    }
+    issues.push(...contractUrlIssues(input.overlay, input.environment));
     return issues;
   }),
 );

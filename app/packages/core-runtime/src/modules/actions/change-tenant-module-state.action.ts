@@ -44,7 +44,7 @@ const withOptionalProperty = <
 const moduleKeySchema = OntosModuleIdSchema.check(Schema.isMaxLength(128));
 const reasonSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 
-export const ChangeTenantModuleStatePayloadSchema = Schema.Struct({
+const ChangeTenantModuleStatePayloadSchema = Schema.Struct({
   expectedState: Schema.optionalKey(TenantModuleStateSchema),
   moduleKey: moduleKeySchema,
   newState: TenantModuleStateSchema,
@@ -54,16 +54,13 @@ export type ChangeTenantModuleStatePayload = Schema.Schema.Type<
   typeof ChangeTenantModuleStatePayloadSchema
 >;
 
-export const ChangeTenantModuleStateResultSchema = Schema.Struct({
+const ChangeTenantModuleStateResultSchema = Schema.Struct({
   moduleKey: moduleKeySchema,
   newState: TenantModuleStateSchema,
   previousState: Schema.Union([TenantModuleStateSchema, Schema.Null]),
 });
-export type ChangeTenantModuleStateResult = Schema.Schema.Type<
-  typeof ChangeTenantModuleStateResultSchema
->;
 
-export const ChangeTenantModuleStateError = Schema.Union([
+const ChangeTenantModuleStateError = Schema.Union([
   TenantModuleStateConcurrentChangeError,
   TenantModuleStatePersistenceUnavailableError,
   TenantModuleStateTenantMissingError,

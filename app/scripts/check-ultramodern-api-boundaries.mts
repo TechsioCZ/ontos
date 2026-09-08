@@ -456,31 +456,34 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
         );
       }
 
-      if (yield* exists(packageJsonPath)) {
-        const packageJson = yield* readText(packageJsonPath).pipe(
-          Effect.flatMap(decodePackageJson),
-        );
-        const isPrivateVerticalInfrastructureApi =
-          appPath.startsWith('verticals/') &&
-          (yield* exists(sharedApi)) &&
-          isGeneratedInfrastructureReadinessApi(appPath, yield* readText(sharedApi));
-        if (isPrivateVerticalInfrastructureApi) {
-          assert(
-            packageJson.exports?.['./api'] === undefined &&
-              packageJson.exports?.['./api/client'] === undefined,
-            `${packageJsonPath}: infrastructure-only vertical APIs must remain private deployment surfaces.`,
+      const validateApiPackage = Effect.gen(function* validateApiPackageEffect() {
+        if (yield* exists(packageJsonPath)) {
+          const packageJson = yield* readText(packageJsonPath).pipe(
+            Effect.flatMap(decodePackageJson),
           );
-        } else {
-          assert(
-            packageJson.exports?.['./api'] === './shared/api.ts',
-            `${packageJsonPath}: package must export ./api from shared/api.ts.`,
-          );
-          assert(
-            packageJson.exports?.['./api/client']?.startsWith('./src/api/') ?? false,
-            `${packageJsonPath}: package must export ./api/client from src/api/*.`,
-          );
+          const isPrivateVerticalInfrastructureApi =
+            appPath.startsWith('verticals/') &&
+            (yield* exists(sharedApi)) &&
+            isGeneratedInfrastructureReadinessApi(appPath, yield* readText(sharedApi));
+          if (isPrivateVerticalInfrastructureApi) {
+            assert(
+              packageJson.exports?.['./api'] === undefined &&
+                packageJson.exports?.['./api/client'] === undefined,
+              `${packageJsonPath}: infrastructure-only vertical APIs must remain private deployment surfaces.`,
+            );
+          } else {
+            assert(
+              packageJson.exports?.['./api'] === './shared/api.ts',
+              `${packageJsonPath}: package must export ./api from shared/api.ts.`,
+            );
+            assert(
+              packageJson.exports?.['./api/client']?.startsWith('./src/api/') ?? false,
+              `${packageJsonPath}: package must export ./api/client from src/api/*.`,
+            );
+          }
         }
-      }
+      });
+      yield* validateApiPackage;
     });
 
   const inspectApiSurfaces = Effect.gen(function* inspectApiSurfacesEffect() {
@@ -540,27 +543,30 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       );
     }
 
-    if (yield* exists('topology/reference-topology.json')) {
-      const topology = yield* readText('topology/reference-topology.json').pipe(
-        Effect.flatMap(decodeTopology),
-      );
-      for (const vertical of topology.verticals ?? []) {
-        if (vertical.api?.runtime === 'effect') {
+    const validateTopologyContracts = Effect.gen(function* validateTopologyContractsEffect() {
+      if (yield* exists('topology/reference-topology.json')) {
+        const topology = yield* readText('topology/reference-topology.json').pipe(
+          Effect.flatMap(decodeTopology),
+        );
+        for (const vertical of topology.verticals ?? []) {
+          if (vertical.api?.runtime === 'effect') {
+            assert(
+              vertical.api.bff?.strictEffectApproach === true,
+              `${vertical.id} topology must mark strictEffectApproach as true.`,
+            );
+            assert(
+              vertical.api.serverEntry?.endsWith('/api/index.ts') ?? false,
+              `${vertical.id} topology must use api/index.ts as the server entry.`,
+            );
+          }
           assert(
-            vertical.api.bff?.strictEffectApproach === true,
-            `${vertical.id} topology must mark strictEffectApproach as true.`,
-          );
-          assert(
-            vertical.api.serverEntry?.endsWith('/api/index.ts') ?? false,
-            `${vertical.id} topology must use api/index.ts as the server entry.`,
+            isFalsyJson(vertical.api?.effect),
+            `${vertical.id} topology must describe the API directly, not under api.effect.`,
           );
         }
-        assert(
-          isFalsyJson(vertical.api?.effect),
-          `${vertical.id} topology must describe the API directly, not under api.effect.`,
-        );
       }
-    }
+    });
+    yield* validateTopologyContracts;
   });
   yield* inspectWorkspaceContracts;
 

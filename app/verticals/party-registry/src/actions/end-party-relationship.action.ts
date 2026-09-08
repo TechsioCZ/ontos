@@ -14,7 +14,6 @@ import {
   PartyRelationshipMutationErrorSchema,
 } from '../../shared/domain/relationship-contract.ts';
 import type {
-  ChangePartyRelationshipResult as Result,
   EndPartyRelationshipPayload as Payload,
   PartyRelationshipLifecycleEventPayload,
 } from '../../shared/domain/relationship-contract.ts';
@@ -25,9 +24,7 @@ import type {
 } from '../services/party-relationship-persistence.service.ts';
 import { createEndPartyRelationshipPartyRegistryRelationshipEndedV1OutboxMessage } from './end-party-relationship.party-registry-relationship-ended-v1.outbox-message.ts';
 
-export type EndPartyRelationshipPayload = Payload;
-export const EndPartyRelationshipResultSchema = ChangePartyRelationshipResultSchema;
-export type EndPartyRelationshipResult = Result;
+const EndPartyRelationshipResultSchema = ChangePartyRelationshipResultSchema;
 
 const eventPayload = (
   result: RelationshipChangeResult,
@@ -144,11 +141,3 @@ export const endPartyRelationshipAction = defineAction(
         ),
     }),
 );
-
-// <generated-outbox-message-exports>
-export { createEndPartyRelationshipPartyRegistryRelationshipEndedV1OutboxMessage } from './end-party-relationship.party-registry-relationship-ended-v1.outbox-message.ts';
-export { EndPartyRelationshipPartyRegistryRelationshipEndedV1OutboxPayloadSchema } from './end-party-relationship.party-registry-relationship-ended-v1.outbox-message.ts';
-export { EndPartyRelationshipPartyRegistryRelationshipEndedV1OutboxProducerModuleKey } from './end-party-relationship.party-registry-relationship-ended-v1.outbox-message.ts';
-export { EndPartyRelationshipPartyRegistryRelationshipEndedV1OutboxTopic } from './end-party-relationship.party-registry-relationship-ended-v1.outbox-message.ts';
-export type { EndPartyRelationshipPartyRegistryRelationshipEndedV1OutboxPayload } from './end-party-relationship.party-registry-relationship-ended-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

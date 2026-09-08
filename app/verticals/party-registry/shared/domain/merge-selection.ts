@@ -9,7 +9,7 @@ const MergeIsoTimestampJsonSchema = Schema.toEncoded(IsoTimestampSchema).check(
   }),
 );
 
-export const MergeSurvivorCandidateSchema = Schema.Struct({
+const MergeSurvivorCandidateSchema = Schema.Struct({
   authoritativeEvidenceRank: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
   blockingAuthoritativeConflict: Schema.Boolean,
   completenessRank: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
@@ -32,12 +32,12 @@ export const MergeSurvivorSelectionReasonSchema = Schema.Literals([
 ]);
 export type MergeSurvivorSelectionReason = typeof MergeSurvivorSelectionReasonSchema.Type;
 
-export const MergeSelectionEvidenceCriterionSchema = Schema.Union([
+const MergeSelectionEvidenceCriterionSchema = Schema.Union([
   Schema.Literals(['CONFIRMED_DUPLICATE_SET', 'IDENTITY_SAFETY']),
   MergeSurvivorSelectionReasonSchema,
 ]);
 export type MergeSelectionEvidenceCriterion = typeof MergeSelectionEvidenceCriterionSchema.Type;
-export const MergeEvaluatedCandidateSnapshotSchema = Schema.Struct({
+const MergeEvaluatedCandidateSnapshotSchema = Schema.Struct({
   candidate: MergeSurvivorCandidateSchema,
   criterionValue: Schema.Union([Schema.String, Schema.Finite, Schema.Boolean]),
   eligibleBefore: Schema.Boolean,
@@ -64,7 +64,7 @@ export const DecisionActorPrincipalIdSchema = Schema.String.check(Schema.isMinLe
   Schema.brand('DecisionActorPrincipalId'),
 );
 
-export const ConfirmedDuplicateSetSchema = Schema.Struct({
+const ConfirmedDuplicateSetSchema = Schema.Struct({
   confirmedDuplicateDecisionId: Schema.toEncoded(ConfirmedDuplicateDecisionIdSchema),
   confirmedPartyRefs: Schema.Array(PartyRefSchema).check(Schema.isMinLength(2)),
   decisionActorPrincipalId: Schema.toEncoded(DecisionActorPrincipalIdSchema),

@@ -22,24 +22,31 @@ export function collectEffectBindings(program: ESTree.Program): EffectBindings {
     if (!EFFECT_MODULE.test(statement.source.value)) continue;
     importsEffect = true;
     const submodule = statement.source.value.split('/').at(-1);
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportSpecifier') {
-        const imported =
-          specifier.imported.type === 'Identifier'
-            ? specifier.imported.name
-            : specifier.imported.value;
-        namespaces.set(specifier.local.name, imported);
-      } else if (
-        specifier.type === 'ImportNamespaceSpecifier' &&
-        submodule !== undefined &&
-        submodule !== 'effect'
-      ) {
-        // `import * as Schema from "effect/Schema"` binds the whole submodule as a namespace.
-        namespaces.set(specifier.local.name, submodule);
-      }
-    }
+    addEffectSpecifiers(namespaces, statement.specifiers, submodule);
   }
   return { namespaces, importsEffect };
+}
+
+function addEffectSpecifiers(
+  namespaces: Map<string, string>,
+  specifiers: ESTree.ImportDeclaration['specifiers'],
+  submodule: string | undefined,
+): void {
+  for (const specifier of specifiers) {
+    if (specifier.type === 'ImportSpecifier') {
+      const imported =
+        specifier.imported.type === 'Identifier'
+          ? specifier.imported.name
+          : specifier.imported.value;
+      namespaces.set(specifier.local.name, imported);
+    } else if (
+      specifier.type === 'ImportNamespaceSpecifier' &&
+      submodule !== undefined &&
+      submodule !== 'effect'
+    ) {
+      namespaces.set(specifier.local.name, submodule);
+    }
+  }
 }
 
 /** `Effect.runPromise` → `{ namespace: "Effect", member: "runPromise" }` when `Effect` is an effect import. */

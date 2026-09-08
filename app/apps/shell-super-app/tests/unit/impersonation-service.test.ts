@@ -596,26 +596,7 @@ test('persists and completes stopped evidence on the first stop after impersonat
   expect(deleteCalls).toBe(2);
 });
 
-test('restores the original session and stopped checkpoint after the provider response is lost', async () => {
-  const originalSessionToken = 'original-session-token';
-  const adminValue = `${originalSessionToken}:true`;
-  const adminCookie = encodeURIComponent(
-    `${adminValue}.${await makeSignature(adminValue, configuration.secret)}`,
-  );
-  const requestHeaders = new Headers({
-    cookie: `better-auth.admin_session=${adminCookie}; better-auth.session_token=deleted`,
-  });
-  const recovery = {
-    actionId: 'impersonation-action',
-    createdAt: new Date('2026-08-09T00:00:00.000Z'),
-    impersonationSessionId,
-    originalAuthBindingId,
-    originalPrincipalId,
-    originalSessionId: restoredSessionId,
-    reason: 'Investigate support request',
-    targetPrincipalId,
-    tenantId,
-  };
+const makeLostResponseRecoveryService = (recovery: SupportRecoveryRecord, expiresAt: Date) => {
   let deleted = false;
   const actionRuntime = makeActionRuntimeDouble([
     actionSuccess({ checkpoint: 'stopped', recorded: true }),
@@ -637,7 +618,7 @@ test('restores the original session and stopped checkpoint after the provider re
       loadOriginalSession: () =>
         Effect.succeed(
           Option.some({
-            expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+            expiresAt,
             id: restoredSessionId,
           }),
         ),
@@ -645,6 +626,33 @@ test('restores the original session and stopped checkpoint after the provider re
     }),
     supportRecoveryPrincipal,
   });
+  return { actionRuntime, deleted: () => deleted, service };
+};
+
+test('restores the original session and stopped checkpoint after the provider response is lost', async () => {
+  const originalSessionToken = 'original-session-token';
+  const adminValue = `${originalSessionToken}:true`;
+  const adminCookie = encodeURIComponent(
+    `${adminValue}.${await makeSignature(adminValue, configuration.secret)}`,
+  );
+  const requestHeaders = new Headers({
+    cookie: `better-auth.admin_session=${adminCookie}; better-auth.session_token=deleted`,
+  });
+  const recovery = {
+    actionId: 'impersonation-action',
+    createdAt: new Date('2026-08-09T00:00:00.000Z'),
+    impersonationSessionId,
+    originalAuthBindingId,
+    originalPrincipalId,
+    originalSessionId: restoredSessionId,
+    reason: 'Investigate support request',
+    targetPrincipalId,
+    tenantId,
+  };
+  const { actionRuntime, deleted, service } = makeLostResponseRecoveryService(
+    recovery,
+    new Date('2099-01-01T00:00:00.000Z'),
+  );
 
   const result = await runEffectTestPromise(
     service
@@ -658,7 +666,7 @@ test('restores the original session and stopped checkpoint after the provider re
   expect(result.active).toBe(false);
   expect(result.checkpointPending).toBe(false);
   expect(actionRuntime.invocationCount()).toBe(1);
-  expect(deleted).toBe(true);
+  expect(deleted()).toBe(true);
   const restoredSessionCookie = result.setCookieHeaders.find((header) =>
     header.startsWith('better-auth.session_token='),
   );
@@ -693,35 +701,10 @@ test('completes stopped recovery when a lost response leaves only an expired ori
     targetPrincipalId,
     tenantId,
   };
-  let deleted = false;
-  const actionRuntime = makeActionRuntimeDouble([
-    actionSuccess({ checkpoint: 'stopped', recorded: true }),
-  ]);
-  const service = makeService({
-    actionRuntime: actionRuntime.runtime,
-    authentication: makeAuthenticationServiceDouble(),
-    configuration,
-    provider: makeSupportAuthProviderDouble({
-      getSession: async () => ({ headers: new Headers(), response: null }),
-    }),
-    resolver: makePrincipalResolverDouble(),
-    store: makeSupportImpersonationStoreDouble({
-      deleteRecovery: () =>
-        Effect.sync(() => {
-          deleted = true;
-        }),
-      deleteSession: () => Effect.void,
-      loadOriginalSession: () =>
-        Effect.succeed(
-          Option.some({
-            expiresAt: new Date('2000-01-01T00:00:00.000Z'),
-            id: restoredSessionId,
-          }),
-        ),
-      loadRecoveries: () => Effect.succeed([recovery]),
-    }),
-    supportRecoveryPrincipal,
-  });
+  const { actionRuntime, deleted, service } = makeLostResponseRecoveryService(
+    recovery,
+    new Date('2000-01-01T00:00:00.000Z'),
+  );
 
   const result = await runEffectTestPromise(
     service
@@ -742,7 +725,7 @@ test('completes stopped recovery when a lost response leaves only an expired ori
   expect(result.active).toBe(false);
   expect(result.checkpointPending).toBe(false);
   expect(actionRuntime.invocationCount()).toBe(1);
-  expect(deleted).toBe(true);
+  expect(deleted()).toBe(true);
   expect(result.setCookieHeaders.every((header) => header.includes('Max-Age=0'))).toBe(true);
 });
 

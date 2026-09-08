@@ -294,17 +294,18 @@ test('preserves bounded external observation evidence separately from trusted ac
   }
 });
 
-// eslint-disable-next-line complexity -- One schema-boundary matrix keeps all related family invariants visible.
-test('models typed contact, relationship, and Counterparty lifecycles with owner-local references', () => {
+const checkSql = (checks: Readonly<Record<string, string>>, name: string) => checks[name] ?? '';
+
+test('models typed contact point lifecycles with owner-local references', () => {
   const contactChecks = Object.fromEntries(
     configOf(partyContactPoints).checks.map((candidate) => [
       candidate.name,
       dialect.sqlToQuery(candidate.value).sql,
     ]),
   );
-  assert.match(contactChecks['party_contact_points_shape_ck'] ?? '', /EMAIL/u);
-  assert.match(contactChecks['party_contact_points_shape_ck'] ?? '', /PHONE/u);
-  assert.match(contactChecks['party_contact_points_shape_ck'] ?? '', /ADDRESS/u);
+  assert.match(checkSql(contactChecks, 'party_contact_points_shape_ck'), /EMAIL/u);
+  assert.match(checkSql(contactChecks, 'party_contact_points_shape_ck'), /PHONE/u);
+  assert.match(checkSql(contactChecks, 'party_contact_points_shape_ck'), /ADDRESS/u);
   for (const column of [
     'display_value',
     'normalization_version',
@@ -329,22 +330,25 @@ test('models typed contact, relationship, and Counterparty lifecycles with owner
       column,
     );
   }
-  assert.match(contactChecks['party_contact_points_revision_ck'] ?? '', /> 0/u);
+  assert.match(checkSql(contactChecks, 'party_contact_points_revision_ck'), /> 0/u);
   assert.match(
-    contactChecks['party_contact_points_additional_evidence_ck'] ?? '',
+    checkSql(contactChecks, 'party_contact_points_additional_evidence_ck'),
     /additional_evidence_refs.*array.*additional_evidence_refs.*32/u,
   );
   assert.match(
-    contactChecks['party_contact_points_end_evidence_ck'] ?? '',
+    checkSql(contactChecks, 'party_contact_points_end_evidence_ck'),
     /valid_to.*end_reason.*end_provenance_source.*end_provenance_method.*end_evidence_refs.*ended_by_action_invocation_id.*ended_by_principal_id.*ended_recorded_at/u,
   );
-  assert.match(contactChecks['party_contact_points_shape_ck'] ?? '', /num_nonnulls/u);
-  assert.match(contactChecks['party_contact_points_shape_ck'] ?? '', /\^\\\+/u);
+  assert.match(checkSql(contactChecks, 'party_contact_points_shape_ck'), /num_nonnulls/u);
+  assert.match(checkSql(contactChecks, 'party_contact_points_shape_ck'), /\^\\\+/u);
   const preferredIndex = configOf(partyContactPoints).indexes.find(
     (candidate) => candidate.config.name === 'party_contact_points_current_preferred_uk',
   );
   assert.equal(preferredIndex?.config.unique, true);
   assert.ok(preferredIndex?.config.where);
+});
+
+test('models contact point purpose lifecycles with owner-local references', () => {
   const purposeConfig = configOf(partyContactPointPurposes);
   const purposeChecks = Object.fromEntries(
     purposeConfig.checks.map((candidate) => [
@@ -352,10 +356,10 @@ test('models typed contact, relationship, and Counterparty lifecycles with owner
       dialect.sqlToQuery(candidate.value).sql,
     ]),
   );
-  assert.match(purposeChecks['party_contact_point_purposes_key_ck'] ?? '', /REGISTERED/u);
-  assert.match(purposeChecks['party_contact_point_purposes_key_ck'] ?? '', /BILLING/u);
-  assert.match(purposeChecks['party_contact_point_purposes_key_ck'] ?? '', /DELIVERY/u);
-  assert.match(purposeChecks['party_contact_point_purposes_key_ck'] ?? '', /CORRESPONDENCE/u);
+  assert.match(checkSql(purposeChecks, 'party_contact_point_purposes_key_ck'), /REGISTERED/u);
+  assert.match(checkSql(purposeChecks, 'party_contact_point_purposes_key_ck'), /BILLING/u);
+  assert.match(checkSql(purposeChecks, 'party_contact_point_purposes_key_ck'), /DELIVERY/u);
+  assert.match(checkSql(purposeChecks, 'party_contact_point_purposes_key_ck'), /CORRESPONDENCE/u);
   for (const column of [
     'registry_context',
     'jurisdiction',
@@ -379,7 +383,7 @@ test('models typed contact, relationship, and Counterparty lifecycles with owner
     );
   }
   assert.match(
-    purposeChecks['party_contact_point_purposes_end_evidence_ck'] ?? '',
+    checkSql(purposeChecks, 'party_contact_point_purposes_end_evidence_ck'),
     /valid_to.*end_reason.*end_provenance_source.*end_provenance_method.*end_evidence_refs.*ended_by_action_invocation_id.*ended_by_principal_id.*ended_recorded_at/u,
   );
   assert.equal(
@@ -399,16 +403,18 @@ test('models typed contact, relationship, and Counterparty lifecycles with owner
       (candidate) => candidate.config.name === 'party_contact_point_purposes_current_registered_uk',
     )?.config.where,
   );
+});
 
+test('models relationship lifecycles with owner-local references', () => {
   const relationshipChecks = Object.fromEntries(
     configOf(partyRelationships).checks.map((candidate) => [
       candidate.name,
       dialect.sqlToQuery(candidate.value).sql,
     ]),
   );
-  assert.match(relationshipChecks['party_relationships_type_ck'] ?? '', /CONTACT_PERSON_OF/u);
+  assert.match(checkSql(relationshipChecks, 'party_relationships_type_ck'), /CONTACT_PERSON_OF/u);
   assert.doesNotMatch(
-    relationshipChecks['party_relationships_type_ck'] ?? '',
+    checkSql(relationshipChecks, 'party_relationships_type_ck'),
     /EMPLOYEE_OF|BRANCH_OF|OTHER/u,
   );
   assert.ok(
@@ -435,20 +441,23 @@ test('models typed contact, relationship, and Counterparty lifecycles with owner
     false,
   );
   assert.match(
-    relationshipChecks['party_relationships_interval_ck'] ?? '',
+    checkSql(relationshipChecks, 'party_relationships_interval_ck'),
     /valid_to.*is null.*valid_from.*is null.*valid_to.*>.*valid_from/u,
   );
   assert.match(
-    relationshipChecks['party_relationships_assertion_state_ck'] ?? '',
+    checkSql(relationshipChecks, 'party_relationships_assertion_state_ck'),
     /ACTIVE.*SUPERSEDED.*RETRACTED.*DISPUTED/u,
   );
-  assert.doesNotMatch(relationshipChecks['party_relationships_assertion_state_ck'] ?? '', /ENDED/u);
+  assert.doesNotMatch(
+    checkSql(relationshipChecks, 'party_relationships_assertion_state_ck'),
+    /ENDED/u,
+  );
   const relationshipIntervalIndex = configOf(partyRelationships).indexes.find(
     (candidate) => candidate.config.name === 'party_relationships_interval_idx',
   );
   assert.equal(relationshipIntervalIndex?.config.unique, false);
   assert.equal(relationshipIntervalIndex?.config.where, undefined);
-  assert.match(relationshipChecks['party_relationships_revision_ck'] ?? '', /> 0/u);
+  assert.match(checkSql(relationshipChecks, 'party_relationships_revision_ck'), /> 0/u);
   for (const column of [
     'end_reason',
     'end_provenance_source',
@@ -470,7 +479,9 @@ test('models typed contact, relationship, and Counterparty lifecycles with owner
     ),
     getTableName(parties),
   );
+});
 
+test('models Counterparty lifecycles with owner-local references', () => {
   assert.deepEqual(uniqueColumns(counterparties, 'party_counterparties_context_uk'), [
     'tenant_id',
     'party_id',
@@ -488,10 +499,10 @@ test('models typed contact, relationship, and Counterparty lifecycles with owner
       dialect.sqlToQuery(candidate.value).sql,
     ]),
   );
-  assert.match(roleChecks['party_counterparty_role_periods_type_ck'] ?? '', /CUSTOMER/u);
-  assert.match(roleChecks['party_counterparty_role_periods_type_ck'] ?? '', /SUPPLIER/u);
+  assert.match(checkSql(roleChecks, 'party_counterparty_role_periods_type_ck'), /CUSTOMER/u);
+  assert.match(checkSql(roleChecks, 'party_counterparty_role_periods_type_ck'), /SUPPLIER/u);
   assert.doesNotMatch(
-    roleChecks['party_counterparty_role_periods_type_ck'] ?? '',
+    checkSql(roleChecks, 'party_counterparty_role_periods_type_ck'),
     /BUSINESS_PARTNER/u,
   );
   for (const column of [
@@ -510,7 +521,7 @@ test('models typed contact, relationship, and Counterparty lifecycles with owner
       column,
     );
   }
-  const roleEndEvidence = roleChecks['party_counterparty_role_periods_end_evidence_ck'] ?? '';
+  const roleEndEvidence = checkSql(roleChecks, 'party_counterparty_role_periods_end_evidence_ck');
   assert.match(
     roleEndEvidence,
     /valid_to[^)]*is null[^)]*end_provenance_source[^)]*is null[^)]*end_provenance_method[^)]*is null/u,
@@ -527,7 +538,7 @@ test('models typed contact, relationship, and Counterparty lifecycles with owner
     'effective intervals, not an is_current unique index, own role-period uniqueness',
   );
   assert.doesNotMatch(
-    roleChecks['party_counterparty_role_periods_state_ck'] ?? '',
+    checkSql(roleChecks, 'party_counterparty_role_periods_state_ck'),
     /ACTIVE' and [^)]*is_current/u,
   );
 });

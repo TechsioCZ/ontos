@@ -86,6 +86,37 @@ export const decideRelationshipCreate = (
     : { _tag: 'overlap', relationshipId: overlapping.relationshipId };
 };
 
+const requiresStartCorrection = (
+  current: RelationshipUpdateState,
+  request: RelationshipUpdateRequest,
+  now: RelationshipIsoTimestamp,
+): boolean =>
+  request.validFrom !== undefined &&
+  Option.isSome(current.validFrom) &&
+  !sameInstant(request.validFrom, current.validFrom.value) &&
+  (DateTime.Order(current.validFrom.value, now) <= 0 ||
+    DateTime.Order(request.validFrom, now) <= 0);
+
+const requiresEndCorrection = (
+  current: RelationshipUpdateState,
+  request: RelationshipUpdateRequest,
+  now: RelationshipIsoTimestamp,
+): boolean =>
+  request.validTo !== undefined &&
+  Option.isSome(current.validTo) &&
+  DateTime.Order(current.validTo.value, now) <= 0 &&
+  !sameOptionalInstant(current.validTo, request.validTo);
+
+const requiresExplicitEnd = (
+  current: RelationshipUpdateState,
+  request: RelationshipUpdateRequest,
+  now: RelationshipIsoTimestamp,
+): boolean =>
+  Option.isNone(current.validTo) &&
+  request.validTo !== undefined &&
+  Option.isSome(request.validTo) &&
+  DateTime.Order(request.validTo.value, now) <= 0;
+
 export const decideRelationshipUpdate = (
   current: RelationshipUpdateState,
   request: RelationshipUpdateRequest,
@@ -109,32 +140,37 @@ export const decideRelationshipUpdate = (
   ) {
     return { _tag: 'invalid_interval' };
   }
-  if (
-    request.validFrom !== undefined &&
-    Option.isSome(current.validFrom) &&
-    !sameInstant(request.validFrom, current.validFrom.value) &&
-    (DateTime.Order(current.validFrom.value, now) <= 0 ||
-      DateTime.Order(request.validFrom, now) <= 0)
-  ) {
+  if (requiresStartCorrection(current, request, now)) {
     return { _tag: 'correction_required', fact: 'validFrom' };
   }
-  if (
-    request.validTo !== undefined &&
-    Option.isSome(current.validTo) &&
-    DateTime.Order(current.validTo.value, now) <= 0 &&
-    !sameOptionalInstant(current.validTo, request.validTo)
-  ) {
+  if (requiresEndCorrection(current, request, now)) {
     return { _tag: 'correction_required', fact: 'validTo' };
   }
-  if (
-    Option.isNone(current.validTo) &&
-    request.validTo !== undefined &&
-    Option.isSome(request.validTo) &&
-    DateTime.Order(request.validTo.value, now) <= 0
-  ) {
+  if (requiresExplicitEnd(current, request, now)) {
     return { _tag: 'end_required' };
   }
   return { _tag: 'update' };
+};
+
+const decideRepeatedRelationshipEnd = (
+  current: RelationshipEndState,
+  request: RelationshipEndRequest,
+) => {
+  if (
+    current.endReason === (request.reason ?? null) &&
+    current.endProvenanceMethod === request.provenance.method &&
+    current.endProvenanceSource === request.provenance.source
+  ) {
+    return { _tag: 'unchanged' } as const;
+  }
+  if (
+    current.endReason === null &&
+    current.endProvenanceMethod === null &&
+    current.endProvenanceSource === null
+  ) {
+    return { _tag: 'attach_end_evidence' } as const;
+  }
+  return { _tag: 'correction_required', fact: 'validTo' } as const;
 };
 
 export const decideRelationshipEnd = (
@@ -159,21 +195,7 @@ export const decideRelationshipEnd = (
     return { _tag: 'invalid_interval' };
   }
   if (Option.isSome(current.validTo) && sameInstant(current.validTo.value, request.effectiveAt)) {
-    if (
-      current.endReason === (request.reason ?? null) &&
-      current.endProvenanceMethod === request.provenance.method &&
-      current.endProvenanceSource === request.provenance.source
-    ) {
-      return { _tag: 'unchanged' };
-    }
-    if (
-      current.endReason === null &&
-      current.endProvenanceMethod === null &&
-      current.endProvenanceSource === null
-    ) {
-      return { _tag: 'attach_end_evidence' };
-    }
-    return { _tag: 'correction_required', fact: 'validTo' };
+    return decideRepeatedRelationshipEnd(current, request);
   }
   if (Option.isSome(current.validTo)) {
     return DateTime.Order(current.validTo.value, now) > 0

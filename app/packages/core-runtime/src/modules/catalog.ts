@@ -34,7 +34,7 @@ export interface InstalledDeploymentContractInput {
   readonly expectedAppId: OntosDeploymentAppId;
 }
 
-export const InstalledDeploymentFailureReasonSchema = Schema.Literals([
+const InstalledDeploymentFailureReasonSchema = Schema.Literals([
   'incompatible',
   'timeout',
   'unavailable',
@@ -252,12 +252,42 @@ export const buildInstalledModuleCatalog = (
   );
 };
 
-/** Resolves each installed deployment independently while excluding contradictory candidates. */
-export const resolveInstalledModuleCatalog = (
+const findConflictingDeploymentAppIds = (
+  candidates: readonly OntosModuleDeploymentContract[],
+): ReadonlySet<OntosDeploymentAppId> => {
+  const conflictingAppIds = new Set<OntosDeploymentAppId>();
+  const byAppId = new Map<OntosDeploymentAppId, OntosModuleDeploymentContract[]>();
+  const byModuleId = new Map<OntosModuleId, OntosModuleDeploymentContract[]>();
+  const byWorkerKey = new Map<string, OntosModuleDeploymentContract[]>();
+  for (const contract of candidates) {
+    const {
+      deployment: { appId },
+      manifest: {
+        module: { id: moduleId },
+      },
+    } = contract;
+    byAppId.set(appId, [...(byAppId.get(appId) ?? []), contract]);
+    byModuleId.set(moduleId, [...(byModuleId.get(moduleId) ?? []), contract]);
+    for (const { workerKey } of contract.runtime.outboxSubscriptions) {
+      byWorkerKey.set(workerKey, [...(byWorkerKey.get(workerKey) ?? []), contract]);
+    }
+  }
+  for (const conflicts of [...byAppId.values(), ...byModuleId.values(), ...byWorkerKey.values()]) {
+    if (conflicts.length > 1) {
+      for (const contract of conflicts) {
+        conflictingAppIds.add(contract.deployment.appId);
+      }
+    }
+  }
+
+  return conflictingAppIds;
+};
+
+const collectDeploymentCandidates = (
   inputs: readonly InstalledDeploymentResolutionInput[],
-): InstalledModuleCatalog => {
-  const authoritativeStatuses = collectAuthoritativeDeploymentStatuses(inputs);
-  const statuses = new Map<OntosDeploymentAppId, InstalledDeploymentStatus>();
+  authoritativeStatuses: ReadonlyMap<OntosDeploymentAppId, AuthoritativeInstalledDeploymentStatus>,
+  statuses: Map<OntosDeploymentAppId, InstalledDeploymentStatus>,
+): OntosModuleDeploymentContract[] => {
   const candidates: OntosModuleDeploymentContract[] = [];
   for (const input of inputs) {
     const authoritative = authoritativeStatuses.get(input.expectedAppId);
@@ -289,30 +319,17 @@ export const resolveInstalledModuleCatalog = (
     }
   }
 
-  const conflictingAppIds = new Set<OntosDeploymentAppId>();
-  const byAppId = new Map<OntosDeploymentAppId, OntosModuleDeploymentContract[]>();
-  const byModuleId = new Map<OntosModuleId, OntosModuleDeploymentContract[]>();
-  const byWorkerKey = new Map<string, OntosModuleDeploymentContract[]>();
-  for (const contract of candidates) {
-    const {
-      deployment: { appId },
-      manifest: {
-        module: { id: moduleId },
-      },
-    } = contract;
-    byAppId.set(appId, [...(byAppId.get(appId) ?? []), contract]);
-    byModuleId.set(moduleId, [...(byModuleId.get(moduleId) ?? []), contract]);
-    for (const { workerKey } of contract.runtime.outboxSubscriptions) {
-      byWorkerKey.set(workerKey, [...(byWorkerKey.get(workerKey) ?? []), contract]);
-    }
-  }
-  for (const conflicts of [...byAppId.values(), ...byModuleId.values(), ...byWorkerKey.values()]) {
-    if (conflicts.length > 1) {
-      for (const contract of conflicts) {
-        conflictingAppIds.add(contract.deployment.appId);
-      }
-    }
-  }
+  return candidates;
+};
+
+/** Resolves each installed deployment independently while excluding contradictory candidates. */
+export const resolveInstalledModuleCatalog = (
+  inputs: readonly InstalledDeploymentResolutionInput[],
+): InstalledModuleCatalog => {
+  const authoritativeStatuses = collectAuthoritativeDeploymentStatuses(inputs);
+  const statuses = new Map<OntosDeploymentAppId, InstalledDeploymentStatus>();
+  const candidates = collectDeploymentCandidates(inputs, authoritativeStatuses, statuses);
+  const conflictingAppIds = findConflictingDeploymentAppIds(candidates);
 
   const healthy = candidates.filter(
     (contract) => !conflictingAppIds.has(contract.deployment.appId),

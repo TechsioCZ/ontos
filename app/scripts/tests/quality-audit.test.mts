@@ -448,6 +448,11 @@ await test('the CLI handles escaped paths, foreign cwd and untracked source prov
         yield* spawner.string(ChildProcess.make('git', ['init', '-q', root]));
       }).pipe(Effect.provide(NodeServices.layer)),
     );
+    mkdirSync(path.join(root, 'scripts/shared'), { recursive: true });
+    copyFileSync(
+      path.join(appRoot, 'scripts/shared/ultramodern-wrapper-source.mts'),
+      path.join(root, 'scripts/shared/ultramodern-wrapper-source.mts'),
+    );
     const executable = path.join(root, 'scripts/quality audit.mts');
     copyFileSync(path.join(appRoot, 'scripts/quality-audit.mts'), executable);
     for (const file of ['knip-model.mts', 'knip-runtime-model.mts']) {

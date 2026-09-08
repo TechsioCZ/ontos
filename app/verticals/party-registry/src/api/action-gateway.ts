@@ -69,9 +69,7 @@ export const makeActionGateway = (acquire: ActionGatewayIssuer = issueGatewayCon
     ),
 });
 
-export const actionGateway = makeActionGateway();
-export const makeOperationGateway = makeActionGateway;
-export const operationGateway = actionGateway;
+export const operationGateway = makeActionGateway();
 
 export const { deriveAresCorrectionReviewHandoffs, prefillPartyCandidateFromAres } =
   AresApplication;
@@ -266,6 +264,45 @@ const sameParty = (left: PartyRef, right: PartyRef): boolean =>
   left.moduleId === right.moduleId &&
   left.resourceType === right.resourceType;
 
+const hasSupportedCanonicalRoute = (selection: AresApplySelection): boolean =>
+  !(
+    !Schema.is(AresApplication.AresCanonicalRouteSchema)(selection.route) ||
+    (selection.route === 'PARTY_UPDATE' && selection.fact !== 'BUSINESS_NAME') ||
+    (selection.route === 'IDENTIFIER_ADD' && selection.fact !== 'ICO') ||
+    (selection.route === 'CONTACT_POINT_ADD' && selection.fact !== 'REGISTERED_ADDRESS')
+  );
+
+const validateSelection = (selection: AresApplySelection, partyRef: PartyRef | null) => {
+  if (!hasSupportedCanonicalRoute(selection)) {
+    return Effect.fail(invalidSelection('The selected fact requires a supported canonical route'));
+  }
+  if (selection.idempotencyKey.trim().length === 0) {
+    return Effect.fail(
+      invalidSelection('Every selected Action requires its own stable idempotency key'),
+    );
+  }
+  if (partyRef === null) {
+    return Effect.fail(invalidSelection('Enrichment requires one explicit existing Party'));
+  } else if (selection.route === 'PARTY_CORRECTION') {
+    const expectedFactKind =
+      selection.fact === 'BUSINESS_NAME' ? 'DISPLAY_NAME' : 'OFFICIAL_IDENTIFIER';
+    if (selection.payload.factKind !== expectedFactKind) {
+      return Effect.fail(
+        invalidSelection('Correction review must nominate the selected supported fact'),
+      );
+    }
+    if (selection.payload.partyId !== partyRef.resourceId) {
+      return Effect.fail(invalidSelection('Correction target does not match the selected Party'));
+    }
+  } else if (!sameParty(selection.payload.partyRef, partyRef)) {
+    return Effect.fail(
+      invalidSelection('All selected facts must target the same tenant-qualified Party'),
+    );
+  }
+
+  return Effect.void;
+};
+
 const validateRequest = (request: AresApplyRequest) => {
   if (!request.userConfirmed || request.correlationId.trim().length === 0) {
     return Effect.fail(
@@ -276,43 +313,16 @@ const validateRequest = (request: AresApplyRequest) => {
   if (facts.length > 4 || new Set(facts).size !== facts.length) {
     return Effect.fail(invalidSelection('Select each bounded ARES fact at most once'));
   }
-  for (const selection of request.selections) {
-    if (
-      !Schema.is(AresApplication.AresCanonicalRouteSchema)(selection.route) ||
-      (selection.route === 'PARTY_UPDATE' && selection.fact !== 'BUSINESS_NAME') ||
-      (selection.route === 'IDENTIFIER_ADD' && selection.fact !== 'ICO') ||
-      (selection.route === 'CONTACT_POINT_ADD' && selection.fact !== 'REGISTERED_ADDRESS')
-    ) {
-      return Effect.fail(
-        invalidSelection('The selected fact requires a supported canonical route'),
-      );
-    }
-    if (selection.idempotencyKey.trim().length === 0) {
-      return Effect.fail(
-        invalidSelection('Every selected Action requires its own stable idempotency key'),
-      );
-    }
-    if (request.partyRef === null) {
-      return Effect.fail(invalidSelection('Enrichment requires one explicit existing Party'));
-    } else if (selection.route === 'PARTY_CORRECTION') {
-      const expectedFactKind =
-        selection.fact === 'BUSINESS_NAME' ? 'DISPLAY_NAME' : 'OFFICIAL_IDENTIFIER';
-      if (selection.payload.factKind !== expectedFactKind) {
-        return Effect.fail(
-          invalidSelection('Correction review must nominate the selected supported fact'),
-        );
-      }
-      if (selection.payload.partyId !== request.partyRef.resourceId) {
-        return Effect.fail(invalidSelection('Correction target does not match the selected Party'));
-      }
-    } else if (!sameParty(selection.payload.partyRef, request.partyRef)) {
-      return Effect.fail(
-        invalidSelection('All selected facts must target the same tenant-qualified Party'),
-      );
-    }
-  }
-  return Schema.decodeUnknownEffect(AresSubjectEvidenceSchema)(request.observation).pipe(
-    Effect.mapError(invalidObservation),
+  return Effect.forEach(
+    request.selections,
+    (selection) => validateSelection(selection, request.partyRef),
+    { concurrency: 1, discard: true },
+  ).pipe(
+    Effect.andThen(() =>
+      Schema.decodeUnknownEffect(AresSubjectEvidenceSchema)(request.observation).pipe(
+        Effect.mapError(invalidObservation),
+      ),
+    ),
   );
 };
 
@@ -475,62 +485,159 @@ const invokeSelection = <Failure>(
     Match.exhaustive,
   );
 
-/**
- * Refreshes provider evidence and canonical facts through governed Reads, evaluates the closed
- * owner policy, then dispatches only explicitly selected standard Actions. Conflicts are deferred
- * to the ordinary reviewed workflow; a caller-supplied route never proves historical error.
- * Each Action persists its bounded external evidence and owns its independent idempotent commit.
- */
-export const applyAresObservationWithActions = Effect.fn(
-  'ActionGateway.applyAresObservationWithActions',
-)(
-  // eslint-disable-next-line complexity -- one closed coordinator preserves fail-stop ordering
-  function* applyAresObservationWithActionsEffect<Failure>(
-    request: AresApplyRequest,
-    invoker: PartyRegistryStandardActionInvoker<Failure>,
-    options: AresApplyOptions = {},
-  ) {
-    if (request.selections.length === 0) {
+const observationIsStale = (
+  supplied: AresSubjectEvidence,
+  observation: AresSubjectEvidence,
+  decisionTime: DateTime.Utc,
+): boolean => {
+  const ageMillis =
+    DateTime.toEpochMillis(decisionTime) - DateTime.toEpochMillis(observation.observedAt);
+  const suppliedAgeMillis =
+    DateTime.toEpochMillis(decisionTime) - DateTime.toEpochMillis(supplied.observedAt);
+  return (
+    ageMillis < 0 ||
+    ageMillis > 300_000 ||
+    suppliedAgeMillis < 0 ||
+    suppliedAgeMillis > 300_000 ||
+    DateTime.toEpochMillis(supplied.servedAt) > DateTime.toEpochMillis(decisionTime)
+  );
+};
+
+const refreshedObservationChanged = (
+  request: AresApplyRequest,
+  suppliedInput: typeof AresSubjectEvidenceSchema.Encoded,
+  observationInput: typeof AresSubjectEvidenceSchema.Encoded,
+  observation: AresSubjectEvidence,
+): boolean =>
+  suppliedInput.providerChangedOn !== observationInput.providerChangedOn ||
+  suppliedInput.queryIco !== observationInput.queryIco ||
+  request.selections.some((selection) => {
+    if (selection.route !== 'PARTY_CORRECTION') {
+      return !matchesObservation(selection, observation);
+    }
+    return selection.fact === 'BUSINESS_NAME'
+      ? suppliedInput.subject.businessName !== observationInput.subject.businessName
+      : suppliedInput.subject.ico !== observationInput.subject.ico;
+  });
+
+const correctionTargetChanged = (
+  selection: AresApplySelection,
+  candidates: readonly AresCorrectionReviewHandoff[],
+): boolean =>
+  selection.route === 'PARTY_CORRECTION' &&
+  candidates.some(
+    (candidate) =>
+      candidate.fact === selection.fact &&
+      candidate.targetAssertionId !== selection.payload.targetAssertionId,
+  );
+
+const selectionRevisionChanged = (
+  selection: ExecutableSelection,
+  revision: number | null,
+): boolean => selection.route === 'PARTY_UPDATE' && selection.payload.expectedRevision !== revision;
+
+const permitsSelectedAction = (
+  decision: AresEvidenceApplication['factDecisions'][number],
+  selection: ExecutableSelection,
+): boolean => decision.outcome === 'APPLY_ENRICHMENT' && decision.route === selection.route;
+
+const planSelectedActions = (
+  request: AresApplyRequest,
+  application: AresEvidenceApplication,
+  observation: AresSubjectEvidence,
+  correctionCandidates: readonly AresCorrectionReviewHandoff[],
+  revision: number | null,
+) => {
+  const executable: ExecutableSelection[] = [];
+  const skipped: AresSkippedAction[] = [];
+  for (const selection of request.selections) {
+    const decision = application.factDecisions.find(({ fact }) => fact === selection.fact);
+    if (correctionTargetChanged(selection, correctionCandidates)) {
       return {
-        _tag: 'AresApplyNotRequested' as const,
-        completed: [] as const,
-        skipped: [] as const,
+        executable,
+        skipped,
+        deferred: {
+          _tag: 'AresApplyDeferred' as const,
+          application: needsConfirmation(application, 'canonical_assertion_changed'),
+          completed: [] as const,
+          correctionCandidates: [],
+          skipped,
+        },
       };
     }
-    const supplied = yield* validateRequest(request);
-    yield* validateSelectedValues(request, supplied);
-    const gateway = options.gateway ?? actionGateway;
-    const reads = options.reads ?? (yield* loadDefaultReads());
-    const clientOptions = options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl };
-    const loadedObservation = yield* gateway.invoke(
-      (authorization) =>
-        reads.observation(
-          { ico: supplied.queryIco },
-          authorization,
-          request.correlationId,
-          clientOptions,
-        ),
-      options.gatewayContext,
-    );
-    const observation = yield* decodeReadObservation(loadedObservation).pipe(
-      Effect.mapError(invalidObservation),
-    );
-    const [suppliedInput, observationInput] = yield* Effect.all(
-      [
-        Schema.encodeEffect(AresSubjectEvidenceSchema)(supplied),
-        Schema.encodeEffect(AresSubjectEvidenceSchema)(observation),
-      ],
-      { concurrency: 2 },
-    ).pipe(
-      Effect.mapError((error) =>
-        invalidSelection('ARES observation cannot be encoded for policy evaluation', error),
-      ),
-    );
-    const decisionTime = yield* DateTime.now;
-    const decisionEpochMillis = DateTime.toEpochMillis(decisionTime);
-    const decidedAt = DateTime.formatIso(decisionTime);
-    let canonical: AresCanonicalSnapshot | null = null;
-    let revision: number | null = null;
+    if (selection.route === 'PARTY_CORRECTION' || decision === undefined) {
+      return {
+        executable,
+        skipped,
+        deferred: {
+          _tag: 'AresApplyDeferred' as const,
+          application,
+          completed: [] as const,
+          correctionCandidates,
+          skipped,
+        },
+      };
+    }
+    if (decision.outcome === 'NO_CHANGE' && matchesObservation(selection, observation)) {
+      skipped.push({ fact: selection.fact, reason: 'ALREADY_SATISFIED', route: selection.route });
+      continue;
+    }
+    const permitted = permitsSelectedAction(decision, selection);
+    if (!permitted) {
+      return {
+        executable,
+        skipped,
+        deferred: {
+          _tag: 'AresApplyDeferred' as const,
+          application,
+          completed: [] as const,
+          correctionCandidates,
+          skipped,
+        },
+      };
+    }
+    if (!matchesObservation(selection, observation)) {
+      return {
+        executable,
+        skipped,
+        deferred: {
+          _tag: 'AresApplyDeferred' as const,
+          application: needsConfirmation(application, 'refreshed_observation_changed'),
+          completed: [] as const,
+          correctionCandidates,
+          skipped,
+        },
+      };
+    }
+    if (selectionRevisionChanged(selection, revision)) {
+      return {
+        executable,
+        skipped,
+        deferred: {
+          _tag: 'AresApplyDeferred' as const,
+          application: needsConfirmation(application, 'canonical_revision_changed'),
+          completed: [] as const,
+          correctionCandidates,
+          skipped,
+        },
+      };
+    }
+    executable.push(selection);
+  }
+  return { executable, skipped, deferred: null };
+};
+
+const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(
+  function* loadCanonicalSnapshotEffect(
+    request: AresApplyRequest,
+    observation: AresSubjectEvidence,
+    reads: AresApplyReads,
+    gateway: ReturnType<typeof makeActionGateway>,
+    options: AresApplyOptions,
+    decidedAt: string,
+    decisionEpochMillis: number,
+    clientOptions: { readonly baseUrl?: string | URL },
+  ) {
     if (request.partyRef !== null) {
       const { partyRef } = request;
       const detail = yield* gateway.invoke(
@@ -585,7 +692,7 @@ export const applyAresObservationWithActions = Effect.fn(
           ? [structuredAddress(point.value.address)]
           : [],
       );
-      canonical = {
+      const canonical: AresCanonicalSnapshot = {
         archived: Option.isSome(party.archivedAt),
         displayName: Option.getOrNull(party.displayName),
         factEvidence: [
@@ -639,203 +746,186 @@ export const applyAresObservationWithActions = Effect.fn(
         partyType: party.partyType,
         registeredAddresses,
       };
-      revision = loadedRevision;
+      return { canonical, revision: loadedRevision };
     }
-    const application = yield* Effect.try({
-      catch: (error) =>
-        invalidSelection(
-          'The trusted ARES evidence cannot be evaluated under the owner policy',
-          error,
-        ),
-      try: () =>
-        AresApplication.deriveAresEvidenceApplication({
-          canonical,
-          decidedAt,
-          evidence: observationInput,
-          selectedFacts: request.selections.map(({ fact }) => fact),
-          userConfirmed: request.userConfirmed,
-        }),
-    });
-    const correctionCandidates =
-      canonical === null
-        ? []
-        : AresApplication.deriveAresCorrectionReviewHandoffs(application, canonical);
-    const ageMillis =
-      DateTime.toEpochMillis(decisionTime) - DateTime.toEpochMillis(observation.observedAt);
-    const suppliedAgeMillis =
-      DateTime.toEpochMillis(decisionTime) - DateTime.toEpochMillis(supplied.observedAt);
-    if (
-      ageMillis < 0 ||
-      ageMillis > 300_000 ||
-      suppliedAgeMillis < 0 ||
-      suppliedAgeMillis > 300_000 ||
-      DateTime.toEpochMillis(supplied.servedAt) > DateTime.toEpochMillis(decisionTime)
-    ) {
-      return {
-        _tag: 'AresApplyDeferred' as const,
-        application: needsConfirmation(application, 'observation_not_fresh'),
-        completed: [] as const,
-        correctionCandidates: [],
-        skipped: [] as const,
-      };
-    }
-    if (
-      suppliedInput.providerChangedOn !== observationInput.providerChangedOn ||
-      suppliedInput.queryIco !== observationInput.queryIco ||
-      request.selections.some((selection) => {
-        if (selection.route !== 'PARTY_CORRECTION') {
-          return !matchesObservation(selection, observation);
-        }
-        return selection.fact === 'BUSINESS_NAME'
-          ? suppliedInput.subject.businessName !== observationInput.subject.businessName
-          : suppliedInput.subject.ico !== observationInput.subject.ico;
-      })
-    ) {
-      return {
-        _tag: 'AresApplyDeferred' as const,
-        application: needsConfirmation(application, 'refreshed_observation_changed'),
-        completed: [] as const,
-        correctionCandidates: [],
-        skipped: [],
-      };
-    }
-    const executable: ExecutableSelection[] = [];
-    const skipped: AresSkippedAction[] = [];
-    for (const selection of request.selections) {
-      const decision = application.factDecisions.find(({ fact }) => fact === selection.fact);
-      if (
-        selection.route === 'PARTY_CORRECTION' &&
-        correctionCandidates.some(
-          (candidate) =>
-            candidate.fact === selection.fact &&
-            candidate.targetAssertionId !== selection.payload.targetAssertionId,
-        )
-      ) {
-        return {
-          _tag: 'AresApplyDeferred' as const,
-          application: needsConfirmation(application, 'canonical_assertion_changed'),
-          completed: [] as const,
-          correctionCandidates: [],
-          skipped,
-        };
-      }
-      if (selection.route === 'PARTY_CORRECTION' || decision === undefined) {
-        return {
-          _tag: 'AresApplyDeferred' as const,
-          application,
-          completed: [] as const,
-          correctionCandidates,
-          skipped,
-        };
-      }
-      if (decision.outcome === 'NO_CHANGE' && matchesObservation(selection, observation)) {
-        skipped.push({ fact: selection.fact, reason: 'ALREADY_SATISFIED', route: selection.route });
-        continue;
-      }
-      const permitted =
-        decision.outcome === 'APPLY_ENRICHMENT' && decision.route === selection.route;
-      if (!permitted) {
-        return {
-          _tag: 'AresApplyDeferred' as const,
-          application,
-          completed: [] as const,
-          correctionCandidates,
-          skipped,
-        };
-      }
-      if (!matchesObservation(selection, observation)) {
-        return {
-          _tag: 'AresApplyDeferred' as const,
-          application: needsConfirmation(application, 'refreshed_observation_changed'),
-          completed: [] as const,
-          correctionCandidates,
-          skipped,
-        };
-      }
-      if (selection.route === 'PARTY_UPDATE' && selection.payload.expectedRevision !== revision) {
-        return {
-          _tag: 'AresApplyDeferred' as const,
-          application: needsConfirmation(application, 'canonical_revision_changed'),
-          completed: [] as const,
-          correctionCandidates,
-          skipped,
-        };
-      }
-      executable.push(selection);
-    }
-    type PartialCompletion = Extract<
-      AresApplyOutcome<Failure>,
-      { readonly _tag: 'AresApplyPartiallyCompleted' }
-    >;
-    interface ExecutionState {
-      readonly completed: readonly AresAppliedAction[];
-      readonly partial: PartialCompletion | null;
-    }
-    const initial: ExecutionState = { completed: [], partial: null };
-    const execution = yield* Effect.reduce(
-      executable,
-      () => initial,
-      (state, selection) => {
-        if (state.partial !== null) {
-          return Effect.succeed(state);
-        }
-        const decision = application.factDecisions.find(({ fact }) => fact === selection.fact);
-        if (decision === undefined) {
-          return Effect.fail(invalidSelection('Selected fact has no owner decision'));
-        }
-        // Logical as-of time of the confirmed observation, stable across delivery retries.
-        // The standard Action records its trusted actual acceptance time independently.
-        const evidence = AresApplication.makeAresAppliedEvidence(
-          { ...application, decidedAt: supplied.servedAt, evidence: supplied },
-          decision,
-        );
-        return invokeSelection(
-          selection,
-          evidence,
-          invoker,
-          gateway,
-          options.gatewayContext ?? {},
-          {
-            ...clientOptions,
-            correlationId: request.correlationId,
-            idempotencyKey: selection.idempotencyKey,
-          },
-        ).pipe(
-          Effect.result,
-          Effect.map((attempt): ExecutionState => {
-            if ('failure' in attempt) {
-              return {
-                completed: state.completed,
-                partial: {
-                  _tag: 'AresApplyPartiallyCompleted' as const,
-                  application,
-                  completed: state.completed,
-                  failed: {
-                    error: attempt.failure,
-                    fact: selection.fact,
-                    idempotencyKey: selection.idempotencyKey,
-                    recovery: 'RESOLVE_STANDARD_ACTION_BEFORE_RETRY' as const,
-                    route: selection.route,
-                  },
-                  skipped,
-                },
-              };
-            }
-            return { completed: [...state.completed, attempt.success], partial: null };
-          }),
-        );
-      },
-    );
-    return (
-      execution.partial ?? {
-        _tag: 'AresApplyCompleted' as const,
-        application,
-        completed: execution.completed,
-        skipped,
-      }
-    );
+    return { canonical: null, revision: null };
   },
 );
+
+/**
+ * Refreshes provider evidence and canonical facts through governed Reads, evaluates the closed
+ * owner policy, then dispatches only explicitly selected standard Actions. Conflicts are deferred
+ * to the ordinary reviewed workflow; a caller-supplied route never proves historical error.
+ * Each Action persists its bounded external evidence and owns its independent idempotent commit.
+ */
+export const applyAresObservationWithActions = Effect.fn(
+  'ActionGateway.applyAresObservationWithActions',
+)(function* applyAresObservationWithActionsEffect<Failure>(
+  request: AresApplyRequest,
+  invoker: PartyRegistryStandardActionInvoker<Failure>,
+  options: AresApplyOptions = {},
+) {
+  if (request.selections.length === 0) {
+    return {
+      _tag: 'AresApplyNotRequested' as const,
+      completed: [] as const,
+      skipped: [] as const,
+    };
+  }
+  const supplied = yield* validateRequest(request);
+  yield* validateSelectedValues(request, supplied);
+  const gateway = options.gateway ?? operationGateway;
+  const reads = options.reads ?? (yield* loadDefaultReads());
+  const clientOptions = options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl };
+  const loadedObservation = yield* gateway.invoke(
+    (authorization) =>
+      reads.observation(
+        { ico: supplied.queryIco },
+        authorization,
+        request.correlationId,
+        clientOptions,
+      ),
+    options.gatewayContext,
+  );
+  const observation = yield* decodeReadObservation(loadedObservation).pipe(
+    Effect.mapError(invalidObservation),
+  );
+  const [suppliedInput, observationInput] = yield* Effect.all(
+    [
+      Schema.encodeEffect(AresSubjectEvidenceSchema)(supplied),
+      Schema.encodeEffect(AresSubjectEvidenceSchema)(observation),
+    ],
+    { concurrency: 2 },
+  ).pipe(
+    Effect.mapError((error) =>
+      invalidSelection('ARES observation cannot be encoded for policy evaluation', error),
+    ),
+  );
+  const decisionTime = yield* DateTime.now;
+  const decisionEpochMillis = DateTime.toEpochMillis(decisionTime);
+  const decidedAt = DateTime.formatIso(decisionTime);
+  const { canonical, revision } = yield* loadCanonicalSnapshot(
+    request,
+    observation,
+    reads,
+    gateway,
+    options,
+    decidedAt,
+    decisionEpochMillis,
+    clientOptions,
+  );
+  const application = yield* Effect.try({
+    catch: (error) =>
+      invalidSelection(
+        'The trusted ARES evidence cannot be evaluated under the owner policy',
+        error,
+      ),
+    try: () =>
+      AresApplication.deriveAresEvidenceApplication({
+        canonical,
+        decidedAt,
+        evidence: observationInput,
+        selectedFacts: request.selections.map(({ fact }) => fact),
+        userConfirmed: request.userConfirmed,
+      }),
+  });
+  const correctionCandidates =
+    canonical === null
+      ? []
+      : AresApplication.deriveAresCorrectionReviewHandoffs(application, canonical);
+  if (observationIsStale(supplied, observation, decisionTime)) {
+    return {
+      _tag: 'AresApplyDeferred' as const,
+      application: needsConfirmation(application, 'observation_not_fresh'),
+      completed: [] as const,
+      correctionCandidates: [],
+      skipped: [] as const,
+    };
+  }
+  if (refreshedObservationChanged(request, suppliedInput, observationInput, observation)) {
+    return {
+      _tag: 'AresApplyDeferred' as const,
+      application: needsConfirmation(application, 'refreshed_observation_changed'),
+      completed: [] as const,
+      correctionCandidates: [],
+      skipped: [],
+    };
+  }
+  const { executable, skipped, deferred } = planSelectedActions(
+    request,
+    application,
+    observation,
+    correctionCandidates,
+    revision,
+  );
+  if (deferred !== null) {
+    return deferred;
+  }
+  type PartialCompletion = Extract<
+    AresApplyOutcome<Failure>,
+    { readonly _tag: 'AresApplyPartiallyCompleted' }
+  >;
+  interface ExecutionState {
+    readonly completed: readonly AresAppliedAction[];
+    readonly partial: PartialCompletion | null;
+  }
+  const initial: ExecutionState = { completed: [], partial: null };
+  const execution = yield* Effect.reduce(
+    executable,
+    () => initial,
+    (state, selection) => {
+      if (state.partial !== null) {
+        return Effect.succeed(state);
+      }
+      const decision = application.factDecisions.find(({ fact }) => fact === selection.fact);
+      if (decision === undefined) {
+        return Effect.fail(invalidSelection('Selected fact has no owner decision'));
+      }
+      // Logical as-of time of the confirmed observation, stable across delivery retries.
+      // The standard Action records its trusted actual acceptance time independently.
+      const evidence = AresApplication.makeAresAppliedEvidence(
+        { ...application, decidedAt: supplied.servedAt, evidence: supplied },
+        decision,
+      );
+      return invokeSelection(selection, evidence, invoker, gateway, options.gatewayContext ?? {}, {
+        ...clientOptions,
+        correlationId: request.correlationId,
+        idempotencyKey: selection.idempotencyKey,
+      }).pipe(
+        Effect.result,
+        Effect.map((attempt): ExecutionState => {
+          if ('failure' in attempt) {
+            return {
+              completed: state.completed,
+              partial: {
+                _tag: 'AresApplyPartiallyCompleted' as const,
+                application,
+                completed: state.completed,
+                failed: {
+                  error: attempt.failure,
+                  fact: selection.fact,
+                  idempotencyKey: selection.idempotencyKey,
+                  recovery: 'RESOLVE_STANDARD_ACTION_BEFORE_RETRY' as const,
+                  route: selection.route,
+                },
+                skipped,
+              },
+            };
+          }
+          return { completed: [...state.completed, attempt.success], partial: null };
+        }),
+      );
+    },
+  );
+  return (
+    execution.partial ?? {
+      _tag: 'AresApplyCompleted' as const,
+      application,
+      completed: execution.completed,
+      skipped,
+    }
+  );
+});
 
 /** Production coordinator: mutations use only the explicit, authenticated standard command API. */
 export const applyAresObservation = (

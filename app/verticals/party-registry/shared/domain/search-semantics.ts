@@ -11,10 +11,10 @@ import type {
   PartySearchResult,
 } from './search-result.ts';
 
-export const SearchProjectionViolationSchema = Schema.TaggedStruct('SearchProjectionViolation', {
+const SearchProjectionViolationSchema = Schema.TaggedStruct('SearchProjectionViolation', {
   reason: Schema.String,
 });
-export type SearchProjectionViolation = typeof SearchProjectionViolationSchema.Type;
+type SearchProjectionViolation = typeof SearchProjectionViolationSchema.Type;
 
 const SearchResultsTagSchema = Schema.TaggedStruct('SearchResults', {});
 type SearchResultsTag = typeof SearchResultsTagSchema.Type;
@@ -40,17 +40,18 @@ const samePartyRef = (left: PartyRef, right: PartyRef): boolean => refKey(left) 
 const isAliasHit = (canonical: PartyRef, matched: PartyRef | undefined): boolean =>
   matched !== undefined && !samePartyRef(canonical, matched);
 
+const partyHitViolatesScope = (hit: PartySearchProjectionHit, tenantId: string): boolean =>
+  hit.canonicalPartyRef.tenantId !== tenantId ||
+  (hit.matchedPartyRef !== undefined && hit.matchedPartyRef.tenantId !== tenantId) ||
+  hit.title.trim().length === 0;
+
 export const normalizePartySearchHits = (
   scope: Readonly<{ readonly includeArchived: boolean; readonly tenantId: string }>,
   hits: readonly PartySearchProjectionHit[],
 ): SearchNormalizationResult<PartySearchResult> => {
   const byCanonicalParty = new Map<string, PartySearchResult>();
   for (const hit of hits) {
-    if (
-      hit.canonicalPartyRef.tenantId !== scope.tenantId ||
-      (hit.matchedPartyRef !== undefined && hit.matchedPartyRef.tenantId !== scope.tenantId) ||
-      hit.title.trim().length === 0
-    ) {
+    if (partyHitViolatesScope(hit, scope.tenantId)) {
       return violation('Party Search projection returned data outside its trusted tenant contract');
     }
     const key = refKey(hit.canonicalPartyRef);
@@ -115,6 +116,45 @@ const sameCurrentProjection = (
   existing.currentRoles.length === currentRoles.length &&
   existing.currentRoles.every((role, index) => role === currentRoles[index]);
 
+const counterpartyHitViolatesScope = (
+  hit: CounterpartySearchProjectionHit,
+  scope: Readonly<{ tenantId: string; legalEntityId: string }>,
+): boolean =>
+  hit.counterpartyRef.tenantId !== scope.tenantId ||
+  hit.canonicalPartyRef.tenantId !== scope.tenantId ||
+  (hit.matchedPartyRef !== undefined && hit.matchedPartyRef.tenantId !== scope.tenantId) ||
+  hit.legalEntity.tenantId !== scope.tenantId ||
+  hit.legalEntity.legalEntityId !== scope.legalEntityId ||
+  hit.partyTitle.trim().length === 0;
+
+const withCounterpartyCollisions = (
+  filtered: readonly CounterpartySearchResult[],
+): SearchNormalizationResult<CounterpartySearchResult> => {
+  const byCanonicalParty = new Map<string, CounterpartySearchResult[]>();
+  for (const item of filtered) {
+    const key = refKey(item.party.ref);
+    byCanonicalParty.set(key, [...(byCanonicalParty.get(key) ?? []), item]);
+  }
+
+  return searchResults(
+    filtered.map((item) => {
+      const colliding = byCanonicalParty.get(refKey(item.party.ref)) ?? [];
+      if (colliding.length < 2) {
+        return item;
+      }
+      return {
+        ...item,
+        collision: {
+          counterpartyRefs: colliding
+            .map(({ ref }) => ref)
+            .toSorted((left, right) => left.resourceId.localeCompare(right.resourceId)),
+          kind: 'CANONICAL_PARTY_COUNTERPARTY_COLLISION' as const,
+        },
+      };
+    }),
+  );
+};
+
 export const normalizeCounterpartySearchHits = (
   scope: Readonly<{
     readonly effectiveAt: typeof Schema.DateTimeUtcFromString.Encoded;
@@ -132,14 +172,7 @@ export const normalizeCounterpartySearchHits = (
 
   const byCounterparty = new Map<string, CounterpartySearchResult>();
   for (const hit of hits) {
-    if (
-      hit.counterpartyRef.tenantId !== scope.tenantId ||
-      hit.canonicalPartyRef.tenantId !== scope.tenantId ||
-      (hit.matchedPartyRef !== undefined && hit.matchedPartyRef.tenantId !== scope.tenantId) ||
-      hit.legalEntity.tenantId !== scope.tenantId ||
-      hit.legalEntity.legalEntityId !== scope.legalEntityId ||
-      hit.partyTitle.trim().length === 0
-    ) {
+    if (counterpartyHitViolatesScope(hit, scope)) {
       return violation(
         'Counterparty Search projection returned data outside its trusted tenant or Legal Entity contract',
       );
@@ -181,27 +214,5 @@ export const normalizeCounterpartySearchHits = (
       (scope.includeArchived || !item.party.archived) &&
       (scope.role === undefined || item.currentRoles.includes(scope.role)),
   );
-  const byCanonicalParty = new Map<string, CounterpartySearchResult[]>();
-  for (const item of filtered) {
-    const key = refKey(item.party.ref);
-    byCanonicalParty.set(key, [...(byCanonicalParty.get(key) ?? []), item]);
-  }
-
-  return searchResults(
-    filtered.map((item) => {
-      const colliding = byCanonicalParty.get(refKey(item.party.ref)) ?? [];
-      if (colliding.length < 2) {
-        return item;
-      }
-      return {
-        ...item,
-        collision: {
-          counterpartyRefs: colliding
-            .map(({ ref }) => ref)
-            .toSorted((left, right) => left.resourceId.localeCompare(right.resourceId)),
-          kind: 'CANONICAL_PARTY_COUNTERPARTY_COLLISION' as const,
-        },
-      };
-    }),
-  );
+  return withCounterpartyCollisions(filtered);
 };

@@ -14,9 +14,8 @@ export const AresCanonicalRouteSchema = Schema.Literals([
   'CONTACT_POINT_ADD',
   'PARTY_CORRECTION',
 ]);
-export type AresCanonicalRoute = typeof AresCanonicalRouteSchema.Type;
 
-export const AresApplyOutcomeSchema = Schema.Literals([
+const AresApplyOutcomeSchema = Schema.Literals([
   'PREFILL_ONLY',
   'APPLY_ENRICHMENT',
   'NO_CHANGE',
@@ -24,15 +23,15 @@ export const AresApplyOutcomeSchema = Schema.Literals([
   'CORRECTION_CANDIDATE',
   'IDENTITY_AMBIGUITY',
 ]);
-export type AresApplyOutcome = typeof AresApplyOutcomeSchema.Type;
+type AresApplyOutcome = typeof AresApplyOutcomeSchema.Type;
 
-export const AresSelectedFactSchema = Schema.Literals([
+const AresSelectedFactSchema = Schema.Literals([
   'BUSINESS_NAME',
   'ICO',
   'REGISTERED_ADDRESS',
   'PARTY_CANDIDATE',
 ]);
-export type AresSelectedFact = typeof AresSelectedFactSchema.Type;
+type AresSelectedFact = typeof AresSelectedFactSchema.Type;
 
 const decisionEvidence = {
   authorityPolicyKey: Schema.String.check(
@@ -48,7 +47,7 @@ const decisionEvidence = {
   ),
 } as const;
 
-export const AresFactDecisionSchema = Schema.Union([
+const AresFactDecisionSchema = Schema.Union([
   Schema.Struct({
     ...decisionEvidence,
     fact: Schema.Literal('BUSINESS_NAME'),
@@ -240,6 +239,39 @@ export const prefillPartyCandidateFromAres = (
   return candidate;
 };
 
+const acceptedObservationMatches = (
+  accepted: AresAppliedEvidence,
+  evidence: AresSubjectEvidence,
+  validFrom: string,
+): boolean =>
+  (Option.isNone(accepted.providerRecordRef) ||
+    Option.isNone(evidence.providerRecordRef) ||
+    Option.getOrNull(accepted.providerRecordRef) ===
+      Option.getOrNull(evidence.providerRecordRef)) &&
+  DateTime.toEpochMillis(accepted.observedAt) <= epochMillisFromString(validFrom) &&
+  epochMillisFromString(validFrom) <= DateTime.toEpochMillis(evidence.observedAt);
+
+const acceptedEvidenceConflicts = (
+  assertion: AresCanonicalFactEvidence,
+  evidence: AresSubjectEvidence,
+  fact: 'BUSINESS_NAME' | 'ICO',
+): boolean => {
+  const acceptedInput = assertion.externalEvidence;
+  const accepted =
+    acceptedInput === null || Schema.is(AresAppliedEvidenceSchema)(acceptedInput)
+      ? acceptedInput
+      : Result.getOrUndefined(Schema.decodeUnknownResult(AresAppliedEvidenceSchema)(acceptedInput));
+  return (
+    accepted !== null &&
+    accepted !== undefined &&
+    accepted.fact === fact &&
+    accepted.outcome === 'APPLY_ENRICHMENT' &&
+    accepted.queryIco === evidence.queryIco &&
+    Option.contains(accepted.providerChangedOn, Option.getOrThrow(evidence.providerChangedOn)) &&
+    acceptedObservationMatches(accepted, evidence, assertion.validFrom)
+  );
+};
+
 const historicalConflict = (
   canonical: AresCanonicalSnapshot,
   evidence: AresSubjectEvidence,
@@ -254,36 +286,141 @@ const historicalConflict = (
   ) {
     return undefined;
   }
-  const assertions = (canonical.factEvidence ?? []).filter((assertion) => {
-    const acceptedInput = assertion.externalEvidence;
-    const accepted =
-      acceptedInput === null || Schema.is(AresAppliedEvidenceSchema)(acceptedInput)
-        ? acceptedInput
-        : Result.getOrUndefined(
-            Schema.decodeUnknownResult(AresAppliedEvidenceSchema)(acceptedInput),
-          );
-    return (
+  const assertions = (canonical.factEvidence ?? []).filter(
+    (assertion) =>
       assertion.fact === fact &&
       (fact === 'BUSINESS_NAME'
         ? normalizeText(assertion.value) === normalizeText(canonical.displayName)
         : canonical.icoValues.includes(assertion.value)) &&
       normalizeText(assertion.value) !== normalizeText(observedValue) &&
-      accepted !== null &&
-      accepted !== undefined &&
-      accepted.fact === fact &&
-      accepted.outcome === 'APPLY_ENRICHMENT' &&
-      accepted.queryIco === evidence.queryIco &&
-      Option.contains(accepted.providerChangedOn, Option.getOrThrow(evidence.providerChangedOn)) &&
-      (Option.isNone(accepted.providerRecordRef) ||
-        Option.isNone(evidence.providerRecordRef) ||
-        Option.getOrNull(accepted.providerRecordRef) ===
-          Option.getOrNull(evidence.providerRecordRef)) &&
-      DateTime.toEpochMillis(accepted.observedAt) <= epochMillisFromString(assertion.validFrom) &&
-      epochMillisFromString(assertion.validFrom) <= DateTime.toEpochMillis(evidence.observedAt)
-    );
-  });
+      acceptedEvidenceConflicts(assertion, evidence, fact),
+  );
   // Multiple current assertions are an unresolved conflict, never an arbitrary review target.
   return assertions.length === 1 ? assertions[0] : undefined;
+};
+
+const blocked = (
+  fact: AresSelectedFact,
+  outcome: Exclude<AresApplyOutcome, 'APPLY_ENRICHMENT'>,
+  reasonCode: string,
+): AresFactDecision => ({ ...ownerPolicy, fact, outcome, reasonCode, route: null });
+
+const businessNameDecision = (
+  canonical: AresCanonicalSnapshot,
+  evidence: AresSubjectEvidence,
+): AresFactDecision | undefined => {
+  const fact = 'BUSINESS_NAME';
+  const businessName = Option.getOrNull(evidence.subject.businessName);
+  if (businessName === null || !isSupportedBusinessName(businessName)) {
+    return blocked(fact, 'NO_CHANGE', 'provider_fact_absent_or_unsupported');
+  }
+  if (normalizeText(canonical.displayName) === normalizeText(businessName)) {
+    return blocked(fact, 'NO_CHANGE', 'canonical_fact_equal');
+  }
+  if (canonical.displayName !== null) {
+    return blocked(fact, 'NEEDS_CONFIRMATION', 'canonical_fact_conflict');
+  }
+  return undefined;
+};
+
+const addressDecision = (
+  canonical: AresCanonicalSnapshot,
+  evidence: AresSubjectEvidence,
+): AresFactDecision | undefined => {
+  const fact = 'REGISTERED_ADDRESS';
+  const address = Option.getOrUndefined(evidence.subject.registeredAddress);
+  if (address === undefined || !isSupportedAddress(address)) {
+    return blocked(fact, 'NO_CHANGE', 'provider_fact_absent_or_unsupported');
+  }
+  if (
+    canonical.registeredAddresses.some((current) => aresRegisteredAddressMatches(address, current))
+  ) {
+    return blocked(fact, 'NO_CHANGE', 'canonical_fact_equal');
+  }
+  if (canonical.registeredAddresses.length > 0) {
+    return blocked(fact, 'NEEDS_CONFIRMATION', 'canonical_fact_conflict');
+  }
+  return undefined;
+};
+
+const identityDecision = (
+  fact: AresSelectedFact,
+  canonical: AresCanonicalSnapshot,
+  evidence: AresSubjectEvidence,
+): AresFactDecision | undefined => {
+  const conflictingIco = canonical.icoValues.some((value) => value !== evidence.subject.ico);
+  const historical =
+    fact === 'BUSINESS_NAME' || fact === 'ICO'
+      ? historicalConflict(canonical, evidence, fact)
+      : undefined;
+  if (
+    conflictingIco &&
+    (fact !== 'ICO' || historical === undefined || canonical.icoValues.length !== 1)
+  ) {
+    return blocked(fact, 'IDENTITY_AMBIGUITY', 'canonical_identity_conflict');
+  }
+  if (historical !== undefined) {
+    return blocked(
+      fact,
+      'CORRECTION_CANDIDATE',
+      'unchanged_provider_revision_conflicts_with_accepted_assertion',
+    );
+  }
+  return undefined;
+};
+
+const applyFactDecision = (
+  fact: Exclude<AresSelectedFact, 'PARTY_CANDIDATE'>,
+  canonical: AresCanonicalSnapshot,
+  userConfirmed: boolean,
+): AresFactDecision => {
+  // Only ORGANIZATION ICO assertions qualify for the current authoritative claim rule.
+  if (fact === 'ICO' && canonical.partyType !== 'ORGANIZATION') {
+    return blocked(fact, 'NEEDS_CONFIRMATION', 'party_type_not_supported_for_authoritative_ico');
+  }
+  if (!userConfirmed) {
+    return blocked(fact, 'NEEDS_CONFIRMATION', 'user_confirmation_required');
+  }
+  const common = {
+    ...ownerPolicy,
+    outcome: 'APPLY_ENRICHMENT',
+    reasonCode: 'selected_missing_fact_confirmed',
+  } as const;
+  if (fact === 'BUSINESS_NAME') {
+    return { ...common, fact, route: 'PARTY_UPDATE' };
+  }
+  if (fact === 'ICO') {
+    return { ...common, fact, route: 'IDENTIFIER_ADD' };
+  }
+  return { ...common, fact, route: 'CONTACT_POINT_ADD' };
+};
+
+const selectedFactDecision = (
+  fact: Exclude<AresSelectedFact, 'PARTY_CANDIDATE'>,
+  canonical: AresCanonicalSnapshot,
+  evidence: AresSubjectEvidence,
+  userConfirmed: boolean,
+): AresFactDecision => {
+  const conflict = identityDecision(fact, canonical, evidence);
+  if (conflict !== undefined) {
+    return conflict;
+  }
+  if (fact === 'BUSINESS_NAME') {
+    const decision = businessNameDecision(canonical, evidence);
+    if (decision !== undefined) {
+      return decision;
+    }
+  }
+  if (fact === 'REGISTERED_ADDRESS') {
+    const decision = addressDecision(canonical, evidence);
+    if (decision !== undefined) {
+      return decision;
+    }
+  }
+  if (fact === 'ICO' && canonical.icoValues.includes(evidence.subject.ico)) {
+    return blocked(fact, 'NO_CHANGE', 'canonical_fact_equal');
+  }
+  return applyFactDecision(fact, canonical, userConfirmed);
 };
 
 /** Policy is closed owner code, never a caller-supplied outcome, route or authority assertion. */
@@ -315,12 +452,6 @@ export const deriveAresEvidenceApplication = (
     age >= 0 &&
     age <= 300_000 &&
     decidedAtEpochMillis >= DateTime.toEpochMillis(evidence.servedAt);
-  const blocked = (
-    fact: AresSelectedFact,
-    outcome: Exclude<AresApplyOutcome, 'APPLY_ENRICHMENT'>,
-    reasonCode: string,
-  ): AresFactDecision => ({ ...ownerPolicy, fact, outcome, reasonCode, route: null });
-  // eslint-disable-next-line complexity -- Keep the closed fact precedence and mutation routes in one auditable decision.
   const decisions = selectedFacts.map((fact): AresFactDecision => {
     if (evidence.subject.ico !== evidence.queryIco) {
       return blocked(fact, 'IDENTITY_AMBIGUITY', 'provider_subject_does_not_match_query');
@@ -340,74 +471,7 @@ export const deriveAresEvidenceApplication = (
     if (!fresh) {
       return blocked(fact, 'NEEDS_CONFIRMATION', 'observation_not_fresh');
     }
-    const conflictingIco = canonical.icoValues.some((value) => value !== evidence.subject.ico);
-    const historical =
-      fact === 'BUSINESS_NAME' || fact === 'ICO'
-        ? historicalConflict(canonical, evidence, fact)
-        : undefined;
-    if (
-      conflictingIco &&
-      (fact !== 'ICO' || historical === undefined || canonical.icoValues.length !== 1)
-    ) {
-      return blocked(fact, 'IDENTITY_AMBIGUITY', 'canonical_identity_conflict');
-    }
-    if (historical !== undefined) {
-      return blocked(
-        fact,
-        'CORRECTION_CANDIDATE',
-        'unchanged_provider_revision_conflicts_with_accepted_assertion',
-      );
-    }
-    if (fact === 'BUSINESS_NAME') {
-      const businessName = Option.getOrNull(evidence.subject.businessName);
-      if (businessName === null || !isSupportedBusinessName(businessName)) {
-        return blocked(fact, 'NO_CHANGE', 'provider_fact_absent_or_unsupported');
-      }
-      if (normalizeText(canonical.displayName) === normalizeText(businessName)) {
-        return blocked(fact, 'NO_CHANGE', 'canonical_fact_equal');
-      }
-      if (canonical.displayName !== null) {
-        return blocked(fact, 'NEEDS_CONFIRMATION', 'canonical_fact_conflict');
-      }
-    }
-    if (fact === 'ICO' && canonical.icoValues.includes(evidence.subject.ico)) {
-      return blocked(fact, 'NO_CHANGE', 'canonical_fact_equal');
-    }
-    if (fact === 'REGISTERED_ADDRESS') {
-      const address = Option.getOrUndefined(evidence.subject.registeredAddress);
-      if (address === undefined || !isSupportedAddress(address)) {
-        return blocked(fact, 'NO_CHANGE', 'provider_fact_absent_or_unsupported');
-      }
-      if (
-        canonical.registeredAddresses.some((current) =>
-          aresRegisteredAddressMatches(address, current),
-        )
-      ) {
-        return blocked(fact, 'NO_CHANGE', 'canonical_fact_equal');
-      }
-      if (canonical.registeredAddresses.length > 0) {
-        return blocked(fact, 'NEEDS_CONFIRMATION', 'canonical_fact_conflict');
-      }
-    }
-    // Only ORGANIZATION ICO assertions qualify for the current authoritative claim rule.
-    if (fact === 'ICO' && canonical.partyType !== 'ORGANIZATION') {
-      return blocked(fact, 'NEEDS_CONFIRMATION', 'party_type_not_supported_for_authoritative_ico');
-    }
-    if (!input.userConfirmed) {
-      return blocked(fact, 'NEEDS_CONFIRMATION', 'user_confirmation_required');
-    }
-    const common = {
-      ...ownerPolicy,
-      outcome: 'APPLY_ENRICHMENT',
-      reasonCode: 'selected_missing_fact_confirmed',
-    } as const;
-    if (fact === 'BUSINESS_NAME') {
-      return { ...common, fact, route: 'PARTY_UPDATE' };
-    }
-    if (fact === 'ICO') {
-      return { ...common, fact, route: 'IDENTIFIER_ADD' };
-    }
-    return { ...common, fact, route: 'CONTACT_POINT_ADD' };
+    return selectedFactDecision(fact, canonical, evidence, input.userConfirmed);
   });
   const priority: readonly AresApplyOutcome[] = [
     'APPLY_ENRICHMENT',

@@ -8,11 +8,10 @@ import {
   ContactPointProvenanceSchema,
   ContactPointTimestampSchema,
   ContactPointVerificationSchema,
-  PartyContactPointSchema,
 } from '../domain/contact-point.ts';
 import { PartyContactPointRefSchema } from '../resources/party-contact-point.ts';
 
-export const ContactPointMetadataChangeSchema = Schema.Union([
+const ContactPointMetadataChangeSchema = Schema.Union([
   Schema.Struct({ preferred: Schema.Boolean, type: Schema.Literal('SET_CHANNEL_PREFERRED') }),
   Schema.Struct({
     assignment: AddressPurposeAssignmentSchema,
@@ -49,7 +48,6 @@ export const ContactPointMetadataChangeSchema = Schema.Union([
     type: Schema.Literal('CORRECT_CONTACT_POINT'),
   }),
 ]);
-export type ContactPointMetadataChange = typeof ContactPointMetadataChangeSchema.Type;
 
 export const UpdateContactPointPayloadSchema = Schema.Struct({
   change: ContactPointMetadataChangeSchema,
@@ -59,5 +57,4 @@ export const UpdateContactPointPayloadSchema = Schema.Struct({
 });
 export type UpdateContactPointPayload = typeof UpdateContactPointPayloadSchema.Type;
 
-export const UpdateContactPointResultSchema = PartyContactPointSchema;
-export type UpdateContactPointResult = typeof UpdateContactPointResultSchema.Type;
+export { PartyContactPointSchema as UpdateContactPointResultSchema } from '../domain/contact-point.ts';

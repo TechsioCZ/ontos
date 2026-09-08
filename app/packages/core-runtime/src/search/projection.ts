@@ -241,34 +241,46 @@ const invalidPeriod = ({
   return from === undefined || (validTo !== undefined && (to === undefined || to <= from));
 };
 
+const hasForeignDocumentReference = (
+  document: CoreSearchProjectionDocument,
+  tenant: string,
+): boolean =>
+  [document.matchedRef, document.subjectRef, document.matchedSubjectRef].some(
+    (ref) => ref !== undefined && ref.tenantId !== tenant,
+  );
+
+const hasInvalidDocumentFacets = (document: CoreSearchProjectionDocument): boolean =>
+  !hasUniqueKeys(document.facets) ||
+  !hasUniqueKeys(document.metadata) ||
+  document.facets.some(
+    ({ values }) => values.length === 0 || new Set(values).size !== values.length,
+  );
+
+const hasInvalidDocumentPeriods = (document: CoreSearchProjectionDocument): boolean =>
+  (document.temporalFacets ?? []).some(invalidPeriod) ||
+  (document.temporalSearchableText ?? []).some(invalidPeriod);
+
+const hasInvalidDocumentAliases = (
+  document: CoreSearchProjectionDocument,
+  tenant: string,
+): boolean =>
+  (document.aliases ?? []).some(
+    (alias) =>
+      alias.ref.tenantId !== tenant || (alias.temporalSearchableText ?? []).some(invalidPeriod),
+  );
+
 const validateDocument = (
   document: CoreSearchProjectionDocument,
-  expected: Readonly<{
-    readonly moduleId: string;
-    readonly resourceType: string;
-    readonly tenantId: string;
-  }>,
+  expected: Readonly<{ moduleId: string; resourceType: string; tenantId: string }>,
 ): Result.Result<true, CoreSearchProjectionInvalid> => {
   if (
     document.ref.tenantId !== expected.tenantId ||
     document.ref.moduleId !== expected.moduleId ||
     document.ref.resourceType !== expected.resourceType ||
-    (document.matchedRef !== undefined && document.matchedRef.tenantId !== expected.tenantId) ||
-    (document.subjectRef !== undefined && document.subjectRef.tenantId !== expected.tenantId) ||
-    (document.matchedSubjectRef !== undefined &&
-      document.matchedSubjectRef.tenantId !== expected.tenantId) ||
-    !hasUniqueKeys(document.facets) ||
-    !hasUniqueKeys(document.metadata) ||
-    document.facets.some(
-      ({ values }) => values.length === 0 || new Set(values).size !== values.length,
-    ) ||
-    (document.temporalFacets ?? []).some(invalidPeriod) ||
-    (document.temporalSearchableText ?? []).some(invalidPeriod) ||
-    (document.aliases ?? []).some(
-      (alias) =>
-        alias.ref.tenantId !== expected.tenantId ||
-        (alias.temporalSearchableText ?? []).some(invalidPeriod),
-    )
+    hasForeignDocumentReference(document, expected.tenantId) ||
+    hasInvalidDocumentFacets(document) ||
+    hasInvalidDocumentPeriods(document) ||
+    hasInvalidDocumentAliases(document, expected.tenantId)
   ) {
     return Result.fail(invalid('Core Search replacement contains an inconsistent document'));
   }
@@ -388,11 +400,94 @@ const decodeReplacementEffect = (input: UnparsedCoreSearchInput) =>
     Effect.flatMap((replacement) => Effect.fromResult(validateReplacement(replacement))),
   );
 
+type Stored = Readonly<{
+  readonly document?: CoreSearchProjectionDocument;
+  readonly projectionVersion: string;
+}>;
+
+const sameStoredDocument = (
+  current: Stored,
+  next: CoreSearchProjectionDocument | undefined,
+): boolean =>
+  current.document === undefined
+    ? next === undefined
+    : next !== undefined && projectionDocumentEquivalence(current.document, next);
+
+const shouldApplyMutation = (
+  current: Stored | undefined,
+  next: Stored,
+): Result.Result<boolean, CoreSearchProjectionInvalid> => {
+  if (current === undefined) {
+    return Result.succeed(true);
+  }
+  const order = BigInt(next.projectionVersion) - BigInt(current.projectionVersion);
+  if (order < 0n) {
+    return Result.succeed(false);
+  }
+  if (order > 0n) {
+    return Result.succeed(true);
+  }
+  return sameStoredDocument(current, next.document)
+    ? Result.succeed(false)
+    : Result.fail(invalid('Core Search mutation reuses a version for different content'));
+};
+
+const shouldReplaceProjection = (
+  prior: Readonly<{ fingerprint: string; version: bigint }> | undefined,
+  version: bigint,
+  fingerprint: string,
+): Result.Result<boolean, CoreSearchProjectionInvalid> => {
+  if (prior === undefined || version > prior.version) {
+    return Result.succeed(true);
+  }
+  if (version < prior.version) {
+    return Result.succeed(false);
+  }
+  return fingerprint === prior.fingerprint
+    ? Result.succeed(false)
+    : Result.fail(invalid('Core Search rebuild reuses a version for different content'));
+};
+
+const mergeReplacementDocuments = (
+  current: Map<string, Stored>,
+  documents: readonly CoreSearchProjectionDocument[],
+): Result.Result<true, CoreSearchProjectionInvalid> => {
+  for (const document of documents) {
+    const existing = current.get(document.ref.resourceId);
+    if (
+      existing === undefined ||
+      BigInt(existing.projectionVersion) < BigInt(document.projectionVersion)
+    ) {
+      current.set(document.ref.resourceId, {
+        document,
+        projectionVersion: document.projectionVersion,
+      });
+    } else if (
+      existing.projectionVersion === document.projectionVersion &&
+      !sameStoredDocument(existing, document)
+    ) {
+      return Result.fail(invalid('Core Search rebuild reuses a version for different content'));
+    }
+  }
+  return Result.succeed(true);
+};
+
+const retireMissingDocuments = (
+  current: Map<string, Stored>,
+  replacement: CoreSearchProjectionReplacement,
+): void => {
+  const nextIds = new Set<string>(replacement.documents.map(({ ref }) => ref.resourceId));
+  for (const [id, existing] of current) {
+    if (
+      !nextIds.has(id) &&
+      BigInt(existing.projectionVersion) < BigInt(replacement.rebuildVersion)
+    ) {
+      current.set(id, { projectionVersion: replacement.rebuildVersion });
+    }
+  }
+};
+
 export const makeInMemoryCoreSearchProjectionStore = (): CoreSearchProjectionStoreService => {
-  type Stored = Readonly<{
-    readonly document?: CoreSearchProjectionDocument;
-    readonly projectionVersion: string;
-  }>;
   const units = new Map<string, Map<string, Stored>>();
   const rebuilds = new Map<string, { readonly fingerprint: string; readonly version: bigint }>();
   const apply: CoreSearchProjectionStoreService['apply'] = Effect.fn(
@@ -408,30 +503,17 @@ export const makeInMemoryCoreSearchProjectionStore = (): CoreSearchProjectionSto
       return yield* Effect.void;
     }
     const unit = units.get(unitKey) ?? new Map<string, Stored>();
-    const current = unit.get(ref.resourceId);
-    if (current !== undefined) {
-      const order = BigInt(version) - BigInt(current.projectionVersion);
-      if (order < 0n) {
-        return yield* Effect.void;
-      }
-      if (order === 0n) {
-        const next = mutation.kind === 'upsert' ? mutation.document : undefined;
-        const unchanged =
-          current.document === undefined
-            ? next === undefined
-            : next !== undefined && projectionDocumentEquivalence(current.document, next);
-        if (!unchanged) {
-          return yield* invalid('Core Search mutation reuses a version for different content');
-        }
-        return yield* Effect.void;
-      }
-    }
-    unit.set(
-      ref.resourceId,
+    const next: Stored =
       mutation.kind === 'upsert'
         ? { document: mutation.document, projectionVersion: version }
-        : { projectionVersion: version },
+        : { projectionVersion: version };
+    const shouldApply = yield* Effect.fromResult(
+      shouldApplyMutation(unit.get(ref.resourceId), next),
     );
+    if (!shouldApply) {
+      return yield* Effect.void;
+    }
+    unit.set(ref.resourceId, next);
     units.set(unitKey, unit);
     return yield* Effect.void;
   });
@@ -455,55 +537,35 @@ export const makeInMemoryCoreSearchProjectionStore = (): CoreSearchProjectionSto
     const prior = rebuilds.get(unitKey);
     const version = BigInt(replacement.rebuildVersion);
     const fingerprint = coreSearchReplacementFingerprint(replacement);
-    if (prior !== undefined) {
-      if (version < prior.version) {
-        return yield* Effect.void;
-      }
-      if (version === prior.version) {
-        if (fingerprint !== prior.fingerprint) {
-          return yield* invalid('Core Search rebuild reuses a version for different content');
-        }
-        return yield* Effect.void;
-      }
+    const shouldReplace = yield* Effect.fromResult(
+      shouldReplaceProjection(prior, version, fingerprint),
+    );
+    if (!shouldReplace) {
+      return yield* Effect.void;
     }
     const current = new Map(units.get(unitKey));
-    const nextIds = new Set<string>(replacement.documents.map(({ ref }) => ref.resourceId));
-    let divergentDocumentVersion = false;
-    for (const document of replacement.documents) {
-      const existing = current.get(document.ref.resourceId);
-      if (
-        existing === undefined ||
-        BigInt(existing.projectionVersion) < BigInt(document.projectionVersion)
-      ) {
-        current.set(document.ref.resourceId, {
-          document,
-          projectionVersion: document.projectionVersion,
-        });
-      } else if (
-        existing.projectionVersion === document.projectionVersion &&
-        (existing.document === undefined ||
-          !projectionDocumentEquivalence(existing.document, document))
-      ) {
-        divergentDocumentVersion = true;
-        break;
-      }
-    }
-    if (divergentDocumentVersion) {
-      return yield* invalid('Core Search rebuild reuses a version for different content');
-    }
-    for (const [id, existing] of current) {
-      if (
-        !nextIds.has(id) &&
-        BigInt(existing.projectionVersion) < BigInt(replacement.rebuildVersion)
-      ) {
-        current.set(id, { projectionVersion: replacement.rebuildVersion });
-      }
-    }
+    yield* Effect.fromResult(mergeReplacementDocuments(current, replacement.documents));
+    retireMissingDocuments(current, replacement);
     units.set(unitKey, current);
     rebuilds.set(unitKey, { fingerprint, version });
     return yield* Effect.void;
   });
   return Object.freeze({ apply, queryCandidates, replace });
+};
+
+const isEffectiveTemporalFacet = (
+  temporal: CoreSearchTemporalFacet,
+  key: string,
+  effectiveAt: number,
+): boolean => {
+  const from = toEpochMillis(temporal.validFrom);
+  const to = temporal.validTo === undefined ? undefined : toEpochMillis(temporal.validTo);
+  return (
+    temporal.key === key &&
+    from !== undefined &&
+    from <= effectiveAt &&
+    (to === undefined || effectiveAt < to)
+  );
 };
 
 const matchesFacets = (
@@ -515,14 +577,7 @@ const matchesFacets = (
     const available = new Set(document.facets.find((candidate) => candidate.key === key)?.values);
     if (effectiveAt !== undefined) {
       for (const temporal of document.temporalFacets ?? []) {
-        const from = toEpochMillis(temporal.validFrom);
-        const to = temporal.validTo === undefined ? undefined : toEpochMillis(temporal.validTo);
-        if (
-          temporal.key === key &&
-          from !== undefined &&
-          from <= effectiveAt &&
-          (to === undefined || effectiveAt < to)
-        ) {
+        if (isEffectiveTemporalFacet(temporal, key, effectiveAt)) {
           available.add(temporal.value);
         }
       }
@@ -601,7 +656,7 @@ const matchDocument = (
     : { ...hit, matchedSubjectRef: alias.ref };
 };
 
-export const makeCoreSearchQueryRuntime = (
+export const createCoreSearchQueryRuntime = (
   store: CoreSearchProjectionStorePort,
 ): CoreSearchQueryRuntimeService => {
   const search: CoreSearchQueryRuntimeService['search'] = Effect.fn(
@@ -640,5 +695,3 @@ export const makeCoreSearchQueryRuntime = (
   });
   return Object.freeze({ search });
 };
-
-export const createCoreSearchQueryRuntime = makeCoreSearchQueryRuntime;

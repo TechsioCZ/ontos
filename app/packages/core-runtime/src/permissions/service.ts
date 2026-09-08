@@ -30,7 +30,7 @@ export const SPICEDB_EXECUTE_PERMISSION = 'execute';
 export const toSpiceDbActionObjectId = (actionKey: string): string =>
   `ak_${Buffer.from(actionKey, 'utf-8').toString('base64url')}`;
 
-export const ActionPermissionDecisionSchema = Schema.Literals(['allowed', 'denied']);
+const ActionPermissionDecisionSchema = Schema.Literals(['allowed', 'denied']);
 export type ActionPermissionDecision = typeof ActionPermissionDecisionSchema.Type;
 
 interface ActionPermissionTargetInput {
@@ -140,7 +140,7 @@ const runCheck = (
     .checkPermission(request)
     .pipe(Effect.mapError(checkFailure), Effect.flatMap(classifyPermissionship));
 
-export interface ActionPermissionRolloutOptions {
+interface ActionPermissionRolloutOptions {
   readonly emit: (event: AuthorizationWouldDenyEvent) => void;
   readonly nowEpochMs: () => number;
   readonly rollout: AuthorizationRolloutDecisionOptions['contract'];

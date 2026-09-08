@@ -13,7 +13,7 @@ import {
 } from '../../shared/apis/party-official-identifier-detail.ts';
 import { findOfficialIdentifierRecord } from '../services/party-official-identifier-persistence.service.ts';
 
-export const partyOfficialIdentifierDetailEntrypoint = defineTenantModuleEntrypoint({
+const partyOfficialIdentifierDetailEntrypoint = defineTenantModuleEntrypoint({
   authorization: { kind: 'context_permission', permission: 'module.access' },
   access: 'read',
   entrypointKey: 'party.registry.api.party-official-identifier-detail',

@@ -26,14 +26,7 @@ import {
 } from '../../shared/actions/resolve-duplicate-candidate-match.ts';
 import type { ResolveDuplicateCandidateMatchPayload } from '../../shared/actions/resolve-duplicate-candidate-match.ts';
 
-export {
-  ResolveDuplicateCandidateMatchPayloadSchema,
-  ResolveDuplicateCandidateMatchResultSchema,
-} from '../../shared/actions/resolve-duplicate-candidate-match.ts';
-export type {
-  ResolveDuplicateCandidateMatchPayload,
-  ResolveDuplicateCandidateMatchResult,
-} from '../../shared/actions/resolve-duplicate-candidate-match.ts';
+export type { ResolveDuplicateCandidateMatchPayload } from '../../shared/actions/resolve-duplicate-candidate-match.ts';
 const ErrorSchema = Schema.Union([
   ClaimOwnedByDifferentParty,
   DuplicateCandidateConflict,

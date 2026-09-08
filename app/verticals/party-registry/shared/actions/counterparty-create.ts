@@ -19,4 +19,3 @@ export const CounterpartyCreateResultSchema = Schema.Struct({
   legalEntityRef: LegalEntityRefSchema,
   partyRef: PartyRefSchema,
 });
-export type CounterpartyCreateResult = typeof CounterpartyCreateResultSchema.Type;

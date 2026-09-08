@@ -84,6 +84,11 @@ const candidateInstant = (instant: PartyCandidate['validFrom'] | string): DateTi
 const encodedCandidateInstant = (instant: PartyCandidate['validFrom'] | string): string =>
   DateTime.formatIso(candidateInstant(instant));
 
+const hasIncompatiblePartyType = (partyType: string, candidate: PartyCandidate) =>
+  partyType !== 'UNRESOLVED' &&
+  candidate.partyType !== 'UNRESOLVED' &&
+  partyType !== candidate.partyType;
+
 const qualifyingCandidateClaims = (candidate: PartyCandidate) =>
   candidate.officialIdentifiers
     .map(normalizeOfficialIdentifier)
@@ -362,6 +367,25 @@ interface CreateOrReuseCaseInput {
   readonly tenantId: string;
 }
 
+const snapshotCandidate = (candidate: PartyCandidate): PartyCandidateSnapshot => ({
+  evidenceArtifactRefs: candidate.evidenceRefs,
+  names: candidate.displayName === undefined ? [] : [candidate.displayName],
+  officialIdentifiers: candidate.officialIdentifiers.map((identifier) => {
+    const normalized = normalizeOfficialIdentifier(identifier);
+    return {
+      identifierTypeKey: normalized.identifierType,
+      namespace: normalized.namespace,
+      normalizedValue: normalized.normalizedValue,
+      verificationState: normalized.verification,
+    };
+  }),
+  partyType: candidate.partyType,
+  policyVersion: MATCH_RULE_VERSION,
+  provenance: candidate.provenance,
+  subjectEvidence: candidate.subjectEvidence ?? [],
+  validFrom: encodedCandidateInstant(candidate.validFrom),
+});
+
 const createOrReuseCase = Effect.fn('PartyMatchingPersistenceService.createOrReuseCase')(
   function* createCase(
     transaction: Pick<PartyTransaction, 'select' | 'insert'>,
@@ -424,24 +448,7 @@ const createOrReuseCase = Effect.fn('PartyMatchingPersistenceService.createOrReu
     }
     const values: typeof duplicateCandidateCases.$inferInsert = {
       candidateFingerprint: fingerprint,
-      candidateSnapshot: {
-        evidenceArtifactRefs: candidate.evidenceRefs,
-        names: candidate.displayName === undefined ? [] : [candidate.displayName],
-        officialIdentifiers: candidate.officialIdentifiers.map((identifier) => {
-          const normalized = normalizeOfficialIdentifier(identifier);
-          return {
-            identifierTypeKey: normalized.identifierType,
-            namespace: normalized.namespace,
-            normalizedValue: normalized.normalizedValue,
-            verificationState: normalized.verification,
-          };
-        }),
-        partyType: candidate.partyType,
-        policyVersion: MATCH_RULE_VERSION,
-        provenance: candidate.provenance,
-        subjectEvidence: candidate.subjectEvidence ?? [],
-        validFrom: encodedCandidateInstant(candidate.validFrom),
-      } satisfies PartyCandidateSnapshot,
+      candidateSnapshot: snapshotCandidate(candidate),
       evaluatedEvidence: evidenceExplanation,
       evaluationFingerprint,
       matchRuleVersion: MATCH_RULE_VERSION,
@@ -532,11 +539,6 @@ const persistDecision = (
     );
 };
 
-/** Owner-local mutation evidence; Actions consume it without widening their public result. */
-export interface MatchingIdentifierAcceptance {
-  readonly addedOfficialIdentifierRefs?: readonly PartyOfficialIdentifierRef[];
-}
-
 const collectNewIdentifierAcceptance = (
   acceptedIds: Set<string>,
   record: typeof partyOfficialIdentifiers.$inferSelect,
@@ -560,9 +562,128 @@ type CreateOrMatchPartyOperation = (
     readonly tenantId: string;
   },
 ) => Effect.Effect<
-  PartyCreateOutcome & MatchingIdentifierAcceptance,
+  PartyCreateOutcome & {
+    readonly addedOfficialIdentifierRefs?: readonly PartyOfficialIdentifierRef[];
+  },
   PartyEvidenceInsufficientError | PartyPersistenceUnavailableError
 >;
+
+const acceptMatchingIdentifiers = (
+  transaction: Parameters<CreateOrMatchPartyOperation>[0],
+  input: Parameters<CreateOrMatchPartyOperation>[1],
+  partyId: string,
+  partyType: PartyCandidate['partyType'],
+  identifiers: readonly NormalizedOfficialIdentifier[],
+  acceptedIds: Set<string>,
+) =>
+  Effect.forEach(
+    identifiers,
+    (identifier) =>
+      addOfficialIdentifierRecord(transaction, input.tenantId, partyId, identifier, {
+        actionInvocationId: input.actionInvocationId,
+        externalEvidence: input.candidate.provenance.externalEvidence,
+        matchRuleVersion: MATCH_RULE_VERSION,
+        partyType,
+        principalId: input.principalId,
+        provenanceMethod: input.candidate.provenance.method,
+        provenanceSource: input.candidate.provenance.source,
+        validFrom: encodedCandidateInstant(input.candidate.validFrom),
+      }).pipe(
+        Effect.tap((record) =>
+          Effect.sync(() =>
+            collectNewIdentifierAcceptance(acceptedIds, record, input.actionInvocationId),
+          ),
+        ),
+      ),
+    { concurrency: 1, discard: true },
+  );
+
+const recordAmbiguousCreate = Effect.fn('PartyMatchingPersistenceService.recordAmbiguousCreate')(
+  function* recordAmbiguity(
+    transaction: Parameters<CreateOrMatchPartyOperation>[0],
+    input: Parameters<CreateOrMatchPartyOperation>[1],
+    partyIds: readonly string[],
+    claimFields: Pick<Parameters<typeof persistDecision>[1], 'claims'> = {},
+  ) {
+    const candidateCase = yield* createOrReuseCase(transaction, {
+      candidate: input.candidate,
+      partyIds,
+      tenantId: input.tenantId,
+    });
+    const decision = yield* persistDecision(transaction, {
+      actionInvocationId: input.actionInvocationId,
+      candidate: input.candidate,
+      candidateCaseId: candidateCase.candidateCaseId,
+      candidateFingerprint: candidateFingerprint(input.candidate),
+      ...claimFields,
+      operation: input.operation ?? 'CREATE',
+      outcome: 'AMBIGUOUS',
+      partyIds,
+      tenantId: input.tenantId,
+    });
+    return {
+      caseRef: makeDuplicateCandidateCaseRef(input.tenantId, candidateCase.candidateCaseId),
+      decisionRef: makePartyMatchDecisionRef(input.tenantId, decision.matchDecisionId),
+      outcome: 'AMBIGUOUS',
+    } as const;
+  },
+);
+
+const matchExistingCandidate = Effect.fn('PartyMatchingPersistenceService.matchExistingCandidate')(
+  function* matchExisting(
+    transaction: Parameters<CreateOrMatchPartyOperation>[0],
+    input: Parameters<CreateOrMatchPartyOperation>[1],
+    existingPartyId: string,
+    partyIds: readonly string[],
+    resolvedClaims: readonly ResolvedClaim[],
+    identifiers: readonly NormalizedOfficialIdentifier[],
+  ) {
+    const existing = yield* findLockedPartyRecord(transaction, input.tenantId, existingPartyId);
+    if (Schema.is(PartyNotFoundSchema)(existing)) {
+      return yield* unavailable();
+    }
+    if (
+      Option.isSome(existing.value.archivedAt) ||
+      hasIncompatiblePartyType(existing.value.partyType, input.candidate)
+    ) {
+      return yield* recordAmbiguousCreate(transaction, input, partyIds, { claims: resolvedClaims });
+    }
+    const addedOfficialIdentifierIds = new Set<string>();
+    const identifiersToAccept = [
+      ...resolvedClaims.filter((claim) => claim.partyId === undefined).map((claim) => claim.claim),
+      ...identifiers.filter(
+        (item) => !qualifiesForExclusiveClaim(item, input.candidate.partyType, MATCH_RULE_VERSION),
+      ),
+    ];
+    yield* acceptMatchingIdentifiers(
+      transaction,
+      input,
+      existingPartyId,
+      existing.value.partyType,
+      identifiersToAccept,
+      addedOfficialIdentifierIds,
+    );
+    const decision = yield* persistDecision(transaction, {
+      actionInvocationId: input.actionInvocationId,
+      candidate: input.candidate,
+      candidateFingerprint: candidateFingerprint(input.candidate),
+      claims: resolvedClaims,
+      operation: input.operation ?? 'CREATE',
+      outcome: 'MATCHED',
+      partyId: existingPartyId,
+      partyIds,
+      tenantId: input.tenantId,
+    });
+    return {
+      addedOfficialIdentifierRefs: [...addedOfficialIdentifierIds].map((id) =>
+        makePartyOfficialIdentifierRef(input.tenantId, id),
+      ),
+      decisionRef: makePartyMatchDecisionRef(input.tenantId, decision.matchDecisionId),
+      outcome: 'MATCHED_EXISTING',
+      partyRef: makePartyRef(input.tenantId, existingPartyId),
+    } as const;
+  },
+);
 
 export const createOrMatchParty: CreateOrMatchPartyOperation = Effect.fn(
   'PartyMatchingPersistenceService.createOrMatchParty',
@@ -601,26 +722,7 @@ export const createOrMatchParty: CreateOrMatchPartyOperation = Effect.fn(
         input.candidate,
         now,
       );
-      const candidateCase = yield* createOrReuseCase(transaction, {
-        candidate: input.candidate,
-        partyIds: weakPartyIds,
-        tenantId: input.tenantId,
-      });
-      const decision = yield* persistDecision(transaction, {
-        actionInvocationId: input.actionInvocationId,
-        candidate: input.candidate,
-        candidateCaseId: candidateCase.candidateCaseId,
-        candidateFingerprint: fingerprint,
-        operation,
-        outcome: 'AMBIGUOUS',
-        partyIds: weakPartyIds,
-        tenantId: input.tenantId,
-      });
-      return {
-        caseRef: makeDuplicateCandidateCaseRef(input.tenantId, candidateCase.candidateCaseId),
-        decisionRef: makePartyMatchDecisionRef(input.tenantId, decision.matchDecisionId),
-        outcome: 'AMBIGUOUS',
-      } as const;
+      return yield* recordAmbiguousCreate(transaction, input, weakPartyIds);
     }
   }
   const resolvedClaims = yield* lockAndResolveClaims(transaction, input.tenantId, strong);
@@ -630,140 +732,18 @@ export const createOrMatchParty: CreateOrMatchPartyOperation = Effect.fn(
     ),
   ].toSorted();
   if (partyIds.length > 1) {
-    const candidateCase = yield* createOrReuseCase(transaction, {
-      candidate: input.candidate,
-      partyIds,
-      tenantId: input.tenantId,
-    });
-    const decision = yield* persistDecision(transaction, {
-      actionInvocationId: input.actionInvocationId,
-      candidate: input.candidate,
-      candidateCaseId: candidateCase.candidateCaseId,
-      candidateFingerprint: fingerprint,
-      claims: resolvedClaims,
-      operation,
-      outcome: 'AMBIGUOUS',
-      partyIds,
-      tenantId: input.tenantId,
-    });
-    return {
-      caseRef: makeDuplicateCandidateCaseRef(input.tenantId, candidateCase.candidateCaseId),
-      decisionRef: makePartyMatchDecisionRef(input.tenantId, decision.matchDecisionId),
-      outcome: 'AMBIGUOUS',
-    } as const;
+    return yield* recordAmbiguousCreate(transaction, input, partyIds, { claims: resolvedClaims });
   }
   const [existingPartyId] = partyIds;
   if (existingPartyId !== undefined) {
-    const existing = yield* findLockedPartyRecord(transaction, input.tenantId, existingPartyId);
-    if (Schema.is(PartyNotFoundSchema)(existing)) {
-      return yield* unavailable();
-    }
-    if (
-      Option.isSome(existing.value.archivedAt) ||
-      (existing.value.partyType !== 'UNRESOLVED' &&
-        input.candidate.partyType !== 'UNRESOLVED' &&
-        existing.value.partyType !== input.candidate.partyType)
-    ) {
-      const candidateCase = yield* createOrReuseCase(transaction, {
-        candidate: input.candidate,
-        partyIds,
-        tenantId: input.tenantId,
-      });
-      const decision = yield* persistDecision(transaction, {
-        actionInvocationId: input.actionInvocationId,
-        candidate: input.candidate,
-        candidateCaseId: candidateCase.candidateCaseId,
-        candidateFingerprint: fingerprint,
-        claims: resolvedClaims,
-        operation,
-        outcome: 'AMBIGUOUS',
-        partyIds,
-        tenantId: input.tenantId,
-      });
-      return {
-        caseRef: makeDuplicateCandidateCaseRef(input.tenantId, candidateCase.candidateCaseId),
-        decisionRef: makePartyMatchDecisionRef(input.tenantId, decision.matchDecisionId),
-        outcome: 'AMBIGUOUS',
-      } as const;
-    }
-    const addedOfficialIdentifierIds = new Set<string>();
-    yield* Effect.forEach(
-      resolvedClaims.filter((claim) => claim.partyId === undefined),
-      (unresolved) =>
-        addOfficialIdentifierRecord(
-          transaction,
-          input.tenantId,
-          existingPartyId,
-          unresolved.claim,
-          {
-            actionInvocationId: input.actionInvocationId,
-            externalEvidence: input.candidate.provenance.externalEvidence,
-            matchRuleVersion: MATCH_RULE_VERSION,
-            partyType: existing.value.partyType,
-            principalId: input.principalId,
-            provenanceMethod: input.candidate.provenance.method,
-            provenanceSource: input.candidate.provenance.source,
-            validFrom: encodedCandidateInstant(input.candidate.validFrom),
-          },
-        ).pipe(
-          Effect.tap((record) =>
-            Effect.sync(() =>
-              collectNewIdentifierAcceptance(
-                addedOfficialIdentifierIds,
-                record,
-                input.actionInvocationId,
-              ),
-            ),
-          ),
-        ),
-      { concurrency: 1, discard: true },
-    );
-    yield* Effect.forEach(
-      identifiers.filter(
-        (item) => !qualifiesForExclusiveClaim(item, input.candidate.partyType, MATCH_RULE_VERSION),
-      ),
-      (identifier) =>
-        addOfficialIdentifierRecord(transaction, input.tenantId, existingPartyId, identifier, {
-          actionInvocationId: input.actionInvocationId,
-          externalEvidence: input.candidate.provenance.externalEvidence,
-          matchRuleVersion: MATCH_RULE_VERSION,
-          partyType: existing.value.partyType,
-          principalId: input.principalId,
-          provenanceMethod: input.candidate.provenance.method,
-          provenanceSource: input.candidate.provenance.source,
-          validFrom: encodedCandidateInstant(input.candidate.validFrom),
-        }).pipe(
-          Effect.tap((record) =>
-            Effect.sync(() =>
-              collectNewIdentifierAcceptance(
-                addedOfficialIdentifierIds,
-                record,
-                input.actionInvocationId,
-              ),
-            ),
-          ),
-        ),
-      { concurrency: 1, discard: true },
-    );
-    const decision = yield* persistDecision(transaction, {
-      actionInvocationId: input.actionInvocationId,
-      candidate: input.candidate,
-      candidateFingerprint: fingerprint,
-      claims: resolvedClaims,
-      operation,
-      outcome: 'MATCHED',
-      partyId: existingPartyId,
+    return yield* matchExistingCandidate(
+      transaction,
+      input,
+      existingPartyId,
       partyIds,
-      tenantId: input.tenantId,
-    });
-    return {
-      addedOfficialIdentifierRefs: [...addedOfficialIdentifierIds].map((id) =>
-        makePartyOfficialIdentifierRef(input.tenantId, id),
-      ),
-      decisionRef: makePartyMatchDecisionRef(input.tenantId, decision.matchDecisionId),
-      outcome: 'MATCHED_EXISTING',
-      partyRef: makePartyRef(input.tenantId, existingPartyId),
-    } as const;
+      resolvedClaims,
+      identifiers,
+    );
   }
   if (input.createWithoutStrongIdentifierReviewed !== true) {
     const weakPartyIds = yield* findWeakCandidatePartyIds(
@@ -773,26 +753,7 @@ export const createOrMatchParty: CreateOrMatchPartyOperation = Effect.fn(
       now,
     );
     if (weakPartyIds.length > 0) {
-      const candidateCase = yield* createOrReuseCase(transaction, {
-        candidate: input.candidate,
-        partyIds: weakPartyIds,
-        tenantId: input.tenantId,
-      });
-      const decision = yield* persistDecision(transaction, {
-        actionInvocationId: input.actionInvocationId,
-        candidate: input.candidate,
-        candidateCaseId: candidateCase.candidateCaseId,
-        candidateFingerprint: fingerprint,
-        operation,
-        outcome: 'AMBIGUOUS',
-        partyIds: weakPartyIds,
-        tenantId: input.tenantId,
-      });
-      return {
-        caseRef: makeDuplicateCandidateCaseRef(input.tenantId, candidateCase.candidateCaseId),
-        decisionRef: makePartyMatchDecisionRef(input.tenantId, decision.matchDecisionId),
-        outcome: 'AMBIGUOUS',
-      } as const;
+      return yield* recordAmbiguousCreate(transaction, input, weakPartyIds);
     }
   }
   const party = yield* insertPartyRecord(transaction, input.tenantId, input.candidate, {
@@ -839,19 +800,15 @@ export const createOrMatchParty: CreateOrMatchPartyOperation = Effect.fn(
   } as const;
 });
 
-/** Records an identity decision without creating or changing a canonical Party. */
-export const matchParty = Effect.fn('PartyMatchingPersistenceService.matchParty')(
-  function* recordMatchDecision(
-    transaction: Pick<PartyTransaction, 'select' | 'insert'>,
+const requirePriorReviewCase = Effect.fn('PartyMatchingPersistenceService.requirePriorReviewCase')(
+  function* requirePriorCase(
+    transaction: Pick<PartyTransaction, 'select'>,
     input: {
-      readonly actionInvocationId: string;
-      readonly candidate: PartyCandidate;
       readonly priorCandidateCaseId?: string;
       readonly priorCaseTenantId?: string;
       readonly tenantId: string;
     },
   ) {
-    yield* lockTenantIdentityWrites(transaction, input.tenantId);
     const { priorCandidateCaseId } = input;
     if (priorCandidateCaseId !== undefined) {
       if (input.priorCaseTenantId !== input.tenantId) {
@@ -878,6 +835,49 @@ export const matchParty = Effect.fn('PartyMatchingPersistenceService.matchParty'
         });
       }
     }
+  },
+);
+
+const evaluateMatchOutcome = Effect.fn('PartyMatchingPersistenceService.evaluateMatchOutcome')(
+  function* evaluateOutcome(
+    transaction: Pick<PartyTransaction, 'select'>,
+    tenantId: string,
+    candidate: PartyCandidate,
+    partyIds: readonly string[],
+    strongPartyIds: readonly string[],
+  ) {
+    let outcome = initialMatchOutcome(partyIds, strongPartyIds);
+    const [solePartyId] = partyIds;
+    if (outcome === 'MATCHED' && solePartyId !== undefined) {
+      const party = yield* findLockedPartyRecord(transaction, tenantId, solePartyId);
+      if (Schema.is(PartyNotFoundSchema)(party)) {
+        return yield* unavailable();
+      }
+      if (
+        Option.isSome(party.value.archivedAt) ||
+        hasIncompatiblePartyType(party.value.partyType, candidate)
+      ) {
+        outcome = 'AMBIGUOUS';
+      }
+    }
+    return outcome;
+  },
+);
+
+/** Records an identity decision without creating or changing a canonical Party. */
+export const matchParty = Effect.fn('PartyMatchingPersistenceService.matchParty')(
+  function* recordMatchDecision(
+    transaction: Pick<PartyTransaction, 'select' | 'insert'>,
+    input: {
+      readonly actionInvocationId: string;
+      readonly candidate: PartyCandidate;
+      readonly priorCandidateCaseId?: string;
+      readonly priorCaseTenantId?: string;
+      readonly tenantId: string;
+    },
+  ) {
+    yield* lockTenantIdentityWrites(transaction, input.tenantId);
+    yield* requirePriorReviewCase(transaction, input);
     yield* requirePartySubjectEvidence(input.candidate);
     const now = yield* DateTime.nowAsDate;
     if (DateTime.toDateUtc(candidateInstant(input.candidate.validFrom)) > now) {
@@ -901,22 +901,14 @@ export const matchParty = Effect.fn('PartyMatchingPersistenceService.matchParty'
       strongPartyIds.length > 0
         ? strongPartyIds
         : yield* findWeakCandidatePartyIds(transaction, input.tenantId, input.candidate, now);
-    let outcome = initialMatchOutcome(partyIds, strongPartyIds);
+    const outcome = yield* evaluateMatchOutcome(
+      transaction,
+      input.tenantId,
+      input.candidate,
+      partyIds,
+      strongPartyIds,
+    );
     const [solePartyId] = partyIds;
-    if (outcome === 'MATCHED' && solePartyId !== undefined) {
-      const party = yield* findLockedPartyRecord(transaction, input.tenantId, solePartyId);
-      if (Schema.is(PartyNotFoundSchema)(party)) {
-        return yield* unavailable();
-      }
-      if (
-        Option.isSome(party.value.archivedAt) ||
-        (party.value.partyType !== 'UNRESOLVED' &&
-          input.candidate.partyType !== 'UNRESOLVED' &&
-          party.value.partyType !== input.candidate.partyType)
-      ) {
-        outcome = 'AMBIGUOUS';
-      }
-    }
     const createCaseInput: CreateOrReuseCaseInput = {
       candidate: input.candidate,
       evidenceExplanation: explainCandidateEvidence(
@@ -965,6 +957,41 @@ export const matchParty = Effect.fn('PartyMatchingPersistenceService.matchParty'
   },
 );
 
+const requireOpenCandidateCase = Effect.fn(
+  'PartyMatchingPersistenceService.requireOpenCandidateCase',
+)(function* requireOpenCase(
+  transaction: Pick<PartyTransaction, 'select'>,
+  input: {
+    readonly tenantId: string;
+    readonly candidateCaseId: string;
+    readonly expectedRevision: number;
+  },
+) {
+  const [candidateCase] = yield* transaction
+    .select()
+    .from(duplicateCandidateCases)
+    .where(
+      and(
+        eq(duplicateCandidateCases.tenantId, input.tenantId),
+        eq(duplicateCandidateCases.candidateCaseId, input.candidateCaseId),
+      ),
+    )
+    .limit(1)
+    .for('update')
+    .pipe(Effect.mapError(unavailable));
+  if (
+    candidateCase === undefined ||
+    candidateCase.revision !== input.expectedRevision ||
+    !['OPEN', 'NEEDS_EVIDENCE'].includes(candidateCase.lifecycleState)
+  ) {
+    return yield* new DuplicateCandidateConflict({
+      code: 'duplicate_candidate_conflict',
+      reason: 'The Duplicate Candidate case is absent, closed, or has a stale revision',
+    });
+  }
+  return candidateCase;
+});
+
 type TransitionDuplicateCandidateCaseOperation = (
   transaction: Pick<PartyTransaction, 'select' | 'update' | 'insert'>,
   input: {
@@ -987,28 +1014,7 @@ export const transitionDuplicateCandidateCase: TransitionDuplicateCandidateCaseO
       input: Parameters<TransitionDuplicateCandidateCaseOperation>[1],
     ) {
       yield* lockTenantIdentityWrites(transaction, input.tenantId);
-      const [candidateCase] = yield* transaction
-        .select()
-        .from(duplicateCandidateCases)
-        .where(
-          and(
-            eq(duplicateCandidateCases.tenantId, input.tenantId),
-            eq(duplicateCandidateCases.candidateCaseId, input.candidateCaseId),
-          ),
-        )
-        .limit(1)
-        .for('update')
-        .pipe(Effect.mapError(unavailable));
-      if (
-        candidateCase === undefined ||
-        candidateCase.revision !== input.expectedRevision ||
-        !['OPEN', 'NEEDS_EVIDENCE'].includes(candidateCase.lifecycleState)
-      ) {
-        return yield* new DuplicateCandidateConflict({
-          code: 'duplicate_candidate_conflict',
-          reason: 'The Duplicate Candidate case is absent, closed, or has a stale revision',
-        });
-      }
+      const candidateCase = yield* requireOpenCandidateCase(transaction, input);
       const lifecycleState = resolvedCaseLifecycle(input.outcome);
       const now = yield* DateTime.nowAsDate;
       yield* transaction
@@ -1052,7 +1058,9 @@ type ResolveDuplicateCandidateMatchOperation = (
     readonly tenantId: string;
   },
 ) => Effect.Effect<
-  DuplicateCaseResolutionResult & MatchingIdentifierAcceptance,
+  DuplicateCaseResolutionResult & {
+    readonly addedOfficialIdentifierRefs?: readonly PartyOfficialIdentifierRef[];
+  },
   | ClaimOwnedByDifferentParty
   | DuplicateCandidateConflict
   | PartyPersistenceUnavailableError
@@ -1073,28 +1081,7 @@ export const resolveDuplicateCandidateMatch: ResolveDuplicateCandidateMatchOpera
       reason: 'The selected Party must belong to the trusted tenant',
     });
   }
-  const [candidateCase] = yield* transaction
-    .select()
-    .from(duplicateCandidateCases)
-    .where(
-      and(
-        eq(duplicateCandidateCases.tenantId, input.tenantId),
-        eq(duplicateCandidateCases.candidateCaseId, input.candidateCaseId),
-      ),
-    )
-    .limit(1)
-    .for('update')
-    .pipe(Effect.mapError(unavailable));
-  if (
-    candidateCase === undefined ||
-    candidateCase.revision !== input.expectedRevision ||
-    !['OPEN', 'NEEDS_EVIDENCE'].includes(candidateCase.lifecycleState)
-  ) {
-    return yield* new DuplicateCandidateConflict({
-      code: 'duplicate_candidate_conflict',
-      reason: 'The Duplicate Candidate case is absent, closed, or has a stale revision',
-    });
-  }
+  const candidateCase = yield* requireOpenCandidateCase(transaction, input);
   if (candidateCase.candidateSnapshot.intent === 'UNARCHIVE') {
     return yield* new DuplicateCandidateConflict({
       code: 'duplicate_candidate_conflict',
@@ -1137,9 +1124,7 @@ export const resolveDuplicateCandidateMatch: ResolveDuplicateCandidateMatchOpera
   if (
     selectedParty === undefined ||
     selectedParty.archivedAt !== null ||
-    (selectedParty.currentType !== 'UNRESOLVED' &&
-      candidate.partyType !== 'UNRESOLVED' &&
-      selectedParty.currentType !== candidate.partyType)
+    hasIncompatiblePartyType(selectedParty.currentType, candidate)
   ) {
     return yield* new DuplicateCandidateConflict({
       code: 'duplicate_candidate_conflict',
@@ -1261,28 +1246,7 @@ export const resolveDuplicateCandidateCreate: ResolveDuplicateCandidateCreateOpe
   input: Parameters<ResolveDuplicateCandidateCreateOperation>[1],
 ) {
   yield* lockTenantIdentityWrites(transaction, input.tenantId);
-  const [candidateCase] = yield* transaction
-    .select()
-    .from(duplicateCandidateCases)
-    .where(
-      and(
-        eq(duplicateCandidateCases.tenantId, input.tenantId),
-        eq(duplicateCandidateCases.candidateCaseId, input.candidateCaseId),
-      ),
-    )
-    .limit(1)
-    .for('update')
-    .pipe(Effect.mapError(unavailable));
-  if (
-    candidateCase === undefined ||
-    candidateCase.revision !== input.expectedRevision ||
-    !['OPEN', 'NEEDS_EVIDENCE'].includes(candidateCase.lifecycleState)
-  ) {
-    return yield* new DuplicateCandidateConflict({
-      code: 'duplicate_candidate_conflict',
-      reason: 'The Duplicate Candidate case is absent, closed, or has a stale revision',
-    });
-  }
+  const candidateCase = yield* requireOpenCandidateCase(transaction, input);
   if (candidateCase.candidateSnapshot.intent === 'UNARCHIVE') {
     return yield* new DuplicateCandidateConflict({
       code: 'duplicate_candidate_conflict',
@@ -1300,17 +1264,16 @@ export const resolveDuplicateCandidateCreate: ResolveDuplicateCandidateCreateOpe
     });
   }
   const candidate = restoreCandidate(candidateCase.candidateSnapshot);
-  const result: PartyCreateOutcome & MatchingIdentifierAcceptance = yield* createOrMatchParty(
-    transaction,
-    {
-      actionInvocationId: input.actionInvocationId,
-      candidate,
-      createWithoutStrongIdentifierReviewed: true,
-      operation: 'REVIEW_CREATE',
-      principalId: input.principalId,
-      tenantId: input.tenantId,
-    },
-  );
+  const result: PartyCreateOutcome & {
+    readonly addedOfficialIdentifierRefs?: readonly PartyOfficialIdentifierRef[];
+  } = yield* createOrMatchParty(transaction, {
+    actionInvocationId: input.actionInvocationId,
+    candidate,
+    createWithoutStrongIdentifierReviewed: true,
+    operation: 'REVIEW_CREATE',
+    principalId: input.principalId,
+    tenantId: input.tenantId,
+  });
   if (result.outcome !== 'CREATED') {
     return yield* new DuplicateCandidateConflict({
       code: 'duplicate_candidate_conflict',

@@ -39,7 +39,7 @@ const InstalledModuleCatalogUnavailableErrorSchema = Schema.TaggedStruct(
 );
 type InstalledModuleCatalogUnavailableFailure =
   typeof InstalledModuleCatalogUnavailableErrorSchema.Type;
-export const InstalledModuleCatalogUnavailableError =
+const InstalledModuleCatalogUnavailableError =
   Schema.TaggedError<InstalledModuleCatalogUnavailableFailure>()(
     'InstalledModuleCatalogUnavailableError',
     unavailableErrorFields,
@@ -55,7 +55,7 @@ const InstalledModuleCatalogInvalidErrorSchema = Schema.TaggedStruct(
   invalidErrorFields,
 );
 type InstalledModuleCatalogInvalidFailure = typeof InstalledModuleCatalogInvalidErrorSchema.Type;
-export const InstalledModuleCatalogInvalidError =
+const InstalledModuleCatalogInvalidError =
   Schema.TaggedError<InstalledModuleCatalogInvalidFailure>()(
     'InstalledModuleCatalogInvalidError',
     invalidErrorFields,
@@ -67,7 +67,7 @@ export type InstalledModuleCatalogError =
 
 export type ModuleContractFetch = typeof globalThis.fetch;
 
-export interface InstalledModuleCatalogLoaderOptions {
+interface InstalledModuleCatalogLoaderOptions {
   readonly maxBytes?: number;
   readonly timeoutMs?: number;
 }

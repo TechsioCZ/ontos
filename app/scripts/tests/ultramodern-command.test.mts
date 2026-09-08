@@ -1,0 +1,115 @@
+/// <reference types="node" />
+
+import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import type { TestContext } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { NodeServices } from '@effect/platform-node';
+import { Effect, ManagedRuntime, Stream } from 'effect';
+import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+
+const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
+const wrappers = [
+  ['assert-mf-types', 'mf-types'],
+  ['generate-node-backend-federation', 'backend-federation-generate'],
+  ['generate-public-surface-assets', 'public-surface'],
+  ['migrate-strict-effect', 'migrate-strict-effect'],
+  ['proof-cloudflare-version', 'cloudflare-proof'],
+  ['ultramodern-performance-readiness', 'performance-readiness'],
+  ['ultramodern-typecheck', 'typecheck'],
+  ['verify-cloudflare-output', 'cloudflare-output-verify'],
+] as const;
+
+const fixtureDirectory = (context: TestContext) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-command-'));
+  context.after(() => rmSync(directory, { force: true, recursive: true }));
+  return directory;
+};
+
+const wrapperRuntime = ManagedRuntime.make(NodeServices.layer);
+test.after(async () => {
+  await wrapperRuntime.dispose();
+});
+
+const invokeWrapper = async (
+  script: string,
+  environment: Readonly<Record<string, string>>,
+  args: readonly string[] = [],
+) =>
+  await wrapperRuntime.runPromise(
+    Effect.gen(function* invokeWrapperEffect() {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawner.spawn(
+        ChildProcess.make(
+          process.execPath,
+          [path.join(workspaceRoot, 'scripts', `${script}.mts`), ...args],
+          {
+            cwd: workspaceRoot,
+            env: environment,
+            extendEnv: true,
+            stderr: 'pipe',
+            stdin: 'ignore',
+            stdout: 'pipe',
+          },
+        ),
+      );
+      return yield* Effect.all(
+        {
+          status: child.exitCode.pipe(Effect.map(Number)),
+          stderr: child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+          stdout: child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+        },
+        { concurrency: 'unbounded' },
+      );
+    }).pipe(Effect.scoped),
+  );
+
+for (const [script, command] of wrappers) {
+  void test(`${script} forwards arguments, workspace and child exit status`, async (context) => {
+    const fixture = fixtureDirectory(context);
+    const createBin = path.join(fixture, 'create.mjs');
+    writeFileSync(
+      createBin,
+      'console.log(process.argv.slice(2).join("|")); console.log(process.env.ULTRAMODERN_WORKSPACE_ROOT); process.exitCode = 7;',
+    );
+    const result = await invokeWrapper(
+      script,
+      { ULTRAMODERN_CREATE_BIN: createBin, ULTRAMODERN_WORKSPACE_ROOT: fixture },
+      ['--probe', 'argument with spaces'],
+    );
+    assert.equal(result.status, 7, result.stderr);
+    assert.equal(
+      result.stdout,
+      `ultramodern|${command}|--probe|argument with spaces\n${fixture}\n`,
+    );
+  });
+}
+
+void test('route generation continues compatibility generation after a nonzero framework exit', async (context) => {
+  const fixture = fixtureDirectory(context);
+  const createBin = path.join(fixture, 'create.mjs');
+  writeFileSync(createBin, 'process.exitCode = 7;');
+  mkdirSync(path.join(fixture, '.modernjs'));
+  writeFileSync(path.join(fixture, '.modernjs/ultramodern.json'), '{"topology":{"apps":[]}}');
+  const result = await invokeWrapper('generate-tanstack-routes', {
+    ULTRAMODERN_CREATE_BIN: createBin,
+    ULTRAMODERN_WORKSPACE_ROOT: fixture,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /continuing with the repository compatibility manifest/u);
+});
+
+void test('missing PATH launcher reports a typed launch failure and exits one', async (context) => {
+  const fixture = fixtureDirectory(context);
+  const result = await invokeWrapper('assert-mf-types', {
+    PATH: fixture,
+    ULTRAMODERN_CREATE_BIN: '',
+    ULTRAMODERN_WORKSPACE_ROOT: fixture,
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Failed to launch modern-js-create from PATH/u);
+  assert.match(result.stderr, /UltraModern command "mf-types"/u);
+});

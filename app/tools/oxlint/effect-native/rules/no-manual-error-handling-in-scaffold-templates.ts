@@ -1,3 +1,4 @@
+import { maskText, driverText, emittedText, reportNode } from '../shared/scaffold-text.ts';
 /**
  * effect-native/no-manual-error-handling-in-scaffold-templates
  *
@@ -205,74 +206,7 @@ function collectMatches(text: string, patterns: readonly RegExp[]): readonly Mat
   return kept;
 }
 
-/** Lexical template inspection, not a type checker or an evaluator of interpolations.
- * Mask comments and (optionally) strings without moving offsets. Dynamic generated fragments,
- * regex literals and arbitrary helper-returned source cannot be fully reconstructed here. */
-function maskText(text: string, strings = false): string {
-  return text.replace(
-    /\/\*[\s\S]*?\*\/|\/\/[^\r\n]*|'(?:\\[\s\S]|[^'\\])*'|"(?:\\[\s\S]|[^"\\])*"|`(?:\\[\s\S]|[^`\\])*`/gu,
-    (value) => (value.startsWith('/') || strings ? value.replace(/[^\r\n]/g, ' ') : value),
-  );
-}
-/** Log/prose/shell arguments belong to the generator driver, not the emitted module. */
-function driverText(node: ESTree.Node): boolean {
-  if (
-    node.parent?.type === 'ImportDeclaration' ||
-    node.parent?.type === 'ImportExpression' ||
-    node.parent?.type === 'ExportNamedDeclaration' ||
-    node.parent?.type === 'ExportAllDeclaration'
-  )
-    return true;
-  let current = node;
-  while (current.parent !== null && current.parent !== undefined) {
-    const parent = current.parent;
-    if (parent.type === 'CallExpression' || parent.type === 'NewExpression') {
-      const callee = parent.callee;
-      if (
-        callee.type === 'Identifier' &&
-        /^(?:Error|TypeError|exec|execSync|execFile|execFileSync|spawn|spawnSync)$/.test(
-          callee.name,
-        )
-      )
-        return true;
-      if (
-        callee.type === 'MemberExpression' &&
-        callee.object.type === 'Identifier' &&
-        callee.object.name === 'console'
-      )
-        return true;
-      return false;
-    }
-    if (
-      ['VariableDeclarator', 'ReturnStatement', 'TemplateLiteral', 'Program'].includes(parent.type)
-    )
-      return false;
-    current = parent;
-  }
-  return false;
-}
-
 type StringNode = Extract<ESTree.Node, { type: 'TemplateLiteral' | 'Literal' }>;
-/** Interpolations are opaque identifier placeholders, not evaluated generator code. */
-function emittedText(node: StringNode): string {
-  return node.type === 'TemplateLiteral'
-    ? node.quasis.map((quasi) => quasi.value.cooked ?? quasi.value.raw).join('_')
-    : typeof node.value === 'string'
-      ? node.value
-      : '';
-}
-/** Report the containing quasi (or whole literal across quasis), not a guessed raw offset.
- * Cooked text normalises CRLF and escapes, so its character offsets are not source offsets. */
-function reportNode(node: StringNode, start: number, end: number): ESTree.Node {
-  if (node.type !== 'TemplateLiteral') return node;
-  let offset = 0;
-  for (const quasi of node.quasis) {
-    const length = (quasi.value.cooked ?? quasi.value.raw).length;
-    if (start >= offset && end <= offset + length) return quasi;
-    offset += length + 1;
-  }
-  return node;
-}
 
 export const rule = defineRule({
   meta: {

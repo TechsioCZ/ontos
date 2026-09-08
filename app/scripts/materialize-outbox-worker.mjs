@@ -119,6 +119,40 @@ const makeProductionDependenciesPlugin = ({ packages, path, workspaceRoot }) => 
 });
 
 /**
+ * @param {string} importedPath External dependency specifier.
+ * @param {Map<string, { manifest: Schema.Schema.Type<typeof PackageManifestSchema> }>} packages Workspace manifests.
+ * @param {Record<string, string>} dependencies Collected production versions.
+ */
+const collectProductionDependency = (importedPath, packages, dependencies) =>
+  Effect.gen(function* collectProductionDependencyEffect() {
+    if (isBuiltin(importedPath)) {
+      return null;
+    }
+    const name = importedPath.startsWith('@')
+      ? importedPath.split('/').slice(0, 2).join('/')
+      : importedPath.split('/').at(0);
+    if (name === undefined) {
+      return yield* Effect.fail(failure(`Invalid worker dependency ${importedPath}`));
+    }
+    const versions = [...packages.values()].flatMap(({ manifest }) => {
+      const version = manifest.dependencies?.[name];
+      return version !== undefined && !version.startsWith('workspace:') ? [version] : [];
+    });
+    const uniqueVersions = [...new Set(versions)];
+    if (uniqueVersions.length !== 1) {
+      return yield* Effect.fail(
+        failure(`Worker dependency ${name} must have one declared production version`),
+      );
+    }
+    const [version] = uniqueVersions;
+    if (version === undefined) {
+      return yield* Effect.fail(failure(`Worker dependency ${name} has no version`));
+    }
+    dependencies[name] = version;
+    return null;
+  });
+
+/**
  * @typedef {{
  *   appId: string,
  *   packageDir: string,
@@ -164,21 +198,24 @@ const materializeOutboxWorkerEffect = ({
     const dependencies = {};
     /** @type {Map<string, { manifest: Schema.Schema.Type<typeof PackageManifestSchema> }>} */
     const packages = new Map();
-    for (const directory of ['packages', 'apps', 'verticals']) {
-      const parent = path.join(workspaceRoot, directory);
-      if (!(yield* fs.exists(parent))) {
-        continue;
-      }
-      for (const entry of yield* fs.readDirectory(parent)) {
-        const manifestPath = path.join(parent, entry, 'package.json');
-        if (!(yield* fs.exists(manifestPath))) {
+    const collectWorkspacePackages = Effect.gen(function* collectWorkspacePackagesEffect() {
+      for (const directory of ['packages', 'apps', 'verticals']) {
+        const parent = path.join(workspaceRoot, directory);
+        if (!(yield* fs.exists(parent))) {
           continue;
         }
-        const manifestSource = yield* fs.readFileString(manifestPath);
-        const manifest = yield* Schema.decodeUnknownEffect(PackageManifestSchema)(manifestSource);
-        packages.set(manifest.name, { manifest });
+        for (const entry of yield* fs.readDirectory(parent)) {
+          const manifestPath = path.join(parent, entry, 'package.json');
+          if (!(yield* fs.exists(manifestPath))) {
+            continue;
+          }
+          const manifestSource = yield* fs.readFileString(manifestPath);
+          const manifest = yield* Schema.decodeUnknownEffect(PackageManifestSchema)(manifestSource);
+          packages.set(manifest.name, { manifest });
+        }
       }
-    }
+    });
+    yield* collectWorkspacePackages;
     const result = yield* Effect.tryPromise({
       catch: () => failure(`Unable to bundle the ${appId} Outbox Worker`),
       try: () =>
@@ -201,33 +238,11 @@ const materializeOutboxWorkerEffect = ({
         ),
     });
     const { metafile } = result;
-    for (const output of Object.values(metafile.outputs)) {
-      for (const imported of output.imports.filter((item) => item.external === true)) {
-        if (isBuiltin(imported.path)) {
-          continue;
-        }
-        const name = imported.path.startsWith('@')
-          ? imported.path.split('/').slice(0, 2).join('/')
-          : imported.path.split('/').at(0);
-        if (name === undefined) {
-          return yield* Effect.fail(failure(`Invalid worker dependency ${imported.path}`));
-        }
-        const versions = [...packages.values()].flatMap(({ manifest }) => {
-          const version = manifest.dependencies?.[name];
-          return version !== undefined && !version.startsWith('workspace:') ? [version] : [];
-        });
-        const uniqueVersions = [...new Set(versions)];
-        if (uniqueVersions.length !== 1) {
-          return yield* Effect.fail(
-            failure(`Worker dependency ${name} must have one declared production version`),
-          );
-        }
-        const [version] = uniqueVersions;
-        if (version === undefined) {
-          return yield* Effect.fail(failure(`Worker dependency ${name} has no version`));
-        }
-        dependencies[name] = version;
-      }
+    const externalImports = Object.values(metafile.outputs).flatMap((output) =>
+      output.imports.filter((item) => item.external === true),
+    );
+    for (const imported of externalImports) {
+      yield* collectProductionDependency(imported.path, packages, dependencies);
     }
     yield* fs.copyFile(
       path.join(workspaceRoot, 'topology/reference-topology.json'),

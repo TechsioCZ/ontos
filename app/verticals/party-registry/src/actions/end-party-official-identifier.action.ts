@@ -37,14 +37,7 @@ import type {
   EndPartyOfficialIdentifierResult,
 } from '../../shared/actions/end-party-official-identifier.ts';
 
-export {
-  EndPartyOfficialIdentifierPayloadSchema,
-  EndPartyOfficialIdentifierResultSchema,
-} from '../../shared/actions/end-party-official-identifier.ts';
-export type {
-  EndPartyOfficialIdentifierPayload,
-  EndPartyOfficialIdentifierResult,
-} from '../../shared/actions/end-party-official-identifier.ts';
+export type { EndPartyOfficialIdentifierPayload } from '../../shared/actions/end-party-official-identifier.ts';
 const ErrorSchema = Schema.Union([
   PartyNotFound,
   OfficialIdentifierClaimConflict,
@@ -183,10 +176,3 @@ export const endPartyOfficialIdentifierAction = defineAction(
   (transaction, scope) =>
     Effect.succeed({ end: makeEndService(transaction, scope.tenantId) } satisfies Services),
 );
-export { createEndPartyOfficialIdentifierPartyRegistryOfficialIdentifierEndedV1OutboxMessage } from './end-party-official-identifier.party-registry-official-identifier-ended-v1.outbox-message.ts';
-export {
-  EndPartyOfficialIdentifierPartyRegistryOfficialIdentifierEndedV1OutboxPayloadSchema,
-  EndPartyOfficialIdentifierPartyRegistryOfficialIdentifierEndedV1OutboxProducerModuleKey,
-  EndPartyOfficialIdentifierPartyRegistryOfficialIdentifierEndedV1OutboxTopic,
-} from './end-party-official-identifier.party-registry-official-identifier-ended-v1.outbox-message.ts';
-export type { EndPartyOfficialIdentifierPartyRegistryOfficialIdentifierEndedV1OutboxPayload } from './end-party-official-identifier.party-registry-official-identifier-ended-v1.outbox-message.ts';

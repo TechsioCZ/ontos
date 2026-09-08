@@ -12,7 +12,7 @@ import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrincipalId'));
 const status = Schema.Literals(['active', 'disabled', 'archived']);
 const reason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
-export const ChangePrincipalStatusPayloadSchema = Schema.Union([
+const ChangePrincipalStatusPayloadSchema = Schema.Union([
   Schema.Struct({
     expectedStatus: status,
     newStatus: Schema.Literal('active'),
@@ -29,10 +29,7 @@ export const ChangePrincipalStatusPayloadSchema = Schema.Union([
 export type ChangePrincipalStatusPayload = Schema.Schema.Type<
   typeof ChangePrincipalStatusPayloadSchema
 >;
-export const ChangePrincipalStatusResultSchema = Schema.Struct({ previousStatus: status, status });
-export type ChangePrincipalStatusResult = Schema.Schema.Type<
-  typeof ChangePrincipalStatusResultSchema
->;
+const ChangePrincipalStatusResultSchema = Schema.Struct({ previousStatus: status, status });
 type ChangePrincipalStatus = PrincipalManagementRepositoryService['changePrincipalStatus'];
 type Input = Parameters<ChangePrincipalStatus>[0];
 type Result = ReturnType<ChangePrincipalStatus>;

@@ -1,4 +1,5 @@
-import { Cause, Schema } from 'effect';
+import { Schema } from 'effect';
+import type { Cause } from 'effect';
 
 const reason = { reason: Schema.String } as const;
 
@@ -110,14 +111,6 @@ export const outboxPersistenceError = <FailureCause>(
   });
   Object.defineProperty(failure, PERSISTENCE_CAUSE_PROPERTY, { value: cause });
   return failure;
-};
-
-export const getOutboxPersistenceCause = (
-  failure: OutboxPersistenceError,
-): Cause.Cause<never> | undefined => {
-  const cause =
-    PERSISTENCE_CAUSE_PROPERTY in failure ? failure[PERSISTENCE_CAUSE_PROPERTY] : undefined;
-  return cause === undefined ? undefined : Cause.die(cause);
 };
 
 export const sanitizeOutboxErrorMessage = (message: string): string =>

@@ -270,6 +270,33 @@ const makeOwnerHandler = (
   return handler;
 };
 
+const loadClientWiring = async (entrypoints: ReturnType<typeof getVerticalRuntimeEntrypoints>) => {
+  const [detailClient, listClient, searchClient] = await Promise.all([
+    entrypoints.api['resource-detail']?.(),
+    entrypoints.api['resource-list']?.(),
+    entrypoints.search['records']?.(),
+  ]);
+  return {
+    action: true,
+    detailClient:
+      detailClient !== undefined &&
+      Predicate.isFunction(
+        Object.getOwnPropertyDescriptor(detailClient, 'executeResourceDetailWithAuthorization')
+          ?.value,
+      ),
+    listClient:
+      listClient !== undefined &&
+      Predicate.isFunction(
+        Object.getOwnPropertyDescriptor(listClient, 'executeResourceListWithAuthorization')?.value,
+      ),
+    searchClient:
+      searchClient !== undefined &&
+      Predicate.isFunction(
+        Object.getOwnPropertyDescriptor(searchClient, 'loadRecordsClientWithAuthorization')?.value,
+      ),
+  };
+};
+
 const loadGeneratedOwner = async (
   verticalRoot: string,
   runtime: ReadRuntimeService,
@@ -308,11 +335,7 @@ const loadGeneratedOwner = async (
   );
   const actions = getVerticalRuntimeActions(registration);
   const entrypoints = getVerticalRuntimeEntrypoints(registration);
-  const [detailClient, listClient, searchClient] = await Promise.all([
-    entrypoints.api['resource-detail']?.(),
-    entrypoints.api['resource-list']?.(),
-    entrypoints.search['records']?.(),
-  ]);
+  const wiring = await loadClientWiring(entrypoints);
   const generatedAction = actions.find(
     ({ descriptor }) => descriptor.actionKey === GENERATED_OWNER.actionKey,
   );
@@ -346,27 +369,7 @@ const loadGeneratedOwner = async (
     verifyActionPrincipal: Schema.decodeUnknownSync(OwnerVerifierSchema)(
       verifier['verifyActionPrincipal'],
     ),
-    wiring: {
-      action: true,
-      detailClient:
-        detailClient !== undefined &&
-        Predicate.isFunction(
-          Object.getOwnPropertyDescriptor(detailClient, 'executeResourceDetailWithAuthorization')
-            ?.value,
-        ),
-      listClient:
-        listClient !== undefined &&
-        Predicate.isFunction(
-          Object.getOwnPropertyDescriptor(listClient, 'executeResourceListWithAuthorization')
-            ?.value,
-        ),
-      searchClient:
-        searchClient !== undefined &&
-        Predicate.isFunction(
-          Object.getOwnPropertyDescriptor(searchClient, 'loadRecordsClientWithAuthorization')
-            ?.value,
-        ),
-    },
+    wiring,
   };
 };
 

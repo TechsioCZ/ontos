@@ -2,7 +2,7 @@ import { afterEach, expect, rstest, test } from '@rstest/core';
 import { cleanup, render, screen } from '@testing-library/react';
 import csCatalog from '../../locales/cs/party-registry.json';
 import enCatalog from '../../locales/en/party-registry.json';
-import { ContactsPage } from '../../src/routes/[lang]/contacts/page.tsx';
+import ContactsPage from '../../src/routes/[lang]/contacts/page.tsx';
 
 interface LocaleState {
   current: 'cs' | 'en';

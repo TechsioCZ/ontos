@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **A9** — "Preserve typed Effects through the frontend" (target: "Schema-driven
  * route/search parameters through `Schema.standardSchemaV1`" and "Form codecs derived from payload
@@ -45,16 +46,13 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production `routeGlobs` defaults instead of
- * forcing the fixture config to pass loosened options (which `run-on-repo.mts` reuses).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+import { stringArray } from '../shared/options.ts';
+import { unwrap as unwrapAst, memberName as astMemberName, keyName } from '../shared/ast.ts';
+import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
+import { importedName } from '../shared/imports.ts';
 
 /** Route modules: the frontend seam A9 names. Nested `routes/` directories are covered too. */
 const DEFAULT_ROUTE_GLOBS = [
@@ -99,18 +97,8 @@ interface RuleOptions {
   readonly allowTestFiles: boolean;
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     routeGlobs: stringArray(record.routeGlobs, DEFAULT_ROUTE_GLOBS),
     exclude: stringArray(record.exclude, DEFAULT_EXCLUDE),
@@ -123,64 +111,24 @@ function readOptions(context: Context): RuleOptions {
   };
 }
 
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
+const ROUTE_WRAPPERS = new Set([
+  'ParenthesizedExpression',
+  'TSAsExpression',
+  'TSSatisfiesExpression',
+  'TSNonNullExpression',
+  'ChainExpression',
+]);
 
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-/** See through parentheses, `as`/`satisfies` casts, `!` and optional-chain wrappers. */
 function unwrap(node: ESTree.Node | null | undefined): ESTree.Node | null {
-  let current: ESTree.Node | null = node ?? null;
-  for (;;) {
-    if (current === null) return null;
-    if (current.type === 'ParenthesizedExpression') current = current.expression;
-    else if (current.type === 'TSAsExpression') current = current.expression;
-    else if (current.type === 'TSSatisfiesExpression') current = current.expression;
-    else if (current.type === 'TSNonNullExpression') current = current.expression;
-    else if (current.type === 'ChainExpression') current = current.expression;
-    else return current;
-  }
+  return unwrapAst(node, { wrappers: ROUTE_WRAPPERS });
 }
 
-/** Non-computed `.searchParams`, or computed `["searchParams"]`. */
 function memberName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
-  const property = unwrap(node.property);
-  if (property !== null && property.type === 'Literal' && typeof property.value === 'string')
-    return property.value;
-  return null;
+  return astMemberName(node, { templates: false, unwrap: { wrappers: ROUTE_WRAPPERS } });
 }
 
-/** The static name of an object/pattern key: `key`, `"key"` — never a computed one. */
 function propertyKeyName(property: Extract<ESTree.Node, { type: 'Property' }>): string | null {
-  if (property.computed) return null;
-  const key = property.key;
-  if (key.type === 'Identifier') return key.name;
-  if (key.type === 'Literal' && typeof key.value === 'string') return key.value;
-  return null;
-}
-
-function importedName(specifier: ESTree.ImportSpecifier): string {
-  return specifier.imported.type === 'Identifier'
-    ? specifier.imported.name
-    : specifier.imported.value;
-}
-
-function lookupVariable(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(identifier);
-  while (scope !== null) {
-    const variable = scope.set.get(identifier.name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
+  return property.computed ? null : keyName(property.key, false, { templates: false });
 }
 
 /**
@@ -279,13 +227,7 @@ function isUrlExpression(context: Context, node: ESTree.Node | null, depth = 0):
   if (target === null || depth >= MAX_ALIAS_DEPTH) return false;
   if (target.type === 'NewExpression')
     return globalConstructorName(context, target) === URL_CONSTRUCTOR;
-  if (target.type === 'CallExpression') {
-    const callee = unwrap(target.callee);
-    if (callee === null || callee.type !== 'MemberExpression') return false;
-    const name = memberName(callee);
-    if (name === null || !URL_STATIC_FACTORIES.has(name)) return false;
-    return globalName(context, callee.object) === URL_CONSTRUCTOR;
-  }
+  if (target.type === 'CallExpression') return isUrlFactoryCall(context, target);
   if (target.type === 'ConditionalExpression') {
     return (
       isUrlExpression(context, target.consequent, depth + 1) ||
@@ -299,6 +241,14 @@ function isUrlExpression(context: Context, node: ESTree.Node | null, depth = 0):
     );
   }
   return false;
+}
+
+function isUrlFactoryCall(context: Context, target: ESTree.CallExpression): boolean {
+  const callee = unwrap(target.callee);
+  if (callee === null || callee.type !== 'MemberExpression') return false;
+  const name = memberName(callee);
+  if (name === null || !URL_STATIC_FACTORIES.has(name)) return false;
+  return globalName(context, callee.object) === URL_CONSTRUCTOR;
 }
 
 /** `true` when the binding was ever written with a URL expression, directly or through an alias. */
@@ -358,43 +308,63 @@ function isFalseValue(context: Context, node: ESTree.Node | null, depth = 0): bo
  * `{ strict: false }` as the hook's first argument — as a literal, through a binding
  * (`const untyped = { strict: false } as const`) or spread in from one.
  */
+function spreadMaySetStrict(entry: ESTree.ObjectExpression['properties'][number]): boolean {
+  return (
+    entry.type === 'SpreadElement' ||
+    (entry.type === 'Property' && propertyKeyName(entry) === 'strict')
+  );
+}
+
+function nextStrictValue(
+  context: Context,
+  property: ESTree.ObjectExpression['properties'][number],
+  value: boolean | undefined,
+  depth: number,
+): boolean | undefined {
+  if (property.type === 'SpreadElement') {
+    // Unknown later spreads may overwrite strict; never infer false through them.
+    const spread = resolveObject(context, property.argument, depth + 1);
+    if (spread === null) return undefined;
+    return spread.properties.some(spreadMaySetStrict)
+      ? strictValue(context, spread, depth + 1)
+      : value;
+  }
+  if (property.type !== 'Property') return value;
+  if (property.computed) return undefined;
+  if (propertyKeyName(property) !== 'strict') return value;
+  return isFalseValue(context, property.value) ? false : undefined;
+}
+
 function strictValue(context: Context, node: ESTree.Node | null, depth = 0): boolean | undefined {
   const object = resolveObject(context, node, depth);
   if (object === null || depth >= MAX_ALIAS_DEPTH) return undefined;
   let value: boolean | undefined;
-  for (const property of object.properties) {
-    if (property.type === 'SpreadElement') {
-      // Unknown later spreads may overwrite strict; never infer false through them.
-      const spread = resolveObject(context, property.argument, depth + 1);
-      if (spread === null) value = undefined;
-      else if (
-        spread.properties.some(
-          (entry) =>
-            entry.type === 'SpreadElement' ||
-            (entry.type === 'Property' && propertyKeyName(entry) === 'strict'),
-        )
-      ) {
-        value = strictValue(context, spread, depth + 1);
-      }
-    } else if (property.type === 'Property') {
-      if (property.computed) value = undefined;
-      else if (propertyKeyName(property) === 'strict') {
-        value = isFalseValue(context, property.value) ? false : undefined;
-      }
-    }
-  }
+  for (const property of object.properties)
+    value = nextStrictValue(context, property, value, depth);
   return value;
+}
+
+function outputUseNode(node: ESTree.Node): ESTree.Node {
+  let current = node;
+  while (current.parent != null) {
+    const inner = unwrap(current.parent);
+    if (inner === null || inner.start !== node.start || inner.end !== node.end) break;
+    current = current.parent;
+  }
+  return current;
+}
+
+function isOutputMethodCall(parent: ESTree.Node | null | undefined, current: ESTree.Node): boolean {
+  if (parent?.type !== 'MemberExpression' || parent.object.start !== current.start) return false;
+  const method = memberName(parent);
+  if (method === null || !OUTPUT_METHODS.has(method)) return false;
+  const call = parent.parent;
+  return call?.type === 'CallExpression' && call.callee.start === parent.start;
 }
 
 /** A mutation or serialization is output construction, not an input read. */
 function isOutputUse(context: Context, node: ESTree.Node, seen: Set<number> = new Set()): boolean {
-  let current = node;
-  while (
-    current.parent != null &&
-    unwrap(current.parent)?.start === node.start &&
-    unwrap(current.parent)?.end === node.end
-  )
-    current = current.parent;
+  const current = outputUseNode(node);
   const parent = current.parent;
   if (
     parent?.type === 'VariableDeclarator' &&
@@ -403,11 +373,7 @@ function isOutputUse(context: Context, node: ESTree.Node, seen: Set<number> = ne
   ) {
     return isOutputBinding(context, parent.id, seen);
   }
-  if (parent?.type !== 'MemberExpression' || parent.object.start !== current.start) return false;
-  const method = memberName(parent);
-  if (method === null || !OUTPUT_METHODS.has(method)) return false;
-  const call = parent.parent;
-  return call?.type === 'CallExpression' && call.callee.start === parent.start;
+  return isOutputMethodCall(parent, current);
 }
 
 function isOutputBinding(
@@ -430,6 +396,23 @@ interface HookBindings {
   readonly moduleObjects: ReadonlySet<string>;
 }
 
+function collectHookSpecifiers(
+  statement: ESTree.ImportDeclaration,
+  hooks: readonly string[],
+  locals: Map<string, string>,
+  moduleObjects: Set<string>,
+): void {
+  for (const specifier of statement.specifiers) {
+    if (specifier.type !== 'ImportSpecifier') {
+      moduleObjects.add(specifier.local.name);
+      continue;
+    }
+    if (specifier.importKind === 'type') continue;
+    const imported = importedName(specifier);
+    if (hooks.includes(imported)) locals.set(specifier.local.name, imported);
+  }
+}
+
 function collectHookBindings(
   program: ESTree.Program,
   hooks: readonly string[],
@@ -440,26 +423,9 @@ function collectHookBindings(
   for (const statement of program.body) {
     if (statement.type !== 'ImportDeclaration') continue;
     if (statement.importKind === 'type' || !matchesGlobs(statement.source.value, modules)) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportSpecifier') {
-        if (specifier.importKind === 'type') continue;
-        const imported = importedName(specifier);
-        if (hooks.includes(imported)) locals.set(specifier.local.name, imported);
-      } else moduleObjects.add(specifier.local.name);
-    }
+    collectHookSpecifiers(statement, hooks, locals, moduleObjects);
   }
   return { locals, moduleObjects };
-}
-
-/** `true` when the identifier still resolves to the `import` binding (not a local shadow). */
-function resolvesToImport(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): boolean {
-  const variable = lookupVariable(context, identifier);
-  if (variable === null) return true;
-  if (variable.defs.length === 0) return true;
-  return variable.defs.some((definition) => definition.type === 'ImportBinding');
 }
 
 /** The hook name a call expression targets, or `null`. Handles aliases and `Router.useParams(...)`. */
@@ -477,6 +443,15 @@ function hookCallName(
     return resolvesToImport(context, callee) ? imported : null;
   }
   if (callee.type !== 'MemberExpression') return null;
+  return moduleHookName(context, callee, bindings, hooks);
+}
+
+function moduleHookName(
+  context: Context,
+  callee: ESTree.MemberExpression,
+  bindings: HookBindings,
+  hooks: readonly string[],
+): string | null {
   const name = memberName(callee);
   if (name === null || !hooks.includes(name)) return null;
   const object = unwrap(callee.object);

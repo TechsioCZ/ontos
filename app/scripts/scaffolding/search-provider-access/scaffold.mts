@@ -186,23 +186,24 @@ const patchManifest = (
     return `${content.slice(0, start + MODULE_MANIFEST_SEARCH_SLOT_START.length)}${slot.replace(pattern, replacement)}${content.slice(end)}`;
   });
 
+const hasConsistentAccessScope = (config: SearchProviderAccessScaffoldConfig): boolean =>
+  (config.accessFiltering === 'tenant_scope') === (config.tenantPermission !== undefined) &&
+  (config.accessFiltering !== 'tenant_scope' || config.legalEntityScope === 'optional') &&
+  (config.accessFiltering !== 'resource_permission' || config.legalEntityScope === 'required');
+
+const hasValidAccessFlags = (config: SearchProviderAccessScaffoldConfig): boolean =>
+  ['tenant_scope', 'resource_permission'].includes(config.accessFiltering) &&
+  ['optional', 'required'].includes(config.legalEntityScope) &&
+  (config.tenantPermission === undefined || config.tenantPermission === 'read_party_identity') &&
+  config.requestFilters.every((filter) => ['includeArchived', 'role'].includes(filter)) &&
+  new Set(config.requestFilters).size === config.requestFilters.length;
+
 const validateConfig = (
   config: SearchProviderAccessScaffoldConfig,
 ): Effect.Effect<void, SearchProviderAccessScaffoldError> =>
   Effect.gen(function* validateConfigEffect() {
     yield* trySync(() => requireCanonicalSlug(config.name, 'search provider'));
-    if (
-      !['tenant_scope', 'resource_permission'].includes(config.accessFiltering) ||
-      !['optional', 'required'].includes(config.legalEntityScope) ||
-      (config.tenantPermission !== undefined &&
-        config.tenantPermission !== 'read_party_identity') ||
-      config.requestFilters.some((filter) => filter !== 'includeArchived' && filter !== 'role') ||
-      (config.accessFiltering === 'tenant_scope') !== (config.tenantPermission !== undefined) ||
-      (config.accessFiltering === 'tenant_scope' && config.legalEntityScope !== 'optional') ||
-      (config.accessFiltering === 'resource_permission' &&
-        config.legalEntityScope !== 'required') ||
-      new Set(config.requestFilters).size !== config.requestFilters.length
-    ) {
+    if (!hasValidAccessFlags(config) || !hasConsistentAccessScope(config)) {
       yield* scaffoldError('search provider access flags are internally inconsistent');
     }
   });
@@ -272,5 +273,3 @@ export const planSearchProviderAccessScaffold = (
       result: { contractPath, manifestPath: vertical.manifestPath, providerPath, serverPath },
     };
   });
-
-export default planSearchProviderAccessScaffold;

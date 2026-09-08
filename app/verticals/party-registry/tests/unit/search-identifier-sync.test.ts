@@ -4,7 +4,7 @@ import test from 'node:test';
 import { DateTime, Effect, Option, Schema } from 'effect';
 import {
   makeCoreSearchIngestion,
-  makeCoreSearchQueryRuntime,
+  createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
 import type { OutboxMessage, OutboxWorkerHandlerContext } from '@app/core-runtime';
@@ -145,7 +145,7 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
   return {
     deliver,
     query: () =>
-      makeCoreSearchQueryRuntime(store).search({
+      createCoreSearchQueryRuntime(store).search({
         effectiveAt: '2026-09-03T00:00:00.000Z',
         includeArchived: false,
         moduleId: 'party.registry',

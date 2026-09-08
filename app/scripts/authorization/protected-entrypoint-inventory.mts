@@ -35,7 +35,7 @@ const ProtectedEntrypointSurfaceSchema = Schema.Literals([
   'worker',
 ]);
 
-export type ProtectedEntrypointSurface = typeof ProtectedEntrypointSurfaceSchema.Type;
+type ProtectedEntrypointSurface = typeof ProtectedEntrypointSurfaceSchema.Type;
 
 const StableIdentifierSchema = Schema.String.check(
   Schema.isPattern(/^[a-z][a-z0-9]*(?:[./_-][a-z0-9]+)*$/u),

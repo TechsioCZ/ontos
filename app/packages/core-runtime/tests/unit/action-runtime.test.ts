@@ -243,6 +243,22 @@ const makeHarness = (options: HarnessOptions = {}) => {
 
   let installedTenantId: string = principal.tenantId;
   let installedLegalEntityId: string = principal.legalEntityId;
+  const commitTransaction = () =>
+    Effect.gen(function* commitTransactionEffect() {
+      const defaultCommitCodes = { 'commit-definite': '40001', uncertain: '08007' };
+      const defaultCode =
+        options.transactionMode === 'uncertain' || options.transactionMode === 'commit-definite'
+          ? defaultCommitCodes[options.transactionMode]
+          : undefined;
+      const code = options.commitFailureCode ?? defaultCode;
+      if (code !== undefined) {
+        return yield* new SqlError({ reason: new ConnectionError({ cause: { code } }) });
+      }
+      if (options.commit !== undefined) {
+        return yield* options.commit;
+      }
+      return [];
+    });
   const query = (statement: string, values: readonly unknown[]) =>
     Effect.gen(function* executeQuery() {
       const text = statement.toLowerCase();
@@ -262,18 +278,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
         }
       }
       if (text === 'commit') {
-        const defaultCommitCodes = { 'commit-definite': '40001', uncertain: '08007' };
-        const defaultCode =
-          options.transactionMode === 'uncertain' || options.transactionMode === 'commit-definite'
-            ? defaultCommitCodes[options.transactionMode]
-            : undefined;
-        const code = options.commitFailureCode ?? defaultCode;
-        if (code !== undefined) {
-          return yield* new SqlError({ reason: new ConnectionError({ cause: { code } }) });
-        }
-        if (options.commit !== undefined) {
-          return yield* options.commit;
-        }
+        return yield* commitTransaction();
       }
       if (text.includes('current_setting')) {
         return [{ legal_entity_id: installedLegalEntityId, tenant_id: installedTenantId }];

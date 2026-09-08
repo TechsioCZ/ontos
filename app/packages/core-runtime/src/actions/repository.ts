@@ -87,6 +87,47 @@ const compareCodeUnits = (left: string, right: string): number => {
   return 0;
 };
 
+const normalizeObjectForHash = <Value extends object>(
+  value: Value,
+  seen: WeakSet<object>,
+  normalize: <Item>(value: Item, seen: WeakSet<object>) => CanonicalValue,
+): CanonicalValue => {
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      throw new CanonicalValueError({
+        reason: 'Action payloads must not contain cyclic values',
+      });
+    }
+    seen.add(value);
+    const normalized = value.map((item) => normalize(item, seen));
+    seen.delete(value);
+    return ['array', normalized];
+  }
+  if (seen.has(value)) {
+    throw new CanonicalValueError({
+      reason: 'Action payloads must not contain cyclic values',
+    });
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new CanonicalValueError({
+      reason: 'Action payloads must contain only canonical data values',
+    });
+  }
+  seen.add(value);
+  const entries = Object.entries(value)
+    .toSorted(([left], [right]) => compareCodeUnits(left, right))
+    .map(([key, item]) => [key, normalize(item, seen)] as const);
+  seen.delete(value);
+  return ['object', entries];
+};
+
+const normalizeNumberForHash = (value: number): CanonicalValue => [
+  'number',
+  Object.is(value, -0) ? '-0' : String(value),
+];
+const isCanonicalDate = Schema.is(Schema.instanceOf(Date));
+
 const normalizeForHash = <Value>(value: Value, seen: WeakSet<object>): CanonicalValue => {
   if (value === undefined) {
     return ['undefined'];
@@ -101,49 +142,40 @@ const normalizeForHash = <Value>(value: Value, seen: WeakSet<object>): Canonical
     return ['string', value];
   }
   if (Predicate.isNumber(value)) {
-    return ['number', Object.is(value, -0) ? '-0' : String(value)];
+    return normalizeNumberForHash(value);
   }
   if (Predicate.isBigInt(value)) {
     return ['bigint', value.toString(10)];
   }
-  if (value instanceof Date) {
+  if (isCanonicalDate(value)) {
     return ['date', value.toISOString()];
   }
-  if (Array.isArray(value)) {
-    if (seen.has(value)) {
-      throw new CanonicalValueError({
-        reason: 'Action payloads must not contain cyclic values',
-      });
-    }
-    seen.add(value);
-    const normalized = value.map((item) => normalizeForHash(item, seen));
-    seen.delete(value);
-    return ['array', normalized];
-  }
   if (Predicate.isObjectKeyword(value)) {
-    if (seen.has(value)) {
-      throw new CanonicalValueError({
-        reason: 'Action payloads must not contain cyclic values',
-      });
-    }
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) {
-      throw new CanonicalValueError({
-        reason: 'Action payloads must contain only canonical data values',
-      });
-    }
-    seen.add(value);
-    const entries = Object.entries(value)
-      .toSorted(([left], [right]) => compareCodeUnits(left, right))
-      .map(([key, item]) => [key, normalizeForHash(item, seen)] as const);
-    seen.delete(value);
-    return ['object', entries];
+    return normalizeObjectForHash(value, seen, normalizeForHash);
   }
   const unsupportedKind = Predicate.isFunction(value) ? 'function' : 'symbol';
   throw new CanonicalValueError({
     reason: `Action payloads cannot contain ${unsupportedKind} values`,
   });
 };
+
+const markInvocationRejected = Effect.fnUntraced(function* markInvocationRejected(
+  transaction: CoreTransaction,
+  actionInvocationId: string,
+) {
+  const completedAt = yield* DateTime.nowAsDate;
+  return yield* transaction
+    .update(actionInvocations)
+    .set({ completedAt, status: 'rejected' })
+    .where(
+      and(
+        eq(actionInvocations.actionInvocationId, actionInvocationId),
+        eq(actionInvocations.status, 'received'),
+        isNull(actionInvocations.completedAt),
+      ),
+    )
+    .returning({ actionInvocationId: actionInvocations.actionInvocationId });
+});
 
 export const computeActionRequestHash = (input: ActionRequestHashInput): string => {
   const canonicalEnvelope = normalizeForHash(
@@ -178,7 +210,7 @@ export interface PrepareActionInvocationInput {
   readonly transport: ActionTransportMetadata;
 }
 
-export interface ResolveActionInvocationInput {
+interface ResolveActionInvocationInput {
   readonly invocationId: string;
   readonly principal: TrustedPrincipalContext;
 }
@@ -567,19 +599,9 @@ export const makeActionRepository = (): ActionRepositoryService => {
           })
           .pipe(Effect.mapError((cause) => transactionFailure(failureReason, cause)));
 
-        const completedAt = yield* DateTime.nowAsDate;
-        const rejected = yield* transaction
-          .update(actionInvocations)
-          .set({ completedAt, status: 'rejected' })
-          .where(
-            and(
-              eq(actionInvocations.actionInvocationId, input.actionInvocationId),
-              eq(actionInvocations.status, 'received'),
-              isNull(actionInvocations.completedAt),
-            ),
-          )
-          .returning({ actionInvocationId: actionInvocations.actionInvocationId })
-          .pipe(Effect.mapError((cause) => transactionFailure(failureReason, cause)));
+        const rejected = yield* markInvocationRejected(transaction, input.actionInvocationId).pipe(
+          Effect.mapError((cause) => transactionFailure(failureReason, cause)),
+        );
         if (rejected.length !== 1) {
           return yield* transactionFailure(
             failureReason,
@@ -693,19 +715,9 @@ export const makeActionRepository = (): ActionRepositoryService => {
           ])
           .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
 
-        const completedAt = yield* DateTime.nowAsDate;
-        const rejected = yield* transaction
-          .update(actionInvocations)
-          .set({ completedAt, status: 'rejected' })
-          .where(
-            and(
-              eq(actionInvocations.actionInvocationId, input.actionInvocationId),
-              eq(actionInvocations.status, 'received'),
-              isNull(actionInvocations.completedAt),
-            ),
-          )
-          .returning({ actionInvocationId: actionInvocations.actionInvocationId })
-          .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
+        const rejected = yield* markInvocationRejected(transaction, input.actionInvocationId).pipe(
+          Effect.mapError((cause) => persistenceFailure(failureReason, cause)),
+        );
         if (rejected.length !== 1) {
           return yield* persistenceFailure(
             failureReason,

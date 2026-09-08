@@ -1,3 +1,5 @@
+import { withUltramodernBuildIdentity } from '../../../packages/shared-contracts/src/ultramodern-build.ts';
+
 declare const ULTRAMODERN_BUILD_MARKER: string;
 declare const ULTRAMODERN_SOURCE_REVISION: string;
 
@@ -63,29 +65,11 @@ const readInjectedSourceRevision = (): string => {
 
 const ultramodernBuildMarker = readInjectedBuildMarker();
 const ultramodernSourceRevision = readInjectedSourceRevision();
-const ultramodernBuildArtifact = {
-  ...ultramodernGeneratedBuildArtifact,
-  deliveryUnit: {
-    ...ultramodernGeneratedBuildArtifact.deliveryUnit,
-    build: ultramodernBuildMarker,
-    buildMarker: ultramodernBuildMarker,
-    sourceRevision: ultramodernSourceRevision,
-  },
-  surfaces: {
-    api: {
-      ...ultramodernGeneratedBuildArtifact.surfaces.api,
-      build: ultramodernBuildMarker,
-      buildMarker: ultramodernBuildMarker,
-      sourceRevision: ultramodernSourceRevision,
-    },
-    ui: {
-      ...ultramodernGeneratedBuildArtifact.surfaces.ui,
-      build: ultramodernBuildMarker,
-      buildMarker: ultramodernBuildMarker,
-      sourceRevision: ultramodernSourceRevision,
-    },
-  },
-} as const;
+const ultramodernBuildArtifact = withUltramodernBuildIdentity(
+  ultramodernGeneratedBuildArtifact,
+  ultramodernBuildMarker,
+  ultramodernSourceRevision,
+);
 
 export { ultramodernBuildArtifact };
 

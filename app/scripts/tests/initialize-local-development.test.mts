@@ -1,3 +1,4 @@
+import { makeModuleContractFixture } from '../../packages/core-runtime/src/testing/module-contract.ts';
 import { runEffectTestPromise } from '../../packages/core-runtime/src/testing/effect-runtime.ts';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
@@ -43,45 +44,8 @@ const topology = JSON.stringify({ verticals: [{ id: 'party-registry' }, { id: 'i
 
 const moduleContract = (
   moduleId: string,
-): Awaited<ReturnType<typeof deriveOntosModuleDeploymentContract>> => ({
-  deployment: { appId: 'test-module', buildMarker: 'test-build' },
-  manifest: {
-    activation: {
-      defaultState: 'inactive',
-      preservesHistoryWhenInactive: true,
-      scope: 'tenant',
-      supportedStates: ['inactive', 'active'],
-    },
-    module: {
-      description: `${moduleId} module`,
-      displayName: moduleId,
-      id: moduleId,
-      implementedAs: 'ultramodern_microvertical',
-      kind: 'business_module',
-    },
-    publicSurface: {
-      actions: [],
-      api: [],
-      components: [],
-      events: [],
-      reports: [],
-      resourceTypes: [],
-      search: [],
-      shellContributions: {
-        mediaAttachments: [],
-        navigation: [],
-        pages: [],
-        publicComponents: [],
-        reports: [],
-        resourceDetails: [],
-        search: [],
-        timelines: [],
-      },
-    },
-  },
-  runtime: { outboxSubscriptions: [] },
-  schemaVersion: '2',
-});
+): Awaited<ReturnType<typeof deriveOntosModuleDeploymentContract>> =>
+  makeModuleContractFixture({ appId: 'test-module', buildMarker: 'test-build', moduleId });
 
 void test('accepts only a development configuration with local service endpoints', async () => {
   const configuration = await runEffectTestPromise(

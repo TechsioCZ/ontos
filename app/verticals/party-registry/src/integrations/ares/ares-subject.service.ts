@@ -163,34 +163,22 @@ const responseInvalid = (cause?: unknown) =>
     reason: 'ARES returned an unsupported subject response',
   });
 
-const classifyStatus = (status: number): AresSubjectError => {
-  switch (status) {
-    case 400: {
-      return responseInvalid();
-    }
-    case 401:
-    case 403: {
-      return denied();
-    }
-    case 404: {
-      return notFound();
-    }
-    case 408:
-    case 425:
-    case 429: {
-      return throttled();
-    }
-    case 500:
-    case 502:
-    case 503:
-    case 504: {
-      return unavailable();
-    }
-    default: {
-      return responseInvalid();
-    }
-  }
-};
+const statusFailures = new Map<number, () => AresSubjectError>([
+  [400, responseInvalid],
+  [401, denied],
+  [403, denied],
+  [404, notFound],
+  [408, throttled],
+  [425, throttled],
+  [429, throttled],
+  [500, unavailable],
+  [502, unavailable],
+  [503, unavailable],
+  [504, unavailable],
+]);
+
+const classifyStatus = (status: number): AresSubjectError =>
+  (statusFailures.get(status) ?? responseInvalid)();
 
 const AresRetryableErrorSchema = Schema.Union([
   AresSubjectThrottled,

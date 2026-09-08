@@ -1,3 +1,4 @@
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
@@ -10,45 +11,13 @@ const contract = (
   appId: string,
   moduleId: string,
   outboxSubscriptions: readonly OntosOutboxSubscriptionContract[] = [],
-) => ({
-  deployment: { appId, buildMarker: `build-${appId}` },
-  manifest: {
-    activation: {
-      defaultState: 'inactive',
-      preservesHistoryWhenInactive: true,
-      scope: 'tenant',
-      supportedStates: ['inactive', 'active'],
-    },
-    module: {
-      description: `${moduleId} module`,
-      displayName: moduleId,
-      id: moduleId,
-      implementedAs: 'ultramodern_microvertical',
-      kind: 'business_module',
-    },
-    publicSurface: {
-      actions: [],
-      api: [],
-      components: [],
-      events: [],
-      reports: [],
-      resourceTypes: [],
-      search: [],
-      shellContributions: {
-        mediaAttachments: [],
-        navigation: [],
-        pages: [],
-        publicComponents: [],
-        reports: [],
-        resourceDetails: [],
-        search: [],
-        timelines: [],
-      },
-    },
-  },
-  runtime: { outboxSubscriptions },
-  schemaVersion: '2',
-});
+) =>
+  makeModuleContractFixture({
+    appId,
+    buildMarker: `build-${appId}`,
+    moduleId,
+    outboxSubscriptions,
+  });
 
 void test('builds immutable deterministic dual indexes for distinct deployment and module IDs', () => {
   const catalog = buildInstalledModuleCatalog([

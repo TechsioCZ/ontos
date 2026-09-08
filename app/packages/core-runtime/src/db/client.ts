@@ -14,7 +14,6 @@ import { coreRelations } from './schema.ts';
 import type { CoreDatabaseExecutor } from './types.ts';
 
 export { DatabaseConnectionError } from './connection-error.ts';
-export { DEFAULT_DATABASE_POOL_DEADLINES } from './pool-configuration.ts';
 export type { DatabasePoolDeadlines } from './pool-configuration.ts';
 
 export class CoreDatabase extends Context.Service<

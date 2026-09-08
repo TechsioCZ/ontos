@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-raw-effect-adt-tag-check
  *
@@ -54,17 +55,13 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
 import { collectEffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production `include` defaults instead of
- * forcing the fixture config to pass loosened options (which `run-on-repo.mts` reuses verbatim).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+import { asNamedMember, staticString, unwrapNode } from '../shared/ast.ts';
+import { resolveVariable } from '../shared/bindings.ts';
+import { stringArray } from '../shared/options.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
@@ -95,18 +92,8 @@ interface RuleOptions {
   readonly reexportModules: readonly string[];
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
@@ -117,97 +104,36 @@ function readOptions(context: Context): RuleOptions {
   };
 }
 
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-/** Strip the wrappers that never change what an expression denotes. */
+/** Keep this rule's original transparent wrappers and bounded traversal. */
 function unwrap(node: ESTree.Node): ESTree.Node {
-  let current: ESTree.Node = node;
-  for (let depth = 0; depth < MAX_UNWRAP_DEPTH; depth += 1) {
-    if (current.type === 'ChainExpression') {
-      current = current.expression;
-      continue;
-    }
-    if (current.type === 'TSNonNullExpression' || current.type === 'ParenthesizedExpression') {
-      current = current.expression;
-      continue;
-    }
-    if (
-      current.type === 'TSAsExpression' ||
-      current.type === 'TSSatisfiesExpression' ||
-      current.type === 'TSTypeAssertion' ||
-      current.type === 'TSInstantiationExpression'
-    ) {
-      current = current.expression;
-      continue;
-    }
-    return current;
-  }
-  return current;
+  return unwrapNode(node, { maxDepth: MAX_UNWRAP_DEPTH });
 }
 
-function templateText(node: ESTree.TemplateLiteral): string | null {
-  const quasi = node.quasis[0];
-  if (node.quasis.length !== 1 || quasi === undefined) return null;
-  return quasi.value.cooked ?? quasi.value.raw;
-}
-
-/** The `_tag` member access itself (`x._tag`, `x?._tag`, `x!._tag`, `x["_tag"]`), or null. */
 function asTagMember(node: ESTree.Node): ESTree.MemberExpression | null {
-  const expression = unwrap(node);
-  if (expression.type !== 'MemberExpression') return null;
-  const property = expression.property;
-  if (!expression.computed) {
-    return property.type === 'Identifier' && property.name === TAG_PROPERTY ? expression : null;
-  }
-  const key = unwrap(property);
-  if (key.type === 'Literal') return key.value === TAG_PROPERTY ? expression : null;
-  if (key.type === 'TemplateLiteral' && key.expressions.length === 0) {
-    return templateText(key) === TAG_PROPERTY ? expression : null;
-  }
-  return null;
+  return asNamedMember(node, TAG_PROPERTY, asStringLiteral, { maxDepth: MAX_UNWRAP_DEPTH });
 }
 
-/** A statically known string operand (`'Some'`, `"Some"`, `` `Some` ``), or null. */
 function asStringLiteral(node: ESTree.Node): string | null {
-  const expression = unwrap(node);
-  if (expression.type === 'Literal')
-    return typeof expression.value === 'string' ? expression.value : null;
-  if (expression.type === 'TemplateLiteral' && expression.expressions.length === 0)
-    return templateText(expression);
-  return null;
+  return staticString(node, {
+    unwrap: { maxDepth: MAX_UNWRAP_DEPTH },
+    templates: true,
+    rawTemplates: true,
+    singleQuasi: true,
+  });
 }
 
 /** Best-effort human name for an expression, used only to pick the message's ADT vocabulary. */
+function directExpressionName(node: ESTree.Node): string | null {
+  if (node.type === 'Identifier') return node.name;
+  if (node.type !== 'MemberExpression' || node.computed) return null;
+  return node.property.type === 'Identifier' ? node.property.name : null;
+}
+
 function expressionName(node: ESTree.Node): string | null {
   const object = unwrap(node);
-  if (object.type === 'Identifier') return object.name;
-  if (
-    object.type === 'MemberExpression' &&
-    !object.computed &&
-    object.property.type === 'Identifier'
-  ) {
-    return object.property.name;
-  }
-  if (object.type === 'CallExpression') {
-    const callee = unwrap(object.callee);
-    if (
-      callee.type === 'MemberExpression' &&
-      !callee.computed &&
-      callee.property.type === 'Identifier'
-    ) {
-      return callee.property.name;
-    }
-    if (callee.type === 'Identifier') return callee.name;
-  }
+  if (object.type === 'CallExpression') return directExpressionName(unwrap(object.callee));
   if (object.type === 'AwaitExpression') return expressionName(object.argument);
-  return null;
+  return directExpressionName(object);
 }
 
 /** Best-effort receiver name (`cleanupExit._tag` → `cleanupExit`, `a.b.failure._tag` → `failure`). */
@@ -234,26 +160,24 @@ function patternBindsTag(pattern: ESTree.Node, name: string, depth: number): boo
   if (depth > MAX_PATTERN_DEPTH) return false;
   if (pattern.type === 'AssignmentPattern') return patternBindsTag(pattern.left, name, depth + 1);
   if (pattern.type !== 'ObjectPattern') return false;
-  for (const property of pattern.properties) {
-    if (property.type !== 'Property') continue;
-    const key = patternKeyName(property as unknown as { key: ESTree.Node; computed: boolean });
-    let value: ESTree.Node = property.value;
-    while (value.type === 'AssignmentPattern') value = value.left;
-    if (key === TAG_PROPERTY && value.type === 'Identifier' && value.name === name) return true;
-    // A nested pattern may still bind `_tag` further down: `const { inner: { _tag } } = x`.
-    if (value.type === 'ObjectPattern' && patternBindsTag(value, name, depth + 1)) return true;
-  }
-  return false;
+  return pattern.properties.some((property) => propertyBindsTag(property, name, depth));
 }
 
-function resolveVariable(context: Context, name: string, from: ESTree.Node): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(from);
-  while (scope !== null) {
-    const variable = scope.set.get(name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
+function propertyBindsTag(property: ESTree.Node, name: string, depth: number): boolean {
+  if (property.type !== 'Property') return false;
+  const key = patternKeyName(property);
+  let value: ESTree.Node = property.value;
+  while (value.type === 'AssignmentPattern') value = value.left;
+  if (key === TAG_PROPERTY && value.type === 'Identifier' && value.name === name) return true;
+  return value.type === 'ObjectPattern' && patternBindsTag(value, name, depth + 1);
+}
+
+function aliasDeclarator(variable: Variable | null): ESTree.VariableDeclarator | null {
+  if (variable === null || variable.defs.length !== 1) return null;
+  if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
+  const definition = variable.defs[0];
+  if (definition === undefined || definition.type !== 'Variable') return null;
+  return definition.node.type === 'VariableDeclarator' ? definition.node : null;
 }
 
 /**
@@ -265,17 +189,10 @@ function resolveVariable(context: Context, name: string, from: ESTree.Node): Var
 function aliasedTagRead(context: Context, node: ESTree.Node): { receiver: string | null } | null {
   const expression = unwrap(node);
   if (expression.type !== 'Identifier') return null;
-  const variable = resolveVariable(context, expression.name, expression);
-  // Exactly one `const`/`let`/`var` definition: a redeclared or imported name is not a tag alias.
-  if (variable === null || variable.defs.length !== 1) return null;
-  // A declaration is not proof of the value after reassignment (including destructured locals).
-  if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
-  const definition = variable.defs[0];
-  if (definition === undefined || definition.type !== 'Variable') return null;
-  const declarator = definition.node;
-  if (declarator.type !== 'VariableDeclarator') return null;
+  const declarator = aliasDeclarator(resolveVariable(context, expression.name, expression));
+  if (declarator === null) return null;
   const initialiser = declarator.init;
-  if (initialiser === null || initialiser === undefined) return null;
+  if (initialiser == null) return null;
 
   if (declarator.id.type === 'Identifier') {
     if (declarator.id.name !== expression.name) return null;
@@ -321,22 +238,19 @@ function hasStaticEffectLinkage(
   reexportModules: readonly string[],
 ): boolean {
   if (collectEffectBindings(program).importsEffect) return true;
-  for (const statement of program.body) {
-    if (statement.type === 'ImportDeclaration') {
-      if (reexportModules.includes(statement.source.value)) return true;
-      continue;
-    }
-    if (statement.type === 'ExportAllDeclaration') {
-      if (isEffectSource(statement.source.value, reexportModules)) return true;
-      continue;
-    }
-    if (statement.type === 'ExportNamedDeclaration') {
-      const source = statement.source;
-      if (source !== null && source !== undefined && isEffectSource(source.value, reexportModules))
-        return true;
-    }
+  return program.body.some((statement) => statementLinksEffect(statement, reexportModules));
+}
+
+function statementLinksEffect(statement: ESTree.Node, reexportModules: readonly string[]): boolean {
+  if (statement.type === 'ImportDeclaration') {
+    return reexportModules.includes(statement.source.value);
   }
-  return false;
+  if (statement.type === 'ExportAllDeclaration') {
+    return isEffectSource(statement.source.value, reexportModules);
+  }
+  if (statement.type !== 'ExportNamedDeclaration') return false;
+  const source = statement.source;
+  return source != null && isEffectSource(source.value, reexportModules);
 }
 
 interface PendingReport {

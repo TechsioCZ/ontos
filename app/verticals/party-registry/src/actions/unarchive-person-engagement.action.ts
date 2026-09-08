@@ -24,9 +24,9 @@ import { transitionPersonEngagementProfile } from '../services/engagement-profil
 import type { LifecycleResult } from '../services/engagement-profile-persistence.service.ts';
 import { resolveEngagementLifecycle } from './engagement-lifecycle.ts';
 
-export const UnarchivePersonEngagementPayload = PersonEngagementLifecyclePayloadSchema;
-export const UnarchivePersonEngagementResult = PersonEngagementProfileSchema;
-export const UnarchivePersonEngagementError = Schema.Union([
+const UnarchivePersonEngagementPayload = PersonEngagementLifecyclePayloadSchema;
+const UnarchivePersonEngagementResult = PersonEngagementProfileSchema;
+const UnarchivePersonEngagementError = Schema.Union([
   EngagementProfileConflict,
   EngagementProfileNotFound,
   EngagementProfilePersistenceUnavailable,

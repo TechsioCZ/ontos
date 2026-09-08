@@ -1077,6 +1077,25 @@ const tenantGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'tenants', 
     ),
 );
 
+const requireAuthenticatedShellContext = Effect.fn('ShellApi.requireAuthenticatedShellContext')(
+  function* requireAuthenticatedShellContext(headers: RequestHeaders) {
+    const authentication = yield* AuthenticationService;
+    const session = yield* authentication
+      .resolveShellContext(requestHeaders(headers))
+      .pipe(
+        Effect.catch((error) => pipe(error, shellProblemFromAuthenticationError, failShellProblem)),
+      );
+    yield* forwardSetCookieHeaders(session.setCookieHeaders);
+    if (session.state === 'anonymous') {
+      return yield* failShellProblem(shellAuthenticationRequiredProblem());
+    }
+    if (session.state !== 'authenticated') {
+      return yield* failShellProblem(shellSelectionRequiredProblem());
+    }
+    return session;
+  },
+);
+
 const compositionGroupLive = HttpApiBuilder.group(
   ShellAuthenticationApi,
   'composition',
@@ -1130,21 +1149,7 @@ const compositionGroupLive = HttpApiBuilder.group(
       )
       .handle('resolveModuleTarget', ({ payload, request }) =>
         Effect.gen(function* resolveModuleTargetHandler() {
-          const authentication = yield* AuthenticationService;
-          const session = yield* authentication
-            .resolveShellContext(requestHeaders(request.headers))
-            .pipe(
-              Effect.catch((error) =>
-                pipe(error, shellProblemFromAuthenticationError, failShellProblem),
-              ),
-            );
-          yield* forwardSetCookieHeaders(session.setCookieHeaders);
-          if (session.state === 'anonymous') {
-            return yield* failShellProblem(shellAuthenticationRequiredProblem());
-          }
-          if (session.state !== 'authenticated') {
-            return yield* failShellProblem(shellSelectionRequiredProblem());
-          }
+          const session = yield* requireAuthenticatedShellContext(request.headers);
           const governedReads = yield* ShellGovernedReads;
           const correlationId = correlationFromRequest(request);
           const response = yield* governedReads
@@ -1220,21 +1225,7 @@ const resourcesGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'resourc
     )
     .handle('resourceDetail', ({ payload, request }) =>
       Effect.gen(function* resourceDetailHandler() {
-        const authentication = yield* AuthenticationService;
-        const session = yield* authentication
-          .resolveShellContext(requestHeaders(request.headers))
-          .pipe(
-            Effect.catch((error) =>
-              pipe(error, shellProblemFromAuthenticationError, failShellProblem),
-            ),
-          );
-        yield* forwardSetCookieHeaders(session.setCookieHeaders);
-        if (session.state === 'anonymous') {
-          return yield* failShellProblem(shellAuthenticationRequiredProblem());
-        }
-        if (session.state !== 'authenticated') {
-          return yield* failShellProblem(shellSelectionRequiredProblem());
-        }
+        const session = yield* requireAuthenticatedShellContext(request.headers);
         const governedReads = yield* ShellGovernedReads;
         const response = yield* governedReads
           .resourceDetail({
@@ -1252,21 +1243,7 @@ const resourcesGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'resourc
     )
     .handle('attachMedia', ({ payload, request }) =>
       Effect.gen(function* attachMediaHandler() {
-        const authentication = yield* AuthenticationService;
-        const session = yield* authentication
-          .resolveShellContext(requestHeaders(request.headers))
-          .pipe(
-            Effect.catch((error) =>
-              pipe(error, shellProblemFromAuthenticationError, failShellProblem),
-            ),
-          );
-        yield* forwardSetCookieHeaders(session.setCookieHeaders);
-        if (session.state === 'anonymous') {
-          return yield* failShellProblem(shellAuthenticationRequiredProblem());
-        }
-        if (session.state !== 'authenticated') {
-          return yield* failShellProblem(shellSelectionRequiredProblem());
-        }
+        const session = yield* requireAuthenticatedShellContext(request.headers);
         const resolution = yield* attachShellMedia(
           {
             ...session.principal,

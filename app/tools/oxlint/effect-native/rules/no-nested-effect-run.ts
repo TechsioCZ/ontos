@@ -60,10 +60,14 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, SourceCode, Variable } from '@oxlint/plugins';
+import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
 import { bindingsFor, effectMember } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
+import { asNode as sharedAsNode, keyName as sharedKeyName } from '../shared/ast.ts';
+import { resolveVariable as sharedResolveVariable } from '../shared/bindings.ts';
+import { importedName } from '../shared/imports.ts';
+import { sameNode as sharedSameNode, nodeKey as sharedNodeKey } from '../shared/reporting.ts';
 import { matchesAny } from '../shared/paths.ts';
 
 /** Root-fiber entry points. Every one of these starts a fresh runtime with no inherited context. */
@@ -128,20 +132,15 @@ interface AnyNode {
 }
 
 function asNode(value: unknown): AnyNode | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const candidate = value as { type?: unknown; start?: unknown };
-  if (typeof candidate.type !== 'string' || typeof candidate.start !== 'number') return null;
-  return value as AnyNode;
+  return sharedAsNode(value, true) as AnyNode | null;
 }
 
-/** Lazily materialised AST nodes are not reference-stable; compare by kind + span instead. */
 function sameNode(left: AnyNode | null, right: AnyNode | null): boolean {
-  if (left === null || right === null) return false;
-  return left.type === right.type && left.start === right.start && left.end === right.end;
+  return sharedSameNode(left as ESTree.Node | null, right as ESTree.Node | null);
 }
 
 function nodeKey(node: AnyNode): string {
-  return `${node.type}:${node.start}:${node.end}`;
+  return sharedNodeKey(node as unknown as ESTree.Node, ':');
 }
 
 /** Strip parens, `!`, `as`, `satisfies` and optional-chaining wrappers to reach the real expression. */
@@ -170,21 +169,7 @@ function isRunMemberName(name: string): boolean {
 }
 
 function keyName(key: AnyNode | null, computed: boolean): string | null {
-  if (key === null) return null;
-  if (computed) {
-    // `Effect["runPromise"]` and `Effect[`runPromise`]` — static string keys only.
-    if (key.type === 'Literal') return typeof key.value === 'string' ? key.value : null;
-    if (key.type === 'TemplateLiteral') {
-      const expressions = Array.isArray(key.expressions) ? key.expressions : [];
-      const quasis = Array.isArray(key.quasis) ? key.quasis : [];
-      if (expressions.length !== 0 || quasis.length !== 1) return null;
-      const cooked = (asNode(quasis[0])?.value as { cooked?: unknown } | undefined)?.cooked;
-      return typeof cooked === 'string' ? cooked : null;
-    }
-    return null;
-  }
-  if (key.type === 'Identifier' && typeof key.name === 'string') return key.name;
-  return key.type === 'Literal' && typeof key.value === 'string' ? key.value : null;
+  return sharedKeyName(key, computed, { templates: computed, singleQuasi: true });
 }
 
 /** Property name of a `MemberExpression`, honouring computed static access. */
@@ -195,14 +180,6 @@ function staticPropertyName(node: AnyNode): string | null {
 /** Key name of an object/pattern `Property`, honouring computed static keys. */
 function propertyKeyName(node: AnyNode): string | null {
   return keyName(asNode(node.key), node.computed === true);
-}
-
-function importedName(specifier: {
-  imported: { type: string; name?: string; value?: string };
-}): string | null {
-  const imported = specifier.imported;
-  if (imported.type === 'Identifier') return imported.name ?? null;
-  return typeof imported.value === 'string' ? imported.value : null;
 }
 
 interface FileImports {
@@ -229,6 +206,30 @@ function collectImports(context: Context, modules: readonly string[]): FileImpor
   const flatRuns = new Map<string, string>();
   let importsEffect = base.importsEffect;
 
+  const collectSpecifier = (
+    specifier: ESTree.ImportDeclaration['specifiers'][number],
+    submodule: string,
+    isExtraModule: boolean,
+  ): void => {
+    if (specifier.type === 'ImportNamespaceSpecifier') {
+      if (submodule === 'effect') barrelLocals.add(specifier.local.name);
+      return;
+    }
+    if (specifier.type !== 'ImportSpecifier') return;
+    const imported = importedName(specifier);
+    const local = specifier.local.name;
+    if (isExtraModule) {
+      namespaces.set(local, imported);
+      if (isRunMemberName(imported)) flatRuns.set(local, imported);
+      return;
+    }
+    if (submodule === 'Effect' && isRunMemberName(imported)) {
+      flatRuns.set(local, imported);
+      return;
+    }
+    if (OWNING_NAMESPACES.has(submodule)) flatOwners.set(local, submodule);
+  };
+
   for (const statement of context.sourceCode.ast.body) {
     if (statement.type !== 'ImportDeclaration') continue;
     const source = statement.source.value;
@@ -237,47 +238,20 @@ function collectImports(context: Context, modules: readonly string[]): FileImpor
     if (!isEffectPackage && !isExtraModule) continue;
     importsEffect = true;
     const submodule = isEffectPackage ? (source.split('/').at(-1) ?? '') : '';
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportNamespaceSpecifier') {
-        if (isEffectPackage && submodule === 'effect') barrelLocals.add(specifier.local.name);
-        continue;
-      }
-      if (specifier.type !== 'ImportSpecifier') continue;
-      const imported = importedName(specifier);
-      if (imported === null) continue;
-      const local = specifier.local.name;
-      if (isExtraModule) {
-        // The barrel re-exports the namespaces (`Effect`, `Layer`, ...) verbatim.
-        namespaces.set(local, imported);
-        if (isRunMemberName(imported)) flatRuns.set(local, imported);
-        continue;
-      }
-      if (submodule === 'Effect' && isRunMemberName(imported)) {
-        flatRuns.set(local, imported);
-        continue;
-      }
-      if (OWNING_NAMESPACES.has(submodule)) flatOwners.set(local, submodule);
-    }
+    for (const specifier of statement.specifiers)
+      collectSpecifier(specifier, submodule, isExtraModule);
   }
 
   return { barrelLocals, bindings: { importsEffect, namespaces }, flatOwners, flatRuns };
 }
 
-function resolveVariable(sourceCode: SourceCode, identifier: AnyNode): Variable | null {
-  const name = typeof identifier.name === 'string' ? identifier.name : null;
-  if (name === null) return null;
-  let scope: Scope | null = null;
+function resolveVariable(context: Context, identifier: AnyNode): Variable | null {
+  if (typeof identifier.name !== 'string') return null;
   try {
-    scope = sourceCode.getScope(identifier as unknown as ESTree.Node);
+    return sharedResolveVariable(context, identifier.name, identifier as unknown as ESTree.Node);
   } catch {
     return null;
   }
-  while (scope !== null) {
-    const variable = scope.set.get(name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
 }
 
 /** Ban new root fibers started from inside Effect-owned code (audit S1 + A1). */
@@ -344,9 +318,19 @@ export const rule = defineRule({
      * An unresolvable identifier falls back to the module-level import table.
      */
     const resolvesToEffectImport = (identifier: AnyNode): boolean => {
-      const variable = resolveVariable(context.sourceCode, identifier);
+      const variable = resolveVariable(context, identifier);
       if (variable === null) return true;
       return variable.defs.some((definition) => definition.type === 'ImportBinding');
+    };
+
+    const importedNamespace = (
+      identifier: AnyNode,
+      namespaces: ReadonlyMap<string, string>,
+    ): string | null => {
+      if (typeof identifier.name !== 'string') return null;
+      const namespace = namespaces.get(identifier.name);
+      if (namespace === undefined) return null;
+      return resolvesToEffectImport(identifier) ? namespace : null;
     };
 
     /**
@@ -355,11 +339,8 @@ export const rule = defineRule({
      */
     const namespaceOfObject = (object: AnyNode | null): string | null => {
       if (object === null) return null;
-      if (object.type === 'Identifier' && typeof object.name === 'string') {
-        const namespace = imports.bindings.namespaces.get(object.name);
-        if (namespace === undefined) return null;
-        return resolvesToEffectImport(object) ? namespace : null;
-      }
+      if (object.type === 'Identifier')
+        return importedNamespace(object, imports.bindings.namespaces);
       if (object.type !== 'MemberExpression') return null;
       const base = unwrap(object.object);
       if (base === null || base.type !== 'Identifier' || typeof base.name !== 'string') return null;
@@ -387,11 +368,7 @@ export const rule = defineRule({
      */
     const owningNamespaceOf = (callee: AnyNode | null): string | null => {
       if (callee === null) return null;
-      if (callee.type === 'Identifier' && typeof callee.name === 'string') {
-        const namespace = imports.flatOwners.get(callee.name);
-        if (namespace === undefined) return null;
-        return resolvesToEffectImport(callee) ? namespace : null;
-      }
+      if (callee.type === 'Identifier') return importedNamespace(callee, imports.flatOwners);
       if (callee.type !== 'MemberExpression') return null;
       const member = staticPropertyName(callee);
       if (member === null || isRunMemberName(member)) return null;
@@ -436,7 +413,7 @@ export const rule = defineRule({
      */
     const referenceStartsFor = (identifier: AnyNode | null): readonly AnyNode[] => {
       if (identifier === null || identifier.type !== 'Identifier') return [];
-      const variable = resolveVariable(context.sourceCode, identifier);
+      const variable = resolveVariable(context, identifier);
       if (variable === null || variable.defs.length !== 1) return [];
       const starts: AnyNode[] = [];
       for (const reference of variable.references) {
@@ -447,6 +424,55 @@ export const rule = defineRule({
         starts.push(node);
       }
       return starts;
+    };
+
+    const isOwnedArgument = (parent: AnyNode, child: AnyNode): boolean => {
+      if (parent.type !== 'CallExpression' && parent.type !== 'NewExpression') return false;
+      return (
+        callArguments(parent).some((argument) => sameNode(argument, child)) &&
+        calleeOwner(unwrap(parent.callee)) !== null
+      );
+    };
+
+    const callbackBinding = (parent: AnyNode, child: AnyNode): AnyNode | null => {
+      if (
+        parent.type === 'VariableDeclarator' &&
+        isFunctionNode(child) &&
+        sameNode(unwrap(parent.init), child)
+      )
+        return asNode(parent.id);
+      if (parent.type === 'FunctionDeclaration' && sameNode(asNode(parent.body), child))
+        return asNode(parent.id);
+      return null;
+    };
+
+    const enqueueCallbackReferences = (
+      identifier: AnyNode | null,
+      queue: AnyNode[],
+      seen: Set<string>,
+    ): void => {
+      for (const next of referenceStartsFor(identifier)) {
+        const key = nodeKey(next);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        queue.push(next);
+      }
+    };
+
+    const walkOwners = (from: AnyNode, queue: AnyNode[], seen: Set<string>): boolean => {
+      let child = from;
+      let parent = asNode(child.parent);
+      for (
+        let guard = 0;
+        parent !== null && parent.type !== 'Program' && guard < MAX_WALK_STEPS;
+        guard += 1
+      ) {
+        if (isOwnedArgument(parent, child)) return true;
+        enqueueCallbackReferences(callbackBinding(parent, child), queue, seen);
+        child = parent;
+        parent = asNode(parent.parent);
+      }
+      return false;
     };
 
     /**
@@ -464,45 +490,7 @@ export const rule = defineRule({
         hops += 1;
         const from = queue.shift();
         if (from === undefined) break;
-        let child: AnyNode = from;
-        let parent = asNode(child.parent);
-        for (
-          let guard = 0;
-          parent !== null && parent.type !== 'Program' && guard < MAX_WALK_STEPS;
-          guard += 1
-        ) {
-          if (parent.type === 'CallExpression' || parent.type === 'NewExpression') {
-            const args = callArguments(parent);
-            if (
-              args.some((argument) => sameNode(argument, child)) &&
-              calleeOwner(unwrap(parent.callee)) !== null
-            ) {
-              return true;
-            }
-          }
-          if (
-            parent.type === 'VariableDeclarator' &&
-            isFunctionNode(child) &&
-            sameNode(unwrap(parent.init), child)
-          ) {
-            for (const next of referenceStartsFor(asNode(parent.id))) {
-              const key = nodeKey(next);
-              if (seen.has(key)) continue;
-              seen.add(key);
-              queue.push(next);
-            }
-          }
-          if (parent.type === 'FunctionDeclaration' && sameNode(asNode(parent.body), child)) {
-            for (const next of referenceStartsFor(asNode(parent.id))) {
-              const key = nodeKey(next);
-              if (seen.has(key)) continue;
-              seen.add(key);
-              queue.push(next);
-            }
-          }
-          child = parent;
-          parent = asNode(parent.parent);
-        }
+        if (walkOwners(from, queue, seen)) return true;
       }
       return false;
     };
@@ -533,6 +521,46 @@ export const rule = defineRule({
       });
     };
 
+    const destructuredMember = (entry: unknown, name: string): string | null => {
+      const property = asNode(entry);
+      if (property === null || property.type !== 'Property') return null;
+      const key = propertyKeyName(property);
+      if (key === null || !isRunMemberName(key)) return null;
+      const rawValue = asNode(property.value);
+      const bound = rawValue?.type === 'AssignmentPattern' ? asNode(rawValue.left) : rawValue;
+      return bound?.type === 'Identifier' && bound.name === name ? key : null;
+    };
+
+    const declaratorRunMember = (input: unknown, name: string): string | null => {
+      const declarator = asNode(input);
+      if (declarator === null || declarator.type !== 'VariableDeclarator') return null;
+      const id = asNode(declarator.id);
+      if (id === null) return null;
+      const init = unwrap(declarator.init);
+      if (id.type === 'Identifier') return runMemberOf(init);
+      if (id.type !== 'ObjectPattern' || init?.type !== 'Identifier') return null;
+      if (namespaceOfObject(init) !== 'Effect') return null;
+      return patternRunMember(id, name);
+    };
+
+    const patternRunMember = (id: AnyNode, name: string): string | null => {
+      const properties = Array.isArray(id.properties) ? id.properties : [];
+      for (const entry of properties) {
+        const member = destructuredMember(entry, name);
+        if (member !== null) return member;
+      }
+      return null;
+    };
+
+    const definitionRunMember = (
+      definition: Variable['defs'][number],
+      name: string,
+    ): string | null => {
+      if (definition.type === 'ImportBinding') return imports.flatRuns.get(name) ?? null;
+      if (definition.type !== 'Variable') return null;
+      return declaratorRunMember(definition.node, name);
+    };
+
     /**
      * The run member a variable stands for: a flat named import of the run function, an alias
      * declarator, an alias assignment, or a destructure of the Effect namespace. `null` for every
@@ -540,40 +568,8 @@ export const rule = defineRule({
      */
     const aliasedRunMember = (variable: Variable): string | null => {
       for (const definition of variable.defs) {
-        if (definition.type === 'ImportBinding') {
-          const flat = imports.flatRuns.get(variable.name);
-          if (flat !== undefined) return flat;
-          continue;
-        }
-        if (definition.type !== 'Variable') continue;
-        const declarator = asNode(definition.node);
-        if (declarator === null || declarator.type !== 'VariableDeclarator') continue;
-        const id = asNode(declarator.id);
-        if (id === null) continue;
-        const init = unwrap(declarator.init);
-        if (id.type === 'Identifier') {
-          if (init === null) continue;
-          const member = runMemberOf(init);
-          if (member !== null) return member;
-          continue;
-        }
-        if (id.type !== 'ObjectPattern') continue;
-        if (init === null || init.type !== 'Identifier') continue;
-        if (namespaceOfObject(init) !== 'Effect') continue;
-        const properties = Array.isArray(id.properties) ? id.properties : [];
-        for (const entry of properties) {
-          const property = asNode(entry);
-          if (property === null || property.type !== 'Property') continue;
-          const key = propertyKeyName(property);
-          if (key === null || !isRunMemberName(key)) continue;
-          const rawValue = asNode(property.value);
-          const bound =
-            rawValue !== null && rawValue.type === 'AssignmentPattern'
-              ? asNode(rawValue.left)
-              : rawValue;
-          if (bound !== null && bound.type === 'Identifier' && bound.name === variable.name)
-            return key;
-        }
+        const member = definitionRunMember(definition, variable.name);
+        if (member !== null) return member;
       }
       // `let run; run = Effect.runPromise;` — the alias is bound by an assignment, not a declarator.
       for (const reference of variable.references) {
@@ -582,6 +578,19 @@ export const rule = defineRule({
         if (member !== null) return member;
       }
       return null;
+    };
+
+    const reportAliasReferences = (variable: Variable): void => {
+      const member = aliasedRunMember(variable);
+      if (member === null) return;
+      for (const reference of variable.references) {
+        if (!reference.isRead()) continue;
+        const identifier = asNode(reference.identifier);
+        if (identifier === null) continue;
+        if (variable.identifiers.some((declared) => sameNode(asNode(declared), identifier)))
+          continue;
+        report(identifier, member);
+      }
     };
 
     return {
@@ -598,18 +607,7 @@ export const rule = defineRule({
         // Alias references are resolved through the scope manager so declaration order and the
         // binding position (declarator, assignment, destructure, flat import) do not matter.
         for (const scope of context.sourceCode.scopeManager.scopes) {
-          for (const variable of scope.variables) {
-            const member = aliasedRunMember(variable);
-            if (member === null) continue;
-            for (const reference of variable.references) {
-              if (!reference.isRead()) continue;
-              const identifier = asNode(reference.identifier);
-              if (identifier === null) continue;
-              if (variable.identifiers.some((declared) => sameNode(asNode(declared), identifier)))
-                continue;
-              report(identifier, member);
-            }
-          }
+          for (const variable of scope.variables) reportAliasReferences(variable);
         }
       },
       MemberExpression(node) {

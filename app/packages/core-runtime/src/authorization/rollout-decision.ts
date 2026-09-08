@@ -2,9 +2,9 @@ import { DateTime, Schema } from 'effect';
 
 export const AUTHORIZATION_WOULD_DENY_SCHEMA_VERSION = 1 as const;
 
-export const AuthorizationRolloutModeSchema = Schema.Literals(['enforced', 'report_only']);
+const AuthorizationRolloutModeSchema = Schema.Literals(['enforced', 'report_only']);
 export type AuthorizationRolloutMode = typeof AuthorizationRolloutModeSchema.Type;
-export const AuthorizationDenialReasonSchema = Schema.Literals([
+const AuthorizationDenialReasonSchema = Schema.Literals([
   'cross_tenant',
   'expired_credential',
   'infrastructure_unavailable',
@@ -62,6 +62,14 @@ const nonBypassableReasons = new Set<AuthorizationDenialReason>([
   'wrong_audience',
 ]);
 
+const isReportOnlyActive = (
+  contract: AuthorizationRolloutRuntimeContract,
+  nowEpochMs: number,
+): boolean =>
+  contract.mode === 'report_only' &&
+  nowEpochMs >= contract.activatedAtEpochMs &&
+  nowEpochMs < contract.expiresAtEpochMs;
+
 export const decideAuthorizationRollout = (
   input: AuthorizationRolloutDecisionInput,
   options: AuthorizationRolloutDecisionOptions,
@@ -76,10 +84,7 @@ export const decideAuthorizationRollout = (
   if (nonBypassableReasons.has(reason)) {
     return 'denied';
   }
-  const active =
-    options.contract.mode === 'report_only' &&
-    input.nowEpochMs >= options.contract.activatedAtEpochMs &&
-    input.nowEpochMs < options.contract.expiresAtEpochMs;
+  const active = isReportOnlyActive(options.contract, input.nowEpochMs);
   const compatible =
     active &&
     input.current === 'allowed' &&

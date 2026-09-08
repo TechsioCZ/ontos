@@ -53,8 +53,19 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree } from '@oxlint/plugins';
 
+import {
+  unwrapNode as unwrap,
+  memberName as staticMemberName,
+  FUNCTION_TYPES,
+} from '../shared/ast.ts';
+import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
+import { collectNamedImports, collectRootNamespaces } from '../shared/imports.ts';
+import {
+  isInTypePosition as inTypePosition,
+  isNonReferencePosition as nonReferencePosition,
+} from '../shared/reference-positions.ts';
 import { bindingsFor } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
 import { isTestFile, matchesAny } from '../shared/paths.ts';
@@ -121,56 +132,40 @@ function resolveOptions(context: Context): ResolvedOptions {
   };
 }
 
-function importedName(specifier: ESTree.ImportSpecifier): string {
-  return specifier.imported.type === 'Identifier'
-    ? specifier.imported.name
-    : specifier.imported.value;
-}
+const RUN_MEMBER = /^run(?:Promise|Sync|Fork|Callback)(?:Exit)?$/u;
 
-/**
- * Collect every local that can reach `Effect.provide*`. The shared collector already handles named and
- * submodule-namespace imports; the root barrel (`import * as X from "effect"`) and direct member
- * imports (`import { provide } from "effect/Effect"`) are collected here, exactly like the sibling
- * rules `no-runtime-construction-outside-root` and `no-layer-or-die-outside-root` do.
- */
+/** Preserve root/submodule filtering and run-before-provide-before-pipe priority. */
 function collectProvideBindings(
   program: ESTree.Program,
   bindings: EffectBindings,
   members: ReadonlySet<string>,
 ): ProvideBindings {
-  const namespaces = new Set<string>();
-  const barrels = new Set<string>();
-  const directMembers = new Map<string, string>();
-  const pipes = new Set<string>();
-  const directRuns = new Set<string>();
-  for (const [local, namespace] of bindings.namespaces) {
-    if (namespace === EFFECT_NAMESPACE) namespaces.add(local);
-    else if (namespace === PIPE_NAMESPACE) pipes.add(local);
+  const isRoot = (source: string) => source === EFFECT_ROOT_MODULE;
+  const isSubmodule = (source: string) => EFFECT_EFFECT_MODULE.test(source);
+  const policy = { valueOnly: true };
+  const namespaces = new Set(
+    [...bindings.namespaces]
+      .filter(([, name]) => name === EFFECT_NAMESPACE)
+      .map(([local]) => local),
+  );
+  const pipes = new Set(
+    [...bindings.namespaces].filter(([, name]) => name === PIPE_NAMESPACE).map(([local]) => local),
+  );
+  const barrels = collectRootNamespaces(program, isRoot, policy);
+  for (const local of collectRootNamespaces(program, isSubmodule, policy)) namespaces.add(local);
+  for (const [local, name] of collectNamedImports(program, isRoot, undefined, policy)) {
+    if (name === EFFECT_NAMESPACE) namespaces.add(local);
+    else if (name === PIPE_NAMESPACE) pipes.add(local);
   }
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    if (statement.importKind === 'type') continue;
-    const source = statement.source.value;
-    const isRoot = source === EFFECT_ROOT_MODULE;
-    const isEffectSubmodule = EFFECT_EFFECT_MODULE.test(source);
-    if (!isRoot && !isEffectSubmodule) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportNamespaceSpecifier') {
-        if (isRoot) barrels.add(specifier.local.name);
-        else namespaces.add(specifier.local.name);
-        continue;
-      }
-      if (specifier.type !== 'ImportSpecifier') continue;
-      if (specifier.importKind === 'type') continue;
-      const imported = importedName(specifier);
-      if (isRoot && imported === EFFECT_NAMESPACE) namespaces.add(specifier.local.name);
-      else if (isRoot && imported === PIPE_NAMESPACE) pipes.add(specifier.local.name);
-      else if (isEffectSubmodule && /^run(?:Promise|Sync|Fork|Callback)(?:Exit)?$/u.test(imported))
-        directRuns.add(specifier.local.name);
-      else if (isEffectSubmodule && members.has(imported))
-        directMembers.set(specifier.local.name, imported);
-      else if (isEffectSubmodule && imported === PIPE_NAMESPACE) pipes.add(specifier.local.name);
-    }
+  const direct = collectNamedImports(program, isSubmodule, undefined, policy);
+  const directRuns = new Set(
+    [...direct].filter(([, name]) => RUN_MEMBER.test(name)).map(([local]) => local),
+  );
+  const directMembers = new Map(
+    [...direct].filter(([, name]) => !RUN_MEMBER.test(name) && members.has(name)),
+  );
+  for (const [local, name] of direct) {
+    if (name === PIPE_NAMESPACE && !members.has(name)) pipes.add(local);
   }
   return {
     namespaces,
@@ -180,26 +175,6 @@ function collectProvideBindings(
     directRuns,
     any: namespaces.size > 0 || barrels.size > 0 || directMembers.size > 0,
   };
-}
-
-/** Strip the wrappers that sit between a reference and its semantic parent expression. */
-function unwrap(node: ESTree.Node): ESTree.Node {
-  let current = node;
-  while (
-    current.type === 'ChainExpression' ||
-    current.type === 'TSNonNullExpression' ||
-    current.type === 'TSAsExpression' ||
-    current.type === 'TSSatisfiesExpression' ||
-    current.type === 'TSInstantiationExpression' ||
-    current.type === 'TSTypeAssertion' ||
-    current.type === 'ParenthesizedExpression'
-  ) {
-    const inner: ESTree.Node | undefined = (current as unknown as { expression?: ESTree.Node })
-      .expression;
-    if (inner === undefined) return current;
-    current = inner;
-  }
-  return current;
 }
 
 /** TS nodes that still contain runtime expressions; every other `TS*` ancestor means a type position. */
@@ -214,58 +189,12 @@ const TS_EXPRESSION_NODES = new Set<string>([
   'TSTypeAssertion',
 ]);
 
-/** True when the node only ever appears in an erased type position (`typeof provide`, ...). */
 function isInTypePosition(node: ESTree.Node): boolean {
-  let current: ESTree.Node | null = node.parent;
-  while (current !== null && current.type !== 'Program') {
-    if (current.type.startsWith('TS') && !TS_EXPRESSION_NODES.has(current.type)) return true;
-    current = current.parent;
-  }
-  return false;
+  return inTypePosition(node, TS_EXPRESSION_NODES);
 }
 
-/** Non-computed `.provide`, or computed `["provide"]` / `` [`provide`] ``. */
 function memberName(node: ESTree.MemberExpression): string | null {
-  const property = node.property;
-  if (!node.computed) return property.type === 'Identifier' ? property.name : null;
-  if (property.type === 'Literal' && typeof property.value === 'string') return property.value;
-  if (
-    property.type === 'TemplateLiteral' &&
-    property.expressions.length === 0 &&
-    property.quasis.length === 1
-  ) {
-    const quasi = property.quasis[0];
-    return quasi === undefined ? null : (quasi.value.cooked ?? quasi.value.raw);
-  }
-  return null;
-}
-
-function lookupVariable(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(identifier);
-  while (scope !== null) {
-    const variable = scope.set.get(identifier.name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
-}
-
-/**
- * `true` when the identifier still resolves to an `import` binding. Unresolved names fall back to
- * `true` because the module-level import declaration already proved the binding exists; only a local
- * shadow (parameter, `const`, catch clause, …) rejects the match.
- */
-function resolvesToImport(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): boolean {
-  const variable = lookupVariable(context, identifier);
-  if (variable === null) return true;
-  if (variable.defs.length === 0) return true;
-  return variable.defs.some((definition) => definition.type === 'ImportBinding');
+  return staticMemberName(node, { templates: true, rawTemplates: true, singleQuasi: true });
 }
 
 /**
@@ -342,29 +271,35 @@ function isRunReference(context: Context, node: ESTree.Node, bindings: ProvideBi
   return member !== null && /^run(?:Promise|Sync|Fork|Callback)(?:Exit)?$/u.test(member);
 }
 
-/** Recognise only an immediately invoked wrapper or a single top-level invocation of a module function. */
-function isEntryFunction(context: Context, fn: ESTree.Node): boolean {
-  if (
-    fn.type !== 'FunctionDeclaration' &&
-    fn.type !== 'FunctionExpression' &&
-    fn.type !== 'ArrowFunctionExpression'
-  )
-    return false;
-  let parent: ESTree.Node | null = fn.parent;
-  if (parent?.type === 'CallExpression' && parent.callee === fn) {
-    for (let at: ESTree.Node | null = parent.parent; at !== null; at = at.parent)
-      if (isFunctionLikeBoundary(at)) return false;
-    return true;
-  }
+function isModuleEvaluation(node: ESTree.Node): boolean {
+  for (let at: ESTree.Node | null = node.parent; at !== null; at = at.parent)
+    if (isFunctionLikeBoundary(at)) return false;
+  return true;
+}
+
+function isProgramParent(parent: ESTree.Node | null): boolean {
+  if (parent?.type === 'ExportNamedDeclaration' || parent?.type === 'ExportDefaultDeclaration')
+    parent = parent.parent;
+  return parent?.type === 'Program';
+}
+
+function entryFunctionIdentifier(
+  fn: ESTree.Node,
+): Extract<ESTree.Node, { type: 'Identifier' }> | null {
+  let parent = fn.parent;
   let id: Extract<ESTree.Node, { type: 'Identifier' }> | null = null;
   if (fn.type === 'FunctionDeclaration') id = fn.id;
   else if (parent?.type === 'VariableDeclarator' && parent.id.type === 'Identifier') {
     id = parent.id;
     parent = parent.parent?.parent ?? null;
   }
-  if (parent?.type === 'ExportNamedDeclaration' || parent?.type === 'ExportDefaultDeclaration')
-    parent = parent.parent;
-  if (id === null || parent?.type !== 'Program') return false;
+  return isProgramParent(parent) ? id : null;
+}
+
+function isSingleModuleCall(
+  context: Context,
+  id: Extract<ESTree.Node, { type: 'Identifier' }>,
+): boolean {
   const variable = lookupVariable(context, id);
   if (variable === null) return false;
   const reads = variable.references.filter(
@@ -376,10 +311,16 @@ function isEntryFunction(context: Context, fn: ESTree.Node): boolean {
   if (reads.length !== 1) return false;
   const reference = reads[0]?.identifier;
   const call = reference?.parent;
-  if (call?.type !== 'CallExpression' || call.callee !== reference) return false;
-  for (let at: ESTree.Node | null = call.parent; at !== null; at = at.parent)
-    if (isFunctionLikeBoundary(at)) return false;
-  return true;
+  return call?.type === 'CallExpression' && call.callee === reference && isModuleEvaluation(call);
+}
+
+/** Recognise only an immediately invoked wrapper or a single top-level invocation. */
+function isEntryFunction(context: Context, fn: ESTree.Node): boolean {
+  if (!FUNCTION_TYPES.has(fn.type)) return false;
+  const parent = fn.parent;
+  if (parent?.type === 'CallExpression' && parent.callee === fn) return isModuleEvaluation(parent);
+  const id = entryFunctionIdentifier(fn);
+  return id !== null && isSingleModuleCall(context, id);
 }
 
 /**
@@ -393,6 +334,73 @@ function isEntryFunction(context: Context, fn: ESTree.Node): boolean {
  *     laundered through another combinator (`Effect.runSync(Effect.succeed(p.pipe(Effect.provide(L))))`)
  *     escapes the run as a pre-provided library value and is still reported.
  */
+interface PipelineState {
+  inPipeline: boolean;
+  sawRunSeam: boolean;
+}
+
+function aliasRead(context: Context, node: ESTree.VariableDeclarator): ESTree.Node | null {
+  if (node.id.type !== 'Identifier') return null;
+  const variable = lookupVariable(context, node.id);
+  const reads = variable?.references.filter((ref) => ref.isRead()) ?? [];
+  if (reads.length !== 1 || variable?.references.some((ref) => ref.isWrite() && !ref.init))
+    return null;
+  return reads[0]!.identifier;
+}
+
+function pipelineAlias(
+  current: ESTree.Node,
+  child: ESTree.Node,
+  state: PipelineState,
+): current is ESTree.VariableDeclarator {
+  return (
+    state.inPipeline &&
+    !state.sawRunSeam &&
+    current.type === 'VariableDeclarator' &&
+    current.init === child &&
+    current.id.type === 'Identifier'
+  );
+}
+
+function hasTerminalRun(
+  context: Context,
+  call: ESTree.CallExpression,
+  bindings: ProvideBindings,
+): boolean {
+  const terminal = call.arguments.at(-1);
+  return terminal !== undefined && isRunReference(context, terminal, bindings);
+}
+
+function visitPipelineCall(
+  context: Context,
+  call: ESTree.CallExpression,
+  child: ESTree.Node,
+  bindings: ProvideBindings,
+  state: PipelineState,
+): void {
+  const pipe = isPipeCall(context, call, bindings);
+  if (state.inPipeline && pipe && hasTerminalRun(context, call, bindings)) state.sawRunSeam = true;
+  if (Object.is(unwrap(call.callee), child) || Object.is(call.callee, child)) return;
+  if (state.inPipeline && !state.sawRunSeam && isRunReference(context, call.callee, bindings))
+    state.sawRunSeam = true;
+  else if (!pipe) state.inPipeline = false;
+}
+
+function visitPipelineNode(
+  context: Context,
+  current: ESTree.Node,
+  child: ESTree.Node,
+  bindings: ProvideBindings,
+  state: PipelineState,
+): void {
+  if (current.type === 'CallExpression') {
+    visitPipelineCall(context, current, child, bindings, state);
+  } else if (current.type === 'MemberExpression') {
+    const isObject = Object.is(current.object, child) || Object.is(unwrap(current.object), child);
+    if (!isObject || memberName(current) !== 'pipe') state.inPipeline = false;
+  } else if (!preservesPipeline(current)) state.inPipeline = false;
+}
+
 function isOuterRunSeam(
   context: Context,
   node: ESTree.Node,
@@ -400,77 +408,37 @@ function isOuterRunSeam(
   hops = 0,
 ): boolean {
   if (hops > 8) return false;
-  let child: ESTree.Node = node;
-  let current: ESTree.Node | null = node.parent;
-  let inPipeline = true;
-  let sawRunSeam = false;
-  while (current !== null) {
+  let child = node;
+  const state: PipelineState = { inPipeline: true, sawRunSeam: false };
+  for (let current = node.parent; current !== null; current = current.parent) {
     if (isFunctionLikeBoundary(current) && !isEntryFunction(context, current)) return false;
-    if (current.type === 'Program') return sawRunSeam;
-    if (
-      inPipeline &&
-      !sawRunSeam &&
-      current.type === 'VariableDeclarator' &&
-      current.init === child &&
-      current.id.type === 'Identifier'
-    ) {
+    if (current.type === 'Program') return state.sawRunSeam;
+    if (pipelineAlias(current, child, state)) {
       if (current.parent?.parent?.type === 'ExportNamedDeclaration') return false;
-      const variable = lookupVariable(context, current.id);
-      const reads = variable?.references.filter((ref) => ref.isRead()) ?? [];
-      // An escaping/mutated pre-provided library value is not a process seam.
-      if (reads.length === 1 && !variable?.references.some((ref) => ref.isWrite() && !ref.init)) {
-        return isOuterRunSeam(context, reads[0]!.identifier, bindings, hops + 1);
-      }
+      const read = aliasRead(context, current);
+      if (read !== null) return isOuterRunSeam(context, read, bindings, hops + 1);
     }
-    if (current.type === 'CallExpression') {
-      if (inPipeline && isPipeCall(context, current, bindings)) {
-        const terminal = current.arguments.at(-1);
-        if (terminal !== undefined && isRunReference(context, terminal, bindings))
-          sawRunSeam = true;
-      }
-      const isCalleePosition =
-        Object.is(unwrap(current.callee), child) || Object.is(current.callee, child);
-      if (!isCalleePosition) {
-        if (inPipeline && !sawRunSeam && isRunReference(context, current.callee, bindings))
-          sawRunSeam = true;
-        else if (!isPipeCall(context, current, bindings)) inPipeline = false;
-      }
-    } else if (current.type === 'MemberExpression') {
-      // `pipe(program, Effect.provide(L)).pipe(...)`: the object of a `.pipe` member stays in the pipeline.
-      const isObjectPosition =
-        Object.is(current.object, child) || Object.is(unwrap(current.object), child);
-      if (!isObjectPosition || memberName(current) !== 'pipe') inPipeline = false;
-    } else if (!preservesPipeline(current)) {
-      inPipeline = false;
-    }
+    visitPipelineNode(context, current, child, bindings, state);
     child = current;
-    current = current.parent;
   }
-  return sawRunSeam;
+  return state.sawRunSeam;
 }
 
-/** Identifier positions that are declarations or property keys, never a value reference. */
-function isNonReferencePosition(node: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
-  const parent = node.parent;
-  if (parent === null || parent === undefined) return true;
-  if (
-    parent.type === 'ImportSpecifier' ||
-    parent.type === 'ImportDefaultSpecifier' ||
-    parent.type === 'ImportNamespaceSpecifier' ||
-    parent.type === 'ExportSpecifier'
-  ) {
-    return true;
-  }
-  if (parent.type === 'MemberExpression' && Object.is(parent.property, node) && !parent.computed)
-    return true;
-  if (parent.type === 'Property' && Object.is(parent.key, node) && !parent.computed) return true;
-  if (parent.type === 'PropertyDefinition' && Object.is(parent.key, node) && !parent.computed)
-    return true;
-  if (parent.type === 'MethodDefinition' && Object.is(parent.key, node) && !parent.computed)
-    return true;
-  if (parent.type === 'AccessorProperty' && Object.is(parent.key, node) && !parent.computed)
-    return true;
-  return false;
+const REFERENCE_KEYS = new Set([
+  'Property',
+  'PropertyDefinition',
+  'MethodDefinition',
+  'AccessorProperty',
+]);
+function isRuntimeImportReference(
+  context: Context,
+  node: Extract<ESTree.Node, { type: 'Identifier' }>,
+): boolean {
+  return (
+    !nonReferencePosition(node, { keyParents: REFERENCE_KEYS }) &&
+    !isInTypePosition(node) &&
+    resolvesToImport(context, node)
+  );
 }
 
 /** S1/A1: keep `Effect.provide*` at the composition root so every program's `R` stays honest. */
@@ -543,9 +511,7 @@ export const rule = defineRule({
         if (resolved === null || imports === null || imports.directMembers.size === 0) return;
         const member = imports.directMembers.get(node.name);
         if (member === undefined || !resolved.members.has(member)) return;
-        if (isNonReferencePosition(node)) return;
-        if (isInTypePosition(node)) return;
-        if (!resolvesToImport(context, node)) return;
+        if (!isRuntimeImportReference(context, node)) return;
         if (resolved.allowOuterRunSeam && isOuterRunSeam(context, node, imports)) return;
         report(node, member);
       },

@@ -62,6 +62,27 @@ const ReadEvidenceCandidateSchema = Schema.Struct({
   resultFingerprintSchema: Schema.optional(Schema.Unknown),
 });
 
+type ReadEvidenceCandidate = typeof ReadEvidenceCandidateSchema.Type;
+
+const isValidResultCount = Schema.is(
+  Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 2_147_483_647, minimum: 0 })),
+);
+
+const hasInvalidFingerprintHash = (
+  value: ReadEvidenceCandidate['resultFingerprintHash'],
+): boolean => value !== undefined && (!Predicate.isString(value) || !sha256.test(value));
+
+const hasInvalidFingerprintSchema = (
+  value: ReadEvidenceCandidate['resultFingerprintSchema'],
+): boolean =>
+  value !== undefined && (!Predicate.isString(value) || value.length === 0 || value.length > 300);
+
+const hasInvalidHashEvidence = (record: ReadEvidenceCandidate): boolean =>
+  record.queryHash !== undefined ||
+  (record.resultFingerprintHash === undefined) !== (record.resultFingerprintSchema === undefined) ||
+  hasInvalidFingerprintHash(record.resultFingerprintHash) ||
+  hasInvalidFingerprintSchema(record.resultFingerprintSchema);
+
 export const validateReadEvidenceMetadata = <Value>(
   captureMode: ReadEvidenceCaptureMode,
   value: Value,
@@ -79,10 +100,7 @@ export const validateReadEvidenceMetadata = <Value>(
       } = record;
       if (
         Object.keys(record).some((key) => !evidenceKeys.has(key)) ||
-        !Predicate.isNumber(resultCount) ||
-        !Number.isSafeInteger(resultCount) ||
-        resultCount < 0 ||
-        resultCount > 2_147_483_647
+        !isValidResultCount(resultCount)
       ) {
         return Effect.fail(invalidEvidence());
       }
@@ -94,17 +112,7 @@ export const validateReadEvidenceMetadata = <Value>(
       ) {
         return Effect.fail(invalidEvidence());
       }
-      if (
-        captureMode === 'hash_only' &&
-        (queryHash !== undefined ||
-          (fingerprintHash === undefined) !== (fingerprintSchema === undefined) ||
-          (fingerprintHash !== undefined &&
-            (!Predicate.isString(fingerprintHash) || !sha256.test(fingerprintHash))) ||
-          (fingerprintSchema !== undefined &&
-            (!Predicate.isString(fingerprintSchema) ||
-              fingerprintSchema.length === 0 ||
-              fingerprintSchema.length > 300)))
-      ) {
+      if (captureMode === 'hash_only' && hasInvalidHashEvidence(record)) {
         return Effect.fail(invalidEvidence());
       }
       return Effect.succeed(

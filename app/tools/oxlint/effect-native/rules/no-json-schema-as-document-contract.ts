@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * Audit finding: **A7** — "Give topology, composition, and authorization evidence shared Schemas"
  * (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`).
@@ -69,21 +70,17 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
+import { collectEffectBindings } from '../shared/effect-imports.ts';
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
+import { booleanOption as boolean, stringArray } from '../shared/options.ts';
+import { keyName, memberName as staticMemberName, unwrapNode } from '../shared/ast.ts';
+import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
+import { collectSchemaLocals, importedName } from '../shared/imports.ts';
 
 const SCHEMA_NAMESPACE = 'Schema';
-const EFFECT_ROOT_MODULE = 'effect';
 const EFFECT_SCHEMA_MODULE = /^effect\/(?:.*\/)?Schema$/u;
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production defaults instead of forcing the
- * fixture config to pass loosened options (which `run-on-repo.mts` reuses verbatim against the repo).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
 /** Shape-free JSON codecs on Effect's `Schema` namespace. */
 const DEFAULT_JSON_MEMBERS = ['Json', 'JsonValue'];
@@ -174,22 +171,8 @@ interface RuleOptions {
   readonly jsonMembers: readonly string[];
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
-function boolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     allowPaths: stringArray(record.allowPaths, DEFAULT_ALLOW_PATHS),
     codecMembers: stringArray(record.codecMembers, DEFAULT_CODEC_MEMBERS),
@@ -198,106 +181,116 @@ function readOptions(context: Context): RuleOptions {
   };
 }
 
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-function importedName(specifier: ESTree.ImportSpecifier): string {
-  return specifier.imported.type === 'Identifier'
-    ? specifier.imported.name
-    : specifier.imported.value;
-}
-
-/** Non-computed `.Json`, or computed `["Json"]`. */
-function memberName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
-  const property = unwrapExpression(node.property);
-  if (property.type === 'TemplateLiteral' && property.expressions.length === 0)
-    return property.quasis[0]?.value.cooked ?? null;
-  if (property.type === 'Literal' && typeof property.value === 'string') return property.value;
-  return null;
-}
-
 function unwrapExpression(node: ESTree.Node): ESTree.Node {
-  let current = node;
-  for (let step = 0; step < MAX_RESOLUTION_DEPTH; step += 1) {
-    if (!EXPRESSION_WRAPPERS.has(current.type)) return current;
-    const next =
-      'expression' in current && current.expression !== null && current.expression !== undefined
-        ? (current.expression as ESTree.Node)
-        : null;
-    if (next === null) return current;
-    current = next;
-  }
-  return current;
+  return unwrapNode(node, { wrappers: EXPRESSION_WRAPPERS, maxDepth: MAX_RESOLUTION_DEPTH });
 }
 
-function lookupVariable(
+function memberName(node: ESTree.MemberExpression): string | null {
+  return staticMemberName(node, {
+    templates: true,
+    unwrap: { wrappers: EXPRESSION_WRAPPERS, maxDepth: MAX_RESOLUTION_DEPTH },
+  });
+}
+
+function recordValue(args: ESTree.CallExpression['arguments']): ESTree.Node | null {
+  if (args.length >= 2) {
+    const second = args[1];
+    return second && second.type !== 'SpreadElement' ? second : null;
+  }
+  return recordObjectValue(args[0]);
+}
+
+function recordObjectValue(first: ESTree.Node | undefined): ESTree.Node | null {
+  if (first?.type !== 'ObjectExpression') return null;
+  let value: ESTree.Node | null = null;
+  for (const property of first.properties) {
+    if (property.type !== 'Property' || property.computed) continue;
+    if (property.key.type === 'Identifier' && property.key.name === 'value') value = property.value;
+  }
+  return value;
+}
+
+type Definition = Variable['defs'][number];
+
+function importedSchemaIdentity(def: Definition, reexports: readonly string[]): string | null {
+  const specifier = def.node;
+  const declaration = def.parent;
+  if (declaration?.type !== 'ImportDeclaration' || declaration.importKind === 'type') return null;
+  if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') return null;
+  return schemaImportSpecifierIdentity(specifier, declaration.source.value, reexports);
+}
+
+function schemaImportSpecifierIdentity(
+  specifier: ESTree.Node,
+  source: string,
+  reexports: readonly string[],
+): string | null {
+  if (EFFECT_SCHEMA_MODULE.test(source)) {
+    if (specifier.type === 'ImportNamespaceSpecifier') return '@schema';
+    return specifier.type === 'ImportSpecifier' ? importedName(specifier) : null;
+  }
+  if (source !== 'effect' && !matchesGlobs(source, reexports)) return null;
+  if (specifier.type === 'ImportNamespaceSpecifier') return '@effect';
+  return specifier.type === 'ImportSpecifier' && importedName(specifier) === 'Schema'
+    ? '@schema'
+    : null;
+}
+
+function constantInitializer(def: Definition): ESTree.VariableDeclarator | null {
+  if (def.type !== 'Variable' || def.node.type !== 'VariableDeclarator' || def.node.init === null)
+    return null;
+  return def.node.parent?.type === 'VariableDeclaration' && def.node.parent.kind === 'const'
+    ? def.node
+    : null;
+}
+
+function selectedSchemaMember(host: string | null, key: string | null): string | null {
+  if (host === '@schema') return key;
+  return host === '@effect' && key === 'Schema' ? '@schema' : null;
+}
+
+function destructuredSchemaMember(
+  pattern: ESTree.ObjectPattern,
+  name: string,
+  host: string | null,
+): string | null | undefined {
+  for (const property of pattern.properties) {
+    if (
+      property.type !== 'Property' ||
+      property.value.type !== 'Identifier' ||
+      property.value.name !== name
+    )
+      continue;
+    const key = keyName(property.key, property.computed, { templates: true });
+    const result = selectedSchemaMember(host, key);
+    if (host === '@schema' || result !== null) return result;
+  }
+  return undefined;
+}
+
+function identifierSchemaIdentity(
   context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(identifier);
-  while (scope !== null) {
-    const variable = scope.set.get(identifier.name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
+  node: Extract<ESTree.Node, { type: 'Identifier' }>,
+  reexports: readonly string[],
+  depth: number,
+): string | null {
+  const variable = lookupVariable(context, node);
+  if (!variable) return null;
+  for (const def of variable.defs) {
+    if (def.type === 'ImportBinding') {
+      const identity = importedSchemaIdentity(def, reexports);
+      if (identity !== null) return identity;
+    }
+    const declarator = constantInitializer(def);
+    if (!declarator?.init) continue;
+    if (declarator.id.type === 'Identifier')
+      return schemaIdentity(context, declarator.init, reexports, depth + 1);
+    if (declarator.id.type !== 'ObjectPattern') continue;
+    const host = schemaIdentity(context, declarator.init, reexports, depth + 1);
+    const identity = destructuredSchemaMember(declarator.id, node.name, host);
+    if (identity !== undefined) return identity;
   }
   return null;
-}
-
-/**
- * `true` when the identifier still resolves to an `import` binding. Unresolved names fall back to
- * `true` because the module-level import declaration already proved the binding exists; only a local
- * shadow (parameter, `const`, catch clause, …) rejects the match.
- */
-function resolvesToImport(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): boolean {
-  const variable = lookupVariable(context, identifier);
-  if (variable === null) return true;
-  if (variable.defs.length === 0) return true;
-  return variable.defs.some((definition) => definition.type === 'ImportBinding');
-}
-
-interface SchemaLocals {
-  /** Locals standing for Effect's `Schema` namespace (`Schema`, `S`, `import * as S from "effect/Schema"`). */
-  readonly namespaces: ReadonlySet<string>;
-  /** Locals bound directly from `effect/Schema` (`import { Json as AnyJson } from "effect/Schema"`). */
-  readonly direct: ReadonlyMap<string, string>;
-}
-
-function collectSchemaLocals(program: ESTree.Program, bindings: EffectBindings): SchemaLocals {
-  const namespaces = new Set<string>();
-  const direct = new Map<string, string>();
-  for (const [local, namespace] of bindings.namespaces) {
-    if (namespace === SCHEMA_NAMESPACE) namespaces.add(local);
-  }
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    const source = statement.source.value;
-    if (EFFECT_SCHEMA_MODULE.test(source)) {
-      for (const specifier of statement.specifiers) {
-        if (specifier.type === 'ImportSpecifier')
-          direct.set(specifier.local.name, importedName(specifier));
-        else if (specifier.type === 'ImportNamespaceSpecifier')
-          namespaces.add(specifier.local.name);
-      }
-      continue;
-    }
-    if (source !== EFFECT_ROOT_MODULE) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportSpecifier' && importedName(specifier) === SCHEMA_NAMESPACE) {
-        namespaces.add(specifier.local.name);
-      }
-    }
-  }
-  return { namespaces, direct };
 }
 
 /** Resolve only lexical imports and immutable same-file aliases; no cross-file or mutation inference. */
@@ -309,65 +302,14 @@ function schemaIdentity(
 ): string | null {
   if (depth > 16) return null;
   const node = unwrapExpression(input);
-  if (node.type === 'MemberExpression') {
-    const host = schemaIdentity(context, node.object, reexports, depth + 1);
-    const member = memberName(node);
-    return host === '@schema'
-      ? member
-      : host === '@effect' && member === 'Schema'
-        ? '@schema'
-        : null;
-  }
-  if (node.type !== 'Identifier') return null;
-  const variable = lookupVariable(context, node);
-  if (!variable) return null;
-  for (const def of variable.defs) {
-    if (def.type === 'ImportBinding') {
-      const specifier = def.node;
-      const declaration = def.parent;
-      if (declaration?.type !== 'ImportDeclaration' || declaration.importKind === 'type') continue;
-      if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') continue;
-      const source = declaration.source.value;
-      if (EFFECT_SCHEMA_MODULE.test(source)) {
-        if (specifier.type === 'ImportNamespaceSpecifier') return '@schema';
-        if (specifier.type === 'ImportSpecifier') return importedName(specifier);
-      }
-      if (source === 'effect' || matchesGlobs(source, reexports)) {
-        if (specifier.type === 'ImportNamespaceSpecifier') return '@effect';
-        if (specifier.type === 'ImportSpecifier' && importedName(specifier) === 'Schema')
-          return '@schema';
-      }
-    }
-    if (def.type !== 'Variable' || def.node.type !== 'VariableDeclarator' || def.node.init === null)
-      continue;
-    const declarator = def.node;
-    if (declarator.init === null) continue;
-    if (declarator.parent?.type !== 'VariableDeclaration' || declarator.parent.kind !== 'const')
-      continue;
-    if (declarator.id.type === 'Identifier')
-      return schemaIdentity(context, declarator.init, reexports, depth + 1);
-    if (declarator.id.type !== 'ObjectPattern') continue;
-    const host = schemaIdentity(context, declarator.init, reexports, depth + 1);
-    for (const property of declarator.id.properties) {
-      if (
-        property.type !== 'Property' ||
-        property.value.type !== 'Identifier' ||
-        property.value.name !== node.name
-      )
-        continue;
-      const key =
-        !property.computed && property.key.type === 'Identifier'
-          ? property.key.name
-          : property.key.type === 'Literal' && typeof property.key.value === 'string'
-            ? property.key.value
-            : property.key.type === 'TemplateLiteral' && property.key.expressions.length === 0
-              ? property.key.quasis[0]?.value.cooked
-              : null;
-      if (host === '@schema') return key ?? null;
-      if (host === '@effect' && key === 'Schema') return '@schema';
-    }
-  }
-  return null;
+  if (node.type === 'MemberExpression')
+    return selectedSchemaMember(
+      schemaIdentity(context, node.object, reexports, depth + 1),
+      memberName(node),
+    );
+  return node.type === 'Identifier'
+    ? identifierSchemaIdentity(context, node, reexports, depth)
+    : null;
 }
 
 export const rule = defineRule({
@@ -470,57 +412,30 @@ export const rule = defineRule({
 
       if (isBareJson(current)) return `${SCHEMA_NAMESPACE}.Json`;
 
-      if (current.type === 'Identifier') {
-        if (seen.has(current.name)) return null;
-        const variable = lookupVariable(context, current);
-        const definition = variable?.defs.find(
-          (def) => def.type === 'Variable' && def.node.type === 'VariableDeclarator',
-        );
-        if (!definition || definition.node.type !== 'VariableDeclarator') return null;
-        const declaration = definition.node.parent;
-        if (declaration?.type !== 'VariableDeclaration' || declaration.kind !== 'const')
-          return null;
-        const init = definition.node.init;
-        if (!init) return null;
-        seen.add(current.name);
-        return jsonDocumentShape(init, depth + 1, seen);
-      }
+      if (current.type === 'Identifier') return aliasDocumentShape(current, depth, seen);
 
       if (current.type !== 'CallExpression') return null;
+      return combinatorDocumentShape(current, depth, seen);
+    };
+
+    const combinatorDocumentShape = (
+      current: ESTree.CallExpression,
+      depth: number,
+      seen: Set<string>,
+    ): string | null => {
       const combinator = schemaReference(unwrapExpression(current.callee));
       if (combinator === null) return null;
       const args = current.arguments;
 
-      if (TRANSPARENT_WRAPPERS.has(combinator)) {
-        const first = args[0];
-        return first === undefined || first.type === 'SpreadElement'
-          ? null
-          : jsonDocumentShape(first, depth + 1, seen);
-      }
-
+      if (TRANSPARENT_WRAPPERS.has(combinator)) return argumentDocumentShape(args[0], depth, seen);
       if (ARRAY_COMBINATORS.has(combinator)) {
-        const first = args[0];
-        if (first === undefined || first.type === 'SpreadElement') return null;
-        return jsonDocumentShape(first, depth + 1, seen) === null
+        return argumentDocumentShape(args[0], depth, seen) === null
           ? null
           : `${SCHEMA_NAMESPACE}.${combinator}(${SCHEMA_NAMESPACE}.Json)`;
       }
 
       if (combinator === 'Record') {
-        // `Schema.Record(key, value)` and the object form `Schema.Record({ key, value })`.
-        let value: ESTree.Node | null = null;
-        const first = args[0];
-        if (args.length >= 2) {
-          const second = args[1];
-          if (second !== undefined && second.type !== 'SpreadElement') value = second;
-        } else if (first !== undefined && first.type === 'ObjectExpression') {
-          for (const property of first.properties) {
-            if (property.type !== 'Property' || property.computed) continue;
-            const key = property.key;
-            const name = key.type === 'Identifier' ? key.name : null;
-            if (name === 'value') value = property.value;
-          }
-        }
+        const value = recordValue(args);
         if (value === null) return null;
         return jsonDocumentShape(value, depth + 1, seen) === null
           ? null
@@ -528,6 +443,30 @@ export const rule = defineRule({
       }
 
       return null;
+    };
+
+    const argumentDocumentShape = (
+      argument: ESTree.Node | undefined,
+      depth: number,
+      seen: Set<string>,
+    ): string | null => {
+      if (argument === undefined || argument.type === 'SpreadElement') return null;
+      return jsonDocumentShape(argument, depth + 1, seen);
+    };
+
+    const aliasDocumentShape = (
+      current: Extract<ESTree.Node, { type: 'Identifier' }>,
+      depth: number,
+      seen: Set<string>,
+    ): string | null => {
+      if (seen.has(current.name)) return null;
+      const definition = lookupVariable(context, current)?.defs.find(
+        (def) => def.type === 'Variable' && def.node.type === 'VariableDeclarator',
+      );
+      const declarator = definition && constantInitializer(definition);
+      if (!declarator?.init) return null;
+      seen.add(current.name);
+      return jsonDocumentShape(declarator.init, depth + 1, seen);
     };
 
     const describe = (node: ESTree.Node): string | null =>
@@ -603,24 +542,40 @@ export const rule = defineRule({
       );
     };
 
+    const reportPipedCodec = (node: ESTree.CallExpression): void => {
+      // Only actual Effect pipe, with the codec immediately following the schema.
+      if (node.arguments.length < 2 || !isEffectPipe(node.callee)) return;
+      const [subject, next] = node.arguments;
+      if (subject.type === 'SpreadElement' || next.type === 'SpreadElement') return;
+      const codec = schemaReference(next);
+      const shape = describe(subject);
+      if (codec && codecMembers.has(codec) && shape)
+        context.report({
+          node: subject,
+          messageId: 'jsonCodecArgument',
+          data: { codec, namespace: 'Schema', shape },
+        });
+    };
+
+    const typeQueryReference = (expression: ESTree.TSTypeQuery['exprName']): string | null => {
+      if (expression.type === 'TSQualifiedName') {
+        const left = expression.left;
+        if (left.type !== 'Identifier') return null;
+        if (!locals.schema.has(left.name) || !resolvesToImport(context, left)) return null;
+        return jsonMembers.has(expression.right.name)
+          ? `${left.name}.${expression.right.name}`
+          : null;
+      }
+      if (expression.type !== 'Identifier') return null;
+      const imported = locals.direct.get(expression.name);
+      if (imported === undefined || !jsonMembers.has(imported)) return null;
+      return resolvesToImport(context, expression) ? expression.name : null;
+    };
+
     return {
       CallExpression(node) {
         const codec = schemaReference(unwrapExpression(node.callee));
-        // Only actual Effect pipe, with the codec immediately following the schema. An
-        // arbitrary intermediate transformation can change the contract and is not inferred.
-        if (codec === null && node.arguments.length >= 2 && isEffectPipe(node.callee)) {
-          const [subject, next] = node.arguments;
-          if (subject.type !== 'SpreadElement' && next.type !== 'SpreadElement') {
-            const pipedCodec = schemaReference(next);
-            const shape = describe(subject);
-            if (pipedCodec && codecMembers.has(pipedCodec) && shape)
-              context.report({
-                node: subject,
-                messageId: 'jsonCodecArgument',
-                data: { codec: pipedCodec, namespace: 'Schema', shape },
-              });
-          }
-        }
+        if (codec === null) reportPipedCodec(node);
         if (codec === null || !codecMembers.has(codec)) return;
         const first = node.arguments[0];
         if (first === undefined || first.type === 'SpreadElement') return;
@@ -655,24 +610,7 @@ export const rule = defineRule({
       },
 
       TSTypeQuery(node) {
-        const expression = node.exprName;
-        let reference: string | null = null;
-        if (expression.type === 'TSQualifiedName') {
-          const left = expression.left;
-          if (left.type !== 'Identifier') return;
-          if (!locals.namespaces.has(left.name) || !resolvesToImport(context, left)) return;
-          if (!jsonMembers.has(expression.right.name)) return;
-          reference = `${left.name}.${expression.right.name}`;
-        } else if (expression.type === 'Identifier') {
-          const imported = locals.direct.get(expression.name);
-          if (
-            imported === undefined ||
-            !jsonMembers.has(imported) ||
-            !resolvesToImport(context, expression)
-          )
-            return;
-          reference = expression.name;
-        }
+        const reference = typeQueryReference(node.exprName);
         if (reference === null) return;
         if (!inTypeContract(node)) return;
         context.report({ node, messageId: 'jsonDocumentType', data: { reference } });

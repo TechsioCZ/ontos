@@ -1,4 +1,4 @@
-import { Cause, Effect, FileSystem, Result, Schema } from 'effect';
+import { Cause, Effect, FileSystem, Predicate, Result, Schema } from 'effect';
 import type { PlatformError } from 'effect';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
@@ -26,7 +26,7 @@ import type {
   ScaffoldPlan,
 } from '../shared.mts';
 
-export class OutboxMessageScaffoldError extends Schema.TaggedError<OutboxMessageScaffoldError>()(
+class OutboxMessageScaffoldError extends Schema.TaggedError<OutboxMessageScaffoldError>()(
   'OutboxMessageScaffoldError',
   { cause: Schema.optional(Schema.Unknown), reason: Schema.String },
 ) {
@@ -41,7 +41,7 @@ const planningFailure = (reason: string, cause?: unknown): OutboxMessageScaffold
     : new OutboxMessageScaffoldError({ cause, reason });
 
 const failureFromCause = (cause: unknown): OutboxMessageScaffoldError =>
-  planningFailure(cause instanceof Error ? cause.message : String(cause), cause);
+  planningFailure(Predicate.isError(cause) ? cause.message : String(cause), cause);
 
 const fromLegacySync = <Value,>(
   operation: () => Value,
@@ -127,7 +127,29 @@ export const outboxTopic = '${topic}' as const;
 export const outboxProducerModuleKey = '${vertical.moduleId}' as const;
 `;
 
-export const planOutboxScaffold = (
+const isMatchingGeneratedAction = (
+  actionContent: string,
+  vertical: OntosVerticalMetadata,
+  action: string,
+): boolean => {
+  const hasGeneratedActionPrefix =
+    actionContent.startsWith(`${ACTION_GENERATOR_HEADER}\n`) ||
+    actionContent.startsWith(`${FORMATTED_ACTION_GENERATOR_PREFIX}${ACTION_GENERATOR_HEADER}\n`);
+  return (
+    hasGeneratedActionPrefix &&
+    [
+      `// @ontos-action-owner ${vertical.moduleId}\n`,
+      `// @ontos-action-slug ${action}\n`,
+      `entrypoint: defineTenantModuleEntrypoint({\n`,
+      `      access: 'write',\n`,
+      `      entrypointKey: '${vertical.moduleId}.${action}',\n`,
+      `      moduleKey: '${vertical.moduleId}',\n`,
+      `      role: 'action',\n`,
+    ].every((fragment) => actionContent.includes(fragment))
+  );
+};
+
+const planOutboxScaffold = (
   workspaceRoot: string,
   config: OutboxScaffoldConfig,
 ): Effect.Effect<
@@ -161,19 +183,7 @@ export const planOutboxScaffold = (
           ),
         ),
       );
-    const hasGeneratedActionPrefix =
-      actionContent.startsWith(`${ACTION_GENERATOR_HEADER}\n`) ||
-      actionContent.startsWith(`${FORMATTED_ACTION_GENERATOR_PREFIX}${ACTION_GENERATOR_HEADER}\n`);
-    if (
-      !hasGeneratedActionPrefix ||
-      !actionContent.includes(`// @ontos-action-owner ${vertical.moduleId}\n`) ||
-      !actionContent.includes(`// @ontos-action-slug ${action}\n`) ||
-      !actionContent.includes(`entrypoint: defineTenantModuleEntrypoint({\n`) ||
-      !actionContent.includes(`      access: 'write',\n`) ||
-      !actionContent.includes(`      entrypointKey: '${vertical.moduleId}.${action}',\n`) ||
-      !actionContent.includes(`      moduleKey: '${vertical.moduleId}',\n`) ||
-      !actionContent.includes(`      role: 'action',\n`)
-    ) {
+    if (!isMatchingGeneratedAction(actionContent, vertical, action)) {
       return yield* Effect.fail(
         planningFailure(
           'Outbox Message can extend only the matching generated Action with its governed write entrypoint',

@@ -24,7 +24,7 @@ export {
   OutboxRepositoryLive as outboxWorkerRepositoryLive,
 } from '@app/core-runtime/outbox/worker';
 
-export const outboxWorkerInfrastructureLayer: Layer.Layer<
+const outboxWorkerInfrastructureLayer: Layer.Layer<
   OutboxRuntime,
   never,
   Layer.Services<typeof OutboxWorkerInfrastructureLive>
@@ -58,21 +58,6 @@ export const outboxWorkerHandlerLayers: OutboxWorkerHandlerLayers = Object.freez
   searchProjectionStore: CoreSearchProjectionStoreLive,
   searchWorkerSnapshot: CoreSearchWorkerSnapshotLive,
 });
-
-type OutboxWorkerDependencyLayers = readonly [
-  OutboxWorkerHandlerLayers['projectionSource'],
-  OutboxWorkerHandlerLayers['searchIngestion'],
-  OutboxWorkerHandlerLayers['searchProjectionStore'],
-  OutboxWorkerHandlerLayers['searchWorkerSnapshot'],
-];
-
-/** Applied in order by the process-level composition root. */
-export const outboxWorkerDependencyLayers: OutboxWorkerDependencyLayers = Object.freeze([
-  outboxWorkerHandlerLayers.projectionSource,
-  outboxWorkerHandlerLayers.searchIngestion,
-  outboxWorkerHandlerLayers.searchProjectionStore,
-  outboxWorkerHandlerLayers.searchWorkerSnapshot,
-] as const);
 
 export const outboxWorkerLayer: Layer.Layer<
   OutboxRuntime | PartySearchProjector,

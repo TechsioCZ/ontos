@@ -408,6 +408,29 @@ void test('preserves scoped service-factory unavailability and never invokes the
   assert.equal(harness.evidence(), 0);
 });
 
+const counterpartyReadRegistration = (
+  legalEntityScope: 'required' | 'optional',
+  onHandler: () => void,
+) =>
+  defineRead(
+    { ...registration().descriptor, legalEntityScope, permissionTarget: 'legal_entity' },
+    () => {
+      onHandler();
+      return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+    },
+    () => Effect.succeed({}),
+    () => ({ kind: 'legal_entity', permission: 'read_counterparty' }),
+  );
+
+const counterpartyReadPrincipal = (legalEntityId: string) => ({
+  authBindingId: '00000000-0000-4000-8000-000000000005',
+  authContextRef: 'better-auth-session:read-runtime',
+  authMethod: 'session' as const,
+  legalEntityId,
+  principalId: scope.principalId,
+  tenantId: scope.tenantId,
+});
+
 void test('persists sanitized permission denial and never invokes the private handler', async () => {
   const legalEntityId = '00000000-0000-4000-8000-000000000004';
   const legalEntityPermissions: (string | undefined)[] = [];
@@ -417,31 +440,14 @@ void test('persists sanitized permission denial and never invokes the private ha
     resolvedScope: { ...scope, legalEntityId },
   });
   let handlerCalls = 0;
-  const deniedRegistration = defineRead(
-    {
-      ...registration().descriptor,
-      legalEntityScope: 'required',
-      permissionTarget: 'legal_entity',
-    },
-    () => {
-      handlerCalls += 1;
-      return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
-    },
-    () => Effect.succeed({}),
-    () => ({ kind: 'legal_entity', permission: 'read_counterparty' }),
-  );
+  const deniedRegistration = counterpartyReadRegistration('required', () => {
+    handlerCalls += 1;
+  });
   const error = await runEffectTestPromise(
     Effect.flip(
       harness.runtime.runRead({
         input: {},
-        principal: {
-          authBindingId: '00000000-0000-4000-8000-000000000005',
-          authContextRef: 'better-auth-session:read-runtime',
-          authMethod: 'session',
-          legalEntityId,
-          principalId: scope.principalId,
-          tenantId: scope.tenantId,
-        },
+        principal: counterpartyReadPrincipal(legalEntityId),
         registration: deniedRegistration,
         transport: { correlationId: scope.correlationId },
       }),
@@ -460,31 +466,14 @@ test('fails closed when explicit Counterparty read authority is unavailable', as
     permissionDecision: 'unavailable',
     resolvedScope: { ...scope, legalEntityId },
   });
-  const counterpartyRead = defineRead(
-    {
-      ...registration().descriptor,
-      legalEntityScope: 'optional',
-      permissionTarget: 'legal_entity',
-    },
-    () => {
-      handlerCalls += 1;
-      return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
-    },
-    () => Effect.succeed({}),
-    () => ({ kind: 'legal_entity', permission: 'read_counterparty' }),
-  );
+  const counterpartyRead = counterpartyReadRegistration('optional', () => {
+    handlerCalls += 1;
+  });
   const error = await runEffectTestPromise(
     Effect.flip(
       harness.runtime.runRead({
         input: {},
-        principal: {
-          authBindingId: '00000000-0000-4000-8000-000000000005',
-          authContextRef: 'better-auth-session:read-runtime',
-          authMethod: 'session',
-          legalEntityId,
-          principalId: scope.principalId,
-          tenantId: scope.tenantId,
-        },
+        principal: counterpartyReadPrincipal(legalEntityId),
         registration: counterpartyRead,
         transport: { correlationId: scope.correlationId },
       }),

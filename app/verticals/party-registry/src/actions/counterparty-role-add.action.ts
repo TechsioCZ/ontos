@@ -35,12 +35,9 @@ export {
   CounterpartyRoleAddPayloadSchema,
   CounterpartyRoleAddResultSchema,
 } from '../../shared/actions/counterparty-role-add.ts';
-export type {
-  CounterpartyRoleAddPayload,
-  CounterpartyRoleAddResult,
-} from '../../shared/actions/counterparty-role-add.ts';
+export type { CounterpartyRoleAddPayload } from '../../shared/actions/counterparty-role-add.ts';
 
-export const CounterpartyRoleAddError = Schema.Union([
+const CounterpartyRoleAddError = Schema.Union([
   CounterpartyEvidenceInsufficient,
   CounterpartyNotFound,
   CounterpartyPartyArchived,
@@ -216,11 +213,3 @@ export const counterpartyRoleAddAction = defineAction(
     });
   },
 );
-
-// <generated-outbox-message-exports>
-export { CounterpartyRoleAddPartyRegistryCounterpartyRoleAddedV1OutboxPayloadSchema } from './counterparty-role-add.party-registry-counterparty-role-added-v1.outbox-message.ts';
-export { CounterpartyRoleAddPartyRegistryCounterpartyRoleAddedV1OutboxProducerModuleKey } from './counterparty-role-add.party-registry-counterparty-role-added-v1.outbox-message.ts';
-export { CounterpartyRoleAddPartyRegistryCounterpartyRoleAddedV1OutboxTopic } from './counterparty-role-add.party-registry-counterparty-role-added-v1.outbox-message.ts';
-export { createCounterpartyRoleAddPartyRegistryCounterpartyRoleAddedV1OutboxMessage } from './counterparty-role-add.party-registry-counterparty-role-added-v1.outbox-message.ts';
-export type { CounterpartyRoleAddPartyRegistryCounterpartyRoleAddedV1OutboxPayload } from './counterparty-role-add.party-registry-counterparty-role-added-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

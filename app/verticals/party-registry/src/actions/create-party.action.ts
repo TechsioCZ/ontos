@@ -24,12 +24,8 @@ import {
 } from '../../shared/actions/create-party.ts';
 import type { CreatePartyPayload } from '../../shared/actions/create-party.ts';
 
-export {
-  CreatePartyPayloadSchema,
-  CreatePartyResultSchema,
-} from '../../shared/actions/create-party.ts';
-export type { CreatePartyPayload, CreatePartyResult } from '../../shared/actions/create-party.ts';
-export const CreatePartyErrorSchema = Schema.Union([
+export type { CreatePartyPayload } from '../../shared/actions/create-party.ts';
+const CreatePartyErrorSchema = Schema.Union([
   PartyEvidenceInsufficient,
   PartyPersistenceUnavailable,
 ]);
@@ -149,11 +145,3 @@ export const createPartyAction = defineAction(
         }),
     }),
 );
-
-export { createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage } from './create-party.party-registry-party-created-v1.outbox-message.ts';
-export {
-  CreatePartyPartyRegistryPartyCreatedV1OutboxPayloadSchema,
-  CreatePartyPartyRegistryPartyCreatedV1OutboxProducerModuleKey,
-  CreatePartyPartyRegistryPartyCreatedV1OutboxTopic,
-} from './create-party.party-registry-party-created-v1.outbox-message.ts';
-export type { CreatePartyPartyRegistryPartyCreatedV1OutboxPayload } from './create-party.party-registry-party-created-v1.outbox-message.ts';

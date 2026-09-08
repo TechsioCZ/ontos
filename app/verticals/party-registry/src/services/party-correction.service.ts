@@ -237,6 +237,326 @@ const transitionedAssertionState = (replacementValue: string | undefined) =>
 const optionalRelationshipRef = (tenantId: string, relationshipId: null | string) =>
   relationshipId === null ? null : partyRelationshipRef(tenantId, relationshipId);
 
+const correctRelationship = Effect.fn('PartyCorrectionService.correctRelationship')(
+  function* correctRelationship(
+    transaction: CorrectionTransaction,
+    tenantId: string,
+    command: RelationshipCorrectionCommand,
+    acceptance: { readonly actionInvocationId: string; readonly principalId: string },
+  ) {
+    let relationshipId: null | string = null;
+    let replacementRelationshipId: null | string = null;
+    let replacementAssertionId: null | string = null;
+    if (command.relationshipRef.tenantId !== tenantId) {
+      return yield* new PartyCorrectionConflict({
+        code: 'party_correction_conflict',
+        reason: 'The target Party Relationship is absent or not active',
+      });
+    }
+    const [targetRow] = yield* transaction
+      .select()
+      .from(partyRelationships)
+      .where(
+        and(
+          eq(partyRelationships.tenantId, tenantId),
+          eq(partyRelationships.relationshipId, command.relationshipRef.resourceId),
+        ),
+      )
+      .limit(1)
+      .for('update')
+      .pipe(Effect.mapError(unavailable));
+    const target = yield* requireActiveRelationshipTarget(targetRow, command.expectedRevision);
+    const correctedPartyId = target.fromPartyId;
+    // A durable Relationship remains correctable after either stored endpoint becomes an alias.
+    // Resolve for invariant reads, but never rewrite the immutable stored endpoint identity.
+    yield* resolvePartyAlias(transaction, tenantId, target.fromPartyId).pipe(
+      Effect.mapError(unavailable),
+    );
+    yield* resolvePartyAlias(transaction, tenantId, target.toPartyId).pipe(
+      Effect.mapError(unavailable),
+    );
+    ({ relationshipId } = target);
+    const [transitioned] = yield* transaction
+      .update(partyRelationships)
+      .set({
+        assertionState: transitionedRelationshipState(command),
+        revision: target.revision + 1,
+      })
+      .where(
+        and(
+          eq(partyRelationships.tenantId, tenantId),
+          eq(partyRelationships.relationshipId, target.relationshipId),
+          eq(partyRelationships.revision, target.revision),
+          eq(partyRelationships.assertionState, 'ACTIVE'),
+        ),
+      )
+      .returning()
+      .pipe(Effect.mapError(unavailable));
+    if (transitioned === undefined) {
+      return yield* new PartyCorrectionConflict({
+        code: 'party_correction_conflict',
+        reason: 'The target Party Relationship changed concurrently',
+      });
+    }
+    if (command.correctionMode === 'SUPERSEDE') {
+      const [replacement] = yield* transaction
+        .insert(partyRelationships)
+        .values({
+          acceptedByActionInvocationId: acceptance.actionInvocationId,
+          acceptedByPrincipalId: acceptance.principalId,
+          assertionState: 'ACTIVE',
+          fromPartyId: target.fromPartyId,
+          policyVersion: command.policyVersion,
+          provenanceMethod: command.provenance.method,
+          provenanceSource: command.provenance.source,
+          relationshipType: target.relationshipType,
+          revision: 1,
+          supersedesRelationshipId: target.relationshipId,
+          tenantId,
+          toPartyId: target.toPartyId,
+          validFrom: Option.match(command.replacementValidFrom, {
+            onNone: () => null,
+            onSome: instantAsDate,
+          }),
+          validTo: Option.match(command.replacementValidTo, {
+            onNone: () => null,
+            onSome: instantAsDate,
+          }),
+        })
+        .returning()
+        .pipe(Effect.mapError(relationshipMutationFailure));
+      if (replacement === undefined) {
+        return yield* unavailable();
+      }
+      replacementRelationshipId = replacement.relationshipId;
+      replacementAssertionId = replacement.relationshipId;
+    }
+
+    return { correctedPartyId, relationshipId, replacementRelationshipId, replacementAssertionId };
+  },
+);
+
+const correctOfficialIdentifier = Effect.fn('PartyCorrectionService.correctOfficialIdentifier')(
+  function* correctOfficialIdentifier(
+    transaction: CorrectionTransaction,
+    tenantId: string,
+    command: IdentityCorrectionCommand,
+    acceptance: { readonly actionInvocationId: string; readonly principalId: string },
+    now: Date,
+  ) {
+    let officialIdentifierId: null | string = null;
+    let replacementOfficialIdentifierId: null | string = null;
+    let replacementAssertionId: null | string = null;
+    const correctedPartyId = command.partyId;
+    yield* requireCanonicalCorrectionTarget(transaction, tenantId, command.partyId);
+    const [targetRow] = yield* transaction
+      .select()
+      .from(partyOfficialIdentifiers)
+      .where(
+        and(
+          eq(partyOfficialIdentifiers.tenantId, tenantId),
+          eq(partyOfficialIdentifiers.officialIdentifierId, command.targetAssertionId),
+          eq(partyOfficialIdentifiers.partyId, command.partyId),
+        ),
+      )
+      .limit(1)
+      .for('update')
+      .pipe(Effect.mapError(unavailable));
+    const target = yield* requireActiveCurrentAssertion(
+      targetRow,
+      'The target Official Identifier assertion is absent or not active',
+    );
+    ({ officialIdentifierId } = target);
+    // The shared tenant-qualified claim lock serializes releases against create/add/unarchive.
+    // SAFETY: The persisted identifier columns are constrained to the closed identifier vocabulary.
+    yield* lockAndResolveClaims(transaction, tenantId, [
+      {
+        identifierType: target.identifierTypeKey as NormalizedOfficialIdentifier['identifierType'],
+        namespace: target.namespace as NormalizedOfficialIdentifier['namespace'],
+        normalizedValue: target.normalizedValue,
+        verification: target.verificationState as NormalizedOfficialIdentifier['verification'],
+      },
+    ]);
+    const replacementIdentifier =
+      command.replacementValue === undefined
+        ? undefined
+        : yield* Schema.decodeUnknownEffect(OfficialIdentifierInputSchema)({
+            identifierType: target.identifierTypeKey,
+            value: command.replacementValue,
+            verification: 'UNVERIFIED',
+          }).pipe(
+            Effect.map(normalizeOfficialIdentifier),
+            Effect.mapError((cause) =>
+              attachCause(
+                new PartyCorrectionConflict({
+                  code: 'party_correction_conflict',
+                  reason: 'The replacement Official Identifier is not formally valid',
+                }),
+                cause,
+              ),
+            ),
+          );
+    yield* transaction
+      .update(partyOfficialIdentifiers)
+      .set({
+        isCurrent: false,
+        state: transitionedAssertionState(command.replacementValue),
+        validTo: now,
+      })
+      .where(
+        and(
+          eq(partyOfficialIdentifiers.tenantId, tenantId),
+          eq(partyOfficialIdentifiers.officialIdentifierId, target.officialIdentifierId),
+        ),
+      )
+      .pipe(Effect.mapError(unavailable));
+    yield* transaction
+      .delete(partyIdentifierClaims)
+      .where(
+        and(
+          eq(partyIdentifierClaims.tenantId, tenantId),
+          eq(partyIdentifierClaims.officialIdentifierId, target.officialIdentifierId),
+        ),
+      )
+      .pipe(Effect.mapError(unavailable));
+    if (replacementIdentifier !== undefined) {
+      const [replacement] = yield* transaction
+        .insert(partyOfficialIdentifiers)
+        .values({
+          acceptedByActionInvocationId: acceptance.actionInvocationId,
+          acceptedByPrincipalId: acceptance.principalId,
+          identifierTypeKey: target.identifierTypeKey,
+          namespace: replacementIdentifier.namespace,
+          normalizedValue: replacementIdentifier.normalizedValue,
+          partyId: command.partyId,
+          policyVersion: command.policyVersion,
+          provenanceMethod: command.provenance.method,
+          provenanceSource: command.provenance.source,
+          state: 'ACTIVE',
+          supersedesOfficialIdentifierId: target.officialIdentifierId,
+          tenantId,
+          validFrom: now,
+          verificationState: 'UNVERIFIED',
+        })
+        .returning()
+        .pipe(Effect.mapError(unavailable));
+      if (replacement === undefined) {
+        return yield* unavailable();
+      }
+      replacementOfficialIdentifierId = replacement.officialIdentifierId;
+      replacementAssertionId = replacement.officialIdentifierId;
+    }
+
+    return {
+      correctedPartyId,
+      officialIdentifierId,
+      replacementOfficialIdentifierId,
+      replacementAssertionId,
+    };
+  },
+);
+
+const correctIdentityAssertion = Effect.fn('PartyCorrectionService.correctIdentityAssertion')(
+  function* correctIdentityAssertion(
+    transaction: CorrectionTransaction,
+    tenantId: string,
+    command: IdentityCorrectionCommand,
+    acceptance: { readonly actionInvocationId: string; readonly principalId: string },
+    now: Date,
+  ) {
+    let partyFactAssertionId: null | string = null;
+    let replacementAssertionId: null | string = null;
+    let replacementEvidenceEvaluation: null | ReturnType<typeof evaluatePartySubjectEvidence> =
+      null;
+    const correctedPartyId = command.partyId;
+    yield* requireCanonicalCorrectionTarget(transaction, tenantId, command.partyId);
+    const [targetRow] = yield* transaction
+      .select()
+      .from(partyFactAssertions)
+      .where(
+        and(
+          eq(partyFactAssertions.tenantId, tenantId),
+          eq(partyFactAssertions.assertionId, command.targetAssertionId),
+          eq(partyFactAssertions.partyId, command.partyId),
+          eq(partyFactAssertions.factKind, command.factKind),
+        ),
+      )
+      .limit(1)
+      .for('update')
+      .pipe(Effect.mapError(unavailable));
+    const target = yield* requireActiveCurrentAssertion(
+      targetRow,
+      'The target Party assertion is absent or not active',
+    );
+    replacementEvidenceEvaluation = yield* validatePartyTypeCorrection(
+      transaction,
+      tenantId,
+      command,
+      target.normalizedValue,
+    );
+    partyFactAssertionId = target.assertionId;
+    yield* transaction
+      .update(partyFactAssertions)
+      .set({
+        isCurrent: false,
+        state: transitionedAssertionState(command.replacementValue),
+        validTo: now,
+      })
+      .where(
+        and(
+          eq(partyFactAssertions.tenantId, tenantId),
+          eq(partyFactAssertions.assertionId, target.assertionId),
+        ),
+      )
+      .pipe(Effect.mapError(unavailable));
+    if (command.replacementValue !== undefined) {
+      const { replacementValue } = command;
+      const [replacement] = yield* transaction
+        .insert(partyFactAssertions)
+        .values({
+          acceptedByActionInvocationId: acceptance.actionInvocationId,
+          acceptedByPrincipalId: acceptance.principalId,
+          evidenceEvaluation: replacementEvidenceEvaluation,
+          factKind: command.factKind,
+          normalizedValue: replacementValue,
+          partyId: command.partyId,
+          policyVersion: command.policyVersion,
+          provenanceMethod: command.provenance.method,
+          provenanceSource: command.provenance.source,
+          state: 'ACTIVE',
+          supersedesAssertionId: target.assertionId,
+          tenantId,
+          validFrom: now,
+        })
+        .returning()
+        .pipe(Effect.mapError(unavailable));
+      if (replacement === undefined) {
+        return yield* unavailable();
+      }
+      replacementAssertionId = replacement.assertionId;
+      yield* transaction
+        .update(parties)
+        .set(
+          command.factKind === 'PARTY_TYPE'
+            ? {
+                currentType: replacementValue,
+                revision: sql`${parties.revision} + 1`,
+                updatedAt: now,
+              }
+            : {
+                currentDisplayName: replacementValue,
+                revision: sql`${parties.revision} + 1`,
+                updatedAt: now,
+              },
+        )
+        .where(and(eq(parties.tenantId, tenantId), eq(parties.partyId, command.partyId)))
+        .pipe(Effect.mapError(unavailable));
+    }
+
+    return { correctedPartyId, partyFactAssertionId, replacementAssertionId };
+  },
+);
+
 export const correctPartyFactRecord = Effect.fn('PartyCorrectionService.correctPartyFactRecord')(
   function* correctFact(
     transaction: CorrectionTransaction,
@@ -246,287 +566,33 @@ export const correctPartyFactRecord = Effect.fn('PartyCorrectionService.correctP
   ) {
     yield* lockTenantIdentityWrites(transaction, tenantId);
     const now = yield* DateTime.nowAsDate;
-    let correctedPartyId: string;
-    let replacementAssertionId: null | string = null;
-    let partyFactAssertionId: null | string = null;
-    let officialIdentifierId: null | string = null;
-    let replacementOfficialIdentifierId: null | string = null;
-    let relationshipId: null | string = null;
-    let replacementRelationshipId: null | string = null;
-    let replacementEvidenceEvaluation: null | ReturnType<typeof evaluatePartySubjectEvidence> =
-      null;
-    if (command.factKind === 'RELATIONSHIP') {
-      if (command.relationshipRef.tenantId !== tenantId) {
-        return yield* new PartyCorrectionConflict({
-          code: 'party_correction_conflict',
-          reason: 'The target Party Relationship is absent or not active',
-        });
-      }
-      const [targetRow] = yield* transaction
-        .select()
-        .from(partyRelationships)
-        .where(
-          and(
-            eq(partyRelationships.tenantId, tenantId),
-            eq(partyRelationships.relationshipId, command.relationshipRef.resourceId),
-          ),
-        )
-        .limit(1)
-        .for('update')
-        .pipe(Effect.mapError(unavailable));
-      const target = yield* requireActiveRelationshipTarget(targetRow, command.expectedRevision);
-      correctedPartyId = target.fromPartyId;
-      // A durable Relationship remains correctable after either stored endpoint becomes an alias.
-      // Resolve for invariant reads, but never rewrite the immutable stored endpoint identity.
-      yield* resolvePartyAlias(transaction, tenantId, target.fromPartyId).pipe(
-        Effect.mapError(unavailable),
-      );
-      yield* resolvePartyAlias(transaction, tenantId, target.toPartyId).pipe(
-        Effect.mapError(unavailable),
-      );
-      ({ relationshipId } = target);
-      const [transitioned] = yield* transaction
-        .update(partyRelationships)
-        .set({
-          assertionState: transitionedRelationshipState(command),
-          revision: target.revision + 1,
-        })
-        .where(
-          and(
-            eq(partyRelationships.tenantId, tenantId),
-            eq(partyRelationships.relationshipId, target.relationshipId),
-            eq(partyRelationships.revision, target.revision),
-            eq(partyRelationships.assertionState, 'ACTIVE'),
-          ),
-        )
-        .returning()
-        .pipe(Effect.mapError(unavailable));
-      if (transitioned === undefined) {
-        return yield* new PartyCorrectionConflict({
-          code: 'party_correction_conflict',
-          reason: 'The target Party Relationship changed concurrently',
-        });
-      }
-      if (command.correctionMode === 'SUPERSEDE') {
-        const [replacement] = yield* transaction
-          .insert(partyRelationships)
-          .values({
-            acceptedByActionInvocationId: acceptance.actionInvocationId,
-            acceptedByPrincipalId: acceptance.principalId,
-            assertionState: 'ACTIVE',
-            fromPartyId: target.fromPartyId,
-            policyVersion: command.policyVersion,
-            provenanceMethod: command.provenance.method,
-            provenanceSource: command.provenance.source,
-            relationshipType: target.relationshipType,
-            revision: 1,
-            supersedesRelationshipId: target.relationshipId,
-            tenantId,
-            toPartyId: target.toPartyId,
-            validFrom: Option.match(command.replacementValidFrom, {
-              onNone: () => null,
-              onSome: instantAsDate,
-            }),
-            validTo: Option.match(command.replacementValidTo, {
-              onNone: () => null,
-              onSome: instantAsDate,
-            }),
-          })
-          .returning()
-          .pipe(Effect.mapError(relationshipMutationFailure));
-        if (replacement === undefined) {
-          return yield* unavailable();
-        }
-        replacementRelationshipId = replacement.relationshipId;
-        replacementAssertionId = replacement.relationshipId;
-      }
-    } else if (command.factKind === 'OFFICIAL_IDENTIFIER') {
-      correctedPartyId = command.partyId;
-      yield* requireCanonicalCorrectionTarget(transaction, tenantId, command.partyId);
-      const [targetRow] = yield* transaction
-        .select()
-        .from(partyOfficialIdentifiers)
-        .where(
-          and(
-            eq(partyOfficialIdentifiers.tenantId, tenantId),
-            eq(partyOfficialIdentifiers.officialIdentifierId, command.targetAssertionId),
-            eq(partyOfficialIdentifiers.partyId, command.partyId),
-          ),
-        )
-        .limit(1)
-        .for('update')
-        .pipe(Effect.mapError(unavailable));
-      const target = yield* requireActiveCurrentAssertion(
-        targetRow,
-        'The target Official Identifier assertion is absent or not active',
-      );
-      ({ officialIdentifierId } = target);
-      // The shared tenant-qualified claim lock serializes releases against create/add/unarchive.
-      // SAFETY: The persisted identifier columns are constrained to the closed identifier vocabulary.
-      yield* lockAndResolveClaims(transaction, tenantId, [
-        {
-          identifierType:
-            target.identifierTypeKey as NormalizedOfficialIdentifier['identifierType'],
-          namespace: target.namespace as NormalizedOfficialIdentifier['namespace'],
-          normalizedValue: target.normalizedValue,
-          verification: target.verificationState as NormalizedOfficialIdentifier['verification'],
-        },
-      ]);
-      const replacementIdentifier =
-        command.replacementValue === undefined
-          ? undefined
-          : yield* Schema.decodeUnknownEffect(OfficialIdentifierInputSchema)({
-              identifierType: target.identifierTypeKey,
-              value: command.replacementValue,
-              verification: 'UNVERIFIED',
-            }).pipe(
-              Effect.map(normalizeOfficialIdentifier),
-              Effect.mapError((cause) =>
-                attachCause(
-                  new PartyCorrectionConflict({
-                    code: 'party_correction_conflict',
-                    reason: 'The replacement Official Identifier is not formally valid',
-                  }),
-                  cause,
-                ),
-              ),
-            );
-      yield* transaction
-        .update(partyOfficialIdentifiers)
-        .set({
-          isCurrent: false,
-          state: transitionedAssertionState(command.replacementValue),
-          validTo: now,
-        })
-        .where(
-          and(
-            eq(partyOfficialIdentifiers.tenantId, tenantId),
-            eq(partyOfficialIdentifiers.officialIdentifierId, target.officialIdentifierId),
-          ),
-        )
-        .pipe(Effect.mapError(unavailable));
-      yield* transaction
-        .delete(partyIdentifierClaims)
-        .where(
-          and(
-            eq(partyIdentifierClaims.tenantId, tenantId),
-            eq(partyIdentifierClaims.officialIdentifierId, target.officialIdentifierId),
-          ),
-        )
-        .pipe(Effect.mapError(unavailable));
-      if (replacementIdentifier !== undefined) {
-        const [replacement] = yield* transaction
-          .insert(partyOfficialIdentifiers)
-          .values({
-            acceptedByActionInvocationId: acceptance.actionInvocationId,
-            acceptedByPrincipalId: acceptance.principalId,
-            identifierTypeKey: target.identifierTypeKey,
-            namespace: replacementIdentifier.namespace,
-            normalizedValue: replacementIdentifier.normalizedValue,
-            partyId: command.partyId,
-            policyVersion: command.policyVersion,
-            provenanceMethod: command.provenance.method,
-            provenanceSource: command.provenance.source,
-            state: 'ACTIVE',
-            supersedesOfficialIdentifierId: target.officialIdentifierId,
-            tenantId,
-            validFrom: now,
-            verificationState: 'UNVERIFIED',
-          })
-          .returning()
-          .pipe(Effect.mapError(unavailable));
-        if (replacement === undefined) {
-          return yield* unavailable();
-        }
-        replacementOfficialIdentifierId = replacement.officialIdentifierId;
-        replacementAssertionId = replacement.officialIdentifierId;
-      }
-    } else {
-      correctedPartyId = command.partyId;
-      yield* requireCanonicalCorrectionTarget(transaction, tenantId, command.partyId);
-      const [targetRow] = yield* transaction
-        .select()
-        .from(partyFactAssertions)
-        .where(
-          and(
-            eq(partyFactAssertions.tenantId, tenantId),
-            eq(partyFactAssertions.assertionId, command.targetAssertionId),
-            eq(partyFactAssertions.partyId, command.partyId),
-            eq(partyFactAssertions.factKind, command.factKind),
-          ),
-        )
-        .limit(1)
-        .for('update')
-        .pipe(Effect.mapError(unavailable));
-      const target = yield* requireActiveCurrentAssertion(
-        targetRow,
-        'The target Party assertion is absent or not active',
-      );
-      replacementEvidenceEvaluation = yield* validatePartyTypeCorrection(
-        transaction,
-        tenantId,
-        command,
-        target.normalizedValue,
-      );
-      partyFactAssertionId = target.assertionId;
-      yield* transaction
-        .update(partyFactAssertions)
-        .set({
-          isCurrent: false,
-          state: transitionedAssertionState(command.replacementValue),
-          validTo: now,
-        })
-        .where(
-          and(
-            eq(partyFactAssertions.tenantId, tenantId),
-            eq(partyFactAssertions.assertionId, target.assertionId),
-          ),
-        )
-        .pipe(Effect.mapError(unavailable));
-      if (command.replacementValue !== undefined) {
-        const { replacementValue } = command;
-        const [replacement] = yield* transaction
-          .insert(partyFactAssertions)
-          .values({
-            acceptedByActionInvocationId: acceptance.actionInvocationId,
-            acceptedByPrincipalId: acceptance.principalId,
-            evidenceEvaluation: replacementEvidenceEvaluation,
-            factKind: command.factKind,
-            normalizedValue: replacementValue,
-            partyId: command.partyId,
-            policyVersion: command.policyVersion,
-            provenanceMethod: command.provenance.method,
-            provenanceSource: command.provenance.source,
-            state: 'ACTIVE',
-            supersedesAssertionId: target.assertionId,
-            tenantId,
-            validFrom: now,
-          })
-          .returning()
-          .pipe(Effect.mapError(unavailable));
-        if (replacement === undefined) {
-          return yield* unavailable();
-        }
-        replacementAssertionId = replacement.assertionId;
-        yield* transaction
-          .update(parties)
-          .set(
-            command.factKind === 'PARTY_TYPE'
-              ? {
-                  currentType: replacementValue,
-                  revision: sql`${parties.revision} + 1`,
-                  updatedAt: now,
-                }
-              : {
-                  currentDisplayName: replacementValue,
-                  revision: sql`${parties.revision} + 1`,
-                  updatedAt: now,
-                },
-          )
-          .where(and(eq(parties.tenantId, tenantId), eq(parties.partyId, command.partyId)))
-          .pipe(Effect.mapError(unavailable));
-      }
-    }
+    const correctionTarget = yield* Match.value(command).pipe(
+      Match.when({ factKind: 'RELATIONSHIP' }, (relationship) =>
+        correctRelationship(transaction, tenantId, relationship, acceptance),
+      ),
+      Match.when({ factKind: 'OFFICIAL_IDENTIFIER' }, (identifier) =>
+        correctOfficialIdentifier(transaction, tenantId, identifier, acceptance, now),
+      ),
+      Match.orElse((identity) =>
+        correctIdentityAssertion(transaction, tenantId, identity, acceptance, now),
+      ),
+    );
+    const {
+      correctedPartyId,
+      replacementAssertionId,
+      partyFactAssertionId,
+      officialIdentifierId,
+      replacementOfficialIdentifierId,
+      relationshipId,
+      replacementRelationshipId,
+    } = {
+      partyFactAssertionId: null,
+      officialIdentifierId: null,
+      replacementOfficialIdentifierId: null,
+      relationshipId: null,
+      replacementRelationshipId: null,
+      ...correctionTarget,
+    };
     const [correction] = yield* transaction
       .insert(partyCorrections)
       .values({
@@ -568,6 +634,19 @@ export const correctPartyFactRecord = Effect.fn('PartyCorrectionService.correctP
   },
 );
 
+const relationshipEndEvidence = (row: typeof partyRelationships.$inferSelect) =>
+  row.validTo !== null &&
+  row.endProvenanceMethod !== null &&
+  row.endProvenanceSource !== null &&
+  row.endedRecordedAt !== null
+    ? {
+        effectiveAt: row.validTo.toISOString(),
+        provenance: { method: row.endProvenanceMethod, source: row.endProvenanceSource },
+        reason: row.endReason,
+        recordedAt: row.endedRecordedAt.toISOString(),
+      }
+    : null;
+
 const loadCorrectionAssertion = Effect.fn('PartyCorrectionService.loadCorrectionAssertion')(
   function* loadImmutableAssertion(
     transaction: Pick<PartyTransaction, 'select'>,
@@ -593,18 +672,7 @@ const loadCorrectionAssertion = Effect.fn('PartyCorrectionService.loadCorrection
       return yield* Schema.decodeUnknownEffect(PartyCorrectionAssertionValueSchema)({
         assertionId: row.relationshipId,
         assertionState: row.assertionState,
-        endEvidence:
-          row.validTo !== null &&
-          row.endProvenanceMethod !== null &&
-          row.endProvenanceSource !== null &&
-          row.endedRecordedAt !== null
-            ? {
-                effectiveAt: row.validTo.toISOString(),
-                provenance: { method: row.endProvenanceMethod, source: row.endProvenanceSource },
-                reason: row.endReason,
-                recordedAt: row.endedRecordedAt.toISOString(),
-              }
-            : null,
+        endEvidence: relationshipEndEvidence(row),
         factKind,
         fromPartyRef: makePartyRef(tenantId, row.fromPartyId),
         provenance: { method: row.provenanceMethod, source: row.provenanceSource },
@@ -671,6 +739,31 @@ const loadCorrectionAssertion = Effect.fn('PartyCorrectionService.loadCorrection
   },
 );
 
+const correctionAssertionTargets = Effect.fn('PartyCorrectionService.correctionAssertionTargets')(
+  function* correctionAssertionTargets(
+    row: typeof partyCorrections.$inferSelect,
+    reason: typeof StoredCorrectionReasonSchema.Type,
+  ) {
+    let { factKind } = reason;
+    if (row.officialIdentifierId !== null) {
+      factKind = 'OFFICIAL_IDENTIFIER';
+    }
+    if (row.relationshipId !== null) {
+      factKind = 'RELATIONSHIP';
+    }
+    const targetAssertionId =
+      row.partyFactAssertionId ?? row.officialIdentifierId ?? row.relationshipId;
+    if (targetAssertionId === null) {
+      return yield* unavailable();
+    }
+    const replacementAssertionId =
+      row.replacementPartyFactAssertionId ??
+      row.replacementOfficialIdentifierId ??
+      row.replacementRelationshipId;
+    return { factKind, targetAssertionId, replacementAssertionId };
+  },
+);
+
 export const findPartyCorrection = Effect.fn('PartyCorrectionService.findPartyCorrection')(
   function* findCorrection(
     transaction: Pick<PartyTransaction, 'select'>,
@@ -695,22 +788,8 @@ export const findPartyCorrection = Effect.fn('PartyCorrectionService.findPartyCo
       return yield* unavailable();
     }
     const storedReason = yield* decodeStoredCorrectionReason(row.reason);
-    let { factKind } = storedReason;
-    if (row.officialIdentifierId !== null) {
-      factKind = 'OFFICIAL_IDENTIFIER';
-    }
-    if (row.relationshipId !== null) {
-      factKind = 'RELATIONSHIP';
-    }
-    const targetAssertionId =
-      row.partyFactAssertionId ?? row.officialIdentifierId ?? row.relationshipId;
-    if (targetAssertionId === null) {
-      return yield* unavailable();
-    }
-    const replacementAssertionId =
-      row.replacementPartyFactAssertionId ??
-      row.replacementOfficialIdentifierId ??
-      row.replacementRelationshipId;
+    const { factKind, targetAssertionId, replacementAssertionId } =
+      yield* correctionAssertionTargets(row, storedReason);
     const originalAssertion = yield* loadCorrectionAssertion(
       transaction,
       tenantId,

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { v1 } from '@authzed/authzed-node';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import {
   ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID,
   ActionAuthorizationProvisioningError,
@@ -105,7 +105,7 @@ const rejectionOf = async <Value,>(promise: Promise<Value>): Promise<Error> => {
   try {
     await promise;
   } catch (error) {
-    if (error instanceof Error) {
+    if (Predicate.isError(error)) {
       return error;
     }
     return assert.fail('Expected the Promise to reject with an Error');
@@ -343,6 +343,24 @@ interface ProvisioningClientFixture {
   readonly state: ProvisioningClientState;
 }
 
+const permissionResponse = (hasPermission: boolean) =>
+  Option.some(
+    response(
+      hasPermission
+        ? v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION
+        : v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
+    ),
+  );
+
+const hasActionGrant = (
+  grants: ReadonlySet<string>,
+  resourceId: string,
+  principalId: string,
+  tenantId: string | undefined,
+): boolean =>
+  grants.has(`${resourceId}:${principalId}`) ||
+  (tenantId !== undefined && grants.has(`${resourceId}:${tenantId}`));
+
 const makeProvisioningClient = (
   contexts: readonly ActionAuthorizationContext[],
 ): ProvisioningClientFixture => {
@@ -359,27 +377,13 @@ const makeProvisioningClient = (
     client: {
       checkPermission: (request) =>
         Effect.sync(() => {
-          if (request.permission === 'access') {
-            return Option.some(
-              response(
-                principalTenants.get(request.subject?.object?.objectId ?? '') ===
-                  request.resource?.objectId
-                  ? v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION
-                  : v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
-              ),
-            );
-          }
           const principalId = request.subject?.object?.objectId ?? '';
           const tenantId = principalTenants.get(principalId);
-          const tenantGrant = `${request.resource?.objectId ?? ''}:${tenantId ?? ''}`;
-          const principalGrant = `${request.resource?.objectId ?? ''}:${principalId}`;
-          return Option.some(
-            response(
-              state.grants.has(principalGrant) ||
-                (tenantId !== undefined && state.grants.has(tenantGrant))
-                ? v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION
-                : v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
-            ),
+          if (request.permission === 'access') {
+            return permissionResponse(tenantId === request.resource?.objectId);
+          }
+          return permissionResponse(
+            hasActionGrant(state.grants, request.resource?.objectId ?? '', principalId, tenantId),
           );
         }),
       writeRelationships: (request) =>

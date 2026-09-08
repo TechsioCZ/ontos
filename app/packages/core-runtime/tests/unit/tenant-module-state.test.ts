@@ -1,3 +1,4 @@
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
@@ -27,45 +28,15 @@ import {
 const contract = (
   moduleId: string,
   supportedStates: OntosModuleDeploymentContract['manifest']['activation']['supportedStates'],
-): OntosModuleDeploymentContract => ({
-  deployment: { appId: 'unit-module', buildMarker: 'unit-build' },
-  manifest: {
-    activation: {
-      defaultState: 'inactive',
-      preservesHistoryWhenInactive: true,
-      scope: 'tenant',
-      supportedStates,
-    },
-    module: {
-      description: 'Unit module',
-      displayName: 'Unit module',
-      id: moduleId,
-      implementedAs: 'ultramodern_microvertical',
-      kind: 'business_module',
-    },
-    publicSurface: {
-      actions: [],
-      api: [],
-      components: [],
-      events: [],
-      reports: [],
-      resourceTypes: [],
-      search: [],
-      shellContributions: {
-        mediaAttachments: [],
-        navigation: [],
-        pages: [],
-        publicComponents: [],
-        reports: [],
-        resourceDetails: [],
-        search: [],
-        timelines: [],
-      },
-    },
-  },
-  runtime: { outboxSubscriptions: [] },
-  schemaVersion: '2',
-});
+): OntosModuleDeploymentContract =>
+  makeModuleContractFixture({
+    appId: 'unit-module',
+    buildMarker: 'unit-build',
+    description: 'Unit module',
+    displayName: 'Unit module',
+    moduleId,
+    supportedStates,
+  });
 
 const catalog = (
   ...contracts: readonly OntosModuleDeploymentContract[]

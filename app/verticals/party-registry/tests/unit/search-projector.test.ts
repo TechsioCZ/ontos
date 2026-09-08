@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Exit, Match } from 'effect';
 import {
-  makeCoreSearchQueryRuntime,
+  createCoreSearchQueryRuntime,
   makeCoreSearchIngestion,
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
@@ -79,7 +79,7 @@ test('post-commit projection makes only active permission-safe identity evidence
           kind: 'upsert',
         }),
       )(documents);
-      const search = makeCoreSearchQueryRuntime(store);
+      const search = createCoreSearchQueryRuntime(store);
       const query = (value: string) =>
         search.search({
           effectiveAt: '2026-09-03T00:00:00.000Z',
@@ -131,7 +131,7 @@ test('aliases collapse to canonical identity and only alias-only evidence labels
         }),
       )(documents);
       const query = (value: string) =>
-        makeCoreSearchQueryRuntime(store).search({
+        createCoreSearchQueryRuntime(store).search({
           includeArchived: false,
           moduleId: 'party.registry',
           query: value,
@@ -175,7 +175,7 @@ test('snapshot-generation replay is idempotent, archive/unarchive refreshes and 
           partyId: partyRef.resourceId,
         });
       const query = (includeArchived = false) =>
-        makeCoreSearchQueryRuntime(store).search({
+        createCoreSearchQueryRuntime(store).search({
           includeArchived,
           moduleId: 'party.registry',
           query: 'ACME',
@@ -248,7 +248,7 @@ test('future-ended contact disappears at its period boundary without another lif
         }),
       )(documents);
       const query = (effectiveAt: string) =>
-        makeCoreSearchQueryRuntime(store).search({
+        createCoreSearchQueryRuntime(store).search({
           effectiveAt,
           includeArchived: false,
           moduleId: 'party.registry',
@@ -312,7 +312,7 @@ test('Counterparty identity survives aliases, current-role expiry and canonical-
           kind: 'upsert',
         }),
       )(documents);
-      const gateway = makePartySearchProjectionGateway(makeCoreSearchQueryRuntime(store));
+      const gateway = makePartySearchProjectionGateway(createCoreSearchQueryRuntime(store));
       const input = {
         effectiveAt: '2026-09-03T00:00:00.000Z',
         includeArchived: false,
@@ -371,7 +371,7 @@ test('shared public contact returns multiple Parties without uniqueness or match
           kind: 'upsert',
         }),
       )(documents);
-      const hits = yield* makeCoreSearchQueryRuntime(store).search({
+      const hits = yield* createCoreSearchQueryRuntime(store).search({
         includeArchived: false,
         moduleId: 'party.registry',
         query: 'public@example.test',
@@ -415,7 +415,7 @@ test('rebuild reconciles omitted documents and preserves tombstones against stal
         partyId: 'party-1',
       });
       assert.deepEqual(
-        yield* makeCoreSearchQueryRuntime(store).search({
+        yield* createCoreSearchQueryRuntime(store).search({
           includeArchived: true,
           moduleId: 'party.registry',
           query: 'ACME',
@@ -455,7 +455,7 @@ test('source failure is sanitized and leaves previously searchable state intact 
           partyId: 'party-1',
         }),
       );
-      const priorHits = yield* makeCoreSearchQueryRuntime(store).search({
+      const priorHits = yield* createCoreSearchQueryRuntime(store).search({
         includeArchived: false,
         moduleId: 'party.registry',
         query: 'ACME',
@@ -542,7 +542,7 @@ test('projection generation is independent of an out-of-order business event seq
           partyId: 'party-1',
         },
       );
-      const hits = yield* makeCoreSearchQueryRuntime(store).search({
+      const hits = yield* createCoreSearchQueryRuntime(store).search({
         includeArchived: false,
         moduleId: 'party.registry',
         query: 'ACME',
@@ -591,7 +591,7 @@ test('correction and identifier/contact changes replace obsolete evidence instea
         partyId: 'party-1',
       });
       const query = (value: string) =>
-        makeCoreSearchQueryRuntime(store).search({
+        createCoreSearchQueryRuntime(store).search({
           includeArchived: false,
           moduleId: 'party.registry',
           query: value,
@@ -628,7 +628,7 @@ test('a complete empty rebuild also rejects delayed evidence for a never-before-
       yield* projector.project(context, {
         partyId: 'party-1',
       });
-      const hits = yield* makeCoreSearchQueryRuntime(store).search({
+      const hits = yield* createCoreSearchQueryRuntime(store).search({
         includeArchived: true,
         moduleId: 'party.registry',
         query: 'ACME',

@@ -13,7 +13,6 @@ import {
 } from '../../shared/domain/relationship-contract.ts';
 import type {
   CreatePartyRelationshipPayload as Payload,
-  CreatePartyRelationshipResult as Result,
   PartyRelationshipLifecycleEventPayload,
 } from '../../shared/domain/relationship-contract.ts';
 import { createPartyRelationshipRecord } from '../services/party-relationship-persistence.service.ts';
@@ -22,9 +21,6 @@ import type {
   RelationshipMutationError,
 } from '../services/party-relationship-persistence.service.ts';
 import { createCreatePartyRelationshipPartyRegistryRelationshipCreatedV1OutboxMessage } from './create-party-relationship.party-registry-relationship-created-v1.outbox-message.ts';
-
-export type CreatePartyRelationshipPayload = Payload;
-export type CreatePartyRelationshipResult = Result;
 
 const eventPayload = (
   result: RelationshipCreateResult,
@@ -132,11 +128,3 @@ export const createPartyRelationshipAction = defineAction(
         ),
     }),
 );
-
-// <generated-outbox-message-exports>
-export { createCreatePartyRelationshipPartyRegistryRelationshipCreatedV1OutboxMessage } from './create-party-relationship.party-registry-relationship-created-v1.outbox-message.ts';
-export { CreatePartyRelationshipPartyRegistryRelationshipCreatedV1OutboxPayloadSchema } from './create-party-relationship.party-registry-relationship-created-v1.outbox-message.ts';
-export { CreatePartyRelationshipPartyRegistryRelationshipCreatedV1OutboxProducerModuleKey } from './create-party-relationship.party-registry-relationship-created-v1.outbox-message.ts';
-export { CreatePartyRelationshipPartyRegistryRelationshipCreatedV1OutboxTopic } from './create-party-relationship.party-registry-relationship-created-v1.outbox-message.ts';
-export type { CreatePartyRelationshipPartyRegistryRelationshipCreatedV1OutboxPayload } from './create-party-relationship.party-registry-relationship-created-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

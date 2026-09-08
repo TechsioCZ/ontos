@@ -322,10 +322,9 @@ export {
   CoreSearchQuerySchema,
   CoreSearchResourceRefSchema,
   CoreSearchTemporalFacetSchema,
-  createCoreSearchQueryRuntime,
   decodeCoreSearchProjectionMutation,
   decodeCoreSearchProjectionReplacement,
-  makeCoreSearchQueryRuntime,
+  createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
 } from './search/projection.ts';
 export type {

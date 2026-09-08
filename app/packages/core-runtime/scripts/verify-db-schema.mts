@@ -67,7 +67,7 @@ const verifyTypedQuery = <Result,>(
     Effect.asVoid,
   );
 
-const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
+const verifyRuntimeRole = Effect.gen(function* verifyRuntimeRoleEffect() {
   const database = yield* CoreDatabase;
   const runtimeRole = yield* database.executor
     .execute<RuntimeRoleRow>(
@@ -90,7 +90,11 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
       reason: 'The application runtime role must be non-superuser and must not bypass RLS',
     });
   }
+  return yield* Effect.void;
+});
 
+const verifySearchIsolation = Effect.gen(function* verifySearchIsolationEffect() {
+  const database = yield* CoreDatabase;
   for (const [tableName, operations] of [
     ['search_index_entries', ['delete', 'insert', 'select', 'update']],
     ['search_projection_generations', ['insert', 'select', 'update']],
@@ -144,7 +148,108 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
       });
     }
   }
+  return yield* Effect.void;
+});
 
+const verifyCatalog = Effect.gen(function* verifyCatalogEffect() {
+  const database = yield* CoreDatabase;
+  // Necessary migration-verification exception: Drizzle has no typed builder
+  // for PostgreSQL catalog metadata. Values stay parameterized and the query is
+  // covered by exact-set mismatch tests.
+  const catalogResult = yield* database.executor
+    .execute<CatalogRow>(
+      sql`
+        with application_tables as (
+          select
+            ${'table'}::text as kind,
+            namespace.nspname as schema_name,
+            relation.relname as table_name
+          from pg_catalog.pg_namespace as namespace
+          inner join pg_catalog.pg_class as relation
+            on relation.relnamespace = namespace.oid
+          where relation.relkind in (${'r'}, ${'p'})
+            and namespace.nspname = ${CORE_SCHEMA_NAME}
+        ),
+        migration_bookkeeping as (
+          select
+            ${'migration'}::text as kind,
+            namespace.nspname as schema_name,
+            relation.relname as table_name
+          from pg_catalog.pg_namespace as namespace
+          inner join pg_catalog.pg_class as relation
+            on relation.relnamespace = namespace.oid
+          where relation.relkind = ${'r'}
+            and namespace.nspname = ${'drizzle'}
+            and relation.relname = ${'__drizzle_migrations_core'}
+        )
+        select kind, schema_name, table_name from application_tables
+        union all
+        select kind, schema_name, table_name from migration_bookkeeping
+        order by kind, schema_name, table_name
+      `,
+      'objects',
+    )
+    .pipe(
+      Effect.mapError(
+        () =>
+          new DatabaseVerificationError({
+            reason: 'Unable to compare the PostgreSQL application catalog',
+          }),
+      ),
+    );
+
+  const entries: CatalogEntry[] = [];
+  const migrationBookkeepingTables: string[] = [];
+
+  for (const row of catalogResult) {
+    if (row.kind === 'migration') {
+      if (row.table_name !== null) {
+        migrationBookkeepingTables.push(row.table_name);
+      }
+      continue;
+    }
+
+    if (row.table_name === null) {
+      return yield* new DatabaseVerificationError({
+        reason: `Catalog table ${row.schema_name} is missing its table name`,
+      });
+    }
+
+    entries.push({
+      kind: 'table',
+      schemaName: row.schema_name,
+      tableName: row.table_name,
+    });
+  }
+
+  const expectedMigrationBookkeepingTables = ['__drizzle_migrations_core'];
+  migrationBookkeepingTables.sort();
+
+  if (
+    migrationBookkeepingTables.length !== expectedMigrationBookkeepingTables.length ||
+    migrationBookkeepingTables.some(
+      (tableName, index) => tableName !== expectedMigrationBookkeepingTables[index],
+    )
+  ) {
+    return yield* new DatabaseVerificationError({
+      reason: `Expected Drizzle migration bookkeeping tables [${expectedMigrationBookkeepingTables.join(', ')}], found [${migrationBookkeepingTables.join(', ')}]`,
+    });
+  }
+
+  const difference = compareApplicationCatalog(entries);
+
+  if (difference.missing.length > 0 || difference.unexpected.length > 0) {
+    return yield* new DatabaseVerificationError({
+      reason: `Core catalog mismatch; missing=[${difference.missing.join(', ')}], unexpected=[${difference.unexpected.join(', ')}]`,
+    });
+  }
+  return yield* Effect.void;
+});
+
+const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
+  const database = yield* CoreDatabase;
+  yield* verifyRuntimeRole;
+  yield* verifySearchIsolation;
   const requiredCompositeConstraints = [
     'core_action_invocations_tenant_auth_binding_fk',
     'core_action_invocations_tenant_impersonator_fk',
@@ -263,96 +368,7 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
     yield* query;
   }
 
-  // Necessary migration-verification exception: Drizzle has no typed builder
-  // for PostgreSQL catalog metadata. Values stay parameterized and the query is
-  // covered by exact-set mismatch tests.
-  const catalogResult = yield* database.executor
-    .execute<CatalogRow>(
-      sql`
-        with application_tables as (
-          select
-            ${'table'}::text as kind,
-            namespace.nspname as schema_name,
-            relation.relname as table_name
-          from pg_catalog.pg_namespace as namespace
-          inner join pg_catalog.pg_class as relation
-            on relation.relnamespace = namespace.oid
-          where relation.relkind in (${'r'}, ${'p'})
-            and namespace.nspname = ${CORE_SCHEMA_NAME}
-        ),
-        migration_bookkeeping as (
-          select
-            ${'migration'}::text as kind,
-            namespace.nspname as schema_name,
-            relation.relname as table_name
-          from pg_catalog.pg_namespace as namespace
-          inner join pg_catalog.pg_class as relation
-            on relation.relnamespace = namespace.oid
-          where relation.relkind = ${'r'}
-            and namespace.nspname = ${'drizzle'}
-            and relation.relname = ${'__drizzle_migrations_core'}
-        )
-        select kind, schema_name, table_name from application_tables
-        union all
-        select kind, schema_name, table_name from migration_bookkeeping
-        order by kind, schema_name, table_name
-      `,
-      'objects',
-    )
-    .pipe(
-      Effect.mapError(
-        () =>
-          new DatabaseVerificationError({
-            reason: 'Unable to compare the PostgreSQL application catalog',
-          }),
-      ),
-    );
-
-  const entries: CatalogEntry[] = [];
-  const migrationBookkeepingTables: string[] = [];
-
-  for (const row of catalogResult) {
-    if (row.kind === 'migration') {
-      if (row.table_name !== null) {
-        migrationBookkeepingTables.push(row.table_name);
-      }
-      continue;
-    }
-
-    if (row.table_name === null) {
-      return yield* new DatabaseVerificationError({
-        reason: `Catalog table ${row.schema_name} is missing its table name`,
-      });
-    }
-
-    entries.push({
-      kind: 'table',
-      schemaName: row.schema_name,
-      tableName: row.table_name,
-    });
-  }
-
-  const expectedMigrationBookkeepingTables = ['__drizzle_migrations_core'];
-  migrationBookkeepingTables.sort();
-
-  if (
-    migrationBookkeepingTables.length !== expectedMigrationBookkeepingTables.length ||
-    migrationBookkeepingTables.some(
-      (tableName, index) => tableName !== expectedMigrationBookkeepingTables[index],
-    )
-  ) {
-    return yield* new DatabaseVerificationError({
-      reason: `Expected Drizzle migration bookkeeping tables [${expectedMigrationBookkeepingTables.join(', ')}], found [${migrationBookkeepingTables.join(', ')}]`,
-    });
-  }
-
-  const difference = compareApplicationCatalog(entries);
-
-  if (difference.missing.length > 0 || difference.unexpected.length > 0) {
-    return yield* new DatabaseVerificationError({
-      reason: `Core catalog mismatch; missing=[${difference.missing.join(', ')}], unexpected=[${difference.unexpected.join(', ')}]`,
-    });
-  }
+  yield* verifyCatalog;
 
   return {
     tableCount: typedQueries.length,

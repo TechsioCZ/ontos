@@ -1,7 +1,8 @@
+import { snapshotTree, write } from './fixture-files.mts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -35,31 +36,6 @@ type JsonValue =
   | { readonly [key: string]: JsonValue };
 
 const json = (value: JsonValue): string => `${JSON.stringify(value, null, 2)}\n`;
-
-const write = async (root: string, relativePath: string, content: string): Promise<void> => {
-  const target = path.join(root, relativePath);
-  await mkdir(path.dirname(target), { recursive: true });
-  await writeFile(target, content, 'utf-8');
-};
-
-const snapshotTree = async (root: string): Promise<Readonly<Record<string, string>>> => {
-  const snapshot: Record<string, string> = {};
-  const visit = async (directory: string): Promise<void> => {
-    const entries = await readdir(directory, { withFileTypes: true });
-    await Promise.all(
-      entries.map(async (entry) => {
-        const entryPath = path.join(directory, entry.name);
-        if (entry.isDirectory() && entry.name !== 'node_modules') {
-          await visit(entryPath);
-        } else if (entry.isFile()) {
-          snapshot[path.relative(root, entryPath)] = await readFile(entryPath, 'utf-8');
-        }
-      }),
-    );
-  };
-  await visit(root);
-  return snapshot;
-};
 
 const createFixture = async (): Promise<string> => {
   const root = await mkdtemp(path.join(tmpdir(), 'ontos-resource-scaffold-'));
@@ -288,14 +264,14 @@ await test('resource scaffold publishes a typed ResourceRef and registers its de
 
 await test('resource scaffold rejects traversal and reruns without partial writes', async () => {
   await withFixture(async (root) => {
-    const beforeTraversal = await snapshotTree(root);
+    const beforeTraversal = await snapshotTree(root, ['node_modules']);
     await assert.rejects(scaffoldResource(root, '../unsafe'), /lower-kebab-case/u);
-    assert.deepEqual(await snapshotTree(root), beforeTraversal);
+    assert.deepEqual(await snapshotTree(root, ['node_modules']), beforeTraversal);
 
     await scaffoldResource(root);
-    const afterFirstRun = await snapshotTree(root);
+    const afterFirstRun = await snapshotTree(root, ['node_modules']);
     await assert.rejects(scaffoldResource(root), /refusing to overwrite existing business file/u);
-    assert.deepEqual(await snapshotTree(root), afterFirstRun);
+    assert.deepEqual(await snapshotTree(root, ['node_modules']), afterFirstRun);
   });
 });
 
@@ -308,9 +284,9 @@ await test('resource scaffold leaves no artifact when generated owner slots or e
       manifest.replace('// <generated-module-manifest-resources>', '// invalid-resource-slot'),
       'utf-8',
     );
-    const beforeMissingSlot = await snapshotTree(root);
+    const beforeMissingSlot = await snapshotTree(root, ['node_modules']);
     await assert.rejects(scaffoldResource(root), /generated owner file/u);
-    assert.deepEqual(await snapshotTree(root), beforeMissingSlot);
+    assert.deepEqual(await snapshotTree(root, ['node_modules']), beforeMissingSlot);
   });
 
   await withFixture(async (root) => {
@@ -326,9 +302,9 @@ await test('resource scaffold leaves no artifact when generated owner slots or e
       },
     };
     await writeFile(packagePath, json(packageWithExportCollision), 'utf-8');
-    const beforeExportCollision = await snapshotTree(root);
+    const beforeExportCollision = await snapshotTree(root, ['node_modules']);
     await assert.rejects(scaffoldResource(root), /resource contract export .* already exists/u);
-    assert.deepEqual(await snapshotTree(root), beforeExportCollision);
+    assert.deepEqual(await snapshotTree(root, ['node_modules']), beforeExportCollision);
   });
 });
 

@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * Audit A6 (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`) asks for Logger,
  * Tracer/OpenTelemetry and minimum-level Layers at runtime roots.
@@ -22,9 +23,14 @@
 import { defineRule } from '@oxlint/plugins';
 import { fileURLToPath } from 'node:url';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
+import { isTestFile, normalisePath, matchesGlobs } from '../shared/paths.ts';
+import { stringArray, booleanOption as boolOption } from '../shared/options.ts';
+import { unwrapNode as unwrap, memberName as sharedMemberName, keyName } from '../shared/ast.ts';
+import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
+import { importedName } from '../shared/imports.ts';
+import { isNonReferencePosition as sharedNonReferencePosition } from '../shared/reference-positions.ts';
 
 const EFFECT_MODULE = /^effect(?:\/.*)?$/u;
 const EFFECT_ROOT_MODULE = 'effect';
@@ -80,7 +86,6 @@ const DEFAULT_MINIMUM_LOG_LEVEL_MEMBERS = [
 /** Effect namespaces whose use is recognized local observability evidence. */
 const LOGGER_NAMESPACE = 'Logger';
 const TRACER_NAMESPACE = 'Tracer';
-const EFFECT_NAMESPACE = 'Effect';
 
 interface RequireOptions {
   readonly logger: boolean;
@@ -102,22 +107,8 @@ interface RuleOptions {
   readonly require: RequireOptions;
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
-function boolOption(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   const rawRequire = record.require;
   const requireRecord: Record<string, unknown> =
     typeof rawRequire === 'object' && rawRequire !== null && !Array.isArray(rawRequire)
@@ -157,10 +148,6 @@ function scopePath(filename: string): string {
     : normalisePath(unified).replace(FIXTURE_PREFIX, '');
 }
 
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
 /** `["ManagedRuntime.make"]` → `Set{"ManagedRuntime.make"}`, ignoring malformed entries. */
 function qualifiedSet(entries: readonly string[]): ReadonlySet<string> {
   const set = new Set<string>();
@@ -170,12 +157,6 @@ function qualifiedSet(entries: readonly string[]): ReadonlySet<string> {
     set.add(entry);
   }
   return set;
-}
-
-function importedName(specifier: ESTree.ImportSpecifier): string {
-  return specifier.imported.type === 'Identifier'
-    ? specifier.imported.name
-    : specifier.imported.value;
 }
 
 function isTypeOnly(
@@ -205,182 +186,136 @@ interface FileBindings {
   readonly otelValueImport: boolean;
 }
 
-function collectFileBindings(program: ESTree.Program, options: RuleOptions): FileBindings {
-  const namespaces = new Map<string, string>();
-  const directMembers = new Map<string, string>();
-  const barrels = new Set<string>();
-  const otelLocals = new Map<string, string>();
-  const runtimeTypeLocals = new Set<string>();
-  const runtimeTypeNamespaces = new Set<string>();
-  const runtimeTypeNames = new Set(options.runtimeTypeNames);
-  let importsEffect = false;
-  let loggerModuleImport = false;
-  let tracerModuleImport = false;
-  let otelValueImport = false;
+type CollectedBindings = {
+  namespaces: Map<string, string>;
+  directMembers: Map<string, string>;
+  barrels: Set<string>;
+  otelLocals: Map<string, string>;
+  runtimeTypeLocals: Set<string>;
+  runtimeTypeNamespaces: Set<string>;
+  importsEffect: boolean;
+  loggerModuleImport: boolean;
+  tracerModuleImport: boolean;
+  otelValueImport: boolean;
+};
 
+function collectRuntimeTypes(
+  statement: ESTree.ImportDeclaration,
+  names: ReadonlySet<string>,
+  bindings: CollectedBindings,
+): void {
+  for (const specifier of statement.specifiers) {
+    if (specifier.type === 'ImportNamespaceSpecifier')
+      bindings.runtimeTypeNamespaces.add(specifier.local.name);
+    if (specifier.type === 'ImportSpecifier' && names.has(importedName(specifier)))
+      bindings.runtimeTypeLocals.add(specifier.local.name);
+  }
+}
+
+function collectEffectSpecifier(
+  specifier: ESTree.ImportDeclarationSpecifier,
+  source: string,
+  bindings: CollectedBindings,
+): void {
+  const submodule = source.split('/').at(-1);
+  const local = specifier.local.name;
+  if (specifier.type === 'ImportSpecifier') {
+    if (source !== EFFECT_ROOT_MODULE && submodule && /^[A-Z]/u.test(submodule))
+      bindings.directMembers.set(local, `${submodule}.${importedName(specifier)}`);
+    else bindings.namespaces.set(local, importedName(specifier));
+    return;
+  }
+  if (specifier.type !== 'ImportNamespaceSpecifier') return;
+  if (source === EFFECT_ROOT_MODULE) bindings.barrels.add(local);
+  else if (submodule !== undefined) bindings.namespaces.set(local, submodule);
+}
+
+function collectBarrelSpecifier(
+  specifier: ESTree.ImportDeclarationSpecifier,
+  bindings: CollectedBindings,
+): void {
+  if (specifier.type === 'ImportNamespaceSpecifier') bindings.barrels.add(specifier.local.name);
+  if (specifier.type !== 'ImportSpecifier') return;
+  const imported = importedName(specifier);
+  if (imported === 'OpenTelemetry') {
+    bindings.otelLocals.set(specifier.local.name, imported);
+    bindings.otelValueImport = true;
+  } else bindings.namespaces.set(specifier.local.name, imported);
+}
+
+function collectEffectImport(
+  specifiers: readonly ESTree.ImportDeclarationSpecifier[],
+  source: string,
+  bindings: CollectedBindings,
+): void {
+  if (specifiers.length === 0) return;
+  bindings.importsEffect = true;
+  const submodule = source.split('/').at(-1);
+  if (submodule === LOGGER_NAMESPACE) bindings.loggerModuleImport = true;
+  if (submodule === TRACER_NAMESPACE) bindings.tracerModuleImport = true;
+  for (const specifier of specifiers) collectEffectSpecifier(specifier, source, bindings);
+}
+
+function collectValueImport(
+  statement: ESTree.ImportDeclaration,
+  options: RuleOptions,
+  bindings: CollectedBindings,
+): void {
+  const source = statement.source.value;
+  const specifiers = statement.specifiers.filter((specifier) => !isTypeOnly(statement, specifier));
+  if (EFFECT_MODULE.test(source)) {
+    collectEffectImport(specifiers, source, bindings);
+    return;
+  }
+  if (matchesGlobs(source, options.otelModules)) {
+    for (const specifier of specifiers) {
+      bindings.otelValueImport = true;
+      bindings.otelLocals.set(
+        specifier.local.name,
+        specifier.type === 'ImportSpecifier' ? importedName(specifier) : specifier.local.name,
+      );
+    }
+    return;
+  }
+  if (!matchesGlobs(source, options.reexportModules)) return;
+  for (const specifier of specifiers) {
+    bindings.importsEffect = true;
+    collectBarrelSpecifier(specifier, bindings);
+  }
+}
+
+function collectFileBindings(program: ESTree.Program, options: RuleOptions): FileBindings {
+  const bindings: CollectedBindings = {
+    namespaces: new Map(),
+    directMembers: new Map(),
+    barrels: new Set(),
+    otelLocals: new Map(),
+    runtimeTypeLocals: new Set(),
+    runtimeTypeNamespaces: new Set(),
+    importsEffect: false,
+    loggerModuleImport: false,
+    tracerModuleImport: false,
+    otelValueImport: false,
+  };
+  const names = new Set(options.runtimeTypeNames);
   for (const statement of program.body) {
     if (statement.type !== 'ImportDeclaration') continue;
-    const source = statement.source.value;
-
-    // Runtime type identities are accepted only from configured framework barrels.
-    if (matchesGlobs(source, options.reexportModules)) {
-      for (const specifier of statement.specifiers) {
-        if (specifier.type === 'ImportNamespaceSpecifier')
-          runtimeTypeNamespaces.add(specifier.local.name);
-        if (specifier.type === 'ImportSpecifier' && runtimeTypeNames.has(importedName(specifier)))
-          runtimeTypeLocals.add(specifier.local.name);
-      }
-    }
-
-    if (EFFECT_MODULE.test(source)) {
-      const submodule = source.split('/').at(-1);
-      for (const specifier of statement.specifiers) {
-        if (isTypeOnly(statement, specifier)) continue;
-        importsEffect = true;
-        if (specifier.type === 'ImportSpecifier') {
-          if (source !== EFFECT_ROOT_MODULE && submodule && /^[A-Z]/u.test(submodule))
-            directMembers.set(specifier.local.name, `${submodule}.${importedName(specifier)}`);
-          else namespaces.set(specifier.local.name, importedName(specifier));
-        } else if (specifier.type === 'ImportNamespaceSpecifier') {
-          if (source === EFFECT_ROOT_MODULE) barrels.add(specifier.local.name);
-          else if (submodule !== undefined) namespaces.set(specifier.local.name, submodule);
-        }
-      }
-      if (
-        source !== EFFECT_ROOT_MODULE &&
-        statement.specifiers.some((specifier) => !isTypeOnly(statement, specifier))
-      ) {
-        if (submodule === LOGGER_NAMESPACE) loggerModuleImport = true;
-        if (submodule === TRACER_NAMESPACE) tracerModuleImport = true;
-      }
-      continue;
-    }
-
-    if (matchesGlobs(source, options.otelModules)) {
-      for (const specifier of statement.specifiers) {
-        if (isTypeOnly(statement, specifier)) continue;
-        otelValueImport = true;
-        const imported =
-          specifier.type === 'ImportSpecifier' ? importedName(specifier) : specifier.local.name;
-        otelLocals.set(specifier.local.name, imported);
-      }
-      continue;
-    }
-
-    if (matchesGlobs(source, options.reexportModules)) {
-      for (const specifier of statement.specifiers) {
-        if (isTypeOnly(statement, specifier)) continue;
-        importsEffect = true;
-        if (specifier.type === 'ImportSpecifier') {
-          if (importedName(specifier) === 'OpenTelemetry') {
-            otelLocals.set(specifier.local.name, 'OpenTelemetry');
-            otelValueImport = true;
-          } else namespaces.set(specifier.local.name, importedName(specifier));
-        } else if (specifier.type === 'ImportNamespaceSpecifier') barrels.add(specifier.local.name);
-      }
-    }
+    if (matchesGlobs(statement.source.value, options.reexportModules))
+      collectRuntimeTypes(statement, names, bindings);
+    collectValueImport(statement, options, bindings);
   }
-
-  return {
-    namespaces,
-    directMembers,
-    barrels,
-    otelLocals,
-    runtimeTypeLocals,
-    runtimeTypeNamespaces,
-    importsEffect,
-    loggerModuleImport,
-    tracerModuleImport,
-    otelValueImport,
-  };
+  return bindings;
 }
 
-function unwrap(node: ESTree.Node): ESTree.Node {
-  while (
-    [
-      'TSAsExpression',
-      'TSSatisfiesExpression',
-      'TSTypeAssertion',
-      'TSNonNullExpression',
-      'TSInstantiationExpression',
-      'ChainExpression',
-      'ParenthesizedExpression',
-    ].includes(node.type)
-  ) {
-    node = (node as unknown as { expression: ESTree.Node }).expression;
-  }
-  return node;
-}
-
-/** Non-computed `.make`, or computed `["make"]`. */
 function memberName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
-  const property = unwrap(node.property);
-  if (property.type === 'Literal' && typeof property.value === 'string') return property.value;
-  if (property.type === 'TemplateLiteral' && property.expressions.length === 0)
-    return property.quasis[0]?.value.cooked ?? null;
-  return null;
+  return sharedMemberName(node, { templates: true, unwrap: {} });
 }
-
-function lookupVariable(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(identifier);
-  while (scope !== null) {
-    const variable = scope.set.get(identifier.name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
-}
-
-/**
- * `true` when the identifier still resolves to an `import` binding. Unresolved names fall back to
- * `true` because the module-level import declaration already proved the binding exists; only a local
- * shadow (parameter, `const`, catch clause, …) rejects the match.
- */
-function resolvesToImport(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): boolean {
-  const variable = lookupVariable(context, identifier);
-  if (variable === null) return true;
-  if (variable.defs.length === 0) return true;
-  return variable.defs.some((definition) => definition.type === 'ImportBinding');
-}
-
-/** Identifier positions that are declarations or property keys, never references to the import. */
-function isNonReferencePosition(node: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
-  const parent = node.parent;
-  if (parent === null || parent === undefined) return true;
-  switch (parent.type) {
-    case 'ImportSpecifier':
-    case 'ImportDefaultSpecifier':
-    case 'ImportNamespaceSpecifier':
-    case 'ExportSpecifier': {
-      return true;
-    }
-    case 'VariableDeclarator': {
-      return parent.id === node;
-    }
-    case 'TSTypeQuery':
-    case 'TSTypeReference':
-    case 'TSQualifiedName': {
-      return true;
-    }
-    case 'MemberExpression': {
-      return parent.property === node && !parent.computed;
-    }
-    case 'Property':
-    case 'PropertyDefinition':
-    case 'MethodDefinition': {
-      return parent.key === node && !parent.computed;
-    }
-    default: {
-      return false;
-    }
-  }
+const NON_REFERENCE_TYPES = new Set(['TSTypeQuery', 'TSTypeReference', 'TSQualifiedName']);
+function isNonReferencePosition(node: ESTree.Node): boolean {
+  return sharedNonReferencePosition(node, {
+    variableBindings: true,
+    nonReferenceParents: NON_REFERENCE_TYPES,
+  });
 }
 
 const FUNCTION_TYPES = new Set([
@@ -419,34 +354,101 @@ const RETURN_TYPE_WRAPPERS = new Set([
  * through `&`, `|` and parentheses only, so a runtime type used as a *type argument*
  * (`Layer.Layer<EffectBffRuntime<…>>`) or in a plain alias is not mistaken for a root.
  */
+function initializedFunctionType(owner: ESTree.Node): ESTree.Node | null {
+  if (owner.type !== 'TSFunctionType') return null;
+  const annotation = owner.parent;
+  if (annotation?.type !== 'TSTypeAnnotation') return null;
+  const binding = annotation.parent;
+  const declaration = binding?.parent;
+  if (declaration?.type !== 'VariableDeclarator' || declaration.id !== binding || !declaration.init)
+    return null;
+  return declaration;
+}
+
+function returnAnnotationOwner(annotation: ESTree.Node): ESTree.Node | null {
+  const owner = annotation.parent as
+    | (ESTree.Node & { returnType?: unknown; body?: unknown })
+    | null
+    | undefined;
+  if (!owner || owner.returnType !== annotation) return null;
+  if (FUNCTION_TYPES.has(owner.type) && owner.body) return owner;
+  return initializedFunctionType(owner);
+}
+
 function functionOwningReturnType(node: ESTree.Node): ESTree.Node | null {
-  let current: ESTree.Node | null | undefined = node.parent;
-  while (current !== null && current !== undefined) {
-    if (current.type === 'TSTypeAnnotation') {
-      const owner = current.parent as (ESTree.Node & { returnType?: unknown }) | null | undefined;
-      if (owner === null || owner === undefined) return null;
-      if (owner.returnType !== current) return null;
-      if (FUNCTION_TYPES.has(owner.type) && (owner as { body?: unknown }).body) return owner;
-      // A function type annotating an initialized variable is executable; a type alias,
-      // interface member, ambient declaration or abstract signature is not.
-      if (owner.type === 'TSFunctionType') {
-        const annotation = owner.parent;
-        if (annotation?.type !== 'TSTypeAnnotation') return null;
-        const binding = annotation.parent;
-        const declaration = binding?.parent;
-        if (
-          declaration?.type === 'VariableDeclarator' &&
-          declaration.id === binding &&
-          declaration.init
-        )
-          return declaration;
-      }
-      return null;
-    }
+  let current = node.parent;
+  while (current) {
+    if (current.type === 'TSTypeAnnotation') return returnAnnotationOwner(current);
     if (!RETURN_TYPE_WRAPPERS.has(current.type)) return null;
     current = current.parent;
   }
   return null;
+}
+
+function excludedPath(path: string, options: RuleOptions): boolean {
+  if (
+    /\.d\.[cm]?ts$/u.test(path) ||
+    /(?:^|\/)(?:dist(?:-[^/]+)?|build|\.output|node_modules)\//u.test(path)
+  )
+    return true;
+  if (matchesGlobs(path, options.ignore)) return true;
+  if (!options.includeTests && isTestFile(path)) return true;
+  return /(?:^|\/)scripts\//u.test(path)
+    ? !options.includeScripts
+    : !matchesGlobs(path, options.include);
+}
+
+function qualifyValue(base: string | null, key: string | null): string | null {
+  if (base === null || key === null) return null;
+  return base === '$root' ? key : `${base}.${key}`;
+}
+
+function destructuredValue(
+  declaration: ESTree.VariableDeclarator,
+  name: string,
+  base: string | null,
+): string | null {
+  if (declaration.id.type === 'Identifier') return base;
+  if (declaration.id.type !== 'ObjectPattern' || base === null) return null;
+  for (const property of declaration.id.properties) {
+    if (
+      property.type !== 'Property' ||
+      property.value.type !== 'Identifier' ||
+      property.value.name !== name
+    )
+      continue;
+    return qualifyValue(base, keyName(property.key, property.computed, { templates: false }));
+  }
+  return null;
+}
+
+function aliasDeclaration(
+  variable: Variable | null,
+  seen: Set<Variable>,
+): ESTree.VariableDeclarator | null {
+  if (!variable || seen.has(variable)) return null;
+  if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
+  seen.add(variable);
+  const definition = variable.defs[0];
+  if (
+    definition?.type !== 'Variable' ||
+    definition.node.type !== 'VariableDeclarator' ||
+    !definition.node.init
+  )
+    return null;
+  return definition.node;
+}
+
+function rootAnchor(
+  roots: RootHit[],
+  program: ESTree.Program,
+): { node: ESTree.Node; kind: string } {
+  roots.sort((left, right) => left.start - right.start);
+  const first = roots[0];
+  return {
+    node: first?.node ?? program.body[0] ?? program,
+    kind: first?.kind ?? 'declared host entry point',
+  };
 }
 
 interface RootHit {
@@ -523,16 +525,7 @@ export const rule = defineRule({
   create(context) {
     const options = readOptions(context);
     const path = scopePath(context.filename);
-    if (
-      /\.d\.[cm]?ts$/u.test(path) ||
-      /(?:^|\/)(?:dist(?:-[^/]+)?|build|\.output|node_modules)\//u.test(path)
-    )
-      return {};
-    if (matchesGlobs(path, options.ignore)) return {};
-    if (!options.includeTests && isTestFile(path)) return {};
-    const script = /(?:^|\/)scripts\//u.test(path);
-    if (script && !options.includeScripts) return {};
-    if (!script && !matchesGlobs(path, options.include)) return {};
+    if (excludedPath(path, options)) return {};
 
     const program = context.sourceCode.ast;
     const bindings = collectFileBindings(program, options);
@@ -554,7 +547,7 @@ export const rule = defineRule({
       if (node.type === 'MemberExpression') {
         const base = resolveValue(node.object, seen);
         const key = memberName(node);
-        return base === null || key === null ? null : base === '$root' ? key : `${base}.${key}`;
+        return qualifyValue(base, key);
       }
       if (node.type !== 'Identifier') return null;
       const variable = lookupVariable(context, node);
@@ -564,40 +557,48 @@ export const rule = defineRule({
           bindings.namespaces.get(node.name) ??
           (bindings.barrels.has(node.name) ? '$root' : null)
         );
-      if (
-        !variable ||
-        seen.has(variable) ||
-        variable.references.some((reference) => reference.isWrite() && !reference.init)
-      )
-        return null;
-      seen.add(variable);
-      const definition = variable.defs[0];
-      if (
-        definition?.type !== 'Variable' ||
-        definition.node.type !== 'VariableDeclarator' ||
-        !definition.node.init
-      )
-        return null;
-      const declaration = definition.node;
-      const base = resolveValue(declaration.init!, seen);
-      if (declaration.id.type === 'Identifier') return base;
-      if (declaration.id.type !== 'ObjectPattern' || base === null) return null;
-      for (const property of declaration.id.properties) {
-        if (
-          property.type !== 'Property' ||
-          property.value.type !== 'Identifier' ||
-          property.value.name !== node.name
-        )
-          continue;
-        const key =
-          !property.computed && property.key.type === 'Identifier'
-            ? property.key.name
-            : property.key.type === 'Literal' && typeof property.key.value === 'string'
-              ? property.key.value
-              : null;
-        return key === null ? null : base === '$root' ? key : `${base}.${key}`;
+      const declaration = aliasDeclaration(variable, seen);
+      if (!declaration?.init) return null;
+      return destructuredValue(declaration, node.name, resolveValue(declaration.init, seen));
+    };
+
+    const recordEvidence = (qualified: string): void => {
+      if (qualified.startsWith('Logger.')) hasLogger = true;
+      if (qualified.startsWith('Tracer.')) hasTracer = true;
+      if (minimumLogLevelMembers.has(qualified)) hasMinimumLogLevel = true;
+    };
+    const recordQualifiedRoot = (
+      node: ESTree.Node,
+      qualified: string,
+      moduleRun = qualified.startsWith('Effect.run'),
+    ): void => {
+      if (runtimeMembers.has(qualified)) recordRoot(node, qualified);
+      else if (moduleRun && !insideFunction(node)) recordRoot(node, `module-level ${qualified}`);
+    };
+    const recordOtel = (node: ESTree.Node, name: string): void => {
+      if (!resolvesToImport(context, node)) return;
+      hasTracer = true;
+      if (name.includes(LOGGER_NAMESPACE)) hasLogger = true;
+    };
+    const runtimeTypeName = (typeName: ESTree.TSTypeName): string | null => {
+      if (typeName.type === 'Identifier') {
+        return bindings.runtimeTypeLocals.has(typeName.name) && resolvesToImport(context, typeName)
+          ? typeName.name
+          : null;
       }
-      return null;
+      if (typeName.type !== 'TSQualifiedName' || typeName.left.type !== 'Identifier') return null;
+      const name = typeName.right.name;
+      if (!runtimeTypeNameSet.has(name) || !bindings.runtimeTypeNamespaces.has(typeName.left.name))
+        return null;
+      return resolvesToImport(context, typeName.left) ? name : null;
+    };
+    const missingEvidence = (): string[] => {
+      const missing: string[] = [];
+      if (options.require.logger && !hasLogger) missing.push('missingLogger');
+      if (options.require.tracer && !hasTracer) missing.push('missingTracer');
+      if (options.require.minimumLogLevel && !hasMinimumLogLevel)
+        missing.push('missingMinimumLogLevel');
+      return missing;
     };
 
     return {
@@ -606,70 +607,32 @@ export const rule = defineRule({
         if (member === null) return;
         const namespace = resolveValue(node.object);
         if (namespace === null) {
-          // `Otel.OtelLogger` / `NodeSdkNs.layer` — namespace import of the OTel package.
-          if (node.object.type !== 'Identifier') return;
-          if (!bindings.otelLocals.has(node.object.name)) return;
-          if (!resolvesToImport(context, node.object)) return;
-          hasTracer = true;
-          if (member.includes(LOGGER_NAMESPACE)) hasLogger = true;
+          if (node.object.type === 'Identifier' && bindings.otelLocals.has(node.object.name))
+            recordOtel(node.object, member);
           return;
         }
         const qualified = `${namespace}.${member}`;
-
-        if (runtimeMembers.has(qualified)) recordRoot(node, qualified);
-        else if (
-          namespace === EFFECT_NAMESPACE &&
-          member.startsWith('run') &&
-          !insideFunction(node)
-        ) {
-          recordRoot(node, `module-level ${qualified}`);
-        }
-
+        recordQualifiedRoot(node, qualified, namespace === 'Effect' && member.startsWith('run'));
+        // Namespace evidence is intentionally limited to the immediate namespace.
         if (namespace === LOGGER_NAMESPACE) hasLogger = true;
         if (namespace === TRACER_NAMESPACE) hasTracer = true;
         if (minimumLogLevelMembers.has(qualified)) hasMinimumLogLevel = true;
       },
-
-      // Bare reference to an `@effect/opentelemetry` binding: `NodeSdk.layer` is caught above, but
-      // `Layer.provide(otelLayer, NodeSdk)` / point-free hand-offs must count as evidence too.
       Identifier(node) {
         if (isNonReferencePosition(node)) return;
         const direct = resolveValue(node);
         if (direct) {
-          if (runtimeMembers.has(direct)) recordRoot(node, direct);
-          else if (direct.startsWith('Effect.run') && !insideFunction(node))
-            recordRoot(node, `module-level ${direct}`);
-          if (direct.startsWith('Logger.')) hasLogger = true;
-          if (direct.startsWith('Tracer.')) hasTracer = true;
-          if (minimumLogLevelMembers.has(direct)) hasMinimumLogLevel = true;
+          recordQualifiedRoot(node, direct);
+          recordEvidence(direct);
         }
         const imported = bindings.otelLocals.get(node.name);
-        if (imported === undefined) return;
-        if (isNonReferencePosition(node)) return;
-        if (!resolvesToImport(context, node)) return;
-        hasTracer = true;
-        if (imported.includes(LOGGER_NAMESPACE)) hasLogger = true;
+        if (imported !== undefined) recordOtel(node, imported);
       },
 
       // `(...): EffectBffDefinition<A> & EffectBffRuntime<A> => { … }` — the BFF composition root.
       TSTypeReference(node) {
-        const typeName = node.typeName;
-        const name =
-          typeName.type === 'Identifier'
-            ? typeName.name
-            : typeName.type === 'TSQualifiedName' && typeName.right.type === 'Identifier'
-              ? typeName.right.name
-              : null;
+        const name = runtimeTypeName(node.typeName);
         if (name === null) return;
-        const known =
-          typeName.type === 'Identifier'
-            ? bindings.runtimeTypeLocals.has(name) && resolvesToImport(context, typeName)
-            : typeName.type === 'TSQualifiedName' &&
-              typeName.left.type === 'Identifier' &&
-              runtimeTypeNameSet.has(name) &&
-              bindings.runtimeTypeNamespaces.has(typeName.left.name) &&
-              resolvesToImport(context, typeName.left);
-        if (!known) return;
         const owner = functionOwningReturnType(node);
         if (owner === null) return;
         recordRoot(owner, `${name} factory`);
@@ -679,23 +642,13 @@ export const rule = defineRule({
         const isDeclaredRoot = matchesGlobs(path, options.rootFiles) && bindings.importsEffect;
         if (roots.length === 0 && !isDeclaredRoot) return;
 
-        const missing: Array<{ readonly messageId: string; readonly label: string }> = [];
-        if (options.require.logger && !hasLogger)
-          missing.push({ messageId: 'missingLogger', label: 'Logger' });
-        if (options.require.tracer && !hasTracer)
-          missing.push({ messageId: 'missingTracer', label: 'Tracer' });
-        if (options.require.minimumLogLevel && !hasMinimumLogLevel) {
-          missing.push({ messageId: 'missingMinimumLogLevel', label: 'MinimumLogLevel' });
-        }
+        const missing = missingEvidence();
         if (missing.length === 0) return;
 
-        roots.sort((left, right) => left.start - right.start);
-        const first = roots[0];
-        const anchor = first?.node ?? node.body[0] ?? node;
-        const kind = first?.kind ?? 'declared host entry point';
+        const { node: anchor, kind } = rootAnchor(roots, node);
 
         for (const entry of missing) {
-          context.report({ node: anchor, messageId: entry.messageId, data: { root: path, kind } });
+          context.report({ node: anchor, messageId: entry, data: { root: path, kind } });
         }
       },
     };

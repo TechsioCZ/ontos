@@ -8,7 +8,7 @@ import { SwitchLegalEntityPayloadSchema, SwitchTenantPayloadSchema } from '../..
 import { runBrowserEffect } from '../runtime/browser-effect-runtime.ts';
 import type { AuthenticatedHomePageModel } from './[lang]/page.data.ts';
 
-export const SwitchFailureStateSchema = Schema.Literals(['authentication-required', 'failed']);
+const SwitchFailureStateSchema = Schema.Literals(['authentication-required', 'failed']);
 export type SwitchFailureState = typeof SwitchFailureStateSchema.Type;
 
 const tenantSwitchFailureState = (error: SwitchTenantClientError): SwitchFailureState =>

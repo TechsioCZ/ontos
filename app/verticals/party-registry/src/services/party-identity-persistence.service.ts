@@ -73,7 +73,7 @@ const ClaimOwnershipSchema = Schema.Union([
 
 export type PartyLookup = typeof PartyLookupSchema.Type;
 export type PartyLifecycle = typeof PartyLifecycleSchema.Type;
-export type PartyUnarchiveLifecycle = typeof PartyUnarchiveLifecycleSchema.Type;
+type PartyUnarchiveLifecycle = typeof PartyUnarchiveLifecycleSchema.Type;
 
 const MATCH_RULE_VERSION = 'party-exact-claims.v1';
 const instantAsDate = (instant: string | DateTime.Utc): Date =>
@@ -399,6 +399,66 @@ const invalidIdentityFactInterval = (
 ): boolean =>
   assertions.some((assertion) => instantAsDate(requestedValidFrom) < assertion.validFrom);
 
+const identityRecordChanges = (
+  current: PartyRecord,
+  input: UpdatePartyIdentityInput,
+  now: Date,
+) => {
+  const changes: Partial<typeof parties.$inferInsert> = {
+    revision: current.revision + 1,
+    updatedAt: now,
+  };
+  if (input.displayName !== undefined) {
+    changes.currentDisplayName = input.displayName;
+  }
+  if (input.partyType !== undefined) {
+    changes.currentType = input.partyType;
+  }
+  return changes;
+};
+
+const identityUpdateAssertions = (
+  current: PartyRecord,
+  input: UpdatePartyIdentityInput,
+  tenantId: string,
+  externalEvidence: (typeof partyFactAssertions.$inferInsert)['externalEvidence'],
+  evaluation: (typeof partyFactAssertions.$inferInsert)['evidenceEvaluation'],
+) => {
+  const assertions: (typeof partyFactAssertions.$inferInsert)[] = [];
+  if (input.displayName !== undefined) {
+    assertions.push({
+      acceptedByActionInvocationId: input.actionInvocationId,
+      acceptedByPrincipalId: input.principalId,
+      externalEvidence,
+      factKind: 'DISPLAY_NAME',
+      normalizedValue: input.displayName,
+      partyId: input.partyId,
+      policyVersion: 'party-identity.v1',
+      provenanceMethod: input.provenanceMethod,
+      provenanceSource: input.provenanceSource,
+      tenantId,
+      validFrom: instantAsDate(input.validFrom),
+    });
+  }
+  if (input.partyType !== undefined && input.partyType !== current.currentType) {
+    assertions.push({
+      acceptedByActionInvocationId: input.actionInvocationId,
+      acceptedByPrincipalId: input.principalId,
+      evidenceEvaluation: evaluation,
+      externalEvidence,
+      factKind: 'PARTY_TYPE',
+      normalizedValue: input.partyType,
+      partyId: input.partyId,
+      policyVersion: 'party-identity.v1',
+      provenanceMethod: input.provenanceMethod,
+      provenanceSource: input.provenanceSource,
+      tenantId,
+      validFrom: instantAsDate(input.validFrom),
+    });
+  }
+  return assertions;
+};
+
 export const updatePartyIdentityRecord = Effect.fn(
   'PartyIdentityPersistenceService.updatePartyIdentityRecord',
 )(function* updateParty(
@@ -462,16 +522,7 @@ export const updatePartyIdentityRecord = Effect.fn(
       : yield* Schema.encodeUnknownEffect(AresAppliedEvidenceSchema)(input.externalEvidence).pipe(
           Effect.mapError(unavailable),
         );
-  const changes: Partial<typeof parties.$inferInsert> = {
-    revision: current.revision + 1,
-    updatedAt: now,
-  };
-  if (input.displayName !== undefined) {
-    changes.currentDisplayName = input.displayName;
-  }
-  if (input.partyType !== undefined) {
-    changes.currentType = input.partyType;
-  }
+  const changes = identityRecordChanges(current, input, now);
   const [updated] = yield* transaction
     .update(parties)
     .set(changes)
@@ -481,38 +532,13 @@ export const updatePartyIdentityRecord = Effect.fn(
   if (updated === undefined) {
     return yield* unavailable();
   }
-  const assertions: (typeof partyFactAssertions.$inferInsert)[] = [];
-  if (input.displayName !== undefined) {
-    assertions.push({
-      acceptedByActionInvocationId: input.actionInvocationId,
-      acceptedByPrincipalId: input.principalId,
-      externalEvidence,
-      factKind: 'DISPLAY_NAME',
-      normalizedValue: input.displayName,
-      partyId: input.partyId,
-      policyVersion: 'party-identity.v1',
-      provenanceMethod: input.provenanceMethod,
-      provenanceSource: input.provenanceSource,
-      tenantId,
-      validFrom: instantAsDate(input.validFrom),
-    });
-  }
-  if (input.partyType !== undefined && input.partyType !== current.currentType) {
-    assertions.push({
-      acceptedByActionInvocationId: input.actionInvocationId,
-      acceptedByPrincipalId: input.principalId,
-      evidenceEvaluation: evaluation,
-      externalEvidence,
-      factKind: 'PARTY_TYPE',
-      normalizedValue: input.partyType,
-      partyId: input.partyId,
-      policyVersion: 'party-identity.v1',
-      provenanceMethod: input.provenanceMethod,
-      provenanceSource: input.provenanceSource,
-      tenantId,
-      validFrom: instantAsDate(input.validFrom),
-    });
-  }
+  const assertions = identityUpdateAssertions(
+    current,
+    input,
+    tenantId,
+    externalEvidence,
+    evaluation,
+  );
   yield* Effect.forEach(
     changedIdentityFactKinds(current, input),
     (factKind) =>
@@ -540,14 +566,12 @@ export const updatePartyIdentityRecord = Effect.fn(
   return { _tag: 'found', value: partyDto(updated) } as const;
 });
 
-export const transitionPartyRecord = Effect.fn(
-  'PartyIdentityPersistenceService.transitionPartyRecord',
-)(function* transitionParty(
-  transaction: Pick<PartyTransaction, 'select' | 'update'>,
+const lockPartyIdentityRecord = Effect.fn(
+  'PartyIdentityPersistenceService.lockPartyIdentityRecord',
+)(function* lockPartyIdentityRecord(
+  transaction: Pick<PartyTransaction, 'select'>,
   tenantId: string,
   partyId: string,
-  expectedRevision: number,
-  state: 'ARCHIVED',
 ) {
   yield* lockTenantIdentityWrites(transaction, tenantId);
   const [current] = yield* transaction
@@ -557,6 +581,19 @@ export const transitionPartyRecord = Effect.fn(
     .limit(1)
     .for('update')
     .pipe(Effect.mapError(unavailable));
+  return current;
+});
+
+export const transitionPartyRecord = Effect.fn(
+  'PartyIdentityPersistenceService.transitionPartyRecord',
+)(function* transitionParty(
+  transaction: Pick<PartyTransaction, 'select' | 'update'>,
+  tenantId: string,
+  partyId: string,
+  expectedRevision: number,
+  state: 'ARCHIVED',
+) {
+  const current = yield* lockPartyIdentityRecord(transaction, tenantId, partyId);
   if (current === undefined) {
     return { _tag: 'not_found' } as const;
   }
@@ -589,14 +626,7 @@ export const unarchivePartyRecord = Effect.fn(
   partyId: string,
   expectedRevision: number,
 ) {
-  yield* lockTenantIdentityWrites(transaction, tenantId);
-  const [current] = yield* transaction
-    .select()
-    .from(parties)
-    .where(and(eq(parties.tenantId, tenantId), eq(parties.partyId, partyId)))
-    .limit(1)
-    .for('update')
-    .pipe(Effect.mapError(unavailable));
+  const current = yield* lockPartyIdentityRecord(transaction, tenantId, partyId);
   if (current === undefined) {
     return { _tag: 'not_found' } as const;
   }
