@@ -1528,12 +1528,22 @@ const isCompleteFluentSlotTail = (state: GeneratedSlotScanState, source: string)
   !state.blockComment &&
   generatedSlotDepthIsZero(state);
 
+const isGeneratedSlotFluentBoundary = (
+  state: GeneratedSlotScanState,
+  character: string,
+  source: string,
+): boolean =>
+  character === '.' &&
+  /\n\s*\.$/u.test(source) &&
+  isCompleteFluentSlotTail(state, source.slice(0, -1));
+
 const splitGeneratedSlotEntries = (slotBody: string): readonly string[] => {
   const body = dedentGeneratedSlotBody(slotBody);
   if (body.length === 0) {
     return [];
   }
   const entries: string[] = [];
+  const fluentTailBoundaries: number[] = [];
   let current = '';
   const state: GeneratedSlotScanState = {
     blockComment: false,
@@ -1558,17 +1568,20 @@ const splitGeneratedSlotEntries = (slotBody: string): readonly string[] => {
     if (state.braces < 0 || state.brackets < 0 || state.parentheses < 0) {
       return raiseScaffoldFailure('generated owner slot contains unbalanced syntax');
     }
+    if (isGeneratedSlotFluentBoundary(state, character, current)) {
+      fluentTailBoundaries.push(current.length - 1);
+    }
     if (generatedSlotDepthIsZero(state) && (character === ',' || character === ';')) {
       entries.push(current.trim());
       current = '';
+      fluentTailBoundaries.length = 0;
     }
   }
   if (isCompleteFluentSlotTail(state, current)) {
     entries.push(
-      ...current
-        .trim()
-        .split(/\n\s*(?=\.)/u)
-        .map((entry) => entry.trim()),
+      ...[0, ...fluentTailBoundaries].map((start, index) =>
+        current.slice(start, fluentTailBoundaries[index]).trim(),
+      ),
     );
     current = '';
   }

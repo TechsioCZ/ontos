@@ -6588,6 +6588,115 @@ it.live(
   }),
 );
 
+it('generated fluent slots preserve nested chains beside independent top-level entries', () => {
+  const nestedEntry = `.addHttpApi(
+  FirstApi,
+  (api) => api
+    .addGroup(FirstGroup)
+    .addGroup(SecondGroup),
+)`;
+  const neighborEntry = '.addHttpApi(SecondApi)';
+  const addedEntry = '.addHttpApi(ThirdApi)';
+  const source = `${GOVERNED_HTTP_API_ADDITION_SLOT_START}
+${nestedEntry}
+${neighborEntry}
+${GOVERNED_HTTP_API_ADDITION_SLOT_END}`;
+  expect(
+    readGeneratedSlotEntries(
+      source,
+      GOVERNED_HTTP_API_ADDITION_SLOT_START,
+      GOVERNED_HTTP_API_ADDITION_SLOT_END,
+    ),
+  ).toEqual([nestedEntry, neighborEntry]);
+  const next = insertSortedSlot(
+    source,
+    GOVERNED_HTTP_API_ADDITION_SLOT_START,
+    GOVERNED_HTTP_API_ADDITION_SLOT_END,
+    [addedEntry],
+    (entry) => entry === nestedEntry || entry === neighborEntry || entry === addedEntry,
+  );
+  expect(
+    readGeneratedSlotEntries(
+      next,
+      GOVERNED_HTTP_API_ADDITION_SLOT_START,
+      GOVERNED_HTTP_API_ADDITION_SLOT_END,
+    ),
+  ).toEqual([nestedEntry, neighborEntry, addedEntry]);
+});
+
+for (const protectedEntry of [
+  '.addHttpApi(FirstApi) /*\n.addHttpApi(CommentOnly)\n*/',
+  '.addHttpApi(FirstApi) // .addHttpApi(CommentOnly)',
+  '.addHttpApi(`text )\n.addHttpApi(StringOnly)\n(`)',
+  '.addHttpApi("text )", \'text ]\', /* ) ] }\n.addGroup(CommentOnly)\n*/ FirstApi)',
+]) {
+  it(`generated fluent slots shield protected text in ${protectedEntry}`, () => {
+    const source = `${GOVERNED_HTTP_API_ADDITION_SLOT_START}
+${protectedEntry}
+.addHttpApi(SecondApi)
+${GOVERNED_HTTP_API_ADDITION_SLOT_END}`;
+    expect(
+      readGeneratedSlotEntries(
+        source,
+        GOVERNED_HTTP_API_ADDITION_SLOT_START,
+        GOVERNED_HTTP_API_ADDITION_SLOT_END,
+      ),
+    ).toEqual([protectedEntry, '.addHttpApi(SecondApi)']);
+  });
+}
+
+it('generated fluent slots preserve terminated statements and reset tail boundaries', () => {
+  const statement = '.addHttpApi(StatementApi)\n.addHttpApi(StatementNeighbor);';
+  const tailEntries = ['.addHttpApi(TailApi)', '.addHttpApi(TailNeighbor)'];
+  const source = `${GOVERNED_HTTP_API_ADDITION_SLOT_START}
+${statement}
+${tailEntries.join('\n')}
+${GOVERNED_HTTP_API_ADDITION_SLOT_END}`;
+  expect(
+    readGeneratedSlotEntries(
+      source,
+      GOVERNED_HTTP_API_ADDITION_SLOT_START,
+      GOVERNED_HTTP_API_ADDITION_SLOT_END,
+    ),
+  ).toEqual([statement, ...tailEntries]);
+});
+
+it('generated fluent slots preserve nonfluent multiline statement continuations', () => {
+  const entries = ['const api = FirstApi\n  .addGroup(FirstGroup);', 'SecondApi,'];
+  const source = `${GOVERNED_HTTP_API_ADDITION_SLOT_START}
+${entries.join('\n')}
+${GOVERNED_HTTP_API_ADDITION_SLOT_END}`;
+  expect(
+    readGeneratedSlotEntries(
+      source,
+      GOVERNED_HTTP_API_ADDITION_SLOT_START,
+      GOVERNED_HTTP_API_ADDITION_SLOT_END,
+    ),
+  ).toEqual(entries);
+});
+
+for (const incompleteEntry of [
+  '.addHttpApi(FirstApi',
+  '.addHttpApi(FirstApi))',
+  '.addHttpApi(FirstApi)\n.addHttpApi(SecondApi',
+  '.addHttpApi("FirstApi)',
+  '.addHttpApi(FirstApi) /* unclosed',
+  'const api = FirstApi\n.addGroup(FirstGroup)',
+]) {
+  it(`generated fluent slots reject incomplete or unbalanced syntax in ${incompleteEntry}`, () => {
+    const source = `${GOVERNED_HTTP_API_ADDITION_SLOT_START}
+${incompleteEntry}
+${GOVERNED_HTTP_API_ADDITION_SLOT_END}`;
+    expect(() =>
+      readGeneratedSlotEntries(
+        source,
+        GOVERNED_HTTP_API_ADDITION_SLOT_START,
+        GOVERNED_HTTP_API_ADDITION_SLOT_END,
+      ),
+    ).toThrow(/generated owner slot contains unsupported developer content/u);
+  });
+}
+
 it('generated fluent slots preserve multiline call entries', () => {
   const source = `${GOVERNED_HTTP_API_ADDITION_SLOT_START}
   .addHttpApi(
