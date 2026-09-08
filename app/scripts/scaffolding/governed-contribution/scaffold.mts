@@ -1,6 +1,18 @@
 import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect';
 import { SyntaxKind } from '@typescript/native/unstable/ast';
 import {
+  GOVERNED_HTTP_API_ADDITION_SLOT_END,
+  GOVERNED_HTTP_API_ADDITION_SLOT_START,
+  GOVERNED_HTTP_API_IMPORT_SLOT_END,
+  GOVERNED_HTTP_API_IMPORT_SLOT_START,
+  GOVERNED_HTTP_HANDLER_IMPORT_SLOT_END,
+  GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START,
+  GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
+  GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
+  GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
+  GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+  GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
+  GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
   MODULE_MANIFEST_API_SLOT_END,
   MODULE_MANIFEST_API_SLOT_START,
   MODULE_MANIFEST_COMPONENT_SLOT_END,
@@ -34,8 +46,8 @@ import {
   insertModuleFederationExposure,
   isModuleManifestImport,
   raiseScaffoldFailure,
-  requireCanonicalSlug,
   readGeneratedSlotEntries,
+  requireCanonicalSlug,
   resolveContainedPath,
   scaffoldFailure,
   toCamelCase,
@@ -45,10 +57,10 @@ import {
   updateMutation,
   withExactDependencies,
 } from '../shared.mts';
+import { hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
 import { planActionBoundaryScaffold } from '../microvertical-action-boundary/scaffold.mts';
 import {
   hasGeneratedOperationGatewayContract,
-  hasGeneratedGovernedServerContract,
   hasGeneratedGovernedClientContract,
   hasGeneratedModuleApiReadContract,
   hasGeneratedModuleApiContract,
@@ -82,6 +94,86 @@ export type GovernedContributionKind = typeof GovernedContributionKindSchema.Typ
 const ProviderContributionKindSchema = Schema.Literals([REPORT_KIND, SEARCH_PROVIDER_KIND]);
 type ProviderContributionKind = typeof ProviderContributionKindSchema.Type;
 const isProviderContribution = Schema.is(ProviderContributionKindSchema);
+
+const directTokenStringProperty = (
+  tokens: ReturnType<typeof tokenizeGovernedClient>,
+  property: string,
+): string | undefined => {
+  const identities: string[] = [];
+  let braceDepth = 0;
+  for (let index = 0; index < tokens.length - 2; index += 1) {
+    if (
+      braceDepth === 1 &&
+      tokens[index]?.kind === SyntaxKind.Identifier &&
+      tokens[index]?.value === property &&
+      tokens[index + 1]?.kind === SyntaxKind.ColonToken &&
+      tokens[index + 2]?.kind === SyntaxKind.StringLiteral
+    ) {
+      const identity = tokens[index + 2]?.value;
+      if (identity !== undefined) {
+        identities.push(identity);
+      }
+    }
+    if (tokens[index]?.kind === SyntaxKind.OpenBraceToken) {
+      braceDepth += 1;
+    } else if (tokens[index]?.kind === SyntaxKind.CloseBraceToken) {
+      braceDepth -= 1;
+    }
+  }
+  return identities.length === 1 ? identities[0] : undefined;
+};
+
+const slotEntryIdentity = (source: string): string | undefined => {
+  const compositionIdentity =
+    /^import \{ (?<value>[^}]+) \}/u.exec(source)?.groups?.['value'] ??
+    /^\.addHttpApi\((?<value>[^)]+)\)/u.exec(source)?.groups?.['value'] ??
+    /^(?<value>[A-Za-z][A-Za-z0-9]*ReadApiLive)\.pipe\(/u.exec(source)?.groups?.['value'];
+  if (compositionIdentity !== undefined) {
+    return compositionIdentity;
+  }
+  const tokens = tokenizeGovernedClient(source);
+  const [registrationProperty, registrationColon] = tokens;
+  if (
+    registrationColon?.kind === SyntaxKind.ColonToken &&
+    (registrationProperty?.kind === SyntaxKind.StringLiteral ||
+      registrationProperty?.kind === SyntaxKind.Identifier)
+  ) {
+    return registrationProperty.value;
+  }
+  for (const property of ['contributionKey', 'key']) {
+    const identity = directTokenStringProperty(tokens, property);
+    if (identity !== undefined) {
+      return identity;
+    }
+  }
+  return undefined;
+};
+
+const insertSortedSlotIdempotently = (
+  content: string,
+  start: string,
+  end: string,
+  entry: string,
+  validateEntry: (candidate: string) => boolean,
+): string => {
+  const entries = readGeneratedSlotEntries(content, start, end);
+  if (entries.some((candidate) => !validateEntry(candidate))) {
+    return raiseScaffoldFailure(
+      `generated owner slot contains unsupported developer content: ${start}`,
+    );
+  }
+  if (generatedSlotContainsExactEntry(content, start, end, entry)) {
+    return content;
+  }
+  const expectedIdentity = slotEntryIdentity(entry);
+  if (
+    expectedIdentity !== undefined &&
+    entries.some((candidate) => slotEntryIdentity(candidate) === expectedIdentity)
+  ) {
+    return raiseScaffoldFailure(`generated owner slot contains drift for ${expectedIdentity}`);
+  }
+  return insertSortedSlot(content, start, end, [entry], validateEntry);
+};
 
 const generatedHeader = (kind: GovernedContributionKind) =>
   isProviderContribution(kind)
@@ -380,7 +472,7 @@ const renderProviderClient = (
 ): string => {
   const type = toPascalCase(name);
   const apiValue = `${type}${kind === REPORT_KIND ? 'Report' : 'Search'}Api`;
-  const group = kind === REPORT_KIND ? 'reports' : 'search';
+  const group = `${toCamelCase(name)}${kind === REPORT_KIND ? 'Report' : 'Search'}`;
   const clientName = `${toCamelCase(name)}Client`;
   const optionsType = `${type}ClientOptions`;
   const invocationTypePrefix = `${type}${kind === REPORT_KIND ? 'Report' : 'Search'}`;
@@ -433,7 +525,7 @@ const renderProviderApiContract = (
 ): string => {
   const type = toPascalCase(name);
   const apiValue = `${type}${kind === REPORT_KIND ? 'Report' : 'Search'}Api`;
-  const group = kind === REPORT_KIND ? 'reports' : 'search';
+  const group = `${toCamelCase(name)}${kind === REPORT_KIND ? 'Report' : 'Search'}`;
   const payloadField = kind === REPORT_KIND ? 'parameters' : 'query';
   const success =
     kind === REPORT_KIND
@@ -487,7 +579,7 @@ export const ${type}ProviderInternalProblemSchema = makeProblemDetailsSchema(
 
 export const ${apiValue} = HttpApi.make('${apiValue}').add(
   HttpApiGroup.make('${group}').add(
-    HttpApiEndpoint.post('execute', '/${vertical.moduleId}/${group}/${name}', {
+    HttpApiEndpoint.post('execute', '/${vertical.moduleId}/${kind === REPORT_KIND ? 'reports' : 'search'}/${name}', {
       error: [
         ${type}ProviderInvalidProblemSchema,
         ${type}ProviderAuthenticationProblemSchema,
@@ -515,10 +607,9 @@ const renderGovernedServer = (
   /* eslint-disable no-nested-ternary, unicorn/no-nested-ternary -- Preserve the compact established generator-name mapping. */
   const suffix = kind === REPORT_KIND ? REPORT_KIND : kind === SEARCH_PROVIDER_KIND ? 'search' : '';
   const contract = isModuleApi ? name : `${name}-${suffix}`;
-  const apiValue = isModuleApi
-    ? `${type}Api`
-    : `${type}${kind === REPORT_KIND ? 'Report' : 'Search'}Api`;
-  const group = isModuleApi ? toCamelCase(name) : kind === REPORT_KIND ? 'reports' : 'search';
+  const group = isModuleApi
+    ? toCamelCase(name)
+    : `${toCamelCase(name)}${kind === REPORT_KIND ? 'Report' : 'Search'}`;
   const readValue = `${toCamelCase(name)}Read`;
   const readImport = isModuleApi
     ? `../src/api/${name}.read.ts`
@@ -526,148 +617,242 @@ const renderGovernedServer = (
   /* eslint-enable no-nested-ternary, unicorn/no-nested-ternary */
   const problemStem = `${type}${isModuleApi ? '' : 'Provider'}`;
   return `${generatedHeader(kind)}
-import { ReadRuntime } from '@app/core-runtime';
-import type { ReadCoreError } from '@app/core-runtime';
 import {
-  Effect,
-  HttpApiBuilder,
-  HttpEffect,
-  HttpServerResponse,
-} from '@modern-js/plugin-bff/effect-edge';
-import { Match, Redacted } from 'effect';
-import { ${apiValue} } from '../shared/apis/${contract}.ts';
+  governedReadHttpStatus,
+  makeGovernedReadHttpHandler,
+} from '@app/core-runtime/http/governed-read';
+import { HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';
+import { governedHttpApi } from '../shared/api.ts';
+import {
+  ${problemStem}AuthenticationProblemSchema,
+  ${problemStem}ForbiddenProblemSchema,
+  ${problemStem}InternalProblemSchema,
+  ${problemStem}InvalidProblemSchema,
+  ${problemStem}NotFoundProblemSchema,
+  ${problemStem}PolicyConflictProblemSchema,
+  ${problemStem}PolicyProblemSchema,
+  ${problemStem}UnavailableProblemSchema,
+} from '../shared/apis/${contract}.ts';
 import { ${readValue} } from '${readImport}';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 
-const authenticationProblem = () => ({
-  _tag: '${problemStem}AuthenticationProblem' as const,
-  detail: 'A valid audience-scoped Bearer assertion is required.',
-  status: 401 as const,
-  title: 'Authentication required',
-  type: 'https://ontos.dev/problems/operation-authentication-required',
-});
-const unavailableProblem = () => ({
-  _tag: '${problemStem}UnavailableProblem' as const,
-  detail: 'The governed read is temporarily unavailable.',
-  retryable: true as const,
-  status: 503 as const,
-  title: 'Read unavailable',
-  type: 'https://ontos.dev/problems/read-unavailable',
-});
-const invalidProblem = () => ({
-  _tag: '${problemStem}InvalidProblem' as const,
-  detail: 'The governed read request is invalid.',
-  status: 400 as const,
-  title: 'Invalid read request',
-  type: 'https://ontos.dev/problems/read-invalid',
-});
-const forbiddenProblem = () => ({
-  _tag: '${problemStem}ForbiddenProblem' as const,
-  detail: 'The principal is not permitted to perform this read.',
-  status: 403 as const,
-  title: 'Read forbidden',
-  type: 'https://ontos.dev/problems/read-forbidden',
-});
-const notFoundProblem = () => ({
-  _tag: '${problemStem}NotFoundProblem' as const,
-  detail: 'The requested resource was not found.',
-  status: 404 as const,
-  title: 'Resource not found',
-  type: 'https://ontos.dev/problems/read-not-found',
-});
-const policyProblem = (status: 409 | 422) =>
-  status === 409
-    ? ({
-        _tag: '${problemStem}PolicyConflictProblem' as const,
-        detail: 'The read conflicts with the current business state.',
-        status: 409 as const,
-        title: 'Read conflict',
-        type: 'https://ontos.dev/problems/read-policy-conflict',
-      })
-    : ({
-        _tag: '${problemStem}PolicyProblem' as const,
-        detail: 'The read is not eligible under the current business policy.',
-        status: 422 as const,
-        title: 'Read ineligible',
-        type: 'https://ontos.dev/problems/read-policy-denied',
-      });
-const internalProblem = () => ({
-  _tag: '${problemStem}InternalProblem' as const,
-  detail: 'The governed read could not be completed.',
-  status: 500 as const,
-  title: 'Read failed',
-  type: 'https://ontos.dev/problems/read-failed',
-});
-const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
-  Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
-);
-const readProblem = (error: ReadCoreError) =>
-  Match.value(error).pipe(
-    Match.tags({
-      ModuleStateCheckUnavailableError: unavailableProblem,
-      ModuleStateDeniedError: forbiddenProblem,
-      OperationAuthenticationRequired: authenticationProblem,
-      OperationContextDenied: forbiddenProblem,
-      OperationContextInvalid: forbiddenProblem,
-      OperationContextUnavailable: unavailableProblem,
-      ReadEvidencePersistenceError: unavailableProblem,
-      ReadEvidenceValidationError: internalProblem,
-      ReadHandlerExecutionError: internalProblem,
-      ReadHandlerNotFound: notFoundProblem,
-      ReadHandlerUnavailable: unavailableProblem,
-      ReadInputValidationError: invalidProblem,
-      ReadPermissionDenied: forbiddenProblem,
-      ReadPermissionUnavailable: unavailableProblem,
-      ReadPolicyDenied: (failure) => policyProblem(failure.httpStatus),
-      ReadPolicyEvaluationError: unavailableProblem,
-      ReadResultValidationError: internalProblem,
+const problems = {
+  authentication: () =>
+    ${problemStem}AuthenticationProblemSchema.make({
+      detail: 'A valid audience-scoped Bearer assertion is required.',
+      status: governedReadHttpStatus.authentication,
+      title: 'Authentication required',
+      type: 'https://ontos.dev/problems/operation-authentication-required',
     }),
-    Match.exhaustive,
-  );
+  forbidden: () =>
+    ${problemStem}ForbiddenProblemSchema.make({
+      detail: 'The principal is not permitted to perform this read.',
+      status: governedReadHttpStatus.forbidden,
+      title: 'Read forbidden',
+      type: 'https://ontos.dev/problems/read-forbidden',
+    }),
+  internal: () =>
+    ${problemStem}InternalProblemSchema.make({
+      detail: 'The governed read could not be completed.',
+      status: governedReadHttpStatus.internal,
+      title: 'Read failed',
+      type: 'https://ontos.dev/problems/read-failed',
+    }),
+  invalid: () =>
+    ${problemStem}InvalidProblemSchema.make({
+      detail: 'The governed read request is invalid.',
+      status: governedReadHttpStatus.invalid,
+      title: 'Invalid read request',
+      type: 'https://ontos.dev/problems/read-invalid',
+    }),
+  notFound: () =>
+    ${problemStem}NotFoundProblemSchema.make({
+      detail: 'The requested resource was not found.',
+      status: governedReadHttpStatus.notFound,
+      title: 'Resource not found',
+      type: 'https://ontos.dev/problems/read-not-found',
+    }),
+  policyConflict: () =>
+    ${problemStem}PolicyConflictProblemSchema.make({
+      detail: 'The read conflicts with the current business state.',
+      status: governedReadHttpStatus.policyConflict,
+      title: 'Read conflict',
+      type: 'https://ontos.dev/problems/read-policy-conflict',
+    }),
+  policyIneligible: () =>
+    ${problemStem}PolicyProblemSchema.make({
+      detail: 'The read is not eligible under the current business policy.',
+      status: governedReadHttpStatus.policyIneligible,
+      title: 'Read ineligible',
+      type: 'https://ontos.dev/problems/read-policy-denied',
+    }),
+  unavailable: () =>
+    ${problemStem}UnavailableProblemSchema.make({
+      detail: 'The governed read is temporarily unavailable.',
+      retryable: true,
+      status: governedReadHttpStatus.unavailable,
+      title: 'Read unavailable',
+      type: 'https://ontos.dev/problems/read-unavailable',
+    }),
+};
 
 export const ${toCamelCase(name)}ReadApiLive = HttpApiBuilder.group(
-  ${apiValue},
+  governedHttpApi,
   '${group}',
   (handlers) =>
-    handlers.handle('execute', ({ payload, request }) =>
-      Effect.gen(function* governedProviderRead() {
-        const correlationId = request.headers['x-correlation-id'];
-        if (correlationId === undefined || correlationId.trim().length === 0) {
-          return yield* Effect.fail(invalidProblem());
-        }
-        const principal = yield* authenticateOperationPrincipal(
-          Redacted.make(request.headers.authorization),
-          {
-            authentication: authenticationProblem,
-            unavailable: unavailableProblem,
-          },
-        );
-        const runtime = yield* ReadRuntime;
-        return yield* runtime
-          .runRead({
-            input: payload,
-            principal,
-            registration: ${readValue},
-            transport: { correlationId },
-          })
-          .pipe(
-            Effect.catch((error) => {
-              const problem = readProblem(error);
-              return (problem.status === 401 ? bearerChallenge : Effect.void).pipe(
-                Effect.andThen(Effect.fail(problem)),
-              );
-            }),
-          );
+    handlers.handle(
+      'execute',
+      makeGovernedReadHttpHandler({
+        authenticatePrincipal: authenticateOperationPrincipal,
+        problems,
+        registration: ${readValue},
       }),
     ),
 );
 `;
 };
 
+const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.patchHttpComposition')(
+  function* patchGovernedHttpComposition(
+    vertical: OntosVerticalMetadata,
+    kind: Exclude<GovernedContributionKind, typeof PUBLIC_COMPONENT_KIND>,
+    name: string,
+  ) {
+    const isModuleApi = kind === MODULE_API_KIND;
+    const type = toPascalCase(name);
+    const contractSuffix = kind === REPORT_KIND ? REPORT_KIND : 'search';
+    const contract = isModuleApi ? name : `${name}-${contractSuffix}`;
+    const apiValue = isModuleApi
+      ? `${type}Api`
+      : `${type}${kind === REPORT_KIND ? 'Report' : 'Search'}Api`;
+    const serverSuffix = isModuleApi ? 'read' : contractSuffix;
+    const layerValue = `${toCamelCase(name)}ReadApiLive`;
+    const sharedApiPath = yield* tryScaffold('failed to resolve governed HTTP API path', () =>
+      resolveContainedPath(vertical.directory, 'shared', 'api.ts'),
+    );
+    const handlerRootPath = yield* tryScaffold(
+      'failed to resolve governed HTTP handler root path',
+      () => resolveContainedPath(vertical.directory, 'api', 'index.ts'),
+    );
+    const fileSystem = yield* FileSystem.FileSystem;
+    const [sharedApi, handlerRoot] = yield* Effect.all([
+      fileSystem
+        .readFileString(sharedApiPath)
+        .pipe(
+          Effect.mapError((cause) =>
+            scaffoldFailure(`failed to read governed HTTP API root ${sharedApiPath}`, cause),
+          ),
+        ),
+      fileSystem
+        .readFileString(handlerRootPath)
+        .pipe(
+          Effect.mapError((cause) =>
+            scaffoldFailure(`failed to read governed HTTP handler root ${handlerRootPath}`, cause),
+          ),
+        ),
+    ]);
+    if (!hasValidGovernedHttpCompositionRoot(sharedApi, handlerRoot)) {
+      return raiseScaffoldFailure(
+        'governed HTTP composition slots are not bound to the exported runtime root',
+      );
+    }
+    const nextSharedApi = yield* tryScaffold('failed to patch governed HTTP API root', () =>
+      insertSortedSlotIdempotently(
+        insertSortedSlotIdempotently(
+          sharedApi,
+          GOVERNED_HTTP_API_IMPORT_SLOT_START,
+          GOVERNED_HTTP_API_IMPORT_SLOT_END,
+          `import { ${apiValue} } from './apis/${contract}.ts';`,
+          (candidate) => candidate.startsWith('import { ') && candidate.endsWith("';"),
+        ),
+        GOVERNED_HTTP_API_ADDITION_SLOT_START,
+        GOVERNED_HTTP_API_ADDITION_SLOT_END,
+        `.addHttpApi(${apiValue})`,
+        (candidate) => candidate.startsWith('.addHttpApi(') && candidate.endsWith(')'),
+      ),
+    );
+    const nextHandlerRoot = yield* tryScaffold('failed to patch governed HTTP handler root', () => {
+      let next = insertSortedSlotIdempotently(
+        insertSortedSlotIdempotently(
+          handlerRoot,
+          GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START,
+          GOVERNED_HTTP_HANDLER_IMPORT_SLOT_END,
+          `import { ${layerValue} } from './${name}-${serverSuffix}-server.ts';`,
+          (candidate) => candidate.startsWith('import { ') && candidate.endsWith("';"),
+        ),
+        GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
+        GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
+        `${layerValue}.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),`,
+        (candidate) =>
+          /^[A-Za-z][A-Za-z0-9]*ReadApiLive\.pipe\(/u.test(candidate) &&
+          candidate.includes('GovernedReadLayer.provide(governedReadRuntimeLive)') &&
+          candidate.endsWith('),'),
+      );
+      if (next.includes(GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START)) {
+        for (const supportImport of [
+          "import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';",
+          "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';",
+        ]) {
+          next = insertSortedSlotIdempotently(
+            next,
+            GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+            GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
+            supportImport,
+            (candidate) => candidate.startsWith('import { ') && candidate.endsWith("';"),
+          );
+        }
+      }
+      if (next.includes(GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START)) {
+        next = insertSortedSlotIdempotently(
+          next,
+          GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
+          GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
+          'GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive)),',
+          (candidate) =>
+            candidate.startsWith('GovernedReadLayer.provide(') && candidate.endsWith('),'),
+        );
+      }
+      return next;
+    });
+    const mutations: Mutation[] = [];
+    const sharedApiMutation = yield* tryScaffold('failed to update governed HTTP API root', () =>
+      updateMutation(sharedApiPath, sharedApi, nextSharedApi),
+    );
+    const handlerRootMutation = yield* tryScaffold(
+      'failed to update governed HTTP handler root',
+      () => updateMutation(handlerRootPath, handlerRoot, nextHandlerRoot),
+    );
+    if (sharedApiMutation !== undefined) {
+      mutations.push(sharedApiMutation);
+    }
+    if (handlerRootMutation !== undefined) {
+      mutations.push(handlerRootMutation);
+    }
+    return mutations;
+  },
+);
+
 interface GovernedContributionSlots {
   readonly manifest: readonly [string, string, string][];
   readonly registration: readonly [string, string, string][];
 }
+
+const manifestOwnerSlots = [
+  [MODULE_MANIFEST_API_SLOT_START, MODULE_MANIFEST_API_SLOT_END],
+  [MODULE_MANIFEST_COMPONENT_SLOT_START, MODULE_MANIFEST_COMPONENT_SLOT_END],
+  [MODULE_MANIFEST_REPORT_SLOT_START, MODULE_MANIFEST_REPORT_SLOT_END],
+  [MODULE_MANIFEST_SEARCH_SLOT_START, MODULE_MANIFEST_SEARCH_SLOT_END],
+  [MODULE_MANIFEST_SHELL_COMPONENT_SLOT_START, MODULE_MANIFEST_SHELL_COMPONENT_SLOT_END],
+  [MODULE_MANIFEST_SHELL_REPORT_SLOT_START, MODULE_MANIFEST_SHELL_REPORT_SLOT_END],
+  [MODULE_MANIFEST_SHELL_SEARCH_SLOT_START, MODULE_MANIFEST_SHELL_SEARCH_SLOT_END],
+] as const;
+
+const registrationOwnerSlots = [
+  [MODULE_REGISTRATION_API_SLOT_START, MODULE_REGISTRATION_API_SLOT_END],
+  [MODULE_REGISTRATION_COMPONENT_SLOT_START, MODULE_REGISTRATION_COMPONENT_SLOT_END],
+  [MODULE_REGISTRATION_REPORT_SLOT_START, MODULE_REGISTRATION_REPORT_SLOT_END],
+  [MODULE_REGISTRATION_SEARCH_SLOT_START, MODULE_REGISTRATION_SEARCH_SLOT_END],
+] as const;
 
 const slotLine = (
   kind: GovernedContributionKind,
@@ -769,52 +954,6 @@ const slotLine = (
 };
 
 /* eslint-disable unicorn/no-array-reduce -- Slot patches intentionally flow through the accumulated document. */
-const directTokenStringProperty = (
-  tokens: ReturnType<typeof tokenizeGovernedClient>,
-  property: string,
-): string | undefined => {
-  const identities: string[] = [];
-  let braceDepth = 0;
-  for (let index = 0; index < tokens.length - 2; index += 1) {
-    if (
-      braceDepth === 1 &&
-      tokens[index]?.kind === SyntaxKind.Identifier &&
-      tokens[index]?.value === property &&
-      tokens[index + 1]?.kind === SyntaxKind.ColonToken &&
-      tokens[index + 2]?.kind === SyntaxKind.StringLiteral
-    ) {
-      const identity = tokens[index + 2]?.value;
-      if (identity !== undefined) {
-        identities.push(identity);
-      }
-    }
-    if (tokens[index]?.kind === SyntaxKind.OpenBraceToken) {
-      braceDepth += 1;
-    } else if (tokens[index]?.kind === SyntaxKind.CloseBraceToken) {
-      braceDepth -= 1;
-    }
-  }
-  return identities.length === 1 ? identities[0] : undefined;
-};
-
-const slotEntryIdentity = (source: string): string | undefined => {
-  const tokens = tokenizeGovernedClient(source);
-  const [registrationProperty, registrationColon] = tokens;
-  if (
-    registrationColon?.kind === SyntaxKind.ColonToken &&
-    (registrationProperty?.kind === SyntaxKind.StringLiteral ||
-      registrationProperty?.kind === SyntaxKind.Identifier)
-  ) {
-    return registrationProperty.value;
-  }
-  for (const property of ['contributionKey', 'key']) {
-    const identity = directTokenStringProperty(tokens, property);
-    if (identity !== undefined) {
-      return identity;
-    }
-  }
-  return undefined;
-};
 
 const readStringArray = (
   tokens: ReturnType<typeof tokenizeGovernedClient>,
@@ -922,21 +1061,11 @@ const structurallyMatchesGeneratedEntry = (current: string, expected: string): b
   });
 };
 
-const GENERATED_OWNER_SLOTS = [
-  [MODULE_MANIFEST_API_SLOT_START, MODULE_MANIFEST_API_SLOT_END],
-  [MODULE_MANIFEST_COMPONENT_SLOT_START, MODULE_MANIFEST_COMPONENT_SLOT_END],
-  [MODULE_MANIFEST_REPORT_SLOT_START, MODULE_MANIFEST_REPORT_SLOT_END],
-  [MODULE_MANIFEST_SEARCH_SLOT_START, MODULE_MANIFEST_SEARCH_SLOT_END],
-  [MODULE_MANIFEST_SHELL_COMPONENT_SLOT_START, MODULE_MANIFEST_SHELL_COMPONENT_SLOT_END],
-  [MODULE_MANIFEST_SHELL_REPORT_SLOT_START, MODULE_MANIFEST_SHELL_REPORT_SLOT_END],
-  [MODULE_MANIFEST_SHELL_SEARCH_SLOT_START, MODULE_MANIFEST_SHELL_SEARCH_SLOT_END],
-  [MODULE_REGISTRATION_API_SLOT_START, MODULE_REGISTRATION_API_SLOT_END],
-  [MODULE_REGISTRATION_COMPONENT_SLOT_START, MODULE_REGISTRATION_COMPONENT_SLOT_END],
-  [MODULE_REGISTRATION_REPORT_SLOT_START, MODULE_REGISTRATION_REPORT_SLOT_END],
-  [MODULE_REGISTRATION_SEARCH_SLOT_START, MODULE_REGISTRATION_SEARCH_SLOT_END],
-] as const;
-
-const patchSlots = (content: string, slots: readonly [string, string, string][]): string =>
+const patchSlots = (
+  content: string,
+  slots: readonly [string, string, string][],
+  ownerSlots: readonly (readonly [string, string])[],
+): string =>
   slots.reduce((current, [start, end, line]) => {
     const entries = readGeneratedSlotEntries(current, start, end);
     if (entries.some((candidate) => !candidate.endsWith(','))) {
@@ -945,14 +1074,16 @@ const patchSlots = (content: string, slots: readonly [string, string, string][])
       );
     }
     const identity = slotEntryIdentity(line);
-    const allOwnerEntries = GENERATED_OWNER_SLOTS.filter(
-      ([ownerStart, ownerEnd]) => current.includes(ownerStart) && current.includes(ownerEnd),
-    ).flatMap(([ownerStart, ownerEnd]) =>
-      readGeneratedSlotEntries(current, ownerStart, ownerEnd).map((entry) => ({
-        entry,
-        start: ownerStart,
-      })),
-    );
+    const allOwnerEntries = ownerSlots
+      .filter(
+        ([ownerStart, ownerEnd]) => current.includes(ownerStart) && current.includes(ownerEnd),
+      )
+      .flatMap(([ownerStart, ownerEnd]) =>
+        readGeneratedSlotEntries(current, ownerStart, ownerEnd).map((entry) => ({
+          entry,
+          start: ownerStart,
+        })),
+      );
     if (allOwnerEntries.some(({ entry }) => slotEntryIdentity(entry) === undefined)) {
       return raiseScaffoldFailure(
         `generated owner slot contains unsupported developer content: ${start}`,
@@ -962,6 +1093,11 @@ const patchSlots = (content: string, slots: readonly [string, string, string][])
       identity === undefined
         ? []
         : allOwnerEntries.filter(({ entry }) => slotEntryIdentity(entry) === identity);
+    if (identityMatches.some((match) => match.start !== start)) {
+      return raiseScaffoldFailure(
+        `generated owner slot contains mismatched identity in the wrong contribution category: ${identity}`,
+      );
+    }
     if (identityMatches.length > 1) {
       return raiseScaffoldFailure(`generated owner slot contains duplicate identity: ${identity}`);
     }
@@ -1251,12 +1387,10 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
       const serverMutation = yield* createOrAcceptGeneratedMutationEffect(
         serverPath,
         renderGovernedServer(kind, name),
-        (current) =>
-          current.startsWith(`${generatedHeader(kind)}\n`) &&
-          hasGeneratedGovernedServerContract(current, `${toCamelCase(name)}ReadApiLive`),
       );
       mutations.push(
         ...EffectArray.getSomes([serverMutation]),
+        ...(yield* patchGovernedHttpComposition(vertical, kind, name)),
         ...(yield* planOperationBoundary(workspaceRoot, vertical)),
       );
     }
@@ -1277,11 +1411,11 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
         );
       }
       manifest = yield* tryScaffold('failed to patch module manifest imports', () =>
-        insertSortedSlot(
+        insertSortedSlotIdempotently(
           manifest,
           MODULE_MANIFEST_IMPORT_SLOT_START,
           MODULE_MANIFEST_IMPORT_SLOT_END,
-          [ownerImport],
+          ownerImport,
           isModuleManifestImport,
         ),
       );
@@ -1290,8 +1424,8 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
       slotLine(kind, vertical, name, resource, config),
     );
     const registration = yield* tryScaffold('failed to patch governed contribution slots', () => {
-      manifest = patchSlots(manifest, slots.manifest);
-      return patchSlots(vertical.registrationContent, slots.registration);
+      manifest = patchSlots(manifest, slots.manifest, manifestOwnerSlots);
+      return patchSlots(vertical.registrationContent, slots.registration, registrationOwnerSlots);
     });
     const manifestMutation = yield* tryScaffold('failed to update module manifest', () =>
       updateMutation(vertical.manifestPath, vertical.manifestContent, manifest),

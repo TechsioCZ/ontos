@@ -355,6 +355,7 @@ const foundationIsExact = (
 };
 
 const rootComposesFoundation = (
+  sourceFile: SourceFile,
   declaration: VariableDeclaration | undefined,
   stem: string,
   foundationName: string,
@@ -368,8 +369,14 @@ const rootComposesFoundation = (
     stringLiteral(chain.base.arguments[0]) === `${pascalCaseStem(stem)}Api` &&
     chain.methods.length > 0 &&
     chain.methods.every(
-      (method) =>
-        (method.name === 'add' || method.name === 'addHttpApi') && method.arguments.length === 1,
+      (method, index) =>
+        method.arguments.length === 1 &&
+        (method.name === 'add' ||
+          method.name === 'addHttpApi' ||
+          (index === chain.methods.length - 1 &&
+            method.name === 'pipe' &&
+            identifierName(method.arguments[0]) === 'identity' &&
+            importsExactBindings(sourceFile, 'effect', ['identity']))),
     ) &&
     first?.name === 'addHttpApi' &&
     identifierName(first.arguments[0]) === foundationName
@@ -591,7 +598,12 @@ const validateParsedContract = (
     return 'MicroVertical readiness foundation API must directly compose its exact readiness endpoint and foundation identity';
   }
   if (
-    !rootComposesFoundation(exportedConst(sourceFile, `${exportStem}Api`), stem, foundationName)
+    !rootComposesFoundation(
+      sourceFile,
+      exportedConst(sourceFile, `${exportStem}Api`),
+      stem,
+      foundationName,
+    )
   ) {
     return 'MicroVertical root API must explicitly compose its readiness foundation API';
   }

@@ -24,8 +24,6 @@ import type {
   EngagementActionError,
   EngagementAttachProblem,
 } from './engagement-profile-problems.ts';
-import { organizationEngagementProfileReadApiLive } from './organization-engagement-profile-read-server.ts';
-import { personEngagementProfileReadApiLive } from './person-engagement-profile-read-server.ts';
 
 const runActionHttp = bindActionHttpRunner({
   authentication: engagementProblem.authentication,
@@ -155,6 +153,4 @@ const personEngagementMutationsLive = HttpApiBuilder.group(
 export const engagementProfileApiHandlersLive = Layer.mergeAll(
   organizationEngagementMutationsLive,
   personEngagementMutationsLive,
-  organizationEngagementProfileReadApiLive,
-  personEngagementProfileReadApiLive,
 );

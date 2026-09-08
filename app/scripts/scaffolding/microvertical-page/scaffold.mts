@@ -404,66 +404,6 @@ export default ${componentName};
 `;
 };
 
-const renderLegacyPage = (
-  vertical: PageVerticalMetadata,
-  page: string,
-  route: PageRoute,
-): string => {
-  const componentName = `${toPascalCase(page)}Page`;
-  const keyRoot = `${vertical.namespace}.pages.${toCamelCase(page)}`;
-  const prefix = vertical.tailwindPrefix;
-  return `import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { UltramodernRouteHead } from '${relativeFromRoute(route, 'ultramodern-route-head', 1)}';
-
-export const ${componentName} = () => {
-  const { t } = useModernI18n();
-  const headingId = '${page}-heading';
-
-  return (
-    <>
-      <UltramodernRouteHead />
-      <main className="${prefix}:min-h-screen ${prefix}:bg-(--color-page-bg) ${prefix}:px-4 ${prefix}:py-8 ${prefix}:text-(--color-page-fg) ${prefix}:sm:px-8 ${prefix}:lg:px-12">
-        <div className="${prefix}:mx-auto ${prefix}:flex ${prefix}:max-w-5xl ${prefix}:flex-col ${prefix}:gap-8">
-          <header className="${prefix}:space-y-3">
-            <h1
-              className="${prefix}:text-3xl ${prefix}:font-bold ${prefix}:sm:text-4xl"
-              id={headingId}
-            >
-              {t('${keyRoot}.title')}
-            </h1>
-            <p className="${prefix}:max-w-2xl ${prefix}:text-base ${prefix}:sm:text-lg">
-              {t('${keyRoot}.description')}
-            </p>
-          </header>
-          <section
-            aria-labelledby={headingId}
-            className="${prefix}:bg-(--color-surface) ${prefix}:p-6 ${prefix}:sm:p-8"
-          >
-            <p>{t('${keyRoot}.empty')}</p>
-          </section>
-        </div>
-      </main>
-    </>
-  );
-};
-
-export default ${componentName};
-`;
-};
-
-const renderFormattedLegacyPage = (
-  vertical: PageVerticalMetadata,
-  page: string,
-  route: PageRoute,
-): string =>
-  renderLegacyPage(vertical, page, route).replace(
-    `            <h1
-              className="${vertical.tailwindPrefix}:text-3xl ${vertical.tailwindPrefix}:font-bold ${vertical.tailwindPrefix}:sm:text-4xl"
-              id={headingId}
-            >`,
-    `            <h1 className="${vertical.tailwindPrefix}:text-3xl ${vertical.tailwindPrefix}:font-bold ${vertical.tailwindPrefix}:sm:text-4xl" id={headingId}>`,
-  );
-
 const renderReadAuthorization = (
   config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
 ): string => {
@@ -706,20 +646,6 @@ ${loaderArguments}
 `;
 };
 
-const renderLegacyShellConnectorLoader = (
-  vertical: PageVerticalMetadata,
-  route: PageRoute,
-): string =>
-  `import { loader as loadModuleTarget } from '${relativeFromRoute(route, 'modules/[moduleId]/page.data.ts')}';
-
-interface ShellPageLoaderArguments {
-  readonly request: Request;
-}
-
-export const loader = ({ request }: ShellPageLoaderArguments) =>
-  loadModuleTarget({ params: { moduleId: '${vertical.moduleId}' }, request });
-`;
-
 const renderShellConnectorMetadata = (
   vertical: PageVerticalMetadata,
   page: string,
@@ -772,19 +698,6 @@ const localizedPageCopy = (locale: string): JsonObject => {
   };
 };
 
-const localizedLegacyPageCopy = (locale: string): JsonObject =>
-  locale === 'cs'
-    ? {
-        description: 'Tato stránka je připravena k implementaci.',
-        empty: 'Zatím zde není žádný obsah.',
-        title: 'Nová stránka',
-      }
-    : {
-        description: 'This page is ready for implementation.',
-        empty: 'No content has been added yet.',
-        title: 'New Page',
-      };
-
 const patchLocale = (
   workspaceRoot: string,
   vertical: PageVerticalMetadata,
@@ -830,51 +743,7 @@ const patchLocale = (
     return mutation;
   });
 
-const migrateLegacyLocale = (
-  workspaceRoot: string,
-  vertical: PageVerticalMetadata,
-  locale: string,
-  page: string,
-): Effect.Effect<Mutation, PageScaffoldError> =>
-  Effect.gen(function* migrateLegacyLocaleEffect() {
-    const localePath = resolveContainedPath(
-      workspaceRoot,
-      'verticals',
-      vertical.slug,
-      'locales',
-      locale,
-      `${vertical.namespace}.json`,
-    );
-    const { content, value } = yield* readJsonEffect(
-      localePath,
-      `${locale} locale catalog`,
-      `${locale} locale catalog is invalid`,
-    );
-    const namespace = asJsonObject(value[vertical.namespace], `${locale} namespace`);
-    const pages: MutableJsonObject = {
-      ...asJsonObject(namespace['pages'], `${locale} pages catalog`),
-    };
-    const pageKey = toCamelCase(page);
-    if (!Equal.equals(pages[pageKey], localizedLegacyPageCopy(locale))) {
-      return yield* pageScaffoldFailure(
-        `legacy locale key ${vertical.namespace}.pages.${pageKey} was modified`,
-      );
-    }
-    pages[pageKey] = localizedPageCopy(locale);
-    const sortedPages = Object.fromEntries(
-      Object.entries(pages).toSorted(([left], [right]) => left.localeCompare(right)),
-    );
-    const patched = patchJsonObjectProperty(content, [vertical.namespace], 'pages', sortedPages);
-    const mutation = updateMutation(localePath, content, patched);
-    if (mutation === undefined) {
-      return yield* pageScaffoldFailure(
-        `legacy locale migration unexpectedly made no change for ${locale}`,
-      );
-    }
-    return mutation;
-  });
-
-const GeneratedPageStateSchema = Schema.Literals(['current', 'legacy', 'invalid']);
+const GeneratedPageStateSchema = Schema.Literals(['current', 'invalid']);
 type GeneratedPageState = typeof GeneratedPageStateSchema.Type;
 
 interface OwnedPageRoute {
@@ -1019,12 +888,6 @@ const resolveGeneratedPageContentState = (
   if (pageContent === renderPage(vertical, page, route)) {
     return 'current';
   }
-  if (
-    pageContent === renderLegacyPage(vertical, page, route) ||
-    pageContent === renderFormattedLegacyPage(vertical, page, route)
-  ) {
-    return 'legacy';
-  }
   return 'invalid';
 };
 
@@ -1058,7 +921,6 @@ const generatedWiringMatches = (
   vertical: PageVerticalMetadata,
   page: string,
   route: PageRoute,
-  pageState: Exclude<GeneratedPageState, 'invalid'>,
   config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
 ): Effect.Effect<boolean, PageScaffoldError, FileSystem.FileSystem> =>
   Effect.gen(function* generatedWiringMatchesEffect() {
@@ -1091,12 +953,7 @@ const generatedWiringMatches = (
     );
     const expectedShellFiles = [
       [PAGE_FILE_NAME, renderShellConnectorPage(route)],
-      [
-        PAGE_LOADER_FILE_NAME,
-        pageState === 'current'
-          ? renderShellConnectorLoader(vertical, page, route)
-          : renderLegacyShellConnectorLoader(vertical, route),
-      ],
+      [PAGE_LOADER_FILE_NAME, renderShellConnectorLoader(vertical, page, route)],
       [ROUTE_METADATA_FILE_NAME, renderShellConnectorMetadata(vertical, page, route, config)],
     ] as const;
     const shellRouteMatches = yield* Effect.all(
@@ -1214,9 +1071,6 @@ const generatedLocaleState = (
     if (Equal.equals(copy, localizedPageCopy(locale))) {
       return 'current';
     }
-    if (Equal.equals(copy, localizedLegacyPageCopy(locale))) {
-      return 'legacy';
-    }
     return 'invalid';
   });
 
@@ -1262,7 +1116,7 @@ const generatedPageState = (
     if (!localeStates.every((state) => state === pageState)) {
       return 'invalid';
     }
-    return (yield* generatedWiringMatches(workspaceRoot, vertical, page, route, pageState, config))
+    return (yield* generatedWiringMatches(workspaceRoot, vertical, page, route, config))
       ? pageState
       : 'invalid';
   });
@@ -1313,36 +1167,6 @@ export const planPageScaffold = (
       if (state === 'current') {
         return {
           mutations: [],
-          result: { appId: vertical.appId, pagePath, routeMetadataPath },
-        };
-      }
-      if (state === 'legacy') {
-        const shellLoaderPath = resolveContainedPath(shellRouteDirectory, PAGE_LOADER_FILE_NAME);
-        const [pageContent, shellLoaderContent, localeMutations] = yield* Effect.all(
-          [
-            readTextFile(pagePath),
-            readTextFile(shellLoaderPath),
-            Effect.all(
-              vertical.locales.map((locale) =>
-                migrateLegacyLocale(workspaceRoot, vertical, locale, page),
-              ),
-              { concurrency: 'unbounded' },
-            ),
-          ],
-          { concurrency: 'unbounded' },
-        );
-        const mutations = [
-          updateMutation(pagePath, pageContent, renderPage(vertical, page, route)),
-          ...localeMutations,
-          updateMutation(
-            shellLoaderPath,
-            shellLoaderContent,
-            renderShellConnectorLoader(vertical, page, route),
-          ),
-        ].filter((mutation) => mutation !== undefined);
-        ensureUniqueMutationPaths(mutations);
-        return {
-          mutations,
           result: { appId: vertical.appId, pagePath, routeMetadataPath },
         };
       }

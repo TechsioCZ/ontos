@@ -21,17 +21,6 @@ export const partyRegistryCorsAllowedHeaders = [
 
 export const partyRegistryCorsAllowedMethods = ['GET', 'HEAD', 'OPTIONS', 'POST'] as const;
 
-export const governedReadProblemStatus = {
-  authentication: 401,
-  forbidden: 403,
-  internal: 500,
-  invalid: 400,
-  notFound: 404,
-  policyConflict: 409,
-  policyDenied: 422,
-  unavailable: 503,
-} as const;
-
 export const partyRegistryCorsAllowedOrigins = (configuredOrigin: string): readonly string[] => {
   const origin = new URL(configuredOrigin);
   if (origin.hostname !== 'localhost' && origin.hostname !== '127.0.0.1') {

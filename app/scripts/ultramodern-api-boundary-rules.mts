@@ -295,7 +295,10 @@ const safeLayerPipeArguments = (expression: string): readonly string[] | undefin
   const argumentsList = callArguments(expression, '.pipe');
   return argumentsList?.every(
     (argument) =>
-      argument === 'Layer.orDie' || callArguments(argument, 'Layer.provide') !== undefined,
+      argument === 'Layer.orDie' ||
+      argument === 'GovernedReadLayer.orDie' ||
+      callArguments(argument, 'Layer.provide') !== undefined ||
+      callArguments(argument, 'GovernedReadLayer.provide') !== undefined,
   ) === true
     ? argumentsList
     : undefined;
@@ -666,6 +669,58 @@ const shadowsBinding = (code: string, name: string, usageIndex: number): boolean
   );
 };
 
+const usesTrustedGovernedLayer = (source: string, code: string, usageIndex: number): boolean => {
+  if (!/\bGovernedReadLayer\s*\./u.test(code)) {
+    return true;
+  }
+  const binding = importedValueBindingFromAnyModule(source, 'GovernedReadLayer');
+  return (
+    binding?.imported === 'Layer' &&
+    (binding.specifier === 'effect' || binding.specifier === effectEdgeSpecifier) &&
+    !shadowsBinding(code, 'GovernedReadLayer', usageIndex)
+  );
+};
+
+const canonicalApiExport = (
+  source: string,
+  name: string,
+  seen: ReadonlySet<string> = new Set(),
+): string | undefined => {
+  if (seen.has(name)) {
+    return undefined;
+  }
+  const code = withoutCommentsOrLiterals(source);
+  if (
+    !new RegExp(String.raw`\bexport\s+const\s+${escapesRegularExpression(name)}\s*=`, 'u').test(
+      code,
+    )
+  ) {
+    return undefined;
+  }
+  const initializer = initializerFor(withoutComments(source), name, source.length);
+  if (initializer === undefined) {
+    return undefined;
+  }
+  return new RegExp(String.raw`^${identifierPattern}$`, 'u').test(initializer)
+    ? canonicalApiExport(source, initializer, new Set([...seen, name]))
+    : name;
+};
+
+const sameApiExport = (
+  module: RuntimeTopologyModule | undefined,
+  actual: string | undefined,
+  expected: string,
+): boolean => {
+  if (actual === expected) {
+    return true;
+  }
+  if (module === undefined || actual === undefined) {
+    return false;
+  }
+  const canonical = canonicalApiExport(module.source, actual);
+  return canonical !== undefined && canonical === canonicalApiExport(module.source, expected);
+};
+
 // oxlint-disable-next-line complexity -- Transitive handler provenance must fail closed across local groups, aggregates, and imported re-exports.
 const handlerLayerDerivesFromHttpApiBuilder = (
   source: string,
@@ -679,7 +734,7 @@ const handlerLayerDerivesFromHttpApiBuilder = (
   seen: ReadonlySet<string> = new Set(),
 ): boolean => {
   const key = `${moduleId}#${name}`;
-  if (seen.has(key)) {
+  if (!usesTrustedGovernedLayer(source, code, usageIndex) || seen.has(key)) {
     return false;
   }
   const nextSeen = new Set([...seen, key]);
@@ -694,14 +749,16 @@ const handlerLayerDerivesFromHttpApiBuilder = (
       const [apiName] = groupArguments;
       const apiBinding =
         apiName === undefined ? undefined : importedValueBindingFromAnyModule(source, apiName);
-      const apiModuleId =
-        apiBinding === undefined ? undefined : resolveImport?.(apiBinding.specifier)?.id;
+      const apiModule =
+        apiBinding === undefined ? undefined : resolveImport?.(apiBinding.specifier);
+      const apiModuleId = apiModule?.id;
       const builderBinding = importedValueBindingFromAnyModule(source, 'HttpApiBuilder');
       return (
         builderBinding?.imported === 'HttpApiBuilder' &&
         builderBinding.specifier === effectEdgeSpecifier &&
         !shadowsBinding(code, 'HttpApiBuilder', usageIndex) &&
-        apiBinding?.imported === expectedApiExport &&
+        apiBinding !== undefined &&
+        sameApiExport(apiModule, apiBinding.imported, expectedApiExport) &&
         (expectedApiModuleId === undefined
           ? /(?:^|\/)shared\/api\.ts$/u.test(apiBinding.specifier)
           : apiModuleId === expectedApiModuleId)
@@ -823,7 +880,7 @@ const declaresLayerValue = (
   usageIndex = code.length,
   seen: ReadonlySet<string> = new Set(),
 ): boolean => {
-  if (seen.has(name)) {
+  if (!usesTrustedGovernedLayer(source, code, usageIndex) || seen.has(name)) {
     return false;
   }
   const initializer = initializerFor(code, name, usageIndex);

@@ -104,6 +104,28 @@ const createFixture = async (): Promise<string> => {
   );
   await write(
     root,
+    'verticals/property-registry/shared/api.ts',
+    `import { HttpApi } from 'effect/unstable/httpapi';
+
+export const propertyRegistryApi = HttpApi.make('PropertyRegistryApi');
+`,
+  );
+  await write(
+    root,
+    'verticals/property-registry/api/index.ts',
+    `import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
+import type { EffectRuntimeLayer } from '@modern-js/plugin-bff/effect-edge';
+import { propertyRegistryApi } from '../shared/api.ts';
+
+const layer = HttpApiBuilder.layer(propertyRegistryApi).pipe(
+  Layer.provide(Layer.empty),
+) satisfies EffectRuntimeLayer;
+
+export default defineEffectBff({ api: propertyRegistryApi, layer });
+`,
+  );
+  await write(
+    root,
     'topology/reference-topology.json',
     json({
       schemaVersion: 1,
@@ -332,7 +354,7 @@ await test('resource scaffold leaves no artifact when generated owner slots or e
   });
 });
 
-await test('resource scaffold upgrades the previous generated empty resourceTypes field safely', async () => {
+await test('resource scaffold rejects a manifest without the governed resource slot', async () => {
   await withFixture(async (root) => {
     const manifestPath = path.join(root, verticalManifestPath);
     const manifest = await readFile(manifestPath, 'utf-8');
@@ -348,9 +370,8 @@ await test('resource scaffold upgrades the previous generated empty resourceType
       'utf-8',
     );
 
-    await scaffoldResource(root);
-    const upgraded = await readFile(manifestPath, 'utf-8');
-    assert.match(upgraded, /\/\/ <generated-module-manifest-resources>/u);
-    assert.match(upgraded, /rentalUnitResourceDescriptor,/u);
+    const before = await snapshotTree(root);
+    await assert.rejects(scaffoldResource(root), /slot/u);
+    assert.deepEqual(await snapshotTree(root), before);
   });
 });

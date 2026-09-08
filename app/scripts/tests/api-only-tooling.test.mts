@@ -38,6 +38,25 @@ const sharedApiFile = 'shared/api.ts';
 const buildMarkerFile = 'shared/ultramodern-build.ts';
 const tsconfigFile = 'tsconfig.json';
 const fixtureApiModuleSource = 'export const fixtureApi = {};';
+const governedApiModuleSource = `${fixtureApiModuleSource}
+export const governedHttpApi = fixtureApi;
+export const unusedApi = {};
+`;
+const governedLayerAliasFixture = `
+import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+import { HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
+import { Layer as GovernedReadLayer } from 'effect';
+import { fixtureApi, governedHttpApi } from '${generatedSharedApiImport}';
+const group = HttpApiBuilder.group(governedHttpApi, 'fixture', (handlers) => handlers.handle('reachable', () => undefined));
+const handlers = Layer.mergeAll(group.pipe(GovernedReadLayer.provide(Layer.empty)));
+export default assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
+`;
+const governedLayerAliasMutations = [
+  ["from 'effect'", "from './counterfeit-layer.ts'"],
+  ['fixtureApi, governedHttpApi', 'fixtureApi, unusedApi as governedHttpApi'],
+  ['const handlers =', 'const GovernedReadLayer = {}; const handlers ='],
+] as const;
+
 const mfManifestPath = '/mf-manifest.json';
 const readinessPath = '/party-registry-api/party-registry/readiness';
 const localePath = '/locales/en/party-registry.json';
@@ -1372,7 +1391,7 @@ void test('published lint validators reject comment, string, and local strict-ro
   const fixtureApiEntryPath = path.join(fixtureRoot, apiIndexFile);
   await mkdir(path.join(fixtureRoot, 'api'), { recursive: true });
   await mkdir(path.join(fixtureRoot, 'shared'), { recursive: true });
-  await writeFile(path.join(fixtureRoot, sharedApiFile), `${fixtureApiModuleSource}\n`);
+  await writeFile(path.join(fixtureRoot, sharedApiFile), governedApiModuleSource);
   await writeFile(
     path.join(fixtureRoot, 'shared/rpc.ts'),
     'export const fixtureRpcGroup = { toLayer: () => undefined };\n',
@@ -1418,6 +1437,9 @@ void test('published lint validators reject comment, string, and local strict-ro
   await writeFile(path.join(generatedRoot, 'shared/rpc.ts'), generatedRpcContractSource);
   const invalidSources = [
     ...adversarialStrictRuntimeSources,
+    ...governedLayerAliasMutations.map(([before, after]) =>
+      governedLayerAliasFixture.replace(before, after),
+    ),
     `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
@@ -1666,7 +1688,7 @@ void test('published lint validators reject comment, string, and local strict-ro
       false,
       `${moduleFormat} rejected exact generated RPC output: ${generatedRpcMessages.join(' | ')}`,
     );
-    for (const source of validAdversarialStrictRuntimeSources) {
+    for (const source of [...validAdversarialStrictRuntimeSources, governedLayerAliasFixture]) {
       const messages: string[] = [];
       module
         .createStrictEffectApiBoundariesRule()
@@ -3513,4 +3535,50 @@ globalThis.fetch = async input => {
   assert.equal(report.status, 'pass');
   assert.equal(report.results[0].appId, 'party-registry');
   assert.ok(report.results[0].assertions.every((entry) => entry.status === 'pass'));
+});
+
+void test('proves generated Layer bindings and API aliases without accepting unused neighbors', () => {
+  const source = governedLayerAliasFixture;
+  const resolveImport = (specifier: string) =>
+    specifier === generatedSharedApiImport
+      ? {
+          id: 'owner/shared/api.ts',
+          resolveImport: unexpectedTopologyImport,
+          source: governedApiModuleSource,
+        }
+      : unexpectedTopologyImport(specifier);
+  assert.equal(strictEffectRuntimeTopologyViolation(source, resolveImport), undefined);
+  for (const [before, after] of governedLayerAliasMutations) {
+    assert.ok(source.includes(before));
+    assert.notEqual(
+      strictEffectRuntimeTopologyViolation(source.replace(before, after), resolveImport),
+      undefined,
+    );
+  }
+});
+
+void test('accepts only the trusted final identity terminator in a governed API slot', async () => {
+  const identityTerminator = '.pipe(identity)';
+  const source = await readFile(
+    path.join(workspaceRoot, 'verticals/party-registry/shared/api.ts'),
+    'utf-8',
+  );
+  assert.ok(source.includes(identityTerminator));
+  assert.equal(microVerticalApiBaselineViolation(partyId, source), undefined);
+  const mutations = [
+    source.replace(
+      "import { Brand, identity } from 'effect';",
+      "import { Brand } from 'effect';\nimport { identity } from './counterfeit.ts';",
+    ),
+    source.replace(identityTerminator, '.pipe(unrelatedIdentity)'),
+    source.replace(identityTerminator, '.pipe(() => HttpApi.make("DiscardedApi"))'),
+    source.replace(identityTerminator, '.pipe(identity).addHttpApi(partyRegistryFoundationApi)'),
+  ];
+  for (const mutated of mutations) {
+    assert.notEqual(mutated, source);
+    assert.match(
+      microVerticalApiBaselineViolation(partyId, mutated) ?? '',
+      /explicitly compose its readiness foundation API/u,
+    );
+  }
 });

@@ -2845,7 +2845,7 @@ index 198beb018e1d6985953748cea5000448f381abe5..7d2acb37a8058c1c7b94c1df033d34e7
    | 'always'
    | 'hourly'
 diff --git a/templates/workspace-scripts/check-ultramodern-api-boundaries.mts b/templates/workspace-scripts/check-ultramodern-api-boundaries.mts
-index d606a2265cb438d32a612cfdd6ebb9561529d4f5..8571da05a5600012e01001a97e6e1bacfb2f3cb9 100644
+index d606a2265cb438d32a612cfdd6ebb9561529d4f5..b31f281e7ab5bbea289fc2aae117fe39202023cf 100644
 --- a/templates/workspace-scripts/check-ultramodern-api-boundaries.mts
 +++ b/templates/workspace-scripts/check-ultramodern-api-boundaries.mts
 @@ -1,6 +1,10 @@
@@ -2859,7 +2859,7 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..8571da05a5600012e01001a97e6e1bac
  
  const workspaceRoot = process.env.ULTRAMODERN_WORKSPACE_ROOT ?? process.cwd();
  const failures = [];
-@@ -182,11 +186,1126 @@ for (const file of textFiles) {
+@@ -182,11 +186,1184 @@ for (const file of textFiles) {
  }
  
  const verticalDirectories = listDirectories('verticals');
@@ -3132,7 +3132,10 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..8571da05a5600012e01001a97e6e1bac
 +  const argumentsList = callArguments(expression, '.pipe');
 +  return argumentsList?.every(
 +    (argument) =>
-+      argument === 'Layer.orDie' || callArguments(argument, 'Layer.provide') !== undefined,
++      argument === 'Layer.orDie' ||
++      argument === 'GovernedReadLayer.orDie' ||
++      callArguments(argument, 'Layer.provide') !== undefined ||
++      callArguments(argument, 'GovernedReadLayer.provide') !== undefined,
 +  ) === true
 +    ? argumentsList
 +    : undefined;
@@ -3248,7 +3251,7 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..8571da05a5600012e01001a97e6e1bac
 +  seen = new Set(),
 +) {
 +  const key = `${moduleId}#${name}`;
-+  if (seen.has(key)) {
++  if (!usesTrustedGovernedLayer(source, code, usageIndex) || seen.has(key)) {
 +    return false;
 +  }
 +  const nextSeen = new Set([...seen, key]);
@@ -3263,14 +3266,16 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..8571da05a5600012e01001a97e6e1bac
 +      const apiName = groupArguments[0];
 +      const apiBinding =
 +        apiName === undefined ? undefined : importedValueBindingFromAnyModule(source, apiName);
-+      const apiModuleId =
-+        apiBinding === undefined ? undefined : resolveImport?.(apiBinding.specifier)?.id;
++      const apiModule =
++        apiBinding === undefined ? undefined : resolveImport?.(apiBinding.specifier);
++      const apiModuleId = apiModule?.id;
 +      const builderBinding = importedValueBindingFromAnyModule(source, 'HttpApiBuilder');
 +      return (
 +        builderBinding?.imported === 'HttpApiBuilder' &&
 +        builderBinding.specifier === '@modern-js/plugin-bff/effect-edge' &&
 +        !shadowsBinding(code, 'HttpApiBuilder', usageIndex) &&
-+        apiBinding?.imported === expectedApiExport &&
++        apiBinding !== undefined &&
++        sameApiExport(apiModule, apiBinding.imported, expectedApiExport) &&
 +        (expectedApiModuleId === undefined
 +          ? /(?:^|\/)shared\/api\.ts$/u.test(apiBinding.specifier)
 +          : apiModuleId === expectedApiModuleId)
@@ -3387,7 +3392,7 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..8571da05a5600012e01001a97e6e1bac
 +  usageIndex = code.length,
 +  seen = new Set(),
 +) {
-+  if (seen.has(name)) {
++  if (!usesTrustedGovernedLayer(source, code, usageIndex) || seen.has(name)) {
 +    return false;
 +  }
 +  const initializer = initializerFor(code, name, usageIndex);
@@ -3678,6 +3683,59 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..8571da05a5600012e01001a97e6e1bac
 +    parameterBindingsShadow(code, name, usageIndex)
 +  );
 +}
++
++function usesTrustedGovernedLayer(source, code, usageIndex) {
++  if (!/\bGovernedReadLayer\s*\./u.test(code)) {
++    return true;
++  }
++  const binding = importedValueBindingFromAnyModule(source, 'GovernedReadLayer');
++  return (
++    binding?.imported === 'Layer' &&
++    (binding.specifier === 'effect' || binding.specifier === '@modern-js/plugin-bff/effect-edge') &&
++    !shadowsBinding(code, 'GovernedReadLayer', usageIndex)
++  );
++}
++
++const canonicalApiExport = (
++  source        ,
++  name        ,
++  seen                      = new Set(),
++)                     => {
++  if (seen.has(name)) {
++    return undefined;
++  }
++  const code = withoutCommentsOrLiterals(source);
++  if (
++    !new RegExp(String.raw`\bexport\s+const\s+${escapeRegularExpression(name)}\s*=`, 'u').test(
++      code,
++    )
++  ) {
++    return undefined;
++  }
++  const initializer = initializerFor(withoutComments(source), name, source.length);
++  if (initializer === undefined) {
++    return undefined;
++  }
++  return new RegExp(String.raw`^[$A-Z_a-z][$\w]*$`, 'u').test(initializer)
++    ? canonicalApiExport(source, initializer, new Set([...seen, name]))
++    : name;
++};
++
++const sameApiExport = (
++  module                                   ,
++  actual                    ,
++  expected        ,
++)          => {
++  if (actual === expected) {
++    return true;
++  }
++  if (module === undefined || actual === undefined) {
++    return false;
++  }
++  const canonical = canonicalApiExport(module.source, actual);
++  return canonical !== undefined && canonical === canonicalApiExport(module.source, expected);
++};
++
 +
 +function curlyDepthAt(code, targetIndex) {
 +  let depth = 0;
@@ -3986,7 +4044,7 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..8571da05a5600012e01001a97e6e1bac
  function assertApiSurface(appPath) {
    const apiEntry = `${appPath}/api/index.ts`;
    const backendEffectExpose = `${appPath}/api/effect-api.ts`;
-@@ -211,30 +1330,28 @@ function assertApiSurface(appPath) {
+@@ -211,30 +1388,28 @@ function assertApiSurface(appPath) {
  
    if (exists(apiEntry)) {
      const entry = readText(apiEntry);
@@ -4031,7 +4089,7 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..8571da05a5600012e01001a97e6e1bac
    }
   if (exists(backendEffectExpose)) {
   const backendExpose = readText(backendEffectExpose);
-@@ -300,6 +1417,62 @@ function assertApiSurface(appPath) {
+@@ -300,6 +1475,62 @@ function assertApiSurface(appPath) {
        /\bSchema\./u,
        'must use Schema for request, response and error shapes.',
      );
@@ -4094,7 +4152,7 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..8571da05a5600012e01001a97e6e1bac
    }
  
    if (exists(modernConfig)) {
-@@ -373,7 +1546,6 @@ if (exists('package.json')) {
+@@ -373,7 +1604,6 @@ if (exists('package.json')) {
  }
  
  if (exists('topology/reference-topology.json')) {
@@ -4104,10 +4162,10 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..8571da05a5600012e01001a97e6e1bac
        assert(
 diff --git a/templates/workspace-scripts/microvertical-api-baseline-boundary.mts b/templates/workspace-scripts/microvertical-api-baseline-boundary.mts
 new file mode 100644
-index 0000000000000000000000000000000000000000..654b081d089f3dd1980b477aa657dc8c70bf8209
+index 0000000000000000000000000000000000000000..d39b20299baf434ed109fea7d93c586cc99f421e
 --- /dev/null
 +++ b/templates/workspace-scripts/microvertical-api-baseline-boundary.mts
-@@ -0,0 +1,674 @@
+@@ -0,0 +1,686 @@
 +import {
 +  isAsExpression,
 +  isCallExpression,
@@ -4465,6 +4523,7 @@ index 0000000000000000000000000000000000000000..654b081d089f3dd1980b477aa657dc8c
 +};
 +
 +const rootComposesFoundation = (
++  sourceFile: SourceFile,
 +  declaration: VariableDeclaration | undefined,
 +  stem: string,
 +  foundationName: string,
@@ -4478,8 +4537,14 @@ index 0000000000000000000000000000000000000000..654b081d089f3dd1980b477aa657dc8c
 +    stringLiteral(chain.base.arguments[0]) === `${pascalCaseStem(stem)}Api` &&
 +    chain.methods.length > 0 &&
 +    chain.methods.every(
-+      (method) =>
-+        (method.name === 'add' || method.name === 'addHttpApi') && method.arguments.length === 1,
++      (method, index) =>
++        method.arguments.length === 1 &&
++        (method.name === 'add' ||
++          method.name === 'addHttpApi' ||
++          (index === chain.methods.length - 1 &&
++            method.name === 'pipe' &&
++            identifierName(method.arguments[0]) === 'identity' &&
++            importsExactBindings(sourceFile, 'effect', ['identity']))),
 +    ) &&
 +    first?.name === 'addHttpApi' &&
 +    identifierName(first.arguments[0]) === foundationName
@@ -4701,7 +4766,12 @@ index 0000000000000000000000000000000000000000..654b081d089f3dd1980b477aa657dc8c
 +    return 'MicroVertical readiness foundation API must directly compose its exact readiness endpoint and foundation identity';
 +  }
 +  if (
-+    !rootComposesFoundation(exportedConst(sourceFile, `${exportStem}Api`), stem, foundationName)
++    !rootComposesFoundation(
++      sourceFile,
++      exportedConst(sourceFile, `${exportStem}Api`),
++      stem,
++      foundationName,
++    )
 +  ) {
 +    return 'MicroVertical root API must explicitly compose its readiness foundation API';
 +  }

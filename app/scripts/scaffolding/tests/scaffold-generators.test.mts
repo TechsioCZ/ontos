@@ -41,7 +41,20 @@ import {
 } from '../../../apps/shell-super-app/api/auth/gateway-issuer.ts';
 import type { GatewayIssuerConfigValue } from '../../../apps/shell-super-app/api/auth/gateway-issuer-config.ts';
 import { getHelpText, runScaffold } from '../cli.mts';
+import { hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
 import type { ScaffoldCommand } from '../cli.mts';
+import {
+  GOVERNED_HTTP_API_ADDITION_SLOT_END,
+  GOVERNED_HTTP_API_ADDITION_SLOT_START,
+  GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
+  GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
+  GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+  GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
+  GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
+  GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
+  insertSortedSlot,
+  readGeneratedSlotEntries,
+} from '../shared.mts';
 import type { JsonValue } from '../shared.mts';
 import {
   assertPublishedOutboxDependencyUsage,
@@ -68,6 +81,10 @@ const test = (name: string, handler: () => void | Promise<void>): void => {
 
 const isGeneratedPrincipalError = (tag: GeneratedPrincipalErrorTag) =>
   Schema.is(Schema.Struct({ _tag: Schema.Literal(tag) }));
+
+const sharedContractsPackagePath = 'packages/shared-contracts';
+const sharedContractsNodeModulePath = 'node_modules/@app/shared-contracts';
+const partyGovernedContractPath = 'verticals/party-registry/shared/api.ts';
 
 interface FixtureVertical {
   readonly appId: string;
@@ -370,6 +387,7 @@ const contactsVertical: FixtureVertical = {
 };
 
 const json = (value: JsonValue): string => `${JSON.stringify(value, null, 2)}\n`;
+const inventoryHandlerRootFile = 'verticals/inventory-stock/api/index.ts';
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
 const require = createRequire(import.meta.url);
 const createEntry = require.resolve('@modern-js/create');
@@ -460,7 +478,34 @@ const createVertical = async (root: string, vertical: FixtureVertical): Promise<
   await writeFixtureFile(
     root,
     `verticals/${vertical.slug}/api/index.ts`,
-    `export const existingApiRuntime = '${vertical.moduleId}';\n`,
+    `import { defineEffectBff, Effect, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
+import type { EffectRuntimeLayer } from '@modern-js/plugin-bff/effect-edge';
+import { fixtureApi } from '../shared/api.ts';
+
+const fixtureLayer = HttpApiBuilder.group(fixtureApi, 'fixture', (handlers) =>
+  handlers.handle('readiness', () => Effect.succeed({ ok: true as const })),
+);
+const layer = HttpApiBuilder.layer(fixtureApi).pipe(
+  Layer.provide(fixtureLayer),
+) satisfies EffectRuntimeLayer;
+
+export default defineEffectBff({ api: fixtureApi, layer });
+`,
+  );
+  await writeFixtureFile(
+    root,
+    `verticals/${vertical.slug}/shared/api.ts`,
+    `import { Schema } from 'effect';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+
+export const fixtureApi = HttpApi.make('FixtureApi').add(
+  HttpApiGroup.make('fixture').add(
+    HttpApiEndpoint.get('readiness', '/fixture/readiness', {
+      success: Schema.Struct({ ok: Schema.Literal(true) }),
+    }),
+  ),
+);
+`,
   );
   await Promise.all(
     ['cs', 'en'].map(
@@ -898,8 +943,8 @@ test('generated read clients fetch mounted owner URLs and support separately dep
     await mkdir(path.join(fixture.root, 'node_modules/@app'), { recursive: true });
     await mkdir(path.join(fixture.root, 'node_modules/@modern-js'), { recursive: true });
     await symlink(
-      path.join(appRoot, 'packages/shared-contracts'),
-      path.join(fixture.root, 'node_modules/@app/shared-contracts'),
+      path.join(appRoot, sharedContractsPackagePath),
+      path.join(fixture.root, sharedContractsNodeModulePath),
       'dir',
     );
     await symlink(
@@ -1015,7 +1060,11 @@ test('generated read clients fetch mounted owner URLs and support separately dep
           Effect.flip,
         ),
       );
-      console.log(JSON.stringify({ calls, endpointRequestsAfterGatewayFailure, gatewayAttempts, gatewayFailureTag: gatewayFailure._tag }));
+      const gatewayUnavailable = Match.value(gatewayFailure).pipe(
+        Match.tag('GatewayUnavailableProblem', () => true),
+        Match.orElse(() => false),
+      );
+      console.log(JSON.stringify({ calls, endpointRequestsAfterGatewayFailure, gatewayAttempts, gatewayUnavailable }));
     `,
       ],
       { cwd: fixture.root, encoding: 'utf-8' },
@@ -1027,7 +1076,7 @@ test('generated read clients fetch mounted owner URLs and support separately dep
           calls: Schema.Array(Schema.Record(Schema.String, Schema.String)),
           endpointRequestsAfterGatewayFailure: Schema.Number,
           gatewayAttempts: Schema.Number,
-          gatewayFailureTag: Schema.String,
+          gatewayUnavailable: Schema.Boolean,
         }),
       ),
     )(result.stdout);
@@ -1051,9 +1100,21 @@ test('generated read clients fetch mounted owner URLs and support separately dep
       })),
     );
     assert.equal(proof.gatewayAttempts, 4);
-    assert.equal(proof.gatewayFailureTag, 'GatewayUnavailableProblem');
+    assert.equal(proof.gatewayUnavailable, true);
     assert.equal(proof.endpointRequestsAfterGatewayFailure, 0);
   });
+});
+
+test('the migrated Party governed API slot accepts future generated additions', async () => {
+  const source = await readFile(path.join(appRoot, partyGovernedContractPath), 'utf-8');
+  const next = insertSortedSlot(
+    source,
+    GOVERNED_HTTP_API_ADDITION_SLOT_START,
+    GOVERNED_HTTP_API_ADDITION_SLOT_END,
+    ['.addHttpApi(FutureReadApi)'],
+    (candidate) => candidate.startsWith('.addHttpApi(') && candidate.endsWith(')'),
+  );
+  assert.match(next, /\.addHttpApi\(FutureReadApi\)/u);
 });
 
 test('governed contribution generators patch owner contracts and lazy adapters atomically', async () => {
@@ -1090,6 +1151,14 @@ test('governed contribution generators patch owner contracts and lazy adapters a
       inventorySlug,
       '--name',
       fixtureName.inventoryItems,
+      scaffoldFlag.resource,
+      'item',
+    ]);
+    await run(fixture, scaffoldCommand.searchProvider, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--name',
+      'inventory-suppliers',
       scaffoldFlag.resource,
       'item',
     ]);
@@ -1142,6 +1211,11 @@ test('governed contribution generators patch owner contracts and lazy adapters a
     const reportServer = await readFixtureFile(fixture.root, inventoryReportServerFile);
     const moduleApiServer = await readFixtureFile(fixture.root, inventoryModuleApiServerFile);
     const operationBoundary = await readFixtureFile(fixture.root, inventoryActionPrincipalFile);
+    const composedApi = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/shared/api.ts',
+    );
+    const composedHandlers = await readFixtureFile(fixture.root, inventoryHandlerRootFile);
     assert.match(searchClient, /api: InventoryItemsSearchApi,/u);
     assert.match(reportClient, /api: StockLevelsReportApi,/u);
     assert.match(
@@ -1182,27 +1256,29 @@ test('governed contribution generators patch owner contracts and lazy adapters a
     assert.match(moduleApiRead, /defineRead\(/u);
     assert.match(moduleApiRead, /legalEntityScope: 'required'/u);
     for (const server of [moduleApiServer, searchServer, reportServer]) {
-      assert.match(server, /authenticateOperationPrincipal\(/u);
-      assert.match(server, /Redacted\.make\(request\.headers\.authorization\)/u);
-      assert.match(server, /yield\* ReadRuntime/u);
-      assert.match(server, /\.runRead\(\{/u);
-      assert.match(server, /HttpEffect\.appendPreResponseHandler/u);
-      assert.match(server, /'www-authenticate', 'Bearer'/u);
-      assert.match(server, /Match\.tags\(\{/u);
-      assert.match(server, /ReadHandlerNotFound: notFoundProblem/u);
-      assert.match(
-        server,
-        /ReadPolicyDenied: \(failure\) => policyProblem\(failure\.httpStatus\)/u,
-      );
-      assert.doesNotMatch(server, /ActionPrincipal(?:Missing|Invalid|Expired|Scope)Error/u);
-      assert.doesNotMatch(server, /switch \(error\._tag\)|error\._tag ===/u);
-      assert.match(server, /problem\.status === 401\s+\?\s+bearerChallenge/u);
+      assert.match(server, /makeGovernedReadHttpHandler\(\{/u);
+      assert.match(server, /authenticatePrincipal: authenticateOperationPrincipal/u);
+      assert.match(server, /registration: \w+Read/u);
+      assert.doesNotMatch(server, /ReadRuntime|Match\.tags|catchTags|bearerChallenge/u);
       assert.doesNotMatch(server, /tenantId|legalEntityId|principalId|CoreDatabase|from 'pg'/u);
     }
-    assert.match(
-      operationBoundary,
-      /export const authenticateOperationPrincipal\s*=\s*makeMicroverticalHttpPrincipalAuthentication/u,
-    );
+    assert.match(operationBoundary, /export const authenticateOperationPrincipal/u);
+    for (const [contract, layer] of [
+      ['InventoryItemsSearchApi', 'inventoryItemsReadApiLive'],
+      ['ResourceDetailApi', 'resourceDetailReadApiLive'],
+      ['StockLevelsReportApi', 'stockLevelsReadApiLive'],
+    ] as const) {
+      assert.match(composedApi, new RegExp(`import \\{ ${contract} \\}`, 'u'));
+      assert.match(composedApi, new RegExp(`\\.addHttpApi\\(${contract}\\)`, 'u'));
+      assert.match(composedHandlers, new RegExp(`import \\{ ${layer} \\}`, 'u'));
+      assert.match(
+        composedHandlers,
+        new RegExp(
+          `${layer}\\.pipe\\([\\s\\S]*?GovernedReadLayer\\.provide\\(governedReadRuntimeLive\\)`,
+          'u',
+        ),
+      );
+    }
     const searchContract = await readFixtureFile(fixture.root, inventorySearchContractFile);
     const reportContract = await readFixtureFile(
       fixture.root,
@@ -1227,12 +1303,221 @@ test('governed contribution generators patch owner contracts and lazy adapters a
       searchContract,
       /makeProblemDetailsSchema\(\s*'InventoryItemsProviderPolicyConflictProblem',\s*409,?\s*\)/u,
     );
+    assert.match(searchContract, /HttpApiGroup\.make\('inventoryItemsSearch'\)/u);
 
+    await mkdir(path.join(fixture.root, 'node_modules', '@app'), { recursive: true });
+    await mkdir(path.dirname(path.join(fixture.root, pluginBffNodeModulePath)), {
+      recursive: true,
+    });
+    await symlink(
+      path.join(appRoot, 'packages/core-runtime'),
+      path.join(fixture.root, 'node_modules/@app/core-runtime'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, sharedContractsPackagePath),
+      path.join(fixture.root, sharedContractsNodeModulePath),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, effectNodeModulePath),
+      path.join(fixture.root, effectNodeModulePath),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, pluginBffNodeModulePath),
+      path.join(fixture.root, pluginBffNodeModulePath),
+      'dir',
+    );
+    await writeFixtureFile(
+      fixture.root,
+      inventoryActionPrincipalFile,
+      `import { Effect, Layer, Redacted } from 'effect';
+
+const principal = {
+  authContextRef: 'job:generated-fixture:run:governed-read',
+  authMethod: 'system',
+  principalId: '00000000-0000-4000-8000-000000000001',
+  tenantId: '00000000-0000-4000-8000-000000000002',
+};
+
+export const ActionPrincipalVerifierLive = Layer.empty;
+
+export const authenticateOperationPrincipal = (authorization, problems) =>
+  Redacted.value(authorization) === 'Bearer proof'
+    ? Effect.succeed(principal)
+    : Effect.fail(problems.authentication());
+`,
+    );
+    await writeFixtureFile(
+      fixture.root,
+      'execute-generated-governed-reads.mts',
+      `import { ReadRuntime } from '@app/core-runtime';
+import {
+  defineEffectBff,
+  Effect,
+  HttpApiBuilder,
+  Layer,
+} from '@modern-js/plugin-bff/effect-edge';
+import { resourceDetailReadApiLive } from './verticals/inventory-stock/api/resource-detail-read-server.ts';
+import { resourceHistoryReadApiLive } from './verticals/inventory-stock/api/resource-history-read-server.ts';
+import { inventoryItemsReadApiLive } from './verticals/inventory-stock/api/inventory-items-search-server.ts';
+import { inventorySuppliersReadApiLive } from './verticals/inventory-stock/api/inventory-suppliers-search-server.ts';
+import { stockLevelsReadApiLive } from './verticals/inventory-stock/api/stock-levels-report-server.ts';
+import generatedRuntime from './verticals/inventory-stock/api/index.ts';
+import { governedHttpApi } from './verticals/inventory-stock/shared/api.ts';
+
+const calls = [];
+const readRuntime = {
+  runRead: ({ input, principal, registration, transport }) =>
+    Effect.sync(() => {
+      calls.push({ input, principal, readKey: registration.descriptor.readKey, transport });
+      if (registration.descriptor.readKey.endsWith('.resource-detail')) return { ok: true };
+      if (registration.descriptor.accessKind === 'search') return [];
+      return { rows: [] };
+    }),
+};
+const readLayer = Layer.succeed(ReadRuntime, readRuntime);
+const fixtureHandlersLive = HttpApiBuilder.group(governedHttpApi, 'fixture', (handlers) =>
+  handlers.handle('readiness', () => Effect.succeed({ ok: true })),
+);
+const handlers = Layer.mergeAll(
+  fixtureHandlersLive,
+  inventoryItemsReadApiLive,
+  inventorySuppliersReadApiLive,
+  resourceDetailReadApiLive,
+  resourceHistoryReadApiLive,
+  stockLevelsReadApiLive,
+).pipe(Layer.provide(readLayer));
+const runtime = defineEffectBff({
+  api: governedHttpApi,
+  layer: HttpApiBuilder.layer(governedHttpApi).pipe(Layer.provide(handlers)),
+});
+const server = runtime.createHandler();
+const generatedServer = generatedRuntime.createHandler();
+const requests = [
+  ['/reads/resource-detail', {}],
+  ['/inventory.stock/search/inventory-items', { query: 'chair' }],
+  ['/inventory.stock/search/inventory-suppliers', { query: 'supplier' }],
+  ['/inventory.stock/reports/stock-levels', { parameters: {} }],
+];
+try {
+  const successes = [];
+  for (const [route, payload] of requests) {
+    const response = await server.handler(
+      new Request('http://fixture.test' + route, {
+        body: JSON.stringify(payload),
+        headers: {
+          authorization: 'Bearer proof',
+          'content-type': 'application/json',
+          'x-correlation-id': 'generated-correlation',
+        },
+        method: 'POST',
+      }),
+    );
+    successes.push({ body: await response.json(), status: response.status });
+  }
+  const callsAfterSuccess = calls.length;
+  const missingCorrelationStatuses = [];
+  for (const [route, payload] of requests) {
+    const response = await server.handler(
+      new Request('http://fixture.test' + route, {
+        body: JSON.stringify(payload),
+        headers: { authorization: 'Bearer proof', 'content-type': 'application/json' },
+        method: 'POST',
+      }),
+    );
+    missingCorrelationStatuses.push(response.status);
+  }
+  const generatedRootResponse = await generatedServer.handler(
+    new Request('http://fixture.test/reads/resource-detail', {
+      body: JSON.stringify({}),
+      headers: { authorization: 'Bearer proof', 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  );
+  console.log(
+    JSON.stringify({
+      calls,
+      callsAfterSuccess,
+      generatedRootStatus: generatedRootResponse.status,
+      missingCorrelationStatuses,
+      successes,
+    }),
+  );
+} finally {
+  await generatedServer.dispose();
+  await server.dispose();
+}
+`,
+    );
+    const execution = spawnSync(
+      process.execPath,
+      ['--experimental-strip-types', 'execute-generated-governed-reads.mts'],
+      {
+        cwd: fixture.root,
+        encoding: 'utf-8',
+        env: {
+          DATABASE_ADMIN_URL: 'postgresql://ontos_admin:admin@localhost:5433/ontos',
+          DATABASE_URL: 'postgresql://ontos_runtime:runtime@localhost:5433/ontos',
+        },
+      },
+    );
+    assert.equal(execution.status, 0, execution.stderr || execution.error?.message);
+    const expectedGeneratedPrincipal = {
+      authContextRef: 'job:generated-fixture:run:governed-read',
+      authMethod: 'system',
+      principalId: '00000000-0000-4000-8000-000000000001',
+      tenantId: '00000000-0000-4000-8000-000000000002',
+    };
+    const expectedGeneratedTransport = { correlationId: 'generated-correlation' };
+    assert.deepEqual(JSON.parse(execution.stdout.trim().split('\n').at(-1) ?? ''), {
+      calls: [
+        {
+          input: {},
+          principal: expectedGeneratedPrincipal,
+          readKey: 'inventory.stock.api.resource-detail',
+          transport: expectedGeneratedTransport,
+        },
+        {
+          input: { query: 'chair' },
+          principal: expectedGeneratedPrincipal,
+          readKey: 'inventory.stock.search.inventory-items',
+          transport: expectedGeneratedTransport,
+        },
+        {
+          input: { query: 'supplier' },
+          principal: expectedGeneratedPrincipal,
+          readKey: 'inventory.stock.search.inventory-suppliers',
+          transport: expectedGeneratedTransport,
+        },
+        {
+          input: { parameters: {} },
+          principal: expectedGeneratedPrincipal,
+          readKey: 'inventory.stock.report.stock-levels',
+          transport: expectedGeneratedTransport,
+        },
+      ],
+      callsAfterSuccess: 4,
+      generatedRootStatus: 400,
+      missingCorrelationStatuses: [400, 400, 400, 400],
+      successes: [
+        { body: { ok: true }, status: 200 },
+        { body: [], status: 200 },
+        { body: [], status: 200 },
+        { body: { rows: [] }, status: 200 },
+      ],
+    });
+
+    // Restore the generated contract after the execution-only authentication stub. Reruns
+    // must validate the real owned boundary, not silently accept handwritten fixture code.
+    await writeFixtureFile(fixture.root, inventoryActionPrincipalFile, operationBoundary);
     const packageJson = decodeFixturePackage(
       await readFixtureFile(fixture.root, inventoryPackageFile),
     );
     assert.equal(packageJson.dependencies['@app/shared-contracts'], workspaceVersion);
 
+    // Owner contracts, reads, and clients remain adaptable; thin HTTP adapters stay generator-owned.
     const adaptedGeneratedArtifacts = [
       [
         inventoryModuleApiContractFile,
@@ -1243,7 +1528,6 @@ test('governed contribution generators patch owner contracts and lazy adapters a
         'export const resourceDetailOwnerProjection = (value: string) => value;',
       ],
       [inventoryModuleApiClientFile, '// Owner-maintained client documentation.'],
-      [inventoryModuleApiServerFile, "const resourceDetailOwnerMetric = 'resource-detail';"],
       [
         inventorySearchProviderFile,
         'export const inventoryItemsOwnerRanking = (score: number) => score;',
@@ -1253,7 +1537,6 @@ test('governed contribution generators patch owner contracts and lazy adapters a
         'export const InventoryItemsOwnerFilterSchema = Schema.Struct({ tag: Schema.String });',
       ],
       [inventorySearchClientFile, '// Owner-maintained search client documentation.'],
-      [inventorySearchServerFile, "const inventoryItemsOwnerMetric = 'inventory-items';"],
       [
         inventoryReportProviderFile,
         'export const stockLevelsOwnerProjection = (column: string) => column;',
@@ -1263,7 +1546,6 @@ test('governed contribution generators patch owner contracts and lazy adapters a
         'export const StockLevelsOwnerColumnSchema = Schema.Struct({ column: Schema.String });',
       ],
       [inventoryReportClientFile, '// Owner-maintained report client documentation.'],
-      [inventoryReportServerFile, "const stockLevelsOwnerMetric = 'stock-levels';"],
     ] as const;
     await Promise.all(
       adaptedGeneratedArtifacts.map(async ([relativePath, ownerAddition]) => {
@@ -1317,6 +1599,187 @@ test('governed contribution generators patch owner contracts and lazy adapters a
       /refusing to overwrite/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), beforeRepeat);
+    for (const generated of [
+      {
+        command: scaffoldCommand.moduleApi,
+        name: fixtureName.resourceDetail,
+        resource: false,
+        server: 'resource-detail-read-server.ts',
+      },
+      {
+        command: scaffoldCommand.searchProvider,
+        name: fixtureName.inventoryItems,
+        resource: true,
+        server: 'inventory-items-search-server.ts',
+      },
+      {
+        command: 'report',
+        name: fixtureName.stockLevels,
+        resource: true,
+        server: 'stock-levels-report-server.ts',
+      },
+    ] as const) {
+      // Byte-identical owned output is a deterministic no-op for every governed read kind.
+      // eslint-disable-next-line no-await-in-loop
+      await run(fixture, generated.command, [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--name',
+        generated.name,
+        ...(generated.resource ? [scaffoldFlag.resource, 'item'] : []),
+      ]);
+      // eslint-disable-next-line no-await-in-loop
+      assert.deepEqual(await snapshotTree(fixture.root), beforeRepeat);
+      const serverPath = path.join(fixture.root, 'verticals/inventory-stock/api', generated.server);
+      // eslint-disable-next-line no-await-in-loop
+      const ownedServer = await readFile(serverPath, 'utf-8');
+      // eslint-disable-next-line no-await-in-loop
+      await writeFile(serverPath, `${ownedServer}// owner customization\n`, 'utf-8');
+      // eslint-disable-next-line no-await-in-loop
+      await assert.rejects(
+        run(fixture, generated.command, [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--name',
+          generated.name,
+          ...(generated.resource ? [scaffoldFlag.resource, 'item'] : []),
+        ]),
+        /refusing to overwrite/u,
+      );
+      // eslint-disable-next-line no-await-in-loop
+      await writeFile(serverPath, ownedServer, 'utf-8');
+    }
+    const sharedApiPath = path.join(fixture.root, 'verticals/inventory-stock/shared/api.ts');
+    const validSharedApi = await readFile(sharedApiPath, 'utf-8');
+    await writeFile(
+      sharedApiPath,
+      validSharedApi.replace(
+        '// </generated-governed-http-api-additions>',
+        'ownerCustomLayer()\n  // </generated-governed-http-api-additions>',
+      ),
+      'utf-8',
+    );
+    const beforeInvalidSharedSlot = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, scaffoldCommand.moduleApi, [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--name',
+        fixtureName.resourceDetail,
+      ]),
+      /composition slots are not bound|unsupported developer content/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeInvalidSharedSlot);
+    await writeFile(sharedApiPath, validSharedApi, 'utf-8');
+
+    const governedApiSlot = new RegExp(
+      `${GOVERNED_HTTP_API_ADDITION_SLOT_START}[\\s\\S]*?${GOVERNED_HTTP_API_ADDITION_SLOT_END}`,
+      'u',
+    ).exec(validSharedApi)?.[0];
+    if (governedApiSlot === undefined) {
+      assert.fail('expected generated governed API slot');
+    }
+    await writeFile(
+      sharedApiPath,
+      `${validSharedApi.replace(governedApiSlot, '')}\nconst relocatedGovernedApiSlot = String.raw\`${governedApiSlot}\`;\n`,
+      'utf-8',
+    );
+    const beforeRelocatedSharedSlot = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, scaffoldCommand.moduleApi, [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--name',
+        fixtureName.resourceDetail,
+      ]),
+      /composition slots are not bound/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeRelocatedSharedSlot);
+    await writeFile(sharedApiPath, validSharedApi, 'utf-8');
+
+    const registrationPath = path.join(
+      fixture.root,
+      'verticals/inventory-stock/vertical.registration.ts',
+    );
+    const validRegistration = await readFile(registrationPath, 'utf-8');
+    const resourceDetailRegistration =
+      "      'resource-detail': () => import('./src/api/resource-detail-client.ts'),\n";
+    const wrongCategoryRegistration = validRegistration.replace(
+      '// </generated-module-registration-search>',
+      `${resourceDetailRegistration}      // </generated-module-registration-search>`,
+    );
+    for (const invalidRegistration of [
+      wrongCategoryRegistration,
+      wrongCategoryRegistration.replace(
+        /^\s*'resource-detail': \(\) => import\('\.\/src\/api\/resource-detail-client\.ts'\),\n/mu,
+        '',
+      ),
+    ]) {
+      // eslint-disable-next-line no-await-in-loop
+      await writeFile(registrationPath, invalidRegistration, 'utf-8');
+      // eslint-disable-next-line no-await-in-loop
+      const beforeWrongCategoryRegistration = await snapshotTree(fixture.root);
+      // eslint-disable-next-line no-await-in-loop
+      await assert.rejects(
+        run(fixture, scaffoldCommand.moduleApi, [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--name',
+          fixtureName.resourceDetail,
+        ]),
+        /wrong contribution category/u,
+      );
+      // eslint-disable-next-line no-await-in-loop
+      assert.deepEqual(await snapshotTree(fixture.root), beforeWrongCategoryRegistration);
+    }
+    await writeFile(registrationPath, validRegistration, 'utf-8');
+
+    const handlerRootPath = path.join(fixture.root, inventoryHandlerRootFile);
+    const validHandlerRoot = await readFile(handlerRootPath, 'utf-8');
+    await writeFile(
+      handlerRootPath,
+      validHandlerRoot.replace(
+        /resourceDetailReadApiLive\.pipe\(\s*GovernedReadLayer\.provide\(governedReadRuntimeLive\),?\s*\),/u,
+        'resourceDetailReadApiLive.pipe(\n    GovernedReadLayer.provide(governedReadRuntimeLive),\n    GovernedReadLayer.provide(ownerCustomizedRuntime),\n  ),',
+      ),
+      'utf-8',
+    );
+    const beforeDriftedHandlerSlot = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, scaffoldCommand.moduleApi, [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--name',
+        fixtureName.resourceDetail,
+      ]),
+      /contains drift/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeDriftedHandlerSlot);
+    await writeFile(handlerRootPath, validHandlerRoot, 'utf-8');
+    const handlerLayerSlot = new RegExp(
+      `${GOVERNED_HTTP_HANDLER_LAYER_SLOT_START}[\\s\\S]*?${GOVERNED_HTTP_HANDLER_LAYER_SLOT_END}`,
+      'u',
+    ).exec(validHandlerRoot)?.[0];
+    if (handlerLayerSlot === undefined) {
+      assert.fail('expected generated governed handler slot');
+    }
+    await writeFile(
+      handlerRootPath,
+      `${validHandlerRoot.replace(handlerLayerSlot, '')}\nconst relocatedHandlerSlot = String.raw\`${handlerLayerSlot}\`;\n`,
+      'utf-8',
+    );
+    const beforeRelocatedHandlerSlot = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, scaffoldCommand.moduleApi, [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--name',
+        fixtureName.resourceDetail,
+      ]),
+      /composition slots are not bound/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeRelocatedHandlerSlot);
+    await writeFile(handlerRootPath, validHandlerRoot, 'utf-8');
     await assert.rejects(
       run(fixture, scaffoldCommand.moduleApi, [
         scaffoldFlag.vertical,
@@ -1565,18 +2028,19 @@ test('adapted governed artifacts require executable owner identity instead of co
       inventoryModuleApiServerFile,
       (source) =>
         `${source.replace(
-          'yield* authenticateOperationPrincipal(',
-          'yield* unverifiedPrincipal(',
+          'authenticatePrincipal: authenticateOperationPrincipal',
+          'authenticatePrincipal: unverifiedPrincipal',
         )}\nconst unverifiedPrincipal = authenticateOperationPrincipal;`,
     );
     await assertAdaptationRejected(
       inventoryModuleApiServerFile,
       (source) =>
-        `${source.replace('yield* ReadRuntime', 'yield* OtherRuntime')}\nvoid ReadRuntime;`,
+        `${source.replace('registration: resourceDetailRead', 'registration: otherRead')}\nvoid ReadRuntime;`,
     );
     await assertAdaptationRejected(
       inventoryModuleApiServerFile,
-      (source) => `${source.replace('.runRead({', '.unsafeRead({')}\nconst spoof = '.runRead({';`,
+      (source) =>
+        `${source.replace('makeGovernedReadHttpHandler({', 'unsafeReadHandler({')}\nconst spoof = '.runRead({';`,
     );
 
     const searchArguments = [
@@ -2004,8 +2468,8 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
       'dir',
     );
     await symlink(
-      path.join(appRoot, 'packages/shared-contracts'),
-      path.join(fixture.root, 'node_modules/@app/shared-contracts'),
+      path.join(appRoot, sharedContractsPackagePath),
+      path.join(fixture.root, sharedContractsNodeModulePath),
       'dir',
     );
     await symlink(
@@ -3346,6 +3810,7 @@ test('rejects missing, handwritten, duplicate, and normalized-collision Outbox t
 
 test('generates isolated Outbox Workers from published contracts and composes a stable registry', async () => {
   await withFixture(async (fixture) => {
+    const billingApiBefore = await readFixtureFile(fixture.root, billingApiIndexFile);
     await run(fixture, 'action', [
       scaffoldFlag.vertical,
       inventorySlug,
@@ -3515,10 +3980,7 @@ export const startBillingOutboxWorker = (): void =>
   });
 `,
     );
-    assert.equal(
-      await readFixtureFile(fixture.root, billingApiIndexFile),
-      "export const existingApiRuntime = 'billing.core';\n",
-    );
+    assert.equal(await readFixtureFile(fixture.root, billingApiIndexFile), billingApiBefore);
     const consumerPackage = decodeFixturePackage(
       await readFixtureFile(fixture.root, 'verticals/billing/package.json'),
     );
@@ -4822,7 +5284,7 @@ test('uses exact page identities and rejects edited generated wiring', async () 
   ]);
 });
 
-test('migrates only exact legacy generated page output and then reruns as a no-op', async () => {
+test('rejects obsolete generated page output without changing files', async () => {
   await withFixture(async (fixture) => {
     const generatorArguments = [
       scaffoldFlag.vertical,
@@ -4917,26 +5379,12 @@ export const loader = ({ request }: ShellPageLoaderArguments) =>
       }),
     );
 
-    await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
-    const migratedPage = await readFixtureFile(fixture.root, inventoryOrdersRouteFile);
-    assert.doesNotMatch(migratedPage, /\.description|\.empty|<main/u);
-    assert.match(
-      await readFixtureFile(
-        fixture.root,
-        'apps/shell-super-app/src/routes/[lang]/orders/page.data.ts',
-      ),
-      /entrypointKey: 'inventory\.stock\.page\.orders'/u,
+    const before = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, scaffoldCommand.microverticalPage, generatorArguments),
+      /page route already exists or collides/u,
     );
-    const migratedEnglish = decodeInventoryLocale(
-      await readFixtureFile(fixture.root, inventoryEnglishLocaleFile),
-    );
-    assert.deepEqual(migratedEnglish.inventory.pages['orders'], {
-      description: pagePlaceholder,
-      title: 'New Page',
-    });
-    const afterMigration = await snapshotTree(fixture.root);
-    await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
-    assert.deepEqual(await snapshotTree(fixture.root), afterMigration);
+    assert.deepEqual(await snapshotTree(fixture.root), before);
   });
 });
 
@@ -5387,11 +5835,17 @@ test('all generated files typecheck against the real workspace contracts', async
             '@app/core-runtime/actions/principal-context': [
               path.join(appRoot, 'packages/core-runtime/src/actions/principal-context.ts'),
             ],
+            '@app/core-runtime/actions/runtime-wiring': [
+              path.join(appRoot, 'packages/core-runtime/src/actions/runtime-wiring.ts'),
+            ],
             '@app/core-runtime/auth/gateway-assertion-redemption': [
               path.join(appRoot, 'packages/core-runtime/src/auth/gateway-assertion-redemption.ts'),
             ],
             '@app/core-runtime/http/action-runner': [
               path.join(appRoot, 'packages/core-runtime/src/http/http-instrumentation-seam.ts'),
+            ],
+            '@app/core-runtime/http/governed-read': [
+              path.join(appRoot, 'packages/core-runtime/src/http/governed-read.ts'),
             ],
             '@app/core-runtime/http/principal-authentication': [
               path.join(appRoot, 'packages/core-runtime/src/http/principal-authentication.ts'),
@@ -5448,4 +5902,136 @@ test('all generated files typecheck against the real workspace contracts', async
     });
     assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
   });
+});
+
+test('generated fluent slots preserve multiline call entries', () => {
+  const source = `${GOVERNED_HTTP_API_ADDITION_SLOT_START}
+  .addHttpApi(
+    FirstApi,
+  )
+  .addHttpApi(SecondApi)
+  ${GOVERNED_HTTP_API_ADDITION_SLOT_END}`;
+  const next = insertSortedSlot(
+    source,
+    GOVERNED_HTTP_API_ADDITION_SLOT_START,
+    GOVERNED_HTTP_API_ADDITION_SLOT_END,
+    ['.addHttpApi(ThirdApi)'],
+    (entry) => entry.startsWith('.addHttpApi(') && entry.endsWith(')'),
+  );
+  const entries = readGeneratedSlotEntries(
+    next,
+    GOVERNED_HTTP_API_ADDITION_SLOT_START,
+    GOVERNED_HTTP_API_ADDITION_SLOT_END,
+  );
+  assert.equal(entries.length, 3);
+  assert.match(entries[0] ?? '', /FirstApi/u);
+});
+
+for (const [start, end] of [
+  [GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START, GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END],
+  [GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START, GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END],
+] as const) {
+  test(`governed generation accepts the independent support slot without ${start}`, async () => {
+    await withFixture(async (fixture) => {
+      const rootPath = path.join(fixture.root, inventoryHandlerRootFile);
+      const source = await readFile(rootPath, 'utf-8');
+      assert.ok(source.includes(start));
+      await writeFile(rootPath, source.replace(start, '').replace(end, ''), 'utf-8');
+      await run(fixture, scaffoldCommand.moduleApi, [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--name',
+        fixtureName.resourceDetail,
+      ]);
+      const generated = await readFile(rootPath, 'utf-8');
+      assert.match(generated, /resourceDetailReadApiLive/u);
+    });
+  });
+}
+
+test('Action identity boundary rejects an owned file without the authentication adapter', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, scaffoldCommand.microverticalActionBoundary, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+    ]);
+    const serverPath = path.join(fixture.root, inventoryActionPrincipalFile);
+    const source = await readFile(serverPath, 'utf-8');
+    await writeFile(
+      serverPath,
+      source.replaceAll('authenticateOperationPrincipal', 'removedAuthenticationAdapter'),
+      'utf-8',
+    );
+    const before = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, scaffoldCommand.microverticalActionBoundary, [
+        scaffoldFlag.vertical,
+        inventorySlug,
+      ]),
+      /refusing|owned|boundary/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), before);
+  });
+});
+
+test('typed injected governed runtime stays bound to the exported owner composition', async () => {
+  const shared = await readFile(path.join(appRoot, partyGovernedContractPath), 'utf-8');
+  const handler = await readFile(
+    path.join(appRoot, 'verticals/party-registry/api/index.ts'),
+    'utf-8',
+  );
+  assert.equal(hasValidGovernedHttpCompositionRoot(shared, handler), true);
+  assert.equal(
+    hasValidGovernedHttpCompositionRoot(
+      shared,
+      handler.replace(
+        'readRuntime: Layer.Layer<ReadRuntime,',
+        'readRuntime: Layer.Layer<UnrelatedRuntime,',
+      ),
+    ),
+    false,
+  );
+  assert.equal(
+    hasValidGovernedHttpCompositionRoot(
+      shared,
+      handler.replace('handlers: resolvedApiHandlersLive', 'handlers: Layer.empty'),
+    ),
+    false,
+  );
+  assert.equal(
+    hasValidGovernedHttpCompositionRoot(
+      shared,
+      handler.replace('api: partyRegistryApi,', 'api: unrelatedApi,'),
+    ),
+    false,
+  );
+  assert.equal(
+    hasValidGovernedHttpCompositionRoot(
+      shared,
+      handler.replace('export default apiRuntime;', 'export default unrelatedRuntime;'),
+    ),
+    false,
+  );
+});
+
+test('assembled governed runtime rejects disconnected handler pipelines and counterfeit assemblers', async () => {
+  const shared = await readFile(path.join(appRoot, partyGovernedContractPath), 'utf-8');
+  const handler = await readFile(
+    path.join(appRoot, 'verticals/party-registry/api/index.ts'),
+    'utf-8',
+  );
+  for (const [before, after] of [
+    [
+      'const resolvedApiHandlersLive = apiHandlersLive.pipe(',
+      'const resolvedApiHandlersLive = unrelatedHandlers.pipe(',
+    ],
+    ["'@app/shared-contracts/server/effect-bff-runtime'", "'./counterfeit-assembler.ts'"],
+    ['handlers: resolvedApiHandlersLive,', 'handlers: unrelatedHandlers,'],
+  ] as const) {
+    assert.ok(handler.includes(before));
+    assert.equal(
+      hasValidGovernedHttpCompositionRoot(shared, handler.replace(before, after)),
+      false,
+    );
+  }
 });

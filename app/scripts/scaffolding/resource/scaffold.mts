@@ -61,30 +61,6 @@ export const ${descriptor} = {
 `;
 };
 
-const withResourceSlot = Effect.fn('ResourceScaffold.withResourceSlot')(function* withResourceSlot(
-  manifest: string,
-) {
-  const hasStart = manifest.includes(MODULE_MANIFEST_RESOURCE_SLOT_START);
-  const hasEnd = manifest.includes(MODULE_MANIFEST_RESOURCE_SLOT_END);
-  if (hasStart || hasEnd) {
-    return manifest;
-  }
-  const legacyField = '    resourceTypes: [],';
-  const first = manifest.indexOf(legacyField);
-  if (first === -1 || manifest.includes(legacyField, first + legacyField.length)) {
-    return yield* scaffoldFailure(
-      'generated owner manifest does not contain one resource slot or legacy empty resourceTypes field',
-    );
-  }
-  return manifest.replace(
-    legacyField,
-    `    resourceTypes: [
-      ${MODULE_MANIFEST_RESOURCE_SLOT_START}
-      ${MODULE_MANIFEST_RESOURCE_SLOT_END}
-    ],`,
-  );
-});
-
 const isResourceDescriptor = (candidate: string): boolean =>
   /^[a-z][A-Za-z0-9]*ResourceDescriptor,$/u.test(candidate);
 
@@ -104,11 +80,10 @@ export const planResourceScaffold = Effect.fn('ResourceScaffold.plan')(
 
     const descriptor = `${toCamelCase(resource)}ResourceDescriptor`;
     const ownerImport = `import { ${descriptor} } from './shared/resources/${resource}.ts';`;
-    const manifestWithSlot = yield* withResourceSlot(vertical.manifestContent);
     const nextManifest = yield* tryScaffold('failed to patch resource manifest', () =>
       insertSortedSlot(
         insertSortedSlot(
-          manifestWithSlot,
+          vertical.manifestContent,
           MODULE_MANIFEST_IMPORT_SLOT_START,
           MODULE_MANIFEST_IMPORT_SLOT_END,
           [ownerImport],

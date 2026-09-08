@@ -1,4 +1,4 @@
-import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect';
+import { Array as EffectArray, Effect, FileSystem, Option, Predicate, Schema } from 'effect';
 import {
   createMutationEffect,
   discoverOntosModuleEffect,
@@ -34,10 +34,10 @@ const scaffoldError = (message: string, cause?: unknown): ActionBoundaryScaffold
 const trySync = <Value,>(operation: () => Value) =>
   Effect.try({
     catch: (cause) =>
-      cause instanceof ActionBoundaryScaffoldError
+      Schema.is(ActionBoundaryScaffoldError)(cause)
         ? cause
         : scaffoldError(
-            cause instanceof Error ? cause.message : 'action boundary update failed',
+            Predicate.isError(cause) ? cause.message : 'action boundary update failed',
             cause,
           ),
     try: operation,
