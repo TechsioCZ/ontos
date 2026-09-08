@@ -182,8 +182,6 @@ export const PartyRelationshipLifecycleEventPayloadSchema = Schema.Struct({
   validFrom: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
   validTo: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
 });
-export type PartyRelationshipLifecycleEventPayload =
-  typeof PartyRelationshipLifecycleEventPayloadSchema.Type;
 export const PartyRelationshipLifecycleEventPayloadJsonSchema = Schema.toEncoded(
   PartyRelationshipLifecycleEventPayloadSchema,
 );

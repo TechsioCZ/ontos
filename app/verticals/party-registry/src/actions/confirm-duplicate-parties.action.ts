@@ -13,7 +13,6 @@ import {
 } from './duplicate-case-resolution-service.ts';
 import { handleDuplicateCaseResolution } from './duplicate-case-resolution-handler.ts';
 
-export type { ConfirmDuplicatePartiesPayload } from '../../shared/actions/confirm-duplicate-parties.ts';
 export const confirmDuplicatePartiesAction = defineAction(
   {
     accessEvidencePolicy: {

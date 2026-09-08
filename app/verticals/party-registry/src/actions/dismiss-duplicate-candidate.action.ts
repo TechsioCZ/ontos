@@ -13,7 +13,6 @@ import {
 } from './duplicate-case-resolution-service.ts';
 import { handleDuplicateCaseResolution } from './duplicate-case-resolution-handler.ts';
 
-export type { DismissDuplicateCandidatePayload } from '../../shared/actions/dismiss-duplicate-candidate.ts';
 export const dismissDuplicateCandidateAction = defineAction(
   {
     accessEvidencePolicy: {
