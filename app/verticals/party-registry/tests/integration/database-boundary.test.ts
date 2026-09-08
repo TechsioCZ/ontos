@@ -3,16 +3,17 @@ import {
   runEffectTestPromise,
   runEffectTestSync as runNativeSync,
 } from '@app/core-runtime/testing/effect-runtime';
-import { findPostgresFailure, loadDatabaseConnectionPair } from '@app/core-runtime';
 
-import { DateTime, Effect, Exit as NativeExit, Scope as NativeScope, Option } from 'effect';
+import { DateTime, Effect, Exit as NativeExit, Scope as NativeScope } from 'effect';
 // @effect-diagnostics asyncFunction:off globalDate:off -- Existing compatibility boundary; expires: 2026-12-31.
 
 import { and, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import assert from 'node:assert/strict';
 import test, { after as afterNativeDatabase } from 'node:test';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { hasPostgreSqlCode, openBoundaryDatabases } from '../support/database-boundary.ts';
+import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
 import { RuleKeySchema } from '../../shared/domain/matching-contracts.ts';
 import {
   counterparties,
@@ -41,6 +42,12 @@ afterNativeDatabase(
   NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
 );
 
+/** Both boundary roles read the same owned schema through the scope closed after these tests. */
+const openPartyDatabase = async (pool: Pool) =>
+  await runEffectTestPromise(
+    makeTestDatabaseFromPool(pool, partyRelations).pipe(NativeScope.provide(nativeDatabaseScope)),
+  );
+
 const tenantA = 'a1000000-0000-4000-8000-000000000001';
 const tenantB = 'a1000000-0000-4000-8000-000000000002';
 const legalEntityA = 'a2000000-0000-4000-8000-000000000001';
@@ -64,97 +71,31 @@ const actionA = 'aa000000-0000-4000-8000-000000000001';
 const principalA = 'ab000000-0000-4000-8000-000000000001';
 const fixtureTenants = [tenantA, tenantB] as const;
 
-const hasPostgreSqlCode =
-  (expected: string) =>
-  (error: Parameters<typeof findPostgresFailure>[0]): boolean =>
-    Option.exists(findPostgresFailure(error), ({ code }) => code === expected);
-
 test('enforces Party owner invariants, tenant isolation, and independent fact lifecycles', async () => {
-  const connections = await runEffectTestPromise(loadDatabaseConnectionPair());
-  const adminPool = new Pool({ connectionString: connections.admin.connectionString });
-  const runtimePool = new Pool({ connectionString: connections.runtime.connectionString, max: 1 });
-  const admin = await runEffectTestPromise(
-    makeTestDatabaseFromPool(adminPool, partyRelations).pipe(
-      NativeScope.provide(nativeDatabaseScope),
-    ),
-  );
-  const runtime = await runEffectTestPromise(
-    makeTestDatabaseFromPool(runtimePool, partyRelations).pipe(
-      NativeScope.provide(nativeDatabaseScope),
-    ),
-  );
+  const { admin, adminPool, runtime, runtimePool } = await openBoundaryDatabases(openPartyDatabase);
 
-  const cleanup = async () => {
-    await runEffectTestPromise(
-      admin.delete(partyCorrections).where(inArray(partyCorrections.tenantId, fixtureTenants)),
-    );
-    await runEffectTestPromise(
-      admin.delete(partyAliases).where(inArray(partyAliases.tenantId, fixtureTenants)),
-    );
-    await runEffectTestPromise(
-      admin.delete(partyMerges).where(inArray(partyMerges.tenantId, fixtureTenants)),
-    );
-    await runEffectTestPromise(
-      admin
-        .delete(partyMatchDecisions)
-        .where(inArray(partyMatchDecisions.tenantId, fixtureTenants)),
-    );
-    await runEffectTestPromise(
-      admin
-        .delete(duplicateCandidateCaseParties)
-        .where(inArray(duplicateCandidateCaseParties.tenantId, fixtureTenants)),
-    );
-    await runEffectTestPromise(
-      admin
-        .delete(duplicateCandidateCases)
-        .where(inArray(duplicateCandidateCases.tenantId, fixtureTenants)),
-    );
-    await runEffectTestPromise(
-      admin
-        .delete(counterpartyRoleAdminReadModels)
-        .where(inArray(counterpartyRoleAdminReadModels.tenantId, fixtureTenants)),
-    );
-    await runEffectTestPromise(
-      admin
-        .delete(counterpartyAdminReadModels)
-        .where(inArray(counterpartyAdminReadModels.tenantId, fixtureTenants)),
-    );
-    await runEffectTestPromise(
-      admin
-        .delete(counterpartyRolePeriods)
-        .where(inArray(counterpartyRolePeriods.tenantId, fixtureTenants)),
-    );
-    await runEffectTestPromise(
-      admin.delete(counterparties).where(inArray(counterparties.tenantId, fixtureTenants)),
-    );
-    await runEffectTestPromise(
-      admin.delete(partyRelationships).where(inArray(partyRelationships.tenantId, fixtureTenants)),
-    );
-    await runEffectTestPromise(
-      admin
-        .delete(partyContactPointPurposes)
-        .where(inArray(partyContactPointPurposes.tenantId, fixtureTenants)),
-    );
-    await runEffectTestPromise(
-      admin.delete(partyContactPoints).where(inArray(partyContactPoints.tenantId, fixtureTenants)),
-    );
-    await runEffectTestPromise(
-      admin
-        .delete(partyIdentifierClaims)
-        .where(inArray(partyIdentifierClaims.tenantId, fixtureTenants)),
-    );
-    await runEffectTestPromise(
-      admin
-        .delete(partyOfficialIdentifiers)
-        .where(inArray(partyOfficialIdentifiers.tenantId, fixtureTenants)),
-    );
-    await runEffectTestPromise(
-      admin
-        .delete(partyFactAssertions)
-        .where(inArray(partyFactAssertions.tenantId, fixtureTenants)),
-    );
-    await runEffectTestPromise(
-      admin.delete(parties).where(inArray(parties.tenantId, fixtureTenants)),
+  // Ordered child-before-parent so every delete respects the owned foreign keys.
+  const cleanup = async (): Promise<void> => {
+    await purgeFixtureRows(
+      [
+        partyCorrections,
+        partyAliases,
+        partyMerges,
+        partyMatchDecisions,
+        duplicateCandidateCaseParties,
+        duplicateCandidateCases,
+        counterpartyRoleAdminReadModels,
+        counterpartyAdminReadModels,
+        counterpartyRolePeriods,
+        counterparties,
+        partyRelationships,
+        partyContactPointPurposes,
+        partyContactPoints,
+        partyIdentifierClaims,
+        partyOfficialIdentifiers,
+        partyFactAssertions,
+        parties,
+      ].map((table) => admin.delete(table).where(inArray(table.tenantId, fixtureTenants))),
     );
   };
 

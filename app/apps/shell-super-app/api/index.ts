@@ -585,12 +585,6 @@ const tenantProblem = (error: SwitchTenantRuntimeError): SwitchTenantProblem =>
     Match.exhaustive,
   );
 
-const failTenantProblem = <Failure extends SwitchTenantProblem>(tenantFailure: Failure) =>
-  (Predicate.isTagged(tenantFailure, 'TenantAuthenticationRequiredProblem')
-    ? bearerChallenge
-    : Effect.void
-  ).pipe(Effect.andThen(Effect.fail(tenantFailure)));
-
 const legalEntityAccessForbiddenProblem = (): LegalEntityAccessForbiddenProblem =>
   problemDetails(
     'LegalEntityAccessForbiddenProblem',
@@ -600,7 +594,9 @@ const legalEntityAccessForbiddenProblem = (): LegalEntityAccessForbiddenProblem 
     'https://ontos.dev/problems/legal-entity-access-forbidden',
   );
 
-const failLegalEntityProblem = <Failure extends LegalEntityProblem>(failure: Failure) =>
+const failContextProblem = <Failure extends LegalEntityProblem | SwitchTenantProblem>(
+  failure: Failure,
+) =>
   (Predicate.isTagged(failure, 'TenantAuthenticationRequiredProblem')
     ? bearerChallenge
     : Effect.void
@@ -970,13 +966,11 @@ const legalEntityGroupLive = HttpApiBuilder.group(
           const result = yield* authentication
             .resolveShellContext(requestHeaders(request.headers))
             .pipe(
-              Effect.catch((error) =>
-                pipe(error, tenantAuthenticationProblem, failLegalEntityProblem),
-              ),
+              Effect.catch((error) => pipe(error, tenantAuthenticationProblem, failContextProblem)),
             );
           yield* forwardSetCookieHeaders(result.setCookieHeaders);
           if (result.state === 'anonymous') {
-            return yield* failLegalEntityProblem(tenantAuthenticationRequiredProblem());
+            return yield* failContextProblem(tenantAuthenticationRequiredProblem());
           }
           const selectedLegalEntityId =
             result.state === 'authenticated' ? result.identity.legalEntityId : undefined;
@@ -998,7 +992,7 @@ const legalEntityGroupLive = HttpApiBuilder.group(
           );
         }).pipe(
           recoverUnexpectedDefect(request, 'Unexpected legal-entity list defect', () =>
-            failLegalEntityProblem(tenantInternalProblem()),
+            failContextProblem(tenantInternalProblem()),
           ),
         ),
       )
@@ -1010,7 +1004,7 @@ const legalEntityGroupLive = HttpApiBuilder.group(
             .pipe(
               Effect.catch(
                 (error: AuthenticationRuntimeError | LegalEntitySelectionForbiddenError) =>
-                  failLegalEntityProblem(
+                  failContextProblem(
                     Predicate.isTagged(error, 'LegalEntitySelectionForbiddenError')
                       ? legalEntityAccessForbiddenProblem()
                       : tenantAuthenticationProblem(error),
@@ -1025,7 +1019,7 @@ const legalEntityGroupLive = HttpApiBuilder.group(
           );
         }).pipe(
           recoverUnexpectedDefect(request, 'Unexpected legal-entity switch defect', () =>
-            failLegalEntityProblem(tenantInternalProblem()),
+            failContextProblem(tenantInternalProblem()),
           ),
         ),
       ),
@@ -1039,7 +1033,7 @@ const tenantGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'tenants', 
         const result = yield* authentication
           .availableTenants(requestHeaders(request.headers))
           .pipe(
-            Effect.catch((error) => pipe(error, tenantAuthenticationProblem, failTenantProblem)),
+            Effect.catch((error) => pipe(error, tenantAuthenticationProblem, failContextProblem)),
           );
         yield* forwardSetCookieHeaders(result.setCookieHeaders);
         return yield* decodeResponse(
@@ -1049,7 +1043,7 @@ const tenantGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'tenants', 
         );
       }).pipe(
         recoverUnexpectedDefect(request, 'Unexpected tenant list defect', () =>
-          failTenantProblem(tenantInternalProblem()),
+          failContextProblem(tenantInternalProblem()),
         ),
       ),
     )
@@ -1058,7 +1052,7 @@ const tenantGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'tenants', 
         const authentication = yield* AuthenticationService;
         const result = yield* authentication
           .switchTenant(payload.tenantId, requestHeaders(request.headers))
-          .pipe(Effect.catch((error) => pipe(error, tenantProblem, failTenantProblem)));
+          .pipe(Effect.catch((error) => pipe(error, tenantProblem, failContextProblem)));
         yield* forwardSetCookieHeaders(result.setCookieHeaders);
         return yield* decodeResponse(
           SwitchTenantResponseSchema,
@@ -1067,24 +1061,31 @@ const tenantGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'tenants', 
         );
       }).pipe(
         recoverUnexpectedDefect(request, 'Unexpected tenant switch defect', () =>
-          failTenantProblem(tenantInternalProblem()),
+          failContextProblem(tenantInternalProblem()),
         ),
       ),
     ),
 );
 
+const requireShellSession = Effect.fn('ShellApi.requireShellSession')(function* requireShellSession(
+  headers: RequestHeaders,
+) {
+  const authentication = yield* AuthenticationService;
+  const session = yield* authentication
+    .resolveShellContext(requestHeaders(headers))
+    .pipe(
+      Effect.catch((error) => pipe(error, shellProblemFromAuthenticationError, failShellProblem)),
+    );
+  yield* forwardSetCookieHeaders(session.setCookieHeaders);
+  if (session.state === 'anonymous') {
+    return yield* failShellProblem(shellAuthenticationRequiredProblem());
+  }
+  return session;
+});
+
 const requireAuthenticatedShellContext = Effect.fn('ShellApi.requireAuthenticatedShellContext')(
   function* requireAuthenticatedShellContext(headers: RequestHeaders) {
-    const authentication = yield* AuthenticationService;
-    const session = yield* authentication
-      .resolveShellContext(requestHeaders(headers))
-      .pipe(
-        Effect.catch((error) => pipe(error, shellProblemFromAuthenticationError, failShellProblem)),
-      );
-    yield* forwardSetCookieHeaders(session.setCookieHeaders);
-    if (session.state === 'anonymous') {
-      return yield* failShellProblem(shellAuthenticationRequiredProblem());
-    }
+    const session = yield* requireShellSession(headers);
     if (session.state !== 'authenticated') {
       return yield* failShellProblem(shellSelectionRequiredProblem());
     }
@@ -1099,18 +1100,7 @@ const compositionGroupLive = HttpApiBuilder.group(
     handlers
       .handle('shellComposition', ({ request }) =>
         Effect.gen(function* shellCompositionHandler() {
-          const authentication = yield* AuthenticationService;
-          const session = yield* authentication
-            .resolveShellContext(requestHeaders(request.headers))
-            .pipe(
-              Effect.catch((error) =>
-                pipe(error, shellProblemFromAuthenticationError, failShellProblem),
-              ),
-            );
-          yield* forwardSetCookieHeaders(session.setCookieHeaders);
-          if (session.state === 'anonymous') {
-            return yield* failShellProblem(shellAuthenticationRequiredProblem());
-          }
+          const session = yield* requireShellSession(request.headers);
           if (session.state === 'access_blocked') {
             return yield* decodeResponse(
               ShellCompositionSchema,
@@ -1192,18 +1182,7 @@ const resourcesGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'resourc
   handlers
     .handle('search', ({ payload, request }) =>
       Effect.gen(function* searchHandler() {
-        const authentication = yield* AuthenticationService;
-        const session = yield* authentication
-          .resolveShellContext(requestHeaders(request.headers))
-          .pipe(
-            Effect.catch((error) =>
-              pipe(error, shellProblemFromAuthenticationError, failShellProblem),
-            ),
-          );
-        yield* forwardSetCookieHeaders(session.setCookieHeaders);
-        if (session.state === 'anonymous') {
-          return yield* failShellProblem(shellAuthenticationRequiredProblem());
-        }
+        const session = yield* requireShellSession(request.headers);
         const governedReads = yield* ShellGovernedReads;
         const response = yield* governedReads
           .search({
@@ -1276,11 +1255,9 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       if (resolved.state !== 'authenticated') {
         return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
       }
-      return { authentication, resolved };
+      return resolved;
     }),
   );
-  const lifecycle = IdentityLifecycle;
-  const correlation = correlationFromRequest;
   const requiredIdempotencyKey = (headers: RequestHeaders) => {
     const value = headerValue(headers, 'idempotency-key');
     return value === undefined
@@ -1296,20 +1273,43 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
         failIdentityProblem(shellInternalProblem()),
       ),
     );
+  const keyIssuanceResponse = <Value extends object, Requirements>(
+    effect: Effect.Effect<Value, IdentityLifecycleError, Requirements>,
+  ) =>
+    Effect.matchEffect(
+      Effect.tap(effect, () => noStore),
+      {
+        onFailure: (error) => pipe(error, identityProblem, failIdentityProblem),
+        onSuccess: (response) =>
+          decodeResponse(ApiKeyIssueResponseSchema, response, shellInternalProblem),
+      },
+    );
+  const mutationContext = Effect.fn('shell.identity.mutationContext')(function* mutationContext(
+    request: RequestWithHeaders,
+    headers: RequestHeaders,
+  ) {
+    const resolved = yield* authenticated(request);
+    const idempotencyKey = yield* requiredIdempotencyKey(headers);
+    const service = yield* IdentityLifecycle;
+    return {
+      context: {
+        correlationId: correlationFromRequest(request),
+        idempotencyKey,
+        principal: resolved.principal,
+      },
+      service,
+    };
+  });
   return handlers
     .handle('createNonHumanPrincipal', ({ headers, payload, request }) =>
       safeIdentity(
         request,
         Effect.gen(function* createNonHumanPrincipalHandler() {
-          const { resolved } = yield* authenticated(request);
-          const idempotencyKey = yield* requiredIdempotencyKey(headers);
-          const service = yield* lifecycle;
+          const { context, service } = yield* mutationContext(request, headers);
           const response = yield* service
             .createNonHumanPrincipal({
-              correlationId: correlation(request),
-              idempotencyKey,
+              ...context,
               payload,
-              principal: resolved.principal,
             })
             .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
           return yield* decodeResponse(
@@ -1324,15 +1324,11 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       safeIdentity(
         request,
         Effect.gen(function* changePrincipalStatusHandler() {
-          const { resolved } = yield* authenticated(request);
-          const idempotencyKey = yield* requiredIdempotencyKey(headers);
-          const service = yield* lifecycle;
+          const { context, service } = yield* mutationContext(request, headers);
           const result = yield* service
             .changePrincipalStatus({
-              correlationId: correlation(request),
-              idempotencyKey,
+              ...context,
               payload,
-              principal: resolved.principal,
             })
             .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
           return yield* decodeResponse(
@@ -1347,30 +1343,14 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       safeIdentity(
         request,
         Effect.gen(function* issueSelfApiKeyHandler() {
-          const { resolved } = yield* authenticated(request);
-          const idempotencyKey = yield* requiredIdempotencyKey(headers);
-          const service = yield* lifecycle;
-          const response = yield* service
+          const { context, service } = yield* mutationContext(request, headers);
+          return yield* service
             .issue(
-              withOptionalProperty(
-                {
-                  correlationId: correlation(request),
-                  idempotencyKey,
-                },
-                payload.name !== undefined,
-                'name',
-                payload.name,
-                {
-                  principal: resolved.principal,
-                  requestHeaders: requestHeaders(request.headers),
-                },
-              ),
+              withOptionalProperty(context, payload.name !== undefined, 'name', payload.name, {
+                requestHeaders: requestHeaders(request.headers),
+              }),
             )
-            .pipe(
-              Effect.tap(() => noStore),
-              Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)),
-            );
-          return yield* decodeResponse(ApiKeyIssueResponseSchema, response, shellInternalProblem);
+            .pipe(keyIssuanceResponse);
         }),
       ),
     )
@@ -1378,7 +1358,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       safeIdentity(
         request,
         Effect.gen(function* listSelfApiKeysHandler() {
-          const { resolved } = yield* authenticated(request);
+          const resolved = yield* authenticated(request);
           const runtime = yield* ReadRuntime;
           const keys = yield* ApiKeyService;
           const resolver = yield* PrincipalResolver;
@@ -1387,7 +1367,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
               input: payload,
               principal: resolved.principal,
               registration: selfApiKeyBindingsRead,
-              transport: { correlationId: correlation(request) },
+              transport: { correlationId: correlationFromRequest(request) },
             })
             .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
           const items = yield* Effect.all(
@@ -1429,31 +1409,23 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       safeIdentity(
         request,
         Effect.gen(function* issueManagedApiKeyHandler() {
-          const { resolved } = yield* authenticated(request);
-          const idempotencyKey = yield* requiredIdempotencyKey(headers);
-          const service = yield* lifecycle;
-          const response = yield* service
+          const { context, service } = yield* mutationContext(request, headers);
+          return yield* service
             .issue(
               withOptionalProperty(
                 {
-                  correlationId: correlation(request),
-                  idempotencyKey,
+                  ...context,
                   managedPrincipalId: payload.principalId,
                 },
                 payload.name !== undefined,
                 'name',
                 payload.name,
                 {
-                  principal: resolved.principal,
                   requestHeaders: requestHeaders(request.headers),
                 },
               ),
             )
-            .pipe(
-              Effect.tap(() => noStore),
-              Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)),
-            );
-          return yield* decodeResponse(ApiKeyIssueResponseSchema, response, shellInternalProblem);
+            .pipe(keyIssuanceResponse);
         }),
       ),
     )
@@ -1461,7 +1433,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       safeIdentity(
         request,
         Effect.gen(function* listManagedApiKeysHandler() {
-          const { resolved } = yield* authenticated(request);
+          const resolved = yield* authenticated(request);
           const runtime = yield* ReadRuntime;
           const keys = yield* ApiKeyService;
           const resolver = yield* PrincipalResolver;
@@ -1470,7 +1442,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
               input: payload,
               principal: resolved.principal,
               registration: managedPrincipalsRead,
-              transport: { correlationId: correlation(request) },
+              transport: { correlationId: correlationFromRequest(request) },
             })
             .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
           const items = yield* Effect.all(
@@ -1530,15 +1502,11 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       safeIdentity(
         request,
         Effect.gen(function* setSelfKeyHandler() {
-          const { resolved } = yield* authenticated(request);
-          const idempotencyKey = yield* requiredIdempotencyKey(headers);
-          const service = yield* lifecycle;
+          const { context, service } = yield* mutationContext(request, headers);
           const response = yield* service
             .setStatus({
               ...payload,
-              correlationId: correlation(request),
-              idempotencyKey,
-              principal: resolved.principal,
+              ...context,
             })
             .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
           return yield* decodeResponse(
@@ -1553,17 +1521,13 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       safeIdentity(
         request,
         Effect.gen(function* setManagedKeyHandler() {
-          const { resolved } = yield* authenticated(request);
-          const idempotencyKey = yield* requiredIdempotencyKey(headers);
-          const service = yield* lifecycle;
+          const { context, service } = yield* mutationContext(request, headers);
           const { principalId, ...statusPayload } = payload;
           const response = yield* service
             .setStatus({
               ...statusPayload,
-              correlationId: correlation(request),
-              idempotencyKey,
+              ...context,
               managedPrincipalId: principalId,
-              principal: resolved.principal,
             })
             .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
           return yield* decodeResponse(
@@ -1578,32 +1542,16 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       safeIdentity(
         request,
         Effect.gen(function* rotateSelfKeyHandler() {
-          const { resolved } = yield* authenticated(request);
-          const idempotencyKey = yield* requiredIdempotencyKey(headers);
-          const service = yield* lifecycle;
-          const response = yield* service
+          const { context, service } = yield* mutationContext(request, headers);
+          return yield* service
             .rotate(
-              withOptionalProperty(
-                {
-                  correlationId: correlation(request),
-                  idempotencyKey,
-                },
-                payload.name !== undefined,
-                'name',
-                payload.name,
-                {
-                  oldAuthBindingId: payload.oldAuthBindingId,
-                  principal: resolved.principal,
-                  reason: payload.reason,
-                  requestHeaders: requestHeaders(request.headers),
-                },
-              ),
+              withOptionalProperty(context, payload.name !== undefined, 'name', payload.name, {
+                oldAuthBindingId: payload.oldAuthBindingId,
+                reason: payload.reason,
+                requestHeaders: requestHeaders(request.headers),
+              }),
             )
-            .pipe(
-              Effect.tap(() => noStore),
-              Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)),
-            );
-          return yield* decodeResponse(ApiKeyIssueResponseSchema, response, shellInternalProblem);
+            .pipe(keyIssuanceResponse);
         }),
       ),
     )
@@ -1611,15 +1559,12 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       safeIdentity(
         request,
         Effect.gen(function* rotateManagedKeyHandler() {
-          const { resolved } = yield* authenticated(request);
-          const idempotencyKey = yield* requiredIdempotencyKey(headers);
-          const service = yield* lifecycle;
-          const response = yield* service
+          const { context, service } = yield* mutationContext(request, headers);
+          return yield* service
             .rotate(
               withOptionalProperty(
                 {
-                  correlationId: correlation(request),
-                  idempotencyKey,
+                  ...context,
                   managedPrincipalId: payload.principalId,
                 },
                 payload.name !== undefined,
@@ -1628,17 +1573,12 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
                 {
                   oldAuthBindingId: payload.oldAuthBindingId,
                   oldManagedPrincipalId: payload.principalId,
-                  principal: resolved.principal,
                   reason: payload.reason,
                   requestHeaders: requestHeaders(request.headers),
                 },
               ),
             )
-            .pipe(
-              Effect.tap(() => noStore),
-              Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)),
-            );
-          return yield* decodeResponse(ApiKeyIssueResponseSchema, response, shellInternalProblem);
+            .pipe(keyIssuanceResponse);
         }),
       ),
     )
@@ -1656,7 +1596,10 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
               targetPrincipalId: payload.targetPrincipalId,
             })
             .pipe(
-              Effect.provideService(SupportImpersonationCorrelationId, correlation(request)),
+              Effect.provideService(
+                SupportImpersonationCorrelationId,
+                correlationFromRequest(request),
+              ),
               Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)),
             );
           yield* forwardSetCookieHeaders(result.setCookieHeaders);
@@ -1680,7 +1623,10 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
               requestHeaders: requestHeaders(request.headers),
             })
             .pipe(
-              Effect.provideService(SupportImpersonationCorrelationId, correlation(request)),
+              Effect.provideService(
+                SupportImpersonationCorrelationId,
+                correlationFromRequest(request),
+              ),
               Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)),
             );
           yield* forwardSetCookieHeaders(result.setCookieHeaders);

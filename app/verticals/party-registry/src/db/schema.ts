@@ -78,12 +78,16 @@ const verificationColumns = () => ({
   policyVersion: text('policy_version').notNull(),
 });
 
-const endedPeriodColumns = () => ({
+const activePeriodColumns = () => ({
   validFrom: validFrom(),
   validTo: validTo(),
   recordedAt: recordedAt(),
   state: text('state').default('ACTIVE').notNull(),
   isCurrent: boolean('is_current').default(true).notNull(),
+});
+
+const endedPeriodColumns = () => ({
+  ...activePeriodColumns(),
   endReason: text('end_reason'),
   endProvenanceSource: text('end_provenance_source'),
   endProvenanceMethod: text('end_provenance_method'),
@@ -92,6 +96,39 @@ const endedPeriodColumns = () => ({
   endedByPrincipalId: uuid('ended_by_principal_id'),
   endedRecordedAt: timestamp('ended_recorded_at', { withTimezone: true }),
 });
+
+const activePeriodConstraints = (
+  prefix: string,
+  table: Readonly<Record<'validFrom' | 'validTo' | 'state' | 'isCurrent', AnyPgColumn>>,
+) => [
+  check(
+    `${prefix}_interval_ck`,
+    sql`${table.validTo} is null or ${table.validTo} >= ${table.validFrom}`,
+  ),
+  check(
+    `${prefix}_state_ck`,
+    sql`${table.state} in ('ACTIVE', 'ENDED', 'SUPERSEDED', 'RETRACTED', 'DISPUTED') and ((${table.state} = 'ACTIVE' and ${table.isCurrent}) or (${table.state} <> 'ACTIVE' and not ${table.isCurrent}))`,
+  ),
+];
+
+const contactEvidenceConstraints = (
+  prefix: string,
+  table: Readonly<
+    Record<
+      keyof ReturnType<typeof endedPeriodColumns> | keyof ReturnType<typeof verificationColumns>,
+      AnyPgColumn
+    >
+  >,
+) => [
+  check(
+    `${prefix}_end_evidence_ck`,
+    sql`(${table.validTo} is null and ${table.endReason} is null and ${table.endProvenanceSource} is null and ${table.endProvenanceMethod} is null and ${table.endEvidenceRefs} is null and ${table.endedByActionInvocationId} is null and ${table.endedByPrincipalId} is null and ${table.endedRecordedAt} is null) or (${table.validTo} is not null and ${table.endReason} = btrim(${table.endReason}) and length(${table.endReason}) > 0 and ${table.endProvenanceSource} = btrim(${table.endProvenanceSource}) and length(${table.endProvenanceSource}) > 0 and ${table.endProvenanceMethod} = btrim(${table.endProvenanceMethod}) and length(${table.endProvenanceMethod}) > 0 and jsonb_typeof(${table.endEvidenceRefs}) = 'array' and jsonb_array_length(${table.endEvidenceRefs}) <= 32 and ${table.endedByActionInvocationId} is not null and ${table.endedByPrincipalId} is not null and ${table.endedRecordedAt} is not null and ${table.endedRecordedAt} >= ${table.recordedAt})`,
+  ),
+  check(
+    `${prefix}_verification_ck`,
+    sql`${table.verificationState} in ('UNVERIFIED', 'VERIFIED', 'REJECTED') and (${table.verificationState} <> 'VERIFIED' or (${table.verifiedAt} is not null and length(btrim(${table.verificationMethod})) > 0 and length(btrim(${table.verifierReference})) > 0))`,
+  ),
+];
 
 const enableGovernedRls = <Table>(table: { readonly enableRLS: () => Table }): Table =>
   table.enableRLS();
@@ -204,11 +241,7 @@ export const partyFactAssertions = enableGovernedRls(
       factKind: text('fact_kind').notNull(),
       evidenceEvaluation: jsonb('evidence_evaluation').$type<PartyEvidenceEvaluation>(),
       normalizedValue: text('normalized_value').notNull(),
-      validFrom: validFrom(),
-      validTo: validTo(),
-      recordedAt: recordedAt(),
-      state: text('state').default('ACTIVE').notNull(),
-      isCurrent: boolean('is_current').default(true).notNull(),
+      ...activePeriodColumns(),
       ...provenanceColumns(),
       ...verificationColumns(),
       supersedesAssertionId: uuid('supersedes_assertion_id'),
@@ -242,14 +275,7 @@ export const partyFactAssertions = enableGovernedRls(
         'party_fact_assertions_value_ck',
         sql`${table.normalizedValue} = btrim(${table.normalizedValue}) and length(${table.normalizedValue}) > 0`,
       ),
-      check(
-        'party_fact_assertions_interval_ck',
-        sql`${table.validTo} is null or ${table.validTo} >= ${table.validFrom}`,
-      ),
-      check(
-        'party_fact_assertions_state_ck',
-        sql`${table.state} in ('ACTIVE', 'ENDED', 'SUPERSEDED', 'RETRACTED', 'DISPUTED') and ((${table.state} = 'ACTIVE' and ${table.isCurrent}) or (${table.state} <> 'ACTIVE' and not ${table.isCurrent}))`,
-      ),
+      ...activePeriodConstraints('party_fact_assertions', table),
       check(
         'party_fact_assertions_verification_ck',
         sql`${table.verificationState} in ('UNVERIFIED', 'VERIFIED', 'REJECTED') and (${table.verificationState} <> 'VERIFIED' or ${table.verifiedAt} is not null)`,
@@ -274,11 +300,7 @@ export const partyOfficialIdentifiers = enableGovernedRls(
       namespace: text('namespace').notNull(),
       jurisdiction: text('jurisdiction').default('CZ').notNull(),
       normalizedValue: text('normalized_value').notNull(),
-      validFrom: validFrom(),
-      validTo: validTo(),
-      recordedAt: recordedAt(),
-      state: text('state').default('ACTIVE').notNull(),
-      isCurrent: boolean('is_current').default(true).notNull(),
+      ...activePeriodColumns(),
       provenanceSource: text('provenance_source').notNull(),
       provenanceMethod: text('provenance_method').notNull(),
       externalEvidence: jsonb('external_evidence').$type<EncodedAresAppliedEvidence>(),
@@ -324,14 +346,7 @@ export const partyOfficialIdentifiers = enableGovernedRls(
         'party_official_identifiers_normalized_value_ck',
         sql`(${table.identifierTypeKey} = 'ICO' and ${table.normalizedValue} ~ '^[0-9]{8}$') or (${table.identifierTypeKey} = 'CZ_DIC' and ${table.normalizedValue} ~ '^CZ[0-9]{8,10}$')`,
       ),
-      check(
-        'party_official_identifiers_interval_ck',
-        sql`${table.validTo} is null or ${table.validTo} >= ${table.validFrom}`,
-      ),
-      check(
-        'party_official_identifiers_state_ck',
-        sql`${table.state} in ('ACTIVE', 'ENDED', 'SUPERSEDED', 'RETRACTED', 'DISPUTED') and ((${table.state} = 'ACTIVE' and ${table.isCurrent}) or (${table.state} <> 'ACTIVE' and not ${table.isCurrent}))`,
-      ),
+      ...activePeriodConstraints('party_official_identifiers', table),
       check(
         'party_official_identifiers_verification_ck',
         sql`${table.verificationState} in ('UNVERIFIED', 'VERIFIED', 'REJECTED') and (${table.verificationState} <> 'VERIFIED' or ${table.verifiedAt} is not null)`,
@@ -467,22 +482,8 @@ export const partyContactPoints = enableGovernedRls(
         'party_contact_points_additional_evidence_ck',
         sql`jsonb_typeof(${table.additionalEvidenceRefs}) = 'array' and jsonb_array_length(${table.additionalEvidenceRefs}) <= 32`,
       ),
-      check(
-        'party_contact_points_interval_ck',
-        sql`${table.validTo} is null or ${table.validTo} >= ${table.validFrom}`,
-      ),
-      check(
-        'party_contact_points_state_ck',
-        sql`${table.state} in ('ACTIVE', 'ENDED', 'SUPERSEDED', 'RETRACTED', 'DISPUTED') and ((${table.state} = 'ACTIVE' and ${table.isCurrent}) or (${table.state} <> 'ACTIVE' and not ${table.isCurrent}))`,
-      ),
-      check(
-        'party_contact_points_end_evidence_ck',
-        sql`(${table.validTo} is null and ${table.endReason} is null and ${table.endProvenanceSource} is null and ${table.endProvenanceMethod} is null and ${table.endEvidenceRefs} is null and ${table.endedByActionInvocationId} is null and ${table.endedByPrincipalId} is null and ${table.endedRecordedAt} is null) or (${table.validTo} is not null and ${table.endReason} = btrim(${table.endReason}) and length(${table.endReason}) > 0 and ${table.endProvenanceSource} = btrim(${table.endProvenanceSource}) and length(${table.endProvenanceSource}) > 0 and ${table.endProvenanceMethod} = btrim(${table.endProvenanceMethod}) and length(${table.endProvenanceMethod}) > 0 and jsonb_typeof(${table.endEvidenceRefs}) = 'array' and jsonb_array_length(${table.endEvidenceRefs}) <= 32 and ${table.endedByActionInvocationId} is not null and ${table.endedByPrincipalId} is not null and ${table.endedRecordedAt} is not null and ${table.endedRecordedAt} >= ${table.recordedAt})`,
-      ),
-      check(
-        'party_contact_points_verification_ck',
-        sql`${table.verificationState} in ('UNVERIFIED', 'VERIFIED', 'REJECTED') and (${table.verificationState} <> 'VERIFIED' or (${table.verifiedAt} is not null and length(btrim(${table.verificationMethod})) > 0 and length(btrim(${table.verifierReference})) > 0))`,
-      ),
+      ...activePeriodConstraints('party_contact_points', table),
+      ...contactEvidenceConstraints('party_contact_points', table),
       check('party_contact_points_revision_ck', sql`${table.revision} > 0`),
       externalEvidenceConstraint(
         'party_contact_points_external_evidence_ck',
@@ -549,22 +550,8 @@ export const partyContactPointPurposes = enableGovernedRls(
         'party_contact_point_purposes_registry_ck',
         sql`(${table.purposeKey} <> 'REGISTERED') or (${table.registryContext} <> 'GENERAL' and ${table.jurisdiction} ~ '^[A-Z]{2}$' and ${table.jurisdiction} <> 'ZZ')`,
       ),
-      check(
-        'party_contact_point_purposes_interval_ck',
-        sql`${table.validTo} is null or ${table.validTo} >= ${table.validFrom}`,
-      ),
-      check(
-        'party_contact_point_purposes_state_ck',
-        sql`${table.state} in ('ACTIVE', 'ENDED', 'SUPERSEDED', 'RETRACTED', 'DISPUTED') and ((${table.state} = 'ACTIVE' and ${table.isCurrent}) or (${table.state} <> 'ACTIVE' and not ${table.isCurrent}))`,
-      ),
-      check(
-        'party_contact_point_purposes_end_evidence_ck',
-        sql`(${table.validTo} is null and ${table.endReason} is null and ${table.endProvenanceSource} is null and ${table.endProvenanceMethod} is null and ${table.endEvidenceRefs} is null and ${table.endedByActionInvocationId} is null and ${table.endedByPrincipalId} is null and ${table.endedRecordedAt} is null) or (${table.validTo} is not null and ${table.endReason} = btrim(${table.endReason}) and length(${table.endReason}) > 0 and ${table.endProvenanceSource} = btrim(${table.endProvenanceSource}) and length(${table.endProvenanceSource}) > 0 and ${table.endProvenanceMethod} = btrim(${table.endProvenanceMethod}) and length(${table.endProvenanceMethod}) > 0 and jsonb_typeof(${table.endEvidenceRefs}) = 'array' and jsonb_array_length(${table.endEvidenceRefs}) <= 32 and ${table.endedByActionInvocationId} is not null and ${table.endedByPrincipalId} is not null and ${table.endedRecordedAt} is not null and ${table.endedRecordedAt} >= ${table.recordedAt})`,
-      ),
-      check(
-        'party_contact_point_purposes_verification_ck',
-        sql`${table.verificationState} in ('UNVERIFIED', 'VERIFIED', 'REJECTED') and (${table.verificationState} <> 'VERIFIED' or (${table.verifiedAt} is not null and length(btrim(${table.verificationMethod})) > 0 and length(btrim(${table.verifierReference})) > 0))`,
-      ),
+      ...activePeriodConstraints('party_contact_point_purposes', table),
+      ...contactEvidenceConstraints('party_contact_point_purposes', table),
       check('party_contact_point_purposes_revision_ck', sql`${table.revision} > 0`),
       externalEvidenceConstraint(
         'party_contact_point_purposes_external_evidence_ck',

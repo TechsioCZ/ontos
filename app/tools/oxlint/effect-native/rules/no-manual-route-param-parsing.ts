@@ -86,18 +86,7 @@ const URL_STATIC_FACTORIES = new Set(['parse']);
 /** Alias hops followed when resolving a binding to a global / options object. Guards cyclic writes. */
 const MAX_ALIAS_DEPTH = 6;
 
-interface RuleOptions {
-  readonly routeGlobs: readonly string[];
-  readonly exclude: readonly string[];
-  readonly untypedHooks: readonly string[];
-  readonly routerModules: readonly string[];
-  readonly manualConstructors: readonly string[];
-  readonly flagStrictFalseOnly: boolean;
-  readonly flagUrlSearchParams: boolean;
-  readonly allowTestFiles: boolean;
-}
-
-function readOptions(context: Context): RuleOptions {
+function readOptions(context: Context) {
   const record = optionRecord(context.options?.[0]);
   return {
     routeGlobs: stringArray(record.routeGlobs, DEFAULT_ROUTE_GLOBS),

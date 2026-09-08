@@ -111,32 +111,17 @@ export const createAuthenticationFixture = async () => {
           .where(eq(principalAuthBindings.providerSubjectId, existingUser.id)),
       ),
     );
+    const tenantIds = Object.values(e2eTenants).map(({ tenantId }) => tenantId);
+    const principalIds = Object.values(e2eTenants).map(({ principalId }) => principalId);
     await coreDatabase
       .delete(principalAuthBindings)
-      .where(eq(principalAuthBindings.principalId, e2eTenants.first.principalId));
-    await coreDatabase
-      .delete(principalAuthBindings)
-      .where(eq(principalAuthBindings.principalId, e2eTenants.second.principalId));
+      .where(inArray(principalAuthBindings.principalId, principalIds));
     await coreDatabase
       .delete(tenantModuleStates)
-      .where(eq(tenantModuleStates.tenantId, e2eTenants.first.tenantId));
-    await coreDatabase
-      .delete(tenantModuleStates)
-      .where(eq(tenantModuleStates.tenantId, e2eTenants.second.tenantId));
-    await coreDatabase
-      .delete(legalEntities)
-      .where(eq(legalEntities.tenantId, e2eTenants.first.tenantId));
-    await coreDatabase
-      .delete(legalEntities)
-      .where(eq(legalEntities.tenantId, e2eTenants.second.tenantId));
-    await coreDatabase
-      .delete(principals)
-      .where(eq(principals.principalId, e2eTenants.first.principalId));
-    await coreDatabase
-      .delete(principals)
-      .where(eq(principals.principalId, e2eTenants.second.principalId));
-    await coreDatabase.delete(tenants).where(eq(tenants.tenantId, e2eTenants.first.tenantId));
-    await coreDatabase.delete(tenants).where(eq(tenants.tenantId, e2eTenants.second.tenantId));
+      .where(inArray(tenantModuleStates.tenantId, tenantIds));
+    await coreDatabase.delete(legalEntities).where(inArray(legalEntities.tenantId, tenantIds));
+    await coreDatabase.delete(principals).where(inArray(principals.principalId, principalIds));
+    await coreDatabase.delete(tenants).where(inArray(tenants.tenantId, tenantIds));
   };
 
   await cleanup();

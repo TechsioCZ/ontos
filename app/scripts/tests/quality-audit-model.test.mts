@@ -116,10 +116,11 @@ const fixture = async () => {
     root,
     'verticals/remote/package.json',
     await stringify({
-      dependencies: { effect: '4.0.0-beta.107' },
+      dependencies: { 'drizzle-orm': '1.0.0-rc.4', effect: '4.0.0-beta.107' },
       name: 'remote-controls',
       private: true,
       type: 'module',
+      'zephyr:dependencies': { composed: 'drizzle-orm@workspace:*' },
     }),
   );
   write(
@@ -258,6 +259,10 @@ await test('real pinned Knip models exact consumers and preserves neighboring fi
     assert.ok(findings('unlisted').includes('verticals/remote/src/index.ts#misspelledChild'));
     assert.ok(findings('unlisted').includes('verticals/remote/src/index.ts#declaredRemote'));
     assert.ok(findings('dependencies').includes('verticals/remote/package.json#effect'));
+    assert.ok(
+      !findings('dependencies').includes('verticals/remote/package.json#drizzle-orm'),
+      'a zephyr:dependencies composition reference must count as a dependency consumer',
+    );
     assert.deepEqual(model.config.workspaces['.']?.ignoreDependencies, []);
     assert.ok(findings('unlisted').includes('src/index.ts#shadowedRemote'));
     assert.ok(findings('unlisted').includes('src/direct.ts#@rspack/core'));

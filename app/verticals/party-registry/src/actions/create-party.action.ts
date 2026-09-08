@@ -16,7 +16,7 @@ import {
   createOrMatchParty,
 } from '../services/party-matching-persistence.service.ts';
 import { createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage } from './create-party.party-registry-party-created-v1.outbox-message.ts';
-import { createAddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxMessage } from './add-party-official-identifier.party-registry-official-identifier-added-v1.outbox-message.ts';
+import { publishAttachedOfficialIdentifiers } from './attached-official-identifier-events.ts';
 
 import {
   CreatePartyPayloadSchema,
@@ -75,31 +75,10 @@ const handleCreateParty = Effect.fn('CreatePartyAction.handleCreateParty')(funct
     );
   }
   if (result.outcome === 'MATCHED_EXISTING') {
-    yield* Effect.forEach(
+    yield* publishAttachedOfficialIdentifiers(
+      context,
+      result.partyRef,
       addedOfficialIdentifierRefs,
-      (officialIdentifierRef) => {
-        const addedIdentifier = { officialIdentifierRef, partyRef: result.partyRef };
-        return context
-          .addDomainEvent({
-            eventType: 'party.registry.official-identifier-added.v1',
-            payloadJson: addedIdentifier,
-            producerModuleKey: 'party.registry',
-            subjectModuleKey: 'party.registry',
-            subjectResourceId: officialIdentifierRef.resourceId,
-            subjectResourceType: officialIdentifierRef.resourceType,
-          })
-          .pipe(
-            Effect.flatMap((event) =>
-              context.addOutboxMessage(
-                event,
-                createAddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxMessage(
-                  addedIdentifier,
-                ),
-              ),
-            ),
-          );
-      },
-      { concurrency: 1, discard: true },
     );
   }
   return result;

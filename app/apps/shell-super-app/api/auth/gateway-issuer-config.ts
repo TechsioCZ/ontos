@@ -1,6 +1,5 @@
-import { loadEnvironmentFileProvider } from './environment-file-provider.ts';
+import { loadConfigurationProvider } from './configuration-provider.ts';
 import { Config, ConfigProvider, Effect, Redacted, Schema } from 'effect';
-import { ROOT_ENV_PATH } from './config.ts';
 
 const withOptionalProperty = <
   Base extends object,
@@ -107,16 +106,10 @@ const parseGatewayIssuerConfigFromProvider = Effect.fn(
   return { issuer: source.issuer, privateJwk };
 });
 
-const environmentProvider = (environment: Environment): ConfigProvider.ConfigProvider =>
-  ConfigProvider.fromEnvRecord({
-    ONTOS_GATEWAY_ISSUER: environment.ONTOS_GATEWAY_ISSUER,
-    ONTOS_GATEWAY_PRIVATE_JWK: environment.ONTOS_GATEWAY_PRIVATE_JWK,
-  });
-
 export const parseGatewayIssuerConfig = (
   environment: Environment,
 ): Effect.Effect<GatewayIssuerConfigValue, GatewayIssuerConfigError> =>
-  parseGatewayIssuerConfigFromProvider(environmentProvider(environment));
+  parseGatewayIssuerConfigFromProvider(ConfigProvider.fromEnvRecord(environment));
 
 export interface LoadGatewayIssuerConfigOptions {
   readonly environment?: Environment;
@@ -126,13 +119,6 @@ export interface LoadGatewayIssuerConfigOptions {
 export const loadGatewayIssuerConfig = (
   options: LoadGatewayIssuerConfigOptions = {},
 ): Effect.Effect<GatewayIssuerConfigValue, GatewayIssuerConfigError> =>
-  loadEnvironmentFileProvider(options.envPath ?? ROOT_ENV_PATH, unableToLoadEnvironment).pipe(
-    Effect.flatMap((fileProvider) =>
-      parseGatewayIssuerConfigFromProvider(
-        (options.environment === undefined
-          ? ConfigProvider.fromEnv()
-          : environmentProvider(options.environment)
-        ).pipe(ConfigProvider.orElse(fileProvider)),
-      ),
-    ),
+  loadConfigurationProvider(options, unableToLoadEnvironment).pipe(
+    Effect.flatMap(parseGatewayIssuerConfigFromProvider),
   );

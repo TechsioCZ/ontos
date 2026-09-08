@@ -716,124 +716,101 @@ test('rejects generic tenant access as an alternative permission target', async 
   assert.equal(handlerCalls, 0);
 });
 
-test('never treats missing Legal Entity scope as an allowed alternative', async () => {
-  let handlerCalls = 0;
-  const composed = defineRead(
-    {
-      ...registration().descriptor,
-      permissionTarget: 'tenant',
-    },
-    () => {
-      handlerCalls += 1;
-      return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
-    },
-    () => Effect.succeed({}),
-    () => ({
-      kind: 'any_of',
-      targets: [
-        { kind: 'tenant', permission: 'manage_party_identity' },
-        { kind: 'module', moduleId: 'party.registry' },
-      ],
-    }),
-  );
-  const failure = await runEffectTestPromise(
-    Effect.flip(
-      makeHarness({ tenantPermissionDecision: 'denied' }).runtime.runRead({
-        input: {},
-        principal: scope,
-        registration: composed,
-        transport: { correlationId: scope.correlationId },
+for (const scenario of [
+  {
+    expectedFailure: 'ReadPermissionUnavailable',
+    name: 'never treats missing Legal Entity scope as an allowed alternative',
+    permission: 'manage_party_identity',
+    resultTargets: null,
+    tenantPermissionDecision: 'denied',
+  },
+  {
+    expectedFailure: 'ReadHandlerExecutionError',
+    name: 'rejects alternative targets whenever result authorization cannot preserve them',
+    permission: 'read_party_identity',
+    resultTargets: () => [],
+    tenantPermissionDecision: 'allowed',
+  },
+] as const) {
+  test(scenario.name, async () => {
+    let handlerCalls = 0;
+    const alternativeRead = defineRead(
+      { ...registration().descriptor, permissionTarget: 'tenant' },
+      () => {
+        handlerCalls += 1;
+        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+      },
+      () => Effect.succeed({}),
+      () => ({
+        kind: 'any_of',
+        targets: [
+          { kind: 'tenant', permission: scenario.permission },
+          { kind: 'module', moduleId: 'party.registry' },
+        ],
       }),
-    ),
-  );
-  assert.equal(failure._tag, 'ReadPermissionUnavailable');
-  assert.equal(handlerCalls, 0);
-});
-
-test('rejects alternative targets whenever result authorization cannot preserve them', async () => {
-  let handlerCalls = 0;
-  const search = defineRead(
-    {
-      ...registration().descriptor,
-      permissionTarget: 'tenant',
-    },
-    () => {
-      handlerCalls += 1;
-      return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
-    },
-    () => Effect.succeed({}),
-    () => ({
-      kind: 'any_of',
-      targets: [
-        { kind: 'tenant', permission: 'read_party_identity' },
-        { kind: 'module', moduleId: 'party.registry' },
-      ],
-    }),
-    () => [],
-  );
-  const failure = await runEffectTestPromise(
-    Effect.flip(
-      makeHarness({ tenantPermissionDecision: 'allowed' }).runtime.runRead({
-        input: {},
-        principal: scope,
-        registration: search,
-        transport: { correlationId: scope.correlationId },
-      }),
-    ),
-  );
-  assert.equal(failure._tag, 'ReadHandlerExecutionError');
-  assert.equal(handlerCalls, 0);
-});
-
-test('rejects handler-controlled hashes in metadata-only evidence', async () => {
-  const harness = makeHarness();
-  const unboundedEvidence = defineRead(
-    registration().descriptor,
-    () => Effect.succeed({ evidence: { queryHash: 'raw query text', resultCount: 1 }, result: [] }),
-    () => Effect.succeed({}),
-    () => ({ kind: 'module', moduleId: 'core.shell' }),
-  );
-  const error = await runEffectTestPromise(
-    Effect.flip(
-      harness.runtime.runRead({
-        input: {},
-        principal: scope,
-        registration: unboundedEvidence,
-        transport: { correlationId: scope.correlationId },
-      }),
-    ),
-  );
-  assert.equal(error._tag, 'ReadEvidenceValidationError');
-  assert.equal(harness.evidence(), 0);
-});
-
-void test('persists late definite denial after rolling back the owner transaction', async () => {
-  const harness = makeHarness();
-  const lateDenial = defineRead(
-    registration().descriptor,
-    () =>
-      Effect.fail(
-        new ReadPermissionDenied({
-          code: 'read_permission_denied',
-          reason: 'A late provider target check denied this read',
+      scenario.resultTargets ?? undefined,
+    );
+    const failure = await runEffectTestPromise(
+      Effect.flip(
+        makeHarness({
+          tenantPermissionDecision: scenario.tenantPermissionDecision,
+        }).runtime.runRead({
+          input: {},
+          principal: scope,
+          registration: alternativeRead,
+          transport: { correlationId: scope.correlationId },
         }),
       ),
-    () => Effect.succeed({}),
-    () => ({ kind: 'module', moduleId: 'core.shell' }),
-  );
-  const error = await runEffectTestPromise(
-    Effect.flip(
-      harness.runtime.runRead({
-        input: {},
-        principal: scope,
-        registration: lateDenial,
-        transport: { correlationId: scope.correlationId },
+    );
+    assert.equal(failure._tag, scenario.expectedFailure);
+    assert.equal(handlerCalls, 0);
+  });
+}
+
+for (const scenario of [
+  {
+    expectedEvidence: 0,
+    expectedFailure: 'ReadEvidenceValidationError',
+    name: 'rejects handler-controlled hashes in metadata-only evidence',
+    outcome: Effect.succeed({
+      evidence: { queryHash: 'raw query text', resultCount: 1 },
+      result: [],
+    }),
+  },
+  {
+    expectedEvidence: 1,
+    expectedFailure: 'ReadPermissionDenied',
+    name: 'persists late definite denial after rolling back the owner transaction',
+    outcome: Effect.fail(
+      new ReadPermissionDenied({
+        code: 'read_permission_denied',
+        reason: 'A late provider target check denied this read',
       }),
     ),
-  );
-  assert.equal(error._tag, 'ReadPermissionDenied');
-  assert.equal(harness.evidence(), 1);
-});
+  },
+]) {
+  test(scenario.name, async () => {
+    const harness = makeHarness();
+    const failingRead = defineRead(
+      registration().descriptor,
+      () => scenario.outcome,
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const error = await runEffectTestPromise(
+      Effect.flip(
+        harness.runtime.runRead({
+          input: {},
+          principal: scope,
+          registration: failingRead,
+          transport: { correlationId: scope.correlationId },
+        }),
+      ),
+    );
+    assert.equal(error._tag, scenario.expectedFailure);
+    assert.equal(harness.evidence(), scenario.expectedEvidence);
+  });
+}
 
 void test('does not release generated search candidates denied by result-level authorization', async () => {
   const legalEntityId = '00000000-0000-4000-8000-000000000004';

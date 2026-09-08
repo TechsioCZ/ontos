@@ -1,3 +1,4 @@
+import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { expect, test } from '@rstest/core';
@@ -13,7 +14,6 @@ import {
 } from '@app/core-runtime';
 import type {
   ActionRuntimeService,
-  ContextAccessService,
   PrincipalResolverService,
   SupportRecoveryPrincipalContextResolverService,
 } from '@app/core-runtime';
@@ -78,21 +78,7 @@ const providePrincipalManagementRepository = Effect.provideService(
   PrincipalManagementRepository,
   principalManagementRepository,
 );
-const contextAccess: ContextAccessService = {
-  legalEntities: ({ legalEntityIds }) =>
-    Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
-  modules: ({ moduleIds }) =>
-    Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
-  resources: ({ resources }) =>
-    Effect.succeed(
-      resources.map(({ moduleId, resourceId, resourceType }) => ({
-        decision: 'allowed' as const,
-        key: `${moduleId}:${resourceType}:${resourceId}`,
-      })),
-    ),
-  tenants: ({ tenantIds }) =>
-    Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
-};
+const contextAccess = makeContextAccessDouble('allowed');
 const provideContextAccess = Effect.provideService(ContextAccess, contextAccess);
 
 const makeService = (options: {

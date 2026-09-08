@@ -7,16 +7,12 @@ import type { ActionHandlerContext } from '@app/core-runtime';
 import {
   ChangePartyRelationshipResultSchema,
   EndPartyRelationshipPayloadSchema,
-  PartyRelationshipLifecycleEventPayloadSchema,
   PartyRelationshipLifecycleEventPayloadJsonSchema,
   EndRelationshipAuditEvidenceSchema,
   EndRelationshipAuditEvidenceJsonSchema,
   PartyRelationshipMutationErrorSchema,
 } from '../../shared/domain/relationship-contract.ts';
-import type {
-  EndPartyRelationshipPayload as Payload,
-  PartyRelationshipLifecycleEventPayload,
-} from '../../shared/domain/relationship-contract.ts';
+import type { EndPartyRelationshipPayload as Payload } from '../../shared/domain/relationship-contract.ts';
 import { endPartyRelationshipRecord } from '../services/party-relationship-persistence.service.ts';
 import type {
   RelationshipChangeResult,
@@ -24,19 +20,7 @@ import type {
 } from '../services/party-relationship-persistence.service.ts';
 import { createEndPartyRelationshipPartyRegistryRelationshipEndedV1OutboxMessage } from './end-party-relationship.party-registry-relationship-ended-v1.outbox-message.ts';
 
-const EndPartyRelationshipResultSchema = ChangePartyRelationshipResultSchema;
-
-const eventPayload = (
-  result: RelationshipChangeResult,
-): PartyRelationshipLifecycleEventPayload => ({
-  fromPartyRef: result.relationship.from.canonicalPartyRef,
-  relationshipRef: result.relationship.relationshipRef,
-  relationshipType: result.relationship.relationshipType,
-  revision: result.relationship.revision,
-  toPartyRef: result.relationship.to.canonicalPartyRef,
-  validFrom: result.relationship.validFrom,
-  validTo: result.relationship.validTo,
-});
+import { encodeRelationshipEventPayload } from './relationship-event-payload.ts';
 
 interface Services {
   readonly end: (
@@ -80,9 +64,7 @@ const handleEndPartyRelationship = Effect.fn(
       relationshipRef: payload.relationshipRef,
     }).pipe(Effect.orDie);
     yield* context.recordAuditEvidence(auditEvidence);
-    const payloadJson = yield* Schema.encodeEffect(PartyRelationshipLifecycleEventPayloadSchema)(
-      eventPayload(result),
-    ).pipe(Effect.orDie);
+    const payloadJson = yield* encodeRelationshipEventPayload(result.relationship);
     const domainEvent = yield* context.addDomainEvent({
       eventType: 'party.registry.relationship-ended.v1',
       payloadJson,
@@ -124,7 +106,7 @@ export const endPartyRelationshipAction = defineAction(
     owningModuleKey: 'party.registry',
     payloadSchema: EndPartyRelationshipPayloadSchema,
     policies: [],
-    resultSchema: EndPartyRelationshipResultSchema,
+    resultSchema: ChangePartyRelationshipResultSchema,
     schemaVersion: '1',
     tenantPermission: () => 'manage_party_relationships',
   },

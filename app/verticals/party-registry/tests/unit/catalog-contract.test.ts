@@ -15,3 +15,18 @@ test('reports exact Party Registry catalog differences', () => {
     unexpected: ['party.unexpected'],
   });
 });
+
+test('compares catalog sets without input order, duplicates, or previous results affecting differences', () => {
+  const actual = ['party.z_extra', 'party.a_extra', 'party.z_extra'];
+  const difference = comparePartyCatalog(actual);
+  assert.deepEqual(difference, {
+    missing: expectedPartyTableCatalog.toSorted(),
+    unexpected: ['party.a_extra', 'party.z_extra'],
+  });
+  difference.missing.pop();
+  assert.deepEqual(comparePartyCatalog(expectedPartyTableCatalog.toReversed()), {
+    missing: [],
+    unexpected: [],
+  });
+  assert.deepEqual(actual, ['party.z_extra', 'party.a_extra', 'party.z_extra']);
+});

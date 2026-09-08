@@ -7,12 +7,8 @@ import {
   defineTenantModuleEntrypoint,
   OperationContextUnavailable,
 } from '@app/core-runtime';
-import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect } from 'effect';
 import {
-  EngagementProfileConflict,
-  EngagementProfileNotFound,
-  EngagementProfilePersistenceUnavailable,
   OrganizationEngagementLifecyclePayloadSchema,
   OrganizationEngagementProfileSchema,
 } from '../../shared/domain/engagement-profile.ts';
@@ -21,37 +17,10 @@ import type {
   OrganizationEngagementProfile,
 } from '../../shared/domain/engagement-profile.ts';
 import { transitionOrganizationEngagementProfile } from '../services/engagement-profile-persistence.service.ts';
-import type { LifecycleResult } from '../services/engagement-profile-persistence.service.ts';
-import { resolveEngagementLifecycle } from './engagement-lifecycle.ts';
-
-const UnarchiveOrganizationEngagementPayload = OrganizationEngagementLifecyclePayloadSchema;
-const UnarchiveOrganizationEngagementResult = OrganizationEngagementProfileSchema;
-const UnarchiveOrganizationEngagementError = Schema.Union([
-  EngagementProfileConflict,
-  EngagementProfileNotFound,
-  EngagementProfilePersistenceUnavailable,
-]);
-
-interface Services {
-  readonly unarchive: (
-    profileId: string,
-  ) => Effect.Effect<
-    LifecycleResult<OrganizationEngagementProfile>,
-    EngagementProfilePersistenceUnavailable
-  >;
-}
-
-const handleUnarchiveOrganizationEngagement = (
-  payload: OrganizationEngagementLifecyclePayload,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
-) =>
-  context.services
-    .unarchive(payload.profileRef.resourceId)
-    .pipe(
-      Effect.flatMap((result) =>
-        resolveEngagementLifecycle(result, payload.profileRef.resourceId, 'active'),
-      ),
-    );
+import {
+  EngagementLifecycleErrorSchema,
+  handleEngagementLifecycle,
+} from './engagement-lifecycle-handler.ts';
 
 export const unarchiveOrganizationEngagementAction = defineAction(
   {
@@ -61,7 +30,7 @@ export const unarchiveOrganizationEngagementAction = defineAction(
     },
     actionKey: 'party.registry.unarchive-organization-engagement',
     auditProfile: 'standard',
-    domainErrorSchema: UnarchiveOrganizationEngagementError,
+    domainErrorSchema: EngagementLifecycleErrorSchema,
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -73,7 +42,7 @@ export const unarchiveOrganizationEngagementAction = defineAction(
     idempotency: 'required',
     legalEntityScope: 'required',
     owningModuleKey: 'party.registry',
-    payloadSchema: UnarchiveOrganizationEngagementPayload,
+    payloadSchema: OrganizationEngagementLifecyclePayloadSchema,
     policies: [],
     resourcePermission: defineActionResourcePermission<OrganizationEngagementLifecyclePayload>(
       (payload) => ({
@@ -85,10 +54,12 @@ export const unarchiveOrganizationEngagementAction = defineAction(
         },
       }),
     ),
-    resultSchema: UnarchiveOrganizationEngagementResult,
+    resultSchema: OrganizationEngagementProfileSchema,
     schemaVersion: '1',
   },
-  handleUnarchiveOrganizationEngagement,
+  handleEngagementLifecycle<OrganizationEngagementLifecyclePayload, OrganizationEngagementProfile>(
+    'active',
+  ),
   (transaction, scope) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(
@@ -99,7 +70,7 @@ export const unarchiveOrganizationEngagementAction = defineAction(
       );
     }
     return Effect.succeed({
-      unarchive: (profileId) =>
+      transition: (profileId) =>
         transitionOrganizationEngagementProfile(transaction, scope.tenantId, profileId, 'active'),
     });
   },

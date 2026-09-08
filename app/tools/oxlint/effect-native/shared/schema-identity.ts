@@ -1,4 +1,5 @@
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
+import type { StringOptions } from './ast.ts';
 import { keyName, memberName, unwrapNode } from './ast.ts';
 import { lookupVariable } from './bindings.ts';
 import { importedName } from './imports.ts';
@@ -54,7 +55,7 @@ export function constSchemaAlias(definition: Definition): ESTree.VariableDeclara
     ? declarator
     : null;
 }
-export function destructuredSchemaIdentity(
+function destructuredSchemaIdentity(
   pattern: ESTree.ObjectPattern,
   name: string,
   host: string | null,
@@ -77,6 +78,7 @@ function identifierIdentity(
   node: ESTree.IdentifierReference | ESTree.IdentifierName | ESTree.BindingIdentifier,
   reexports: readonly string[],
   depth: number,
+  syntax: StringOptions,
 ): string | null {
   const variable = lookupVariable(context, node);
   if (!variable) return null;
@@ -88,9 +90,9 @@ function identifierIdentity(
     const alias = constSchemaAlias(definition);
     if (!alias?.init) continue;
     if (alias.id.type === 'Identifier')
-      return schemaIdentity(context, alias.init, reexports, depth + 1);
+      return schemaIdentity(context, alias.init, reexports, depth + 1, syntax);
     if (alias.id.type !== 'ObjectPattern') continue;
-    const host = schemaIdentity(context, alias.init, reexports, depth + 1);
+    const host = schemaIdentity(context, alias.init, reexports, depth + 1, syntax);
     const identity = destructuredSchemaIdentity(alias.id, node.name, host);
     if (identity !== undefined) return identity;
   }
@@ -99,19 +101,23 @@ function identifierIdentity(
 
 /** Schema lexical identity: @effect root, @schema namespace, or direct member; const-only aliases,
  * glob barrels, no type-only imports, no write/typechecker inference, bounded to 16 hops.
+ * Member syntax is caller-owned; defaults remain literal-only. Alias recursion retains that policy.
  */
 export function schemaIdentity(
   context: Context,
   input: ESTree.Node,
   reexports: readonly string[] = [],
   depth = 0,
+  syntax: StringOptions = { templates: false },
 ): string | null {
   if (depth > 16) return null;
-  const node = unwrapNode(input);
+  const node = unwrapNode(input, syntax.unwrap);
   if (node.type === 'MemberExpression')
     return schemaMember(
-      schemaIdentity(context, node.object, reexports, depth + 1),
-      memberName(node),
+      schemaIdentity(context, node.object, reexports, depth + 1, syntax),
+      memberName(node, syntax),
     );
-  return node.type === 'Identifier' ? identifierIdentity(context, node, reexports, depth) : null;
+  return node.type === 'Identifier'
+    ? identifierIdentity(context, node, reexports, depth, syntax)
+    : null;
 }

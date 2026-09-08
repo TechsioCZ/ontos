@@ -164,7 +164,7 @@ const markInvocationRejected = Effect.fnUntraced(function* markInvocationRejecte
   actionInvocationId: string,
 ) {
   const completedAt = yield* DateTime.nowAsDate;
-  return yield* transaction
+  const rejected = yield* transaction
     .update(actionInvocations)
     .set({ completedAt, status: 'rejected' })
     .where(
@@ -175,6 +175,12 @@ const markInvocationRejected = Effect.fnUntraced(function* markInvocationRejecte
       ),
     )
     .returning({ actionInvocationId: actionInvocations.actionInvocationId });
+  if (rejected.length !== 1) {
+    return yield* new RepositoryInvariantError({
+      reason: 'The Action invocation could not be marked rejected',
+    });
+  }
+  return yield* Effect.void;
 });
 
 export const computeActionRequestHash = (input: ActionRequestHashInput): string => {
@@ -599,17 +605,9 @@ export const makeActionRepository = (): ActionRepositoryService => {
           })
           .pipe(Effect.mapError((cause) => transactionFailure(failureReason, cause)));
 
-        const rejected = yield* markInvocationRejected(transaction, input.actionInvocationId).pipe(
+        yield* markInvocationRejected(transaction, input.actionInvocationId).pipe(
           Effect.mapError((cause) => transactionFailure(failureReason, cause)),
         );
-        if (rejected.length !== 1) {
-          return yield* transactionFailure(
-            failureReason,
-            new RepositoryInvariantError({
-              reason: 'The Action invocation could not be marked rejected',
-            }),
-          );
-        }
         return yield* Effect.void;
       },
     );
@@ -673,14 +671,14 @@ export const makeActionRepository = (): ActionRepositoryService => {
         );
         yield* transaction
           .insert(auditEvents)
-          .values([
-            {
+          .values(
+            ['action.policy_checked', 'action.rejected'].map((eventType) => ({
               actionInvocationId: input.actionInvocationId,
               auditProfile: input.auditProfile,
               authBindingId: input.principal.authBindingId,
               authContextRef: input.principal.authContextRef,
               authMethod: input.principal.authMethod,
-              eventType: 'action.policy_checked',
+              eventType,
               evidenceJson: policyEvidence,
               impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
               legalEntityId: input.principal.legalEntityId,
@@ -692,40 +690,13 @@ export const makeActionRepository = (): ActionRepositoryService => {
               targetResourceId: input.transport.targetResourceId,
               targetResourceType: input.transport.targetResourceType,
               tenantId: input.principal.tenantId,
-            },
-            {
-              actionInvocationId: input.actionInvocationId,
-              auditProfile: input.auditProfile,
-              authBindingId: input.principal.authBindingId,
-              authContextRef: input.principal.authContextRef,
-              authMethod: input.principal.authMethod,
-              eventType: 'action.rejected',
-              evidenceJson: policyEvidence,
-              impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
-              legalEntityId: input.principal.legalEntityId,
-              outcome: 'denied',
-              outcomeCode: input.reasonCode,
-              outcomeStage: 'policy',
-              principalId: input.principal.principalId,
-              targetModuleKey: input.transport.targetModuleKey,
-              targetResourceId: input.transport.targetResourceId,
-              targetResourceType: input.transport.targetResourceType,
-              tenantId: input.principal.tenantId,
-            },
-          ])
+            })),
+          )
           .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
 
-        const rejected = yield* markInvocationRejected(transaction, input.actionInvocationId).pipe(
+        yield* markInvocationRejected(transaction, input.actionInvocationId).pipe(
           Effect.mapError((cause) => persistenceFailure(failureReason, cause)),
         );
-        if (rejected.length !== 1) {
-          return yield* persistenceFailure(
-            failureReason,
-            new RepositoryInvariantError({
-              reason: 'The Action invocation could not be marked rejected',
-            }),
-          );
-        }
         return yield* Effect.void;
       },
     );

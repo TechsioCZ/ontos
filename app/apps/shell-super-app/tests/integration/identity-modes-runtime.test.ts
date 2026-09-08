@@ -1,4 +1,5 @@
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
 import { Scope as NativeScope, Exit as NativeExit, Context, Effect, Predicate } from 'effect';
 import {
   runEffectTestSync as runNativeSync,
@@ -172,36 +173,26 @@ void test('verifies provider keys and completes live support impersonation with 
       const ids = [originalUserId, targetUserId, secondAdministratorUserId].filter(
         (id) => id.length > 0,
       );
-      await runEffectTestPromise(
+      await purgeFixtureRows([
         authDatabase
           .delete(supportImpersonationRecovery)
           .where(eq(supportImpersonationRecovery.tenantId, tenantId)),
-      );
-      await runEffectTestPromise(
         authDatabase.delete(apikey).where(inArray(apikey.referenceId, ids)),
-      );
-      await runEffectTestPromise(authDatabase.delete(session).where(inArray(session.userId, ids)));
-      await runEffectTestPromise(authDatabase.delete(account).where(inArray(account.userId, ids)));
-      await runEffectTestPromise(authDatabase.delete(user).where(inArray(user.id, ids)));
+        authDatabase.delete(session).where(inArray(session.userId, ids)),
+        authDatabase.delete(account).where(inArray(account.userId, ids)),
+        authDatabase.delete(user).where(inArray(user.id, ids)),
+      ]);
     }
-    await runEffectTestPromise(
+    await purgeFixtureRows([
       coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
       coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
       coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
       coreDatabase
         .delete(principalAuthBindings)
         .where(eq(principalAuthBindings.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
       coreDatabase.delete(principals).where(eq(principals.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)));
+      coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
+    ]);
   };
 
   try {

@@ -9,6 +9,10 @@ import {
   OperationContextUnavailable,
 } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
+import {
+  counterpartyRoleWritePermission,
+  failCounterpartyNotFound,
+} from './counterparty-role-action-support.ts';
 import { CounterpartyAuditEvidenceSchema } from '../../shared/domain/counterparty-contract.ts';
 import {
   CounterpartyEvidenceInsufficient,
@@ -78,15 +82,7 @@ const handleCounterpartyRoleAdd = Effect.fn('CounterpartyRoleAddAction.handleCou
     }
     const persistenceResult = yield* context.services.add(payload, context);
     const result = yield* Match.value(persistenceResult).pipe(
-      Match.tag('counterparty_not_found', ({ counterpartyId }) =>
-        Effect.fail(
-          new CounterpartyNotFound({
-            code: 'counterparty_not_found',
-            counterpartyId,
-            reason: 'The Counterparty does not exist in the selected Legal Entity',
-          }),
-        ),
-      ),
+      Match.tag('counterparty_not_found', failCounterpartyNotFound),
       Match.tag('overlap', ({ roleType }) =>
         Effect.fail(
           new CounterpartyRoleOverlap({
@@ -171,14 +167,9 @@ export const counterpartyRoleAddAction = defineAction(
     owningModuleKey: 'party.registry',
     payloadSchema: CounterpartyRoleAddPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<CounterpartyRoleAddPayload>((payload) => ({
-      permission: 'write',
-      resource: {
-        moduleId: payload.counterpartyRef.moduleId,
-        resourceId: payload.counterpartyRef.resourceId,
-        resourceType: payload.counterpartyRef.resourceType,
-      },
-    })),
+    resourcePermission: defineActionResourcePermission<CounterpartyRoleAddPayload>(
+      counterpartyRoleWritePermission,
+    ),
     resultSchema: CounterpartyRoleAddResultSchema,
     schemaVersion: '1',
   },

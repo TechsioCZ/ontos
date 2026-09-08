@@ -3,29 +3,16 @@
 // @ontos-outbox-worker-owner party.registry
 // @ontos-outbox-worker-producer party.registry
 // @ontos-outbox-worker-topic party.registry.official-identifier-ended.v1
-import { Effect } from 'effect';
-import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
-import { PartySearchProjector } from '../services/party-search-projection.service.ts';
+import { defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { definePartySearchWorker } from './party-search-worker.ts';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/party-registry/outbox/party-registry-official-identifier-ended-v1';
 
-const handleProjectOfficialIdentifierEndedToSearch = Effect.fn(
-  'handleProjectOfficialIdentifierEndedToSearch',
-)(function* projectCommittedEvent(
-  payload: typeof OutboxPayloadSchema.Type,
-  context: OutboxWorkerHandlerContext,
-) {
-  const projector = yield* PartySearchProjector;
-  yield* projector.project(context, { partyId: payload.partyRef.resourceId });
-});
-
-export const projectOfficialIdentifierEndedToSearchWorker = defineOutboxWorker(
+export const { worker: projectOfficialIdentifierEndedToSearchWorker } = definePartySearchWorker(
   {
-    consumerModuleKey: 'party.registry',
     entrypoint: defineTenantModuleEntrypoint({
       access: 'background',
       authorization: { kind: 'owner_local_background' },
@@ -33,17 +20,12 @@ export const projectOfficialIdentifierEndedToSearchWorker = defineOutboxWorker(
       moduleKey: 'party.registry',
       role: 'worker',
     }),
-    leaseDurationMs: 30_000,
     payloadSchema: OutboxPayloadSchema,
     producerModuleKey: outboxProducerModuleKey,
-    retryPolicy: {
-      initialBackoffMs: 1000,
-      maxAttempts: 5,
-      maxBackoffMs: 60_000,
-      multiplier: 2,
-    },
     topic: outboxTopic,
-    workerKey: 'party.registry.project-official-identifier-ended-to-search',
   },
-  handleProjectOfficialIdentifierEndedToSearch,
+  {
+    spanName: 'handleProjectOfficialIdentifierEndedToSearch',
+    target: (payload) => ({ partyId: payload.partyRef.resourceId }),
+  },
 );

@@ -20,6 +20,7 @@ import {
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { coreRelations, principalAuthBindings, principals, tenants } from '../../src/db/schema.ts';
 import { makeTestDatabaseFromPool } from '../support/database.ts';
+import { purgeFixtureRows } from '../support/fixture-cleanup.ts';
 import { runEffectTestSync as runNativeSync } from '../support/effect-runtime.ts';
 
 const nativeDatabaseScope = runNativeSync(NativeScope.make());
@@ -36,15 +37,13 @@ void test('persists managed key lifecycle without credential material and enforc
     makeTestDatabaseFromPool(pool, coreRelations).pipe(NativeScope.provide(nativeDatabaseScope)),
   );
   const cleanup = async () => {
-    await runEffectTestPromise(
+    await purgeFixtureRows([
       database
         .delete(principalAuthBindings)
         .where(eq(principalAuthBindings.providerSubjectId, providerKeyId)),
-    );
-    await runEffectTestPromise(
       database.delete(principals).where(eq(principals.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(database.delete(tenants).where(eq(tenants.tenantId, tenantId)));
+      database.delete(tenants).where(eq(tenants.tenantId, tenantId)),
+    ]);
   };
 
   try {

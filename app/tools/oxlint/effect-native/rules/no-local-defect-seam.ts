@@ -117,17 +117,9 @@ const DEFAULT_MEMBERS = [
 /** Barrels that re-export Effect namespaces verbatim; `Effect` from them is Effect's `Effect`. */
 const DEFAULT_REEXPORT_MODULES = ['@modern-js/plugin-bff/effect-edge'];
 
-interface RuleOptions {
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly seamPaths: readonly string[];
-  readonly members: readonly string[];
-  readonly reexportModules: readonly string[];
-  readonly includeTests: boolean;
-  readonly includeScripts: boolean;
-}
+type RuleOptions = Readonly<ReturnType<typeof readOptions>>;
 
-function readOptions(context: Context): RuleOptions {
+function readOptions(context: Context) {
   const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),

@@ -166,7 +166,7 @@ export const GatewayAssertionRedemptionLive = Layer.succeed(
 );
 `;
 
-export const renderActionHttpRunner = (
+const renderActionHttpRunner = (
   vertical: Pick<VerticalMetadata, 'appId'>,
 ): string => `${ACTION_BOUNDARY_GENERATOR_HEADER}
 // @ontos-action-boundary-owner ${vertical.appId}

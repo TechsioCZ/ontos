@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * Audit finding: **A7** — "Give topology, composition, and authorization evidence shared Schemas"
  * (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`).
@@ -70,17 +69,20 @@ import { optionRecord } from '../shared/options.ts';
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Variable } from '@oxlint/plugins';
+import type { Context, ESTree } from '@oxlint/plugins';
 
 import { collectEffectBindings } from '../shared/effect-imports.ts';
 import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
-import { booleanOption as boolean, stringArray } from '../shared/options.ts';
-import { keyName, memberName as staticMemberName, unwrapNode } from '../shared/ast.ts';
+import { booleanOption as boolean, optionRecord, stringArray } from '../shared/options.ts';
+import { unwrapNode } from '../shared/ast.ts';
 import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
 import { collectSchemaLocals, importedName } from '../shared/imports.ts';
+import {
+  constSchemaAlias as constantInitializer,
+  schemaIdentity,
+} from '../shared/schema-identity.ts';
 
 const SCHEMA_NAMESPACE = 'Schema';
-const EFFECT_SCHEMA_MODULE = /^effect\/(?:.*\/)?Schema$/u;
 
 /** Shape-free JSON codecs on Effect's `Schema` namespace. */
 const DEFAULT_JSON_MEMBERS = ['Json', 'JsonValue'];
@@ -185,13 +187,6 @@ function unwrapExpression(node: ESTree.Node): ESTree.Node {
   return unwrapNode(node, { wrappers: EXPRESSION_WRAPPERS, maxDepth: MAX_RESOLUTION_DEPTH });
 }
 
-function memberName(node: ESTree.MemberExpression): string | null {
-  return staticMemberName(node, {
-    templates: true,
-    unwrap: { wrappers: EXPRESSION_WRAPPERS, maxDepth: MAX_RESOLUTION_DEPTH },
-  });
-}
-
 function recordValue(args: ESTree.CallExpression['arguments']): ESTree.Node | null {
   if (args.length >= 2) {
     const second = args[1];
@@ -208,108 +203,6 @@ function recordObjectValue(first: ESTree.Node | undefined): ESTree.Node | null {
     if (property.key.type === 'Identifier' && property.key.name === 'value') value = property.value;
   }
   return value;
-}
-
-type Definition = Variable['defs'][number];
-
-function importedSchemaIdentity(def: Definition, reexports: readonly string[]): string | null {
-  const specifier = def.node;
-  const declaration = def.parent;
-  if (declaration?.type !== 'ImportDeclaration' || declaration.importKind === 'type') return null;
-  if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') return null;
-  return schemaImportSpecifierIdentity(specifier, declaration.source.value, reexports);
-}
-
-function schemaImportSpecifierIdentity(
-  specifier: ESTree.Node,
-  source: string,
-  reexports: readonly string[],
-): string | null {
-  if (EFFECT_SCHEMA_MODULE.test(source)) {
-    if (specifier.type === 'ImportNamespaceSpecifier') return '@schema';
-    return specifier.type === 'ImportSpecifier' ? importedName(specifier) : null;
-  }
-  if (source !== 'effect' && !matchesGlobs(source, reexports)) return null;
-  if (specifier.type === 'ImportNamespaceSpecifier') return '@effect';
-  return specifier.type === 'ImportSpecifier' && importedName(specifier) === 'Schema'
-    ? '@schema'
-    : null;
-}
-
-function constantInitializer(def: Definition): ESTree.VariableDeclarator | null {
-  if (def.type !== 'Variable' || def.node.type !== 'VariableDeclarator' || def.node.init === null)
-    return null;
-  return def.node.parent?.type === 'VariableDeclaration' && def.node.parent.kind === 'const'
-    ? def.node
-    : null;
-}
-
-function selectedSchemaMember(host: string | null, key: string | null): string | null {
-  if (host === '@schema') return key;
-  return host === '@effect' && key === 'Schema' ? '@schema' : null;
-}
-
-function destructuredSchemaMember(
-  pattern: ESTree.ObjectPattern,
-  name: string,
-  host: string | null,
-): string | null | undefined {
-  for (const property of pattern.properties) {
-    if (
-      property.type !== 'Property' ||
-      property.value.type !== 'Identifier' ||
-      property.value.name !== name
-    )
-      continue;
-    const key = keyName(property.key, property.computed, { templates: true });
-    const result = selectedSchemaMember(host, key);
-    if (host === '@schema' || result !== null) return result;
-  }
-  return undefined;
-}
-
-function identifierSchemaIdentity(
-  context: Context,
-  node: Extract<ESTree.Node, { type: 'Identifier' }>,
-  reexports: readonly string[],
-  depth: number,
-): string | null {
-  const variable = lookupVariable(context, node);
-  if (!variable) return null;
-  for (const def of variable.defs) {
-    if (def.type === 'ImportBinding') {
-      const identity = importedSchemaIdentity(def, reexports);
-      if (identity !== null) return identity;
-    }
-    const declarator = constantInitializer(def);
-    if (!declarator?.init) continue;
-    if (declarator.id.type === 'Identifier')
-      return schemaIdentity(context, declarator.init, reexports, depth + 1);
-    if (declarator.id.type !== 'ObjectPattern') continue;
-    const host = schemaIdentity(context, declarator.init, reexports, depth + 1);
-    const identity = destructuredSchemaMember(declarator.id, node.name, host);
-    if (identity !== undefined) return identity;
-  }
-  return null;
-}
-
-/** Resolve only lexical imports and immutable same-file aliases; no cross-file or mutation inference. */
-function schemaIdentity(
-  context: Context,
-  input: ESTree.Node,
-  reexports: readonly string[] = [],
-  depth = 0,
-): string | null {
-  if (depth > 16) return null;
-  const node = unwrapExpression(input);
-  if (node.type === 'MemberExpression')
-    return selectedSchemaMember(
-      schemaIdentity(context, node.object, reexports, depth + 1),
-      memberName(node),
-    );
-  return node.type === 'Identifier'
-    ? identifierSchemaIdentity(context, node, reexports, depth)
-    : null;
 }
 
 export const rule = defineRule({
@@ -390,7 +283,11 @@ export const rule = defineRule({
      * namespace binding, or a bare identifier bound by `import { Record as SchemaRecord } from
      * "effect/Schema"`. `null` for anything that is not Effect's `Schema`.
      */
-    const schemaReference = (node: ESTree.Node): string | null => schemaIdentity(context, node);
+    const schemaReference = (node: ESTree.Node): string | null =>
+      schemaIdentity(context, node, [], 0, {
+        templates: true,
+        unwrap: { wrappers: EXPRESSION_WRAPPERS, maxDepth: MAX_RESOLUTION_DEPTH },
+      });
 
     /** `Schema.Json` / `S.Json` / `Schema["Json"]` / a bare `Json` imported from `effect/Schema`. */
     const isBareJson = (node: ESTree.Node): boolean => {

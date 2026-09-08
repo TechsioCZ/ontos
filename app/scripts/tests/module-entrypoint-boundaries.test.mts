@@ -752,36 +752,18 @@ const decoy = { 'stock-list': () => import('./src/api/stock-list-client.ts') };`
 
     const gatewayPath = 'verticals/inventory-stock/src/api/action-gateway.ts';
     const gateway = await readFile(path.join(root, gatewayPath), 'utf-8');
-    await write(
-      root,
-      gatewayPath,
-      gateway.replace(
-        'export const operationGateway = makeOperationGateway();',
-        "namespace Decoy { export const operationGateway = makeOperationGateway(); }\nconst spoof = 'export const operationGateway = actionGateway';",
-      ),
-    );
-    await assert.rejects(
-      checkModuleEntrypointBoundaries(root),
-      /module APIs require an approved Codesmith generator/u,
-    );
-    await write(root, gatewayPath, gateway);
-    await write(
-      root,
-      gatewayPath,
-      gateway.replace(
-        'export const operationGateway = makeOperationGateway();',
-        "export const operationGateway = { invoke: (attempt) => attempt('Bearer cached') };",
-      ),
-    );
-    await assert.rejects(
-      checkModuleEntrypointBoundaries(root),
-      /module APIs require an approved Codesmith generator/u,
-    );
-    await write(root, gatewayPath, gateway);
     await assertRejectedSources(
       root,
       gatewayPath,
       [
+        gateway.replace(
+          'export const operationGateway = makeOperationGateway();',
+          "namespace Decoy { export const operationGateway = makeOperationGateway(); }\nconst spoof = 'export const operationGateway = actionGateway';",
+        ),
+        gateway.replace(
+          'export const operationGateway = makeOperationGateway();',
+          "export const operationGateway = { invoke: (attempt) => attempt('Bearer cached') };",
+        ),
         gateway.replace(
           SHARED_GATEWAY_FACTORY,
           "makeSharedOperationGateway('wrong-audience', acquire)",
@@ -858,38 +840,23 @@ test('rejects generated governed clients that bypass the shared client runtime s
     await writeGovernedModuleApi(root);
     const readPath = STOCK_LIST_READ_FILE;
     const validRead = await readFile(path.join(root, readPath), 'utf-8');
-    await write(
+    await assertRejectedSources(
       root,
       readPath,
-      validRead.replace(
-        'policies: []',
-        "policies: [], ...{ entrypoint: attackerEntrypoint, legalEntityScope: 'required' }",
-      ),
-    );
-    await assert.rejects(
-      checkModuleEntrypointBoundaries(root),
+      [
+        validRead.replace(
+          'policies: []',
+          "policies: [], ...{ entrypoint: attackerEntrypoint, legalEntityScope: 'required' }",
+        ),
+        validRead.replace(
+          "owningModuleKey: 'inventory.stock'",
+          "owningModuleKey: 'attacker.module'",
+        ),
+        validRead.replace("readKey: 'inventory.stock.api.stock-list'", "readKey: 'attacker.read'"),
+        validRead.replace(SCHEMA_VERSION_ONE, "schemaVersion: '2'"),
+      ],
       /module APIs require an approved Codesmith generator/u,
     );
-    await write(root, readPath, validRead);
-    const assertModuleReadDriftRejected = async (
-      expected: string,
-      replacement: string,
-    ): Promise<void> => {
-      await write(root, readPath, validRead.replace(expected, replacement));
-      await assert.rejects(
-        checkModuleEntrypointBoundaries(root),
-        /module APIs require an approved Codesmith generator/u,
-      );
-    };
-    await assertModuleReadDriftRejected(
-      "owningModuleKey: 'inventory.stock'",
-      "owningModuleKey: 'attacker.module'",
-    );
-    await assertModuleReadDriftRejected(
-      "readKey: 'inventory.stock.api.stock-list'",
-      "readKey: 'attacker.read'",
-    );
-    await assertModuleReadDriftRejected(SCHEMA_VERSION_ONE, "schemaVersion: '2'");
     await write(root, readPath, validRead);
     const clientPath = 'verticals/inventory-stock/src/api/stock-list-client.ts';
     const validClient = await readFile(path.join(root, clientPath), 'utf-8');
@@ -1416,38 +1383,26 @@ const decoyGroup = HttpApiGroup.make('inventoryItemsSearch').add(HttpApiEndpoint
       ),
     );
     await checkModuleEntrypointBoundaries(root);
-    await write(
+    await assertRejectedSources(
       root,
       providerSourcePath,
-      validProviderSource.replace(
-        "{ kind: 'context_permission', permission: 'module.access' }",
-        "{ kind: 'public' }",
-      ),
-    );
-    await assert.rejects(
-      checkModuleEntrypointBoundaries(root),
+      [
+        validProviderSource.replace(
+          "{ kind: 'context_permission', permission: 'module.access' }",
+          "{ kind: 'public' }",
+        ),
+        validProviderSource.replace(
+          "owningModuleKey: 'inventory.stock'",
+          "owningModuleKey: 'attacker.module'",
+        ),
+        validProviderSource.replace(
+          "readKey: 'inventory.stock.search.inventory-items'",
+          "readKey: 'attacker.read'",
+        ),
+        validProviderSource.replace(SCHEMA_VERSION_ONE, "schemaVersion: '2'"),
+      ],
       /generated search and report clients require the shared client runtime/u,
     );
-    await write(root, providerSourcePath, validProviderSource);
-    const assertProviderReadDriftRejected = async (
-      expected: string,
-      replacement: string,
-    ): Promise<void> => {
-      await write(root, providerSourcePath, validProviderSource.replace(expected, replacement));
-      await assert.rejects(
-        checkModuleEntrypointBoundaries(root),
-        /generated search and report clients require the shared client runtime/u,
-      );
-    };
-    await assertProviderReadDriftRejected(
-      "owningModuleKey: 'inventory.stock'",
-      "owningModuleKey: 'attacker.module'",
-    );
-    await assertProviderReadDriftRejected(
-      "readKey: 'inventory.stock.search.inventory-items'",
-      "readKey: 'attacker.read'",
-    );
-    await assertProviderReadDriftRejected(SCHEMA_VERSION_ONE, "schemaVersion: '2'");
     await write(root, providerSourcePath, validProviderSource);
     await write(
       root,

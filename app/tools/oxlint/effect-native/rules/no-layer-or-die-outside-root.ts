@@ -1,4 +1,4 @@
-import { optionRecord } from '../shared/options.ts';
+import { optionRecord, positiveInteger, stringArray } from '../shared/options.ts';
 /**
  * Audit finding: **A1** — "Establish one process-level Layer and ManagedRuntime composition model"
  * (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`). A1 counts 12 `Layer.orDie` sites while the
@@ -44,7 +44,6 @@ import type { Context, ESTree } from '@oxlint/plugins';
 
 import { collectEffectBindings } from '../shared/effect-imports.ts';
 import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
-import { stringArray } from '../shared/options.ts';
 import { importedName } from '../shared/imports.ts';
 import { lookupVariable } from '../shared/bindings.ts';
 import { asNode, keyName as staticKeyName, memberName } from '../shared/ast.ts';
@@ -96,15 +95,11 @@ interface RuleOptions {
 
 function readOptions(context: Context): RuleOptions {
   const record = optionRecord(context.options?.[0]);
-  const maxPerRoot = record.maxPerRoot;
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
     exclude: stringArray(record.exclude, DEFAULT_EXCLUDE),
     rootFiles: stringArray(record.rootFiles, DEFAULT_ROOT_FILES),
-    maxPerRoot:
-      typeof maxPerRoot === 'number' && Number.isInteger(maxPerRoot) && maxPerRoot >= 0
-        ? maxPerRoot
-        : 1,
+    maxPerRoot: positiveInteger(record.maxPerRoot, 1, 0),
     members: stringArray(record.members, DEFAULT_MEMBERS),
     reexportModules: stringArray(record.reexportModules, DEFAULT_REEXPORT_MODULES),
     allowTestFiles: record.allowTestFiles === true,

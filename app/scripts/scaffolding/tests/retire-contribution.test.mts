@@ -1,3 +1,12 @@
+import { NodeServices } from '@effect/platform-node';
+import { Effect, ManagedRuntime } from 'effect';
+import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { fileURLToPath } from 'node:url';
+import {
+  insertSortedSlot,
+  readGeneratedSlotEntries,
+  removeGeneratedSlotEntry,
+} from '../shared.mts';
 import { snapshotTree, write } from './fixture-files.mts';
 import assert from 'node:assert/strict';
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -8,6 +17,8 @@ import { getHelpText, runScaffold } from '../cli.mts';
 import type { JsonValue } from '../shared.mts';
 
 const json = (value: JsonValue): string => `${JSON.stringify(value, null, 2)}\n`;
+
+const VERTICAL_FLAG = '--vertical';
 
 const RETIRE_CONTRIBUTION_COMMAND = 'retire-contribution';
 const ARCHIVE_ITEM = 'archive-item';
@@ -175,7 +186,7 @@ const withFixture = async (run: (root: string) => Promise<void>): Promise<void> 
 const retire = async (root: string, kind: 'action' | 'api' | 'page', name: string) =>
   await runScaffold(
     RETIRE_CONTRIBUTION_COMMAND,
-    ['--vertical', 'inventory', '--kind', kind, '--name', name],
+    [VERTICAL_FLAG, 'inventory', '--kind', kind, '--name', name],
     { workspaceRoot: root },
   );
 
@@ -256,4 +267,113 @@ await test('refuses traversal, reruns, customized artifacts, and dependent Actio
     await assert.rejects(retire(root, 'page', ITEM_DETAIL), /exactly one generated/u);
     assert.deepEqual(await snapshotTree(root), retired);
   });
+});
+
+await test('slot insertion and retirement share multiline indentation and preserve the owner suffix', () => {
+  const start = '// <test-slot>';
+  const end = '// </test-slot>';
+  const content = `before
+  ${start}
+  ${end}
+after`;
+  const entry = `item({
+  key: "example",
+}),`;
+  const inserted = insertSortedSlot(content, start, end, [entry], () => true);
+  assert.equal(
+    inserted,
+    `before
+  ${start}
+  item({
+    key: "example",
+  }),
+${end}
+after`,
+  );
+  assert.deepEqual(readGeneratedSlotEntries(inserted, start, end), [entry]);
+  const removed = removeGeneratedSlotEntry(
+    inserted,
+    start,
+    end,
+    (candidate) => candidate === entry,
+    'item',
+  );
+  assert.equal(
+    removed,
+    `before
+  ${start}
+
+${end}
+after`,
+  );
+  assert.throws(
+    () => removeGeneratedSlotEntry(removed, start, end, () => true, 'item'),
+    /found 0/u,
+  );
+});
+
+await test('native scaffold CLI maps kebab-case flags and forwards trailing arguments', async (context) => {
+  const cliRuntime = ManagedRuntime.make(NodeServices.layer);
+  context.after(async () => await cliRuntime.dispose());
+  const cases = [
+    {
+      args: [
+        'action',
+        '--action',
+        'archive-item',
+        VERTICAL_FLAG,
+        'inventory',
+        '--legal-entity-scope',
+        'optional',
+        '--authorization',
+        'action_execution',
+        '--provisioning',
+        'invalid',
+      ],
+      message: '--provisioning must be tenant_membership_default or explicit',
+    },
+    {
+      args: [
+        'search-provider-access',
+        VERTICAL_FLAG,
+        'inventory',
+        '--name',
+        'items',
+        '--legal-entity-scope',
+        'required',
+        '--access-filtering',
+        'tenant_scope',
+        '--request-filters',
+        'role',
+      ],
+      message: 'search provider access flags are internally inconsistent',
+    },
+    {
+      args: [
+        'retire-contribution',
+        '--',
+        VERTICAL_FLAG,
+        'inventory',
+        '--name',
+        'item',
+        '--kind',
+        'invalid',
+      ],
+      message: '--kind must be action, api, or page',
+    },
+  ];
+  await cliRuntime.runPromise(
+    Effect.gen(function* nativeCliFlags() {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      for (const { args, message } of cases) {
+        const output = yield* spawner.string(
+          ChildProcess.make(process.execPath, [
+            fileURLToPath(new URL('../cli.mts', import.meta.url)),
+            ...args,
+          ]),
+        );
+        assert.ok(output.includes(message), output);
+      }
+    }),
+  );
 });

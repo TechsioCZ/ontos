@@ -26,14 +26,11 @@ const BindManagedApiKeyResultSchema = Schema.Struct({
   authBindingId: AuthBindingIdSchema,
   status: Schema.Literal('active'),
 });
-type BindApiKey = PrincipalManagementRepositoryService['bindApiKey'];
-type Input = Parameters<BindApiKey>[0];
-type Result = ReturnType<BindApiKey>;
 const handle = Effect.fn('BindManagedApiKeyAction.handle')(function* bindManagedApiKeyActionHandle(
   payload: BindManagedApiKeyPayload,
   context: ActionHandlerContext<
     Readonly<Record<never, never>>,
-    { readonly bind: (input: Input) => Result }
+    { readonly bind: PrincipalManagementRepositoryService['bindApiKey'] }
   >,
 ) {
   const result = yield* context.services.bind({

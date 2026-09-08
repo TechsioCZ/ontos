@@ -114,17 +114,9 @@ const MAX_NAME_DEPTH = 8;
 /** Hops allowed when following `const` aliases (`const Literals = Schema.Literals`). */
 const MAX_ALIAS_HOPS = 2;
 
-interface RuleOptions {
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly ignoreTests: boolean;
-  readonly reportSubsets: boolean;
-  readonly minMembers: number;
-  readonly factories: readonly string[];
-  readonly reexportModules: readonly string[];
-}
+type RuleOptions = Readonly<ReturnType<typeof readOptions>>;
 
-function readOptions(context: Context): RuleOptions {
+function readOptions(context: Context) {
   const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),

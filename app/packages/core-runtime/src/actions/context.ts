@@ -1,4 +1,10 @@
 import { Schema } from 'effect';
+import {
+  decodedStringBrand,
+  nonEmptyString,
+  TargetModuleKeySchema,
+  TargetResourceIdSchema,
+} from './string-schemas.ts';
 import type { Effect } from 'effect';
 import type {
   DataAccessEventInput,
@@ -13,24 +19,9 @@ import type { OperationalScope } from '../operations/context.ts';
 export { TrustedPrincipalContextSchema } from './principal-context.ts';
 export type { TrustedPrincipalContext } from './principal-context.ts';
 
-const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
-const CorrelationIdSchema = nonEmptyString.pipe(
-  Schema.brand('CorrelationId'),
-  Schema.decodeTo(Schema.String),
-);
-const IdempotencyKeySchema = nonEmptyString.pipe(
-  Schema.brand('IdempotencyKey'),
-  Schema.decodeTo(Schema.String),
-);
-const TargetModuleKeySchema = nonEmptyString.pipe(
-  Schema.brand('TargetModuleKey'),
-  Schema.decodeTo(Schema.String),
-);
-const TargetResourceIdSchema = nonEmptyString.pipe(
-  Schema.brand('TargetResourceId'),
-  Schema.decodeTo(Schema.String),
-);
-const TraceIdSchema = nonEmptyString.pipe(Schema.brand('TraceId'), Schema.decodeTo(Schema.String));
+const CorrelationIdSchema = decodedStringBrand(nonEmptyString, 'CorrelationId');
+const IdempotencyKeySchema = decodedStringBrand(nonEmptyString, 'IdempotencyKey');
+const TraceIdSchema = decodedStringBrand(nonEmptyString, 'TraceId');
 
 export const ActionTransportMetadataSchema = Schema.Struct({
   correlationId: CorrelationIdSchema,

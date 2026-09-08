@@ -1,8 +1,3 @@
-import {
-  constSchemaAlias as constAlias,
-  destructuredSchemaIdentity as destructuredIdentity,
-} from '../shared/schema-identity.ts';
-import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **A3** — "Replace ambient configuration with Config, ConfigProvider, and Redacted"
  * and **A7** — "Give topology, composition, and authorization evidence shared Schemas"
@@ -65,13 +60,13 @@ import { optionRecord } from '../shared/options.ts';
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Variable } from '@oxlint/plugins';
+import type { Context, ESTree } from '@oxlint/plugins';
 
 import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
-import { booleanOption, stringArray } from '../shared/options.ts';
-import { keyName, memberName, unwrapNode } from '../shared/ast.ts';
+import { booleanOption, optionRecord, stringArray } from '../shared/options.ts';
+import { keyName } from '../shared/ast.ts';
 import { lookupVariable } from '../shared/bindings.ts';
-import { importedName } from '../shared/imports.ts';
+import { schemaIdentity } from '../shared/schema-identity.ts';
 import { isNonReferencePosition, isInErasedTypePosition } from '../shared/reference-positions.ts';
 
 const EFFECT_SCHEMA_MODULE = /^effect\/(?:.*\/)?Schema$/u;
@@ -125,80 +120,6 @@ function isDeclarationPosition(node: ESTree.Node): boolean {
   return isNonReferencePosition(node, { variableBindings: true }) || isInErasedTypePosition(node);
 }
 
-type Definition = Variable['defs'][number];
-
-function schemaMember(host: string | null, member: string | null): string | null {
-  if (host === '@schema') return member;
-  return host === '@effect' && member === 'Schema' ? '@schema' : null;
-}
-
-function importIdentity(def: Definition, reexports: readonly string[]): string | null {
-  const specifier = def.node;
-  const declaration = def.parent;
-  if (declaration?.type !== 'ImportDeclaration' || declaration.importKind === 'type') return null;
-  if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') return null;
-  if (EFFECT_SCHEMA_MODULE.test(declaration.source.value)) {
-    return submoduleImportIdentity(specifier);
-  }
-  if (declaration.source.value !== 'effect' && !matchesGlobs(declaration.source.value, reexports))
-    return null;
-  return rootImportIdentity(specifier);
-}
-
-function submoduleImportIdentity(specifier: ESTree.Node): string | null {
-  if (specifier.type === 'ImportNamespaceSpecifier') return '@schema';
-  return specifier.type === 'ImportSpecifier' ? importedName(specifier) : null;
-}
-
-function rootImportIdentity(specifier: ESTree.Node): string | null {
-  if (specifier.type === 'ImportNamespaceSpecifier') return '@effect';
-  return specifier.type === 'ImportSpecifier' && importedName(specifier) === 'Schema'
-    ? '@schema'
-    : null;
-}
-
-function identifierIdentity(
-  context: Context,
-  node: Extract<ESTree.Node, { type: 'Identifier' }>,
-  reexports: readonly string[],
-  depth: number,
-): string | null {
-  const variable = lookupVariable(context, node);
-  if (!variable) return null;
-  for (const def of variable.defs) {
-    if (def.type === 'ImportBinding') {
-      const identity = importIdentity(def, reexports);
-      if (identity !== null) return identity;
-    }
-    const alias = constAlias(def);
-    if (!alias?.init) continue;
-    if (alias.id.type === 'Identifier')
-      return schemaIdentity(context, alias.init, reexports, depth + 1);
-    if (alias.id.type !== 'ObjectPattern') continue;
-    const host = schemaIdentity(context, alias.init, reexports, depth + 1);
-    const identity = destructuredIdentity(alias.id, node.name, host);
-    if (identity !== undefined) return identity;
-  }
-  return null;
-}
-
-/** Local until shared schemaIdentity preserves cooked template and wrapped computed keys. */
-function schemaIdentity(
-  context: Context,
-  input: ESTree.Node,
-  reexports: readonly string[] = [],
-  depth = 0,
-): string | null {
-  if (depth > 16) return null;
-  const node: ESTree.Node = unwrapNode(input);
-  if (node.type === 'MemberExpression')
-    return schemaMember(
-      schemaIdentity(context, node.object, reexports, depth + 1),
-      memberName(node, { templates: true, unwrap: {} }),
-    );
-  return node.type === 'Identifier' ? identifierIdentity(context, node, reexports, depth) : null;
-}
-
 export const rule = defineRule({
   meta: {
     type: 'problem',
@@ -211,14 +132,6 @@ export const rule = defineRule({
         'so the failure stays in a typed channel.',
     },
     messages: {
-      syncCodec:
-        '`{{namespace}}.{{member}}` throws instead of failing typed: the `SchemaError` escapes as a defect ' +
-        'or gets caught and collapsed, discarding the `ParseIssue` (audit A3 — ambient configuration parsed ' +
-        'with synchronous Schema decoding and throws; audit A7 — topology/authorization evidence decoded ' +
-        'with `JSON.parse` + sync Schema + casts). Use `{{namespace}}.{{effectful}}` (or ' +
-        '`{{namespace}}.{{result}}` where no Effect context exists) so the decode failure stays in the ' +
-        'error channel, and decode configuration through `Config.schema` with a root `ConfigProvider` ' +
-        'instead of parsing it inline. Framework config roots and tests are already allowed by this rule.',
       syncCodecBare:
         '`{{member}}` (imported from `effect/Schema`) throws instead of failing typed: the `SchemaError` ' +
         'escapes as a defect or gets caught and collapsed, discarding the `ParseIssue` (audit A3/A7). ' +
@@ -271,7 +184,10 @@ export const rule = defineRule({
     };
     return {
       MemberExpression(node) {
-        const member = schemaIdentity(context, node, options.reexportModules);
+        const member = schemaIdentity(context, node, options.reexportModules, 0, {
+          templates: true,
+          unwrap: {},
+        });
         if (member !== null && members.has(member)) report(node, member);
       },
       Identifier(node) {
@@ -279,12 +195,21 @@ export const rule = defineRule({
         // Destructured aliases report at capture, not at every subsequent use.
         const variable = lookupVariable(context, node);
         if (!variable?.defs.some((def) => def.type === 'ImportBinding')) return;
-        const member = schemaIdentity(context, node, options.reexportModules);
+        const member = schemaIdentity(context, node, options.reexportModules, 0, {
+          templates: true,
+          unwrap: {},
+        });
         if (member !== null && members.has(member)) report(node, member);
       },
       VariableDeclarator(node) {
         if (node.id.type !== 'ObjectPattern' || node.init === null) return;
-        if (schemaIdentity(context, node.init, options.reexportModules) !== '@schema') return;
+        if (
+          schemaIdentity(context, node.init, options.reexportModules, 0, {
+            templates: true,
+            unwrap: {},
+          }) !== '@schema'
+        )
+          return;
         for (const property of node.id.properties) {
           if (property.type !== 'Property') continue;
           const member = keyName(property.key, property.computed);

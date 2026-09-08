@@ -95,48 +95,76 @@ const ProviderContributionKindSchema = Schema.Literals([REPORT_KIND, SEARCH_PROV
 type ProviderContributionKind = typeof ProviderContributionKindSchema.Type;
 const isProviderContribution = Schema.is(ProviderContributionKindSchema);
 
-const directTokenStringProperty = (
-  tokens: ReturnType<typeof tokenizeGovernedClient>,
+type GovernedToken = ReturnType<typeof tokenizeGovernedClient>[number];
+
+const propertyValueKind = (
+  tokens: readonly GovernedToken[],
   property: string,
-): string | undefined => {
-  const identities: string[] = [];
+): SyntaxKind | undefined => {
+  const [key, colon, value] = tokens;
+  return key?.kind === SyntaxKind.Identifier &&
+    key.value === property &&
+    colon?.kind === SyntaxKind.ColonToken
+    ? value?.kind
+    : undefined;
+};
+
+const directPropertyIndexes = (
+  tokens: readonly GovernedToken[],
+  property: string,
+  kind: SyntaxKind,
+): readonly number[] => {
+  const indexes: number[] = [];
   let braceDepth = 0;
-  for (let index = 0; index < tokens.length - 2; index += 1) {
-    if (
-      braceDepth === 1 &&
-      tokens[index]?.kind === SyntaxKind.Identifier &&
-      tokens[index]?.value === property &&
-      tokens[index + 1]?.kind === SyntaxKind.ColonToken &&
-      tokens[index + 2]?.kind === SyntaxKind.StringLiteral
-    ) {
-      const identity = tokens[index + 2]?.value;
-      if (identity !== undefined) {
-        identities.push(identity);
-      }
+  for (const [index, token] of tokens.slice(0, -2).entries()) {
+    if (braceDepth === 1 && propertyValueKind(tokens.slice(index, index + 3), property) === kind) {
+      indexes.push(index);
     }
-    if (tokens[index]?.kind === SyntaxKind.OpenBraceToken) {
+    if (token.kind === SyntaxKind.OpenBraceToken) {
       braceDepth += 1;
-    } else if (tokens[index]?.kind === SyntaxKind.CloseBraceToken) {
+    } else if (token.kind === SyntaxKind.CloseBraceToken) {
       braceDepth -= 1;
     }
   }
-  return identities.length === 1 ? identities[0] : undefined;
+  return indexes;
+};
+
+const directTokenStringProperty = (
+  tokens: readonly GovernedToken[],
+  property: string,
+): string | undefined => {
+  const indexes = directPropertyIndexes(tokens, property, SyntaxKind.StringLiteral);
+  const [index] = indexes;
+  return indexes.length === 1 && index !== undefined ? tokens[index + 2]?.value : undefined;
+};
+
+const identityTokenKinds = new Set([SyntaxKind.Identifier, SyntaxKind.StringLiteral]);
+
+const compositionIdentity = (source: string): string | undefined => {
+  for (const pattern of [
+    /^import \{ (?<value>[^}]+) \}/u,
+    /^\.addHttpApi\((?<value>[^)]+)\)/u,
+    /^(?<value>[A-Za-z][A-Za-z0-9]*ReadApiLive)\.pipe\(/u,
+  ]) {
+    const value = pattern.exec(source)?.groups?.['value'];
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
 };
 
 const slotEntryIdentity = (source: string): string | undefined => {
-  const compositionIdentity =
-    /^import \{ (?<value>[^}]+) \}/u.exec(source)?.groups?.['value'] ??
-    /^\.addHttpApi\((?<value>[^)]+)\)/u.exec(source)?.groups?.['value'] ??
-    /^(?<value>[A-Za-z][A-Za-z0-9]*ReadApiLive)\.pipe\(/u.exec(source)?.groups?.['value'];
-  if (compositionIdentity !== undefined) {
-    return compositionIdentity;
+  const composed = compositionIdentity(source);
+  if (composed !== undefined) {
+    return composed;
   }
   const tokens = tokenizeGovernedClient(source);
   const [registrationProperty, registrationColon] = tokens;
   if (
     registrationColon?.kind === SyntaxKind.ColonToken &&
-    (registrationProperty?.kind === SyntaxKind.StringLiteral ||
-      registrationProperty?.kind === SyntaxKind.Identifier)
+    registrationProperty !== undefined &&
+    identityTokenKinds.has(registrationProperty.kind)
   ) {
     return registrationProperty.value;
   }
@@ -991,24 +1019,8 @@ const directStringArrayProperty = (
   property: string,
 ): readonly string[] | undefined => {
   const tokens = tokenizeGovernedClient(source);
-  let braceDepth = 0;
-  for (let index = 0; index < tokens.length - 3; index += 1) {
-    if (
-      braceDepth === 1 &&
-      tokens[index]?.kind === SyntaxKind.Identifier &&
-      tokens[index]?.value === property &&
-      tokens[index + 1]?.kind === SyntaxKind.ColonToken &&
-      tokens[index + 2]?.kind === SyntaxKind.OpenBracketToken
-    ) {
-      return readStringArray(tokens, index + 3);
-    }
-    if (tokens[index]?.kind === SyntaxKind.OpenBraceToken) {
-      braceDepth += 1;
-    } else if (tokens[index]?.kind === SyntaxKind.CloseBraceToken) {
-      braceDepth -= 1;
-    }
-  }
-  return undefined;
+  const [index] = directPropertyIndexes(tokens, property, SyntaxKind.OpenBracketToken);
+  return index === undefined ? undefined : readStringArray(tokens, index + 3);
 };
 
 // Owners may adapt accessFiltering/tenantPermission and report label/dimensions. These describe
@@ -1056,17 +1068,16 @@ const structurallyMatchesGeneratedEntry = (current: string, expected: string): b
   }
   return expectedTokens.every((expectedToken, index) => {
     const currentToken = currentTokens[index];
+    if (currentToken === undefined) {
+      return false;
+    }
+    const carriesIdentity = identityTokenKinds.has(expectedToken.kind);
     const isPropertyKey =
-      index === 0 &&
-      (expectedToken.kind === SyntaxKind.Identifier ||
-        expectedToken.kind === SyntaxKind.StringLiteral) &&
-      (currentToken?.kind === SyntaxKind.Identifier ||
-        currentToken?.kind === SyntaxKind.StringLiteral);
-    const sameKind = isPropertyKey || currentToken?.kind === expectedToken.kind;
-    const carriesIdentity =
-      expectedToken.kind === SyntaxKind.Identifier ||
-      expectedToken.kind === SyntaxKind.StringLiteral;
-    return sameKind && (!carriesIdentity || currentToken?.value === expectedToken.value);
+      index === 0 && carriesIdentity && identityTokenKinds.has(currentToken.kind);
+    return (
+      (isPropertyKey || currentToken.kind === expectedToken.kind) &&
+      (!carriesIdentity || currentToken.value === expectedToken.value)
+    );
   });
 };
 
@@ -1098,10 +1109,9 @@ const patchSlots = (
         `generated owner slot contains unsupported developer content: ${start}`,
       );
     }
-    const identityMatches =
-      identity === undefined
-        ? []
-        : allOwnerEntries.filter(({ entry }) => slotEntryIdentity(entry) === identity);
+    const identityMatches = allOwnerEntries.filter(
+      ({ entry }) => identity !== undefined && slotEntryIdentity(entry) === identity,
+    );
     if (identityMatches.some((match) => match.start !== start)) {
       return raiseScaffoldFailure(
         `generated owner slot contains mismatched identity in the wrong contribution category: ${identity}`,
@@ -1116,7 +1126,6 @@ const patchSlots = (
     const [identityMatch] = identityMatches;
     if (
       identityMatch !== undefined &&
-      identityMatch.start === start &&
       (structurallyMatchesGeneratedEntry(identityMatch.entry, line) ||
         acceptsAdaptedProviderDescriptor(start, identityMatch.entry, line))
     ) {
@@ -1387,10 +1396,7 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
       if (isApi) {
         return renderApiContract(name);
       }
-      if (isProviderContribution(kind)) {
-        return renderProvider(kind, vertical, name, config);
-      }
-      return raiseScaffoldFailure('unsupported governed contribution', kind);
+      return renderProvider(kind, vertical, name, config);
     });
     const artifactMutation = isComponent
       ? Option.some(yield* createMutationEffect(artifactPath, artifact))
@@ -1463,12 +1469,9 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
     const registrationMutation = yield* tryScaffold('failed to update module registration', () =>
       updateMutation(vertical.registrationPath, vertical.registrationContent, registration),
     );
-    if (manifestMutation !== undefined) {
-      mutations.push(manifestMutation);
-    }
-    if (registrationMutation !== undefined) {
-      mutations.push(registrationMutation);
-    }
+    mutations.push(
+      ...[manifestMutation, registrationMutation].filter((mutation) => mutation !== undefined),
+    );
     if (isComponent) {
       mutations.push(yield* patchFederationExposure(vertical, name));
     }

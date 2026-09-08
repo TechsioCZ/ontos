@@ -226,20 +226,16 @@ void test('batches tenant-isolated states once, rejects malformed/unavailable re
       assert.doesNotMatch(malformed.reason, /corrupt|storage/u);
     } finally {
       await runEffectTestPromise(
-        database.executor
-          .delete(tenantModuleStates)
-          .where(eq(tenantModuleStates.tenantId, tenantOne)),
-      );
-      await runEffectTestPromise(
-        database.executor
-          .delete(tenantModuleStates)
-          .where(eq(tenantModuleStates.tenantId, tenantTwo)),
-      );
-      await runEffectTestPromise(
-        database.executor.delete(tenants).where(eq(tenants.tenantId, tenantOne)),
-      );
-      await runEffectTestPromise(
-        database.executor.delete(tenants).where(eq(tenants.tenantId, tenantTwo)),
+        Effect.forEach(
+          [tenantModuleStates, tenants],
+          (table) =>
+            Effect.forEach(
+              [tenantOne, tenantTwo],
+              (tenantId) => database.executor.delete(table).where(eq(table.tenantId, tenantId)),
+              { discard: true },
+            ),
+          { discard: true },
+        ),
       );
     }
   });

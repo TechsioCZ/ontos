@@ -1,10 +1,6 @@
+import { failAuthenticatedProblem } from './fail-authenticated-problem.ts';
 import type { ActionCoreError } from '@app/core-runtime';
-import {
-  Effect,
-  HttpApiMiddleware,
-  HttpEffect,
-  HttpServerResponse,
-} from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpApiMiddleware } from '@modern-js/plugin-bff/effect-edge';
 import { Match, Schema } from 'effect';
 
 import {
@@ -131,16 +127,11 @@ export const partyCommandProblem = {
     }),
 };
 
-const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
-  Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
-);
 export const isPartyCommandAuthenticationProblem = Schema.is(
   PartyCommandAuthenticationProblemSchema,
 );
 export const failPartyCommandProblem = <Problem extends PartyCommandProblem>(mapped: Problem) =>
-  (isPartyCommandAuthenticationProblem(mapped) ? bearerChallenge : Effect.void).pipe(
-    Effect.andThen(Effect.fail(mapped)),
-  );
+  failAuthenticatedProblem(mapped, isPartyCommandAuthenticationProblem);
 
 export const partyCommandSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   PartyCommandSchemaErrorMiddleware,

@@ -2,20 +2,18 @@
 // @ontos-action-owner party.registry
 // @ontos-action-slug confirm-duplicate-parties
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
-import { PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
-import { DuplicateCandidateConflict } from '../../shared/domain/matching-contracts.ts';
-import { transitionDuplicateCandidateCase } from '../services/party-matching-persistence.service.ts';
 import {
   ConfirmDuplicatePartiesPayloadSchema,
   ConfirmDuplicatePartiesResultSchema,
 } from '../../shared/actions/confirm-duplicate-parties.ts';
-import type { ConfirmDuplicatePartiesPayload } from '../../shared/actions/confirm-duplicate-parties.ts';
 
+import {
+  DuplicateCaseResolutionErrorSchema,
+  duplicateCaseResolutionService,
+} from './duplicate-case-resolution-service.ts';
 import { handleDuplicateCaseResolution } from './duplicate-case-resolution-handler.ts';
 
 export type { ConfirmDuplicatePartiesPayload } from '../../shared/actions/confirm-duplicate-parties.ts';
-const ErrorSchema = Schema.Union([DuplicateCandidateConflict, PartyPersistenceUnavailable]);
 export const confirmDuplicatePartiesAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -24,7 +22,7 @@ export const confirmDuplicatePartiesAction = defineAction(
     },
     actionKey: 'party.registry.confirm-duplicate-parties',
     auditProfile: 'sensitive',
-    domainErrorSchema: ErrorSchema,
+    domainErrorSchema: DuplicateCaseResolutionErrorSchema,
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -44,17 +42,7 @@ export const confirmDuplicatePartiesAction = defineAction(
   },
   handleDuplicateCaseResolution,
   (transaction, scope) =>
-    Effect.succeed({
-      resolve: (payload: ConfirmDuplicatePartiesPayload, invocationId: string) =>
-        transitionDuplicateCandidateCase(transaction, {
-          actionInvocationId: invocationId,
-          candidateCaseId: payload.caseRef.resourceId,
-          expectedRevision: payload.expectedRevision,
-          outcome: 'CONFIRMED_DUPLICATE_PARTIES',
-          reason: payload.reason,
-          tenantId: scope.tenantId,
-        }),
-    }),
+    duplicateCaseResolutionService(transaction, scope.tenantId, 'CONFIRMED_DUPLICATE_PARTIES'),
 );
 // Production merge remains deliberately absent: this Action records reviewed readiness only.
 // <generated-outbox-message-exports>

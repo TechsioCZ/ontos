@@ -79,6 +79,7 @@
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
+import { optionRecord, stringArray } from '../shared/options.ts';
 import { importedName } from '../shared/imports.ts';
 
 import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
@@ -218,28 +219,19 @@ interface RuleOptions {
   readonly environmentReaders: readonly string[];
 }
 
-function stringList(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
 function readOptions(raw: unknown): RuleOptions {
-  const given: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
-  const includePaths = stringList(given.includePaths, DEFAULT_INCLUDE_PATHS);
+  const given = optionRecord(raw);
+  const includePaths = stringArray(given.includePaths, DEFAULT_INCLUDE_PATHS);
   const identifiers = given.environmentIdentifiers;
   return {
-    allowPaths: stringList(given.allowPaths, []),
+    allowPaths: stringArray(given.allowPaths, []),
     ignoreTestFiles: given.ignoreTestFiles === true,
     includePaths: includePaths.length > 0 ? includePaths : DEFAULT_INCLUDE_PATHS,
     environmentIdentifiers:
       typeof identifiers === 'string' && identifiers.length > 0
         ? identifiers
         : DEFAULT_ENVIRONMENT_IDENTIFIERS,
-    environmentReaders: stringList(given.environmentReaders, DEFAULT_ENVIRONMENT_READERS),
+    environmentReaders: stringArray(given.environmentReaders, DEFAULT_ENVIRONMENT_READERS),
   };
 }
 

@@ -294,15 +294,18 @@ test('preserves bounded external observation evidence separately from trusted ac
   }
 });
 
-const checkSql = (checks: Readonly<Record<string, string>>, name: string) => checks[name] ?? '';
-
-test('models typed contact point lifecycles with owner-local references', () => {
-  const contactChecks = Object.fromEntries(
-    configOf(partyContactPoints).checks.map((candidate) => [
+const checksOf = (table: (typeof configuredTables)[number]) =>
+  Object.fromEntries(
+    configOf(table).checks.map((candidate) => [
       candidate.name,
       dialect.sqlToQuery(candidate.value).sql,
     ]),
   );
+
+const checkSql = (checks: Readonly<Record<string, string>>, name: string) => checks[name] ?? '';
+
+test('models typed contact point lifecycles with owner-local references', () => {
+  const contactChecks = checksOf(partyContactPoints);
   assert.match(checkSql(contactChecks, 'party_contact_points_shape_ck'), /EMAIL/u);
   assert.match(checkSql(contactChecks, 'party_contact_points_shape_ck'), /PHONE/u);
   assert.match(checkSql(contactChecks, 'party_contact_points_shape_ck'), /ADDRESS/u);
@@ -406,12 +409,7 @@ test('models contact point purpose lifecycles with owner-local references', () =
 });
 
 test('models relationship lifecycles with owner-local references', () => {
-  const relationshipChecks = Object.fromEntries(
-    configOf(partyRelationships).checks.map((candidate) => [
-      candidate.name,
-      dialect.sqlToQuery(candidate.value).sql,
-    ]),
-  );
+  const relationshipChecks = checksOf(partyRelationships);
   assert.match(checkSql(relationshipChecks, 'party_relationships_type_ck'), /CONTACT_PERSON_OF/u);
   assert.doesNotMatch(
     checkSql(relationshipChecks, 'party_relationships_type_ck'),
@@ -493,12 +491,7 @@ test('models Counterparty lifecycles with owner-local references', () => {
       column,
     );
   }
-  const roleChecks = Object.fromEntries(
-    configOf(counterpartyRolePeriods).checks.map((candidate) => [
-      candidate.name,
-      dialect.sqlToQuery(candidate.value).sql,
-    ]),
-  );
+  const roleChecks = checksOf(counterpartyRolePeriods);
   assert.match(checkSql(roleChecks, 'party_counterparty_role_periods_type_ck'), /CUSTOMER/u);
   assert.match(checkSql(roleChecks, 'party_counterparty_role_periods_type_ck'), /SUPPLIER/u);
   assert.doesNotMatch(
@@ -548,12 +541,7 @@ test('persists one recoverable match decision per Action and bounded duplicate r
     uniqueColumns(partyMatchDecisions, 'party_match_decisions_action_invocation_uk'),
     ['tenant_id', 'action_invocation_id'],
   );
-  const decisionChecks = Object.fromEntries(
-    configOf(partyMatchDecisions).checks.map((candidate) => [
-      candidate.name,
-      dialect.sqlToQuery(candidate.value).sql,
-    ]),
-  );
+  const decisionChecks = checksOf(partyMatchDecisions);
   assert.match(decisionChecks['party_match_decisions_outcome_ck'] ?? '', /CREATED/u);
   assert.match(decisionChecks['party_match_decisions_outcome_ck'] ?? '', /MATCHED/u);
   assert.match(decisionChecks['party_match_decisions_outcome_ck'] ?? '', /AMBIGUOUS/u);

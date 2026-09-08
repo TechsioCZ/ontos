@@ -101,18 +101,9 @@ const SCHEMA_LITERAL_MEMBERS = new Set(['Literals', 'Literal']);
 
 const DECLARATION_FILE = /\.d\.[cm]?ts$/u;
 
-interface RuleOptions {
-  readonly minMembers: number;
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly ignoreTests: boolean;
-  readonly ignoreAmbient: boolean;
-  readonly ignoreNullishMembers: boolean;
-  readonly includeEnums: boolean;
-  readonly allowedNames: readonly string[];
-}
+type RuleOptions = Readonly<ReturnType<typeof readOptions>>;
 
-function readOptions(context: Context): RuleOptions {
+function readOptions(context: Context) {
   const record = optionRecord(context.options?.[0]);
   return {
     minMembers: positiveInteger(record.minMembers, DEFAULT_MIN_MEMBERS),

@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { isTestFile, normalisePath, matchesGlobs } from '../shared/paths.ts';
+import { isTestFile, rootedScopePath, matchesGlobs } from '../shared/paths.ts';
 import { stringArray, booleanOption as boolOption } from '../shared/options.ts';
 import { unwrapNode as unwrap, memberName as sharedMemberName, keyName } from '../shared/ast.ts';
 import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
@@ -34,12 +34,6 @@ import { isNonReferencePosition as sharedNonReferencePosition } from '../shared/
 
 const EFFECT_MODULE = /^effect(?:\/.*)?$/u;
 const EFFECT_ROOT_MODULE = 'effect';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production `include`/`rootFiles` defaults.
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
 /** A6 targets the deployed hosts; `scripts/**` joins only through `includeScripts`. */
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
@@ -87,33 +81,11 @@ const DEFAULT_MINIMUM_LOG_LEVEL_MEMBERS = [
 const LOGGER_NAMESPACE = 'Logger';
 const TRACER_NAMESPACE = 'Tracer';
 
-interface RequireOptions {
-  readonly logger: boolean;
-  readonly tracer: boolean;
-  readonly minimumLogLevel: boolean;
-}
+type RuleOptions = Readonly<ReturnType<typeof readOptions>>;
 
-interface RuleOptions {
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly rootFiles: readonly string[];
-  readonly runtimeMembers: readonly string[];
-  readonly runtimeTypeNames: readonly string[];
-  readonly otelModules: readonly string[];
-  readonly reexportModules: readonly string[];
-  readonly minimumLogLevelMembers: readonly string[];
-  readonly includeScripts: boolean;
-  readonly includeTests: boolean;
-  readonly require: RequireOptions;
-}
-
-function readOptions(context: Context): RuleOptions {
+function readOptions(context: Context) {
   const record = optionRecord(context.options?.[0]);
-  const rawRequire = record.require;
-  const requireRecord: Record<string, unknown> =
-    typeof rawRequire === 'object' && rawRequire !== null && !Array.isArray(rawRequire)
-      ? (rawRequire as Record<string, unknown>)
-      : {};
+  const requireRecord = optionRecord(record.require);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
@@ -138,14 +110,7 @@ function readOptions(context: Context): RuleOptions {
 
 /** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
 function scopePath(filename: string): string {
-  const unified = filename.replaceAll('\\', '/');
-  const fixture =
-    /(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u.exec(unified);
-  if (fixture?.[1]) return fixture[1];
-  const root = fileURLToPath(new URL('../../../../', import.meta.url)).replaceAll('\\', '/');
-  return unified.startsWith(root)
-    ? unified.slice(root.length)
-    : normalisePath(unified).replace(FIXTURE_PREFIX, '');
+  return rootedScopePath(filename, fileURLToPath(new URL('../../../../', import.meta.url)));
 }
 
 /** `["ManagedRuntime.make"]` → `Set{"ManagedRuntime.make"}`, ignoring malformed entries. */

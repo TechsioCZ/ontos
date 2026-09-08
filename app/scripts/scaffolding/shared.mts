@@ -1676,6 +1676,28 @@ export const readGeneratedSlotEntries = (
   return entries.success;
 };
 
+const renderGeneratedSlotEntries = (
+  content: string,
+  startMarker: string,
+  endMarker: string,
+  entries: readonly string[],
+): string => {
+  const start = content.indexOf(startMarker);
+  const end = content.indexOf(endMarker);
+  const bodyStart = start + startMarker.length;
+  const endLineStart = Math.max(content.lastIndexOf('\n', end - 1) + 1, 0);
+  const indentation = /^[ \t]*/u.exec(content.slice(endLineStart, end))?.[0] ?? '';
+  const rendered = entries
+    .map((entry) =>
+      entry
+        .split('\n')
+        .map((line) => `${indentation}${line}`)
+        .join('\n'),
+    )
+    .join('\n');
+  return `${content.slice(0, bodyStart)}\n${rendered}\n${content.slice(end)}`;
+};
+
 export const removeGeneratedSlotEntry = (
   content: string,
   startMarker: string,
@@ -1691,20 +1713,7 @@ export const removeGeneratedSlotEntry = (
     );
   }
   const remaining = entries.filter((entry) => !matches(entry));
-  const start = content.indexOf(startMarker);
-  const end = content.indexOf(endMarker);
-  const bodyStart = start + startMarker.length;
-  const endLineStart = Math.max(content.lastIndexOf('\n', end - 1) + 1, 0);
-  const indentation = /^[ \t]*/u.exec(content.slice(endLineStart, end))?.[0] ?? '';
-  const rendered = remaining
-    .map((entry) =>
-      entry
-        .split('\n')
-        .map((line) => `${indentation}${line}`)
-        .join('\n'),
-    )
-    .join('\n');
-  return `${content.slice(0, bodyStart)}\n${rendered}\n${content.slice(end)}`;
+  return renderGeneratedSlotEntries(content, startMarker, endMarker, remaining);
 };
 
 export const generatedSlotContainsExactEntry = (
@@ -1728,9 +1737,6 @@ export const insertSortedSlot = (
   additions: readonly string[],
   validateEntry: (candidate: string) => boolean,
 ): string => {
-  const start = content.indexOf(startMarker);
-  const end = content.indexOf(endMarker);
-  const bodyStart = start + startMarker.length;
   const existing = readGeneratedSlotEntries(content, startMarker, endMarker);
   if (existing.some((line) => !validateEntry(line))) {
     return raiseScaffoldFailure(
@@ -1746,15 +1752,5 @@ export const insertSortedSlot = (
   const entries = [...existing, ...additions].toSorted((left, right) =>
     generatedSlotSortKey(left).localeCompare(generatedSlotSortKey(right)),
   );
-  const endLineStart = Math.max(content.lastIndexOf('\n', end - 1) + 1, 0);
-  const indentation = /^[ \t]*/u.exec(content.slice(endLineStart, end))?.[0] ?? '';
-  const renderedEntries = entries
-    .map((entry) =>
-      entry
-        .split('\n')
-        .map((line) => `${indentation}${line}`)
-        .join('\n'),
-    )
-    .join('\n');
-  return `${content.slice(0, bodyStart)}\n${renderedEntries}\n${content.slice(end)}`;
+  return renderGeneratedSlotEntries(content, startMarker, endMarker, entries);
 };

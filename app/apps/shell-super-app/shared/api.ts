@@ -12,11 +12,7 @@ import { GatewayContextApiGroup } from '@app/shared-contracts';
 
 export type SafeTenantIdentity = typeof SafeTenantIdentitySchema.Type;
 export type SafeAuthenticatedIdentity = typeof SafeAuthenticatedIdentitySchema.Type;
-export type AnonymousSession = typeof AnonymousSessionSchema.Type;
-export type AuthenticatedSession = typeof AuthenticatedSessionSchema.Type;
 export type LegalEntityChoice = typeof LegalEntityChoiceSchema.Type;
-export type SelectionRequiredSession = typeof SelectionRequiredSessionSchema.Type;
-export type AccessBlockedSession = typeof AccessBlockedSessionSchema.Type;
 export type CurrentSession = typeof CurrentSessionSchema.Type;
 export type SignInPayload = typeof SignInPayloadSchema.Type;
 export type SignInResponse = typeof SignInResponseSchema.Type;
@@ -37,8 +33,6 @@ export type ResourceRef = typeof ResourceRefSchema.Type;
 export type ShellSearchResult = typeof ShellSearchResultSchema.Type;
 export type ShellSearchPayload = typeof ShellSearchPayloadSchema.Type;
 export type ShellSearchResponse = typeof ShellSearchResponseSchema.Type;
-export type ShellResourceDetailField = typeof ShellResourceDetailFieldSchema.Type;
-export type ShellTimelineEntry = typeof ShellTimelineEntrySchema.Type;
 export type ShellResourceResponse = typeof ShellResourceResponseSchema.Type;
 export type MediaAttachmentResponse = typeof MediaAttachmentResponseSchema.Type;
 
@@ -271,21 +265,6 @@ export type IdentityProblem =
   | ShellRateLimitedProblem
   | ShellCapabilityUnavailableProblem
   | ShellInternalProblem;
-
-export type ShellCompositionProblem =
-  | ShellAuthenticationRequiredProblem
-  | ShellCapabilityUnavailableProblem
-  | ShellInternalProblem;
-
-export type ShellTargetProblem =
-  | ShellAuthenticationRequiredProblem
-  | ShellCapabilityUnavailableProblem
-  | ShellInternalProblem
-  | ShellPolicyConflictProblem
-  | ShellPolicyUnprocessableProblem
-  | ShellSelectionRequiredProblem
-  | ShellTargetForbiddenProblem
-  | ShellTargetNotFoundProblem;
 
 const safeTenantIdentityFields = {
   displayName: Schema.String,
@@ -888,79 +867,8 @@ const authenticationEndpointPath = (endpoint: { readonly path: string }) =>
 
 export const shellAuthenticationApiContract = {
   apiPrefix: '/shell-super-app-api',
-  availableLegalEntitiesPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.legalEntities.endpoints.availableLegalEntities,
-  ),
-  availableTenantsPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.tenants.endpoints.availableTenants,
-  ),
-  changePrincipalStatusPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.identity.endpoints.changePrincipalStatus,
-  ),
-  compositionPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.composition.endpoints.shellComposition,
-  ),
-  createNonHumanPrincipalPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.identity.endpoints.createNonHumanPrincipal,
-  ),
-  currentSessionPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.authentication.endpoints.currentSession,
-  ),
-  issueApiKeyGatewayContextPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.gatewayContext.endpoints.issueApiKeyGatewayContext,
-  ),
-  issueGatewayContextPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.gatewayContext.endpoints.issueGatewayContext,
-  ),
-  issueManagedApiKeyPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.identity.endpoints.issueManagedApiKey,
-  ),
-  issueSelfApiKeyPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.identity.endpoints.issueSelfApiKey,
-  ),
-  listManagedApiKeysPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.identity.endpoints.listManagedApiKeys,
-  ),
-  listSelfApiKeysPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.identity.endpoints.listSelfApiKeys,
-  ),
-  mediaAttachmentPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.resources.endpoints.attachMedia,
-  ),
-  ownerId: 'shell-super-app',
-  resolveModuleTargetPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.composition.endpoints.resolveModuleTarget,
-  ),
-  resourceDetailPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.resources.endpoints.resourceDetail,
-  ),
-  rotateManagedApiKeyPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.identity.endpoints.rotateManagedApiKey,
-  ),
-  rotateSelfApiKeyPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.identity.endpoints.rotateSelfApiKey,
-  ),
-  searchPath: authenticationEndpointPath(ShellAuthenticationApi.groups.resources.endpoints.search),
-  setManagedApiKeyStatusPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.identity.endpoints.setManagedApiKeyStatus,
-  ),
-  setSelfApiKeyStatusPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.identity.endpoints.setSelfApiKeyStatus,
-  ),
   signInPath: authenticationEndpointPath(
     ShellAuthenticationApi.groups.authentication.endpoints.signIn,
-  ),
-  signOutPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.authentication.endpoints.signOut,
-  ),
-  startSupportImpersonationPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.identity.endpoints.startSupportImpersonation,
-  ),
-  stopSupportImpersonationPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.identity.endpoints.stopSupportImpersonation,
-  ),
-  switchLegalEntityPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.legalEntities.endpoints.switchLegalEntity,
   ),
   switchTenantPath: authenticationEndpointPath(
     ShellAuthenticationApi.groups.tenants.endpoints.switchTenant,

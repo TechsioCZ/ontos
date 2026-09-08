@@ -244,9 +244,7 @@ const correctRelationship = Effect.fn('PartyCorrectionService.correctRelationshi
     command: RelationshipCorrectionCommand,
     acceptance: { readonly actionInvocationId: string; readonly principalId: string },
   ) {
-    let relationshipId: null | string = null;
     let replacementRelationshipId: null | string = null;
-    let replacementAssertionId: null | string = null;
     if (command.relationshipRef.tenantId !== tenantId) {
       return yield* new PartyCorrectionConflict({
         code: 'party_correction_conflict',
@@ -275,7 +273,7 @@ const correctRelationship = Effect.fn('PartyCorrectionService.correctRelationshi
     yield* resolvePartyAlias(transaction, tenantId, target.toPartyId).pipe(
       Effect.mapError(unavailable),
     );
-    ({ relationshipId } = target);
+    const { relationshipId } = target;
     const [transitioned] = yield* transaction
       .update(partyRelationships)
       .set({
@@ -329,10 +327,14 @@ const correctRelationship = Effect.fn('PartyCorrectionService.correctRelationshi
         return yield* unavailable();
       }
       replacementRelationshipId = replacement.relationshipId;
-      replacementAssertionId = replacement.relationshipId;
     }
 
-    return { correctedPartyId, relationshipId, replacementRelationshipId, replacementAssertionId };
+    return {
+      correctedPartyId,
+      relationshipId,
+      replacementRelationshipId,
+      replacementAssertionId: replacementRelationshipId,
+    };
   },
 );
 
@@ -344,9 +346,7 @@ const correctOfficialIdentifier = Effect.fn('PartyCorrectionService.correctOffic
     acceptance: { readonly actionInvocationId: string; readonly principalId: string },
     now: Date,
   ) {
-    let officialIdentifierId: null | string = null;
     let replacementOfficialIdentifierId: null | string = null;
-    let replacementAssertionId: null | string = null;
     const correctedPartyId = command.partyId;
     yield* requireCanonicalCorrectionTarget(transaction, tenantId, command.partyId);
     const [targetRow] = yield* transaction
@@ -366,7 +366,7 @@ const correctOfficialIdentifier = Effect.fn('PartyCorrectionService.correctOffic
       targetRow,
       'The target Official Identifier assertion is absent or not active',
     );
-    ({ officialIdentifierId } = target);
+    const { officialIdentifierId } = target;
     // The shared tenant-qualified claim lock serializes releases against create/add/unarchive.
     // SAFETY: The persisted identifier columns are constrained to the closed identifier vocabulary.
     yield* lockAndResolveClaims(transaction, tenantId, [
@@ -444,14 +444,13 @@ const correctOfficialIdentifier = Effect.fn('PartyCorrectionService.correctOffic
         return yield* unavailable();
       }
       replacementOfficialIdentifierId = replacement.officialIdentifierId;
-      replacementAssertionId = replacement.officialIdentifierId;
     }
 
     return {
       correctedPartyId,
       officialIdentifierId,
       replacementOfficialIdentifierId,
-      replacementAssertionId,
+      replacementAssertionId: replacementOfficialIdentifierId,
     };
   },
 );
@@ -464,10 +463,7 @@ const correctIdentityAssertion = Effect.fn('PartyCorrectionService.correctIdenti
     acceptance: { readonly actionInvocationId: string; readonly principalId: string },
     now: Date,
   ) {
-    let partyFactAssertionId: null | string = null;
     let replacementAssertionId: null | string = null;
-    let replacementEvidenceEvaluation: null | ReturnType<typeof evaluatePartySubjectEvidence> =
-      null;
     const correctedPartyId = command.partyId;
     yield* requireCanonicalCorrectionTarget(transaction, tenantId, command.partyId);
     const [targetRow] = yield* transaction
@@ -488,13 +484,13 @@ const correctIdentityAssertion = Effect.fn('PartyCorrectionService.correctIdenti
       targetRow,
       'The target Party assertion is absent or not active',
     );
-    replacementEvidenceEvaluation = yield* validatePartyTypeCorrection(
+    const replacementEvidenceEvaluation = yield* validatePartyTypeCorrection(
       transaction,
       tenantId,
       command,
       target.normalizedValue,
     );
-    partyFactAssertionId = target.assertionId;
+    const partyFactAssertionId = target.assertionId;
     yield* transaction
       .update(partyFactAssertions)
       .set({

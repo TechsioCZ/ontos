@@ -529,6 +529,26 @@ effectTest(
   ),
 );
 
+const runFailedAction = (
+  runtime: ReturnType<typeof makeActionRuntime>,
+  actionKey: string,
+  key: string,
+  moduleStateKey: string,
+  executions: ExecutionCounter,
+) =>
+  Effect.flip(
+    runtime.runAction({
+      payload: undefined,
+      principal,
+      registration: registration(
+        actionKey,
+        moduleStateKey,
+        incrementExecution.bind(undefined, executions),
+      ),
+      transport: transport(key, moduleStateKey),
+    }),
+  );
+
 effectTest(
   'persists one normalized terminal denial and no business or collected evidence',
   withDatabase((database) =>
@@ -537,18 +557,7 @@ effectTest(
       const key = 'missing';
       const moduleStateKey = `${actionPrefix}.state.missing`;
       const failure = yield* runWithLivePermission(database, (runtime) =>
-        Effect.flip(
-          runtime.runAction({
-            payload: undefined,
-            principal,
-            registration: registration(
-              actionKeys.missing,
-              moduleStateKey,
-              incrementExecution.bind(undefined, executions),
-            ),
-            transport: transport(key, moduleStateKey),
-          }),
-        ),
+        runFailedAction(runtime, actionKeys.missing, key, moduleStateKey, executions),
       );
       const [invocation] = yield* database.executor
         .select()
@@ -794,18 +803,7 @@ effectTest(
       const failure = yield* runWithLivePermission(
         database,
         (runtime) =>
-          Effect.flip(
-            runtime.runAction({
-              payload: undefined,
-              principal,
-              registration: registration(
-                actionKeys.unavailable,
-                moduleStateKey,
-                incrementExecution.bind(undefined, executions),
-              ),
-              transport: transport(key, moduleStateKey),
-            }),
-          ),
+          runFailedAction(runtime, actionKeys.unavailable, key, moduleStateKey, executions),
         { ...spiceDbConfig, preSharedKey: 'invalid-integration-key' },
       );
       const [invocation] = yield* database.executor

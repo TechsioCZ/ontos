@@ -55,20 +55,7 @@ const TSX_FILE = /\.[cm]?[jt]sx$/u;
 
 type AnyNode = ESTree.Node & { readonly parent?: ESTree.Node | null };
 
-interface RuleOptions {
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly includeTests: boolean;
-  readonly includeTsx: boolean;
-  readonly allowPaths: readonly string[];
-  readonly driverCallbacks: readonly string[];
-  readonly allowNames: readonly string[];
-  readonly effectModules: readonly string[];
-  readonly promiseTypes: readonly string[];
-  readonly includeFunctionDeclarations: boolean;
-}
-
-function readOptions(context: Context): RuleOptions {
+function readOptions(context: Context) {
   const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),

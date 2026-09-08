@@ -1,3 +1,4 @@
+import { makeInstalledCatalogFixture as catalog } from '../support/installed-catalog.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
@@ -5,7 +6,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
 import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
-import type { InstalledModuleCatalog, OntosModuleDeploymentContract } from '../../src/index.ts';
+import type { OntosModuleDeploymentContract } from '../../src/index.ts';
 import {
   TenantModuleStateConcurrentChangeError,
   TenantModuleStatePersistenceUnavailableError,
@@ -37,28 +38,6 @@ const contract = (
     moduleId,
     supportedStates,
   });
-
-const catalog = (
-  ...contracts: readonly OntosModuleDeploymentContract[]
-): InstalledModuleCatalog => {
-  const byModule = new Map(contracts.map((item) => [item.manifest.module.id, item]));
-  return Object.freeze({
-    contracts: Object.freeze([...contracts]),
-    deploymentAppIds: Object.freeze(contracts.map(({ deployment }) => deployment.appId)),
-    deploymentStatuses: Object.freeze(
-      contracts.map((moduleContract) => ({
-        appId: moduleContract.deployment.appId,
-        moduleId: moduleContract.manifest.module.id,
-        status: 'available' as const,
-      })),
-    ),
-    getByDeploymentAppId: (appId: string) =>
-      contracts.find(({ deployment }) => deployment.appId === appId),
-    getByModuleId: (moduleId: string) => byModule.get(moduleId),
-    moduleIds: Object.freeze(contracts.map(({ manifest }) => manifest.module.id)),
-    outboxSubscriptions: Object.freeze([]),
-  });
-};
 
 void test('uses one canonical tenant module state schema', async () => {
   const decodedStates = await Promise.all(

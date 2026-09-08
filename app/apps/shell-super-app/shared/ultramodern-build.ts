@@ -60,9 +60,4 @@ const ultramodernBuildArtifact = withUltramodernBuildIdentity(
   ultramodernSourceRevision,
 );
 
-export { ultramodernBuildArtifact };
-
 export const ultramodernDeliveryUnit = ultramodernBuildArtifact.deliveryUnit;
-export const ultramodernVerticalIdentity = ultramodernDeliveryUnit;
-export const ultramodernUiMarker = ultramodernBuildArtifact.surfaces.ui;
-export const ultramodernApiMarker = ultramodernBuildArtifact.surfaces.api;

@@ -1,3 +1,4 @@
+import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import {
   makeFaultInjectableCoreDatabase,
   TestQueryHook,
@@ -41,7 +42,6 @@ import {
 } from '@app/core-runtime';
 import type {
   ActionRegistration,
-  ContextAccessService,
   DomainEventContractMap,
   GatewayAssertionRedemption,
   InstalledModuleCatalog,
@@ -1157,21 +1157,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
       },
     ]);
 
-    const unavailableContextAccess: ContextAccessService = {
-      legalEntities: ({ legalEntityIds }) =>
-        Effect.succeed(legalEntityIds.map((key) => ({ decision: 'unavailable' as const, key }))),
-      modules: ({ moduleIds }) =>
-        Effect.succeed(moduleIds.map((key) => ({ decision: 'unavailable' as const, key }))),
-      resources: ({ resources }) =>
-        Effect.succeed(
-          resources.map(({ moduleId, resourceId, resourceType }) => ({
-            decision: 'unavailable' as const,
-            key: `${moduleId}:${resourceType}:${resourceId}`,
-          })),
-        ),
-      tenants: ({ tenantIds }) =>
-        Effect.succeed(tenantIds.map((key) => ({ decision: 'unavailable' as const, key }))),
-    };
+    const unavailableContextAccess = makeContextAccessDouble('unavailable');
     const unavailableResolver: OperationalScopeResolverService = makeOperationalScopeResolver(
       makeOperationalScopeRepository(runtimeDatabase),
       unavailableContextAccess,

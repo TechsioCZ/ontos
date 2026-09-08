@@ -35,15 +35,12 @@ const SetSelfApiKeyBindingStatusResultSchema = Schema.Struct({
   previousStatus: status,
   status,
 });
-type SetStatus = PrincipalManagementRepositoryService['setApiKeyBindingStatus'];
-type Input = Parameters<SetStatus>[0];
-type Result = ReturnType<SetStatus>;
 const handle = Effect.fn('SetSelfApiKeyBindingStatusAction.handle')(
   function* setSelfApiKeyBindingStatusActionHandle(
     payload: SetSelfApiKeyBindingStatusPayload,
     context: ActionHandlerContext<
       Readonly<Record<never, never>>,
-      { readonly setStatus: (input: Input) => Result }
+      { readonly setStatus: PrincipalManagementRepositoryService['setApiKeyBindingStatus'] }
     >,
   ) {
     const result = yield* context.services.setStatus({

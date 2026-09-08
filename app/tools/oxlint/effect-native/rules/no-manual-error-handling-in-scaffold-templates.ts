@@ -78,6 +78,7 @@ import { maskText, driverText, emittedText, reportNode } from '../shared/scaffol
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
+import { optionRecord, stringArray } from '../shared/options.ts';
 
 import type { Context, ESTree } from '@oxlint/plugins';
 
@@ -122,17 +123,8 @@ interface Match {
   readonly text: string;
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
 function readOptions(raw: unknown): RuleOptions {
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(raw);
   return {
     templatePaths: stringArray(record.templatePaths, DEFAULT_TEMPLATE_PATHS),
     patterns: stringArray(record.patterns, DEFAULT_PATTERNS),

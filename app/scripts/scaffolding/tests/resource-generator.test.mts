@@ -174,6 +174,20 @@ const scaffoldResource = async (root: string, resource = resourceName) =>
     workspaceRoot: root,
   });
 
+/**
+ * A refused resource scaffold must leave the fixture tree byte-identical, so each guard proves
+ * its own rejection message against a snapshot taken immediately before the run.
+ */
+const assertResourceScaffoldRefused = async (
+  root: string,
+  expected: RegExp,
+  ignored: readonly string[] = ['node_modules'],
+): Promise<void> => {
+  const before = await snapshotTree(root, ignored);
+  await assert.rejects(scaffoldResource(root), expected);
+  assert.deepEqual(await snapshotTree(root, ignored), before);
+};
+
 await test('resource help documents the public command and writes nothing', async () => {
   const missingRoot = path.join(tmpdir(), 'resource-help-does-not-exist');
   const result = await runScaffold('resource', ['--help'], {
@@ -291,9 +305,7 @@ await test('resource scaffold rejects traversal and reruns without partial write
     assert.deepEqual(await snapshotTree(root, ['node_modules']), beforeTraversal);
 
     await scaffoldResource(root);
-    const afterFirstRun = await snapshotTree(root, ['node_modules']);
-    await assert.rejects(scaffoldResource(root), /refusing to overwrite existing business file/u);
-    assert.deepEqual(await snapshotTree(root, ['node_modules']), afterFirstRun);
+    await assertResourceScaffoldRefused(root, /refusing to overwrite existing business file/u);
   });
 });
 
@@ -306,9 +318,7 @@ await test('resource scaffold leaves no artifact when generated owner slots or e
       manifest.replace('// <generated-module-manifest-resources>', '// invalid-resource-slot'),
       'utf-8',
     );
-    const beforeMissingSlot = await snapshotTree(root, ['node_modules']);
-    await assert.rejects(scaffoldResource(root), /generated owner file/u);
-    assert.deepEqual(await snapshotTree(root, ['node_modules']), beforeMissingSlot);
+    await assertResourceScaffoldRefused(root, /generated owner file/u);
   });
 
   await withFixture(async (root) => {
@@ -324,9 +334,7 @@ await test('resource scaffold leaves no artifact when generated owner slots or e
       },
     };
     await writeFile(packagePath, json(packageWithExportCollision), 'utf-8');
-    const beforeExportCollision = await snapshotTree(root, ['node_modules']);
-    await assert.rejects(scaffoldResource(root), /resource contract export .* already exists/u);
-    assert.deepEqual(await snapshotTree(root, ['node_modules']), beforeExportCollision);
+    await assertResourceScaffoldRefused(root, /resource contract export .* already exists/u);
   });
 });
 
@@ -346,8 +354,6 @@ await test('resource scaffold rejects a manifest without the governed resource s
       'utf-8',
     );
 
-    const before = await snapshotTree(root);
-    await assert.rejects(scaffoldResource(root), /slot/u);
-    assert.deepEqual(await snapshotTree(root), before);
+    await assertResourceScaffoldRefused(root, /slot/u, []);
   });
 });

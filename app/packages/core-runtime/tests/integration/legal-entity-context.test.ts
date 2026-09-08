@@ -1,25 +1,13 @@
-import {
-  makeEffectTestCallback as nativeTestCallback,
-  makeEffectTestCallback,
-} from '@app/core-runtime/testing/effect-runtime';
+import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
 
 import { eq } from 'drizzle-orm';
-import { Effect, Exit as NativeExit, Scope as NativeScope } from 'effect';
+import { Effect } from 'effect';
 import assert from 'node:assert/strict';
-import test, { after as afterNativeDatabase } from 'node:test';
-import { Pool } from 'pg';
+import test from 'node:test';
 import { makeLegalEntityContext } from '../../src/auth/legal-entity-context.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
-import { coreRelations, legalEntities, tenants } from '../../src/db/schema.ts';
-import { makeTestDatabaseFromPool } from '../support/database.ts';
-import { runEffectTestSync as runNativeSync } from '../support/effect-runtime.ts';
-
-const nativeDatabaseScope = runNativeSync(NativeScope.make());
-const databaseEffect = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.promise(() => operation());
-afterNativeDatabase(
-  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
-);
+import { legalEntities, tenants } from '../../src/db/schema.ts';
+import { makeCoreDatabase } from '../../src/db/client.ts';
 
 const tenantOne = '11000000-0000-4000-8000-000000000001';
 const tenantTwo = '11000000-0000-4000-8000-000000000002';
@@ -28,18 +16,11 @@ const activeTwo = '21000000-0000-4000-8000-000000000002';
 const suspended = '21000000-0000-4000-8000-000000000003';
 const foreign = '21000000-0000-4000-8000-000000000004';
 
-const effectTest = <Value, Failure>(name: string, effect: Effect.Effect<Value, Failure>): void => {
-  test(name, makeEffectTestCallback(effect));
-};
-
-effectTest(
+test(
   'lists and validates only active legal entities inside the exact tenant',
   Effect.gen(function* legalEntityContextIntegration() {
     const configuration = yield* loadDatabaseConfig();
-    const pool = new Pool({ connectionString: configuration.connectionString });
-    const database = yield* makeTestDatabaseFromPool(pool, coreRelations).pipe(
-      NativeScope.provide(nativeDatabaseScope),
-    );
+    const { executor: database } = yield* makeCoreDatabase(configuration);
     const context = makeLegalEntityContext({ executor: database });
     const cleanup = Effect.gen(function* cleanLegalEntityContextFixtures() {
       yield* database.delete(legalEntities).where(eq(legalEntities.tenantId, tenantOne));
@@ -113,9 +94,6 @@ effectTest(
       assert.equal(inactiveError._tag, 'LegalEntityContextInactiveError');
       const missingError = yield* Effect.flip(context.validateSelection(tenantOne, foreign));
       assert.equal(missingError._tag, 'LegalEntityContextMissingError');
-    }).pipe(
-      Effect.ensuring(cleanup.pipe(Effect.orDie)),
-      Effect.ensuring(databaseEffect(pool.end.bind(pool)).pipe(Effect.orDie)),
-    );
-  }),
+    }).pipe(Effect.ensuring(cleanup.pipe(Effect.orDie)));
+  }).pipe(Effect.scoped, makeEffectTestCallback),
 );

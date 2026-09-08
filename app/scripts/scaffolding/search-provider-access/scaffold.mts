@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Schema } from 'effect';
+import { Effect, FileSystem, Predicate, Schema } from 'effect';
 import {
   discoverOntosModuleEffect,
   ensureUniqueMutationPaths,
@@ -35,10 +35,10 @@ const scaffoldError = (message: string, cause?: unknown): SearchProviderAccessSc
 const trySync = <Value,>(operation: () => Value) =>
   Effect.try({
     catch: (cause) =>
-      cause instanceof SearchProviderAccessScaffoldError
+      Schema.is(SearchProviderAccessScaffoldError)(cause)
         ? cause
         : scaffoldError(
-            cause instanceof Error ? cause.message : 'search provider access update failed',
+            Predicate.isError(cause) ? cause.message : 'search provider access update failed',
             cause,
           ),
     try: operation,

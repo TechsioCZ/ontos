@@ -1,18 +1,10 @@
 import { Cause, Schema } from 'effect';
+import { actionErrorSchema } from './error-schema.ts';
 
-const actionTransactionFields = {
+const ActionTransactionErrorValue = actionErrorSchema('ActionTransactionError', {
   code: Schema.Literal('action_transaction_failed'),
   reason: Schema.String,
-};
-const ActionTransactionErrorContract = Schema.TaggedStruct(
-  'ActionTransactionError',
-  actionTransactionFields,
-);
-type ActionTransactionErrorSelf = typeof ActionTransactionErrorContract.Type & Cause.YieldableError;
-const ActionTransactionErrorValue = Schema.TaggedError<ActionTransactionErrorSelf>()(
-  'ActionTransactionError',
-  actionTransactionFields,
-);
+});
 export type ActionTransactionError = InstanceType<typeof ActionTransactionErrorValue>;
 const ActionTransactionErrorInternals = (() => {
   let createWithCause: (

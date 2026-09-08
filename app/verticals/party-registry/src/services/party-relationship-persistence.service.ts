@@ -356,6 +356,21 @@ const resolveCreateDecision = (input: {
     Match.exhaustive,
   );
 
+const staleRelationshipRevision = (actualRevision: number, expectedRevision: number) =>
+  Effect.fail(
+    new PartyRelationshipRevisionConflict({
+      actualRevision,
+      code: 'party_relationship_revision_conflict',
+      expectedRevision,
+      reason: 'The Party Relationship changed after it was read',
+    }),
+  );
+
+const invalidRelationshipInterval = (reason: string) =>
+  Effect.fail(
+    new PartyRelationshipInvalidInterval({ code: 'party_relationship_invalid_interval', reason }),
+  );
+
 const validateUpdateDecision = (
   decision: ReturnType<typeof decideRelationshipUpdate>,
   payload: UpdatePartyRelationshipPayload,
@@ -368,29 +383,16 @@ const validateUpdateDecision = (
   Match.value(decision).pipe(
     Match.tag('update', () => Effect.void),
     Match.tag('revision_conflict', (conflict) =>
-      Effect.fail(
-        new PartyRelationshipRevisionConflict({
-          actualRevision: conflict.actualRevision,
-          code: 'party_relationship_revision_conflict',
-          expectedRevision: payload.expectedRevision,
-          reason: 'The Party Relationship changed after it was read',
-        }),
-      ),
+      staleRelationshipRevision(conflict.actualRevision, payload.expectedRevision),
     ),
     Match.tag('invalid_interval', () =>
-      Effect.fail(
-        new PartyRelationshipInvalidInterval({
-          code: 'party_relationship_invalid_interval',
-          reason: 'validTo must be later than validFrom for the exclusive [from,to) interval',
-        }),
+      invalidRelationshipInterval(
+        'validTo must be later than validFrom for the exclusive [from,to) interval',
       ),
     ),
     Match.tag('end_required', () =>
-      Effect.fail(
-        new PartyRelationshipInvalidInterval({
-          code: 'party_relationship_invalid_interval',
-          reason: 'Use End to establish an immediate or retrospective effective end',
-        }),
+      invalidRelationshipInterval(
+        'Use End to establish an immediate or retrospective effective end',
       ),
     ),
     Match.tag('correction_required', (correction) =>
@@ -419,30 +421,15 @@ const validateEndDecision = (
     Match.tag('end', () => Effect.succeed('CHANGE' as const)),
     Match.tag('unchanged', () => Effect.succeed('UNCHANGED' as const)),
     Match.tag('revision_conflict', (conflict) =>
-      Effect.fail(
-        new PartyRelationshipRevisionConflict({
-          actualRevision: conflict.actualRevision,
-          code: 'party_relationship_revision_conflict',
-          expectedRevision: payload.expectedRevision,
-          reason: 'The Party Relationship changed after it was read',
-        }),
-      ),
+      staleRelationshipRevision(conflict.actualRevision, payload.expectedRevision),
     ),
     Match.tag('invalid_interval', () =>
-      Effect.fail(
-        new PartyRelationshipInvalidInterval({
-          code: 'party_relationship_invalid_interval',
-          reason: 'The effective end must be later than the relationship validFrom',
-        }),
+      invalidRelationshipInterval(
+        'The effective end must be later than the relationship validFrom',
       ),
     ),
     Match.tag('update_required', () =>
-      Effect.fail(
-        new PartyRelationshipInvalidInterval({
-          code: 'party_relationship_invalid_interval',
-          reason: 'Use Update to change a still-future planned end',
-        }),
-      ),
+      invalidRelationshipInterval('Use Update to change a still-future planned end'),
     ),
     Match.tag('correction_required', (correction) =>
       Effect.fail(

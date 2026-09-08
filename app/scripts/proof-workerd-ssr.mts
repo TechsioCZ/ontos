@@ -1287,6 +1287,27 @@ const proveBoundary = (
     );
   });
 
+const routeHtml = (
+  response: MiniflareResponse,
+  appId: string,
+  route: string,
+  outboundRequests: readonly OutboundRequest[],
+  outboundStart: number,
+) =>
+  Effect.gen(function* routeHtmlEffect() {
+    const html = yield* Effect.tryPromise({
+      catch: (cause) => proofError(`${appId} route ${route} body failed`, cause),
+      try: async () => await response.text(),
+    });
+    const routeOutboundRequests = outboundRequests.slice(outboundStart);
+    const outboundEvidence = yield* encodeJson(routeOutboundRequests);
+    yield* ensure(
+      response.status === 200,
+      `${appId} returned HTTP ${response.status} for ${route} in workerd; outbound requests: ${outboundEvidence}; response: ${html.slice(0, 500)} ... ${html.slice(-1000)}`,
+    );
+    return { html, routeOutboundRequests };
+  });
+
 const proveShellRoute = (
   apps: readonly App[],
   miniflare: Miniflare,
@@ -1306,15 +1327,12 @@ const proveShellRoute = (
           headers: { accept: 'text/html' },
         }),
     });
-    const html = yield* Effect.tryPromise({
-      catch: (cause) => proofError(`${shell.id} route ${route} body failed`, cause),
-      try: async () => await response.text(),
-    });
-    const routeOutboundRequests = state.outboundRequests.slice(outboundStart);
-    const outboundEvidence = yield* encodeJson(routeOutboundRequests);
-    yield* ensure(
-      response.status === 200,
-      `${shell.id} returned HTTP ${response.status} for ${route} in workerd; outbound requests: ${outboundEvidence}; response: ${html.slice(0, 500)} ... ${html.slice(-1000)}`,
+    const { html, routeOutboundRequests } = yield* routeHtml(
+      response,
+      shell.id,
+      route,
+      state.outboundRequests,
+      outboundStart,
     );
     yield* ensure(
       !html.includes(DEGRADED_BOUNDARY_MARKER),
@@ -1363,7 +1381,6 @@ const proveShellRoute = (
 const proveRemote = (
   miniflare: Miniflare,
   remote: App,
-  shell: App,
   state: ShellProofState,
 ): Effect.Effect<void, WorkerdProofError> =>
   Effect.gen(function* proveRemoteEffect() {
@@ -1382,15 +1399,12 @@ const proveRemote = (
             headers: { accept: 'text/html' },
           }),
       });
-      const html = yield* Effect.tryPromise({
-        catch: (cause) => proofError(`${remote.id} route ${route} body failed`, cause),
-        try: async () => await response.text(),
-      });
-      const routeOutboundRequests = state.outboundRequests.slice(outboundStart);
-      const outboundEvidence = yield* encodeJson(routeOutboundRequests);
-      yield* ensure(
-        response.status === 200,
-        `${remote.id} returned HTTP ${response.status} for ${route} in workerd; outbound requests: ${outboundEvidence}; response: ${html.slice(0, 500)} ... ${html.slice(-1000)}`,
+      const { html, routeOutboundRequests } = yield* routeHtml(
+        response,
+        remote.id,
+        route,
+        state.outboundRequests,
+        outboundStart,
       );
       yield* ensure(
         response.headers.get(CONTENT_TYPE_HEADER)?.includes('text/html') === true,
@@ -1413,10 +1427,6 @@ const proveRemote = (
       });
       state.renderedRemoteIds.add(remote.id);
     }
-    yield* ensure(
-      state.renderedRemoteIds.has(remote.id),
-      `${shell.id} proof routes are missing independently rendered ${remote.id} content`,
-    );
   });
 
 const runShellProof = (
@@ -1480,7 +1490,7 @@ const runShellProof = (
       (route) => proveShellRoute(apps, miniflare, route, shell, shellWorkerName, state),
       { concurrency: 1 },
     );
-    yield* Effect.forEach(remotes, (remote) => proveRemote(miniflare, remote, shell, state), {
+    yield* Effect.forEach(remotes, (remote) => proveRemote(miniflare, remote, state), {
       concurrency: 1,
     });
     const apiProofs = yield* runApiProofs(apps, miniflare, shell, executionByAppId);

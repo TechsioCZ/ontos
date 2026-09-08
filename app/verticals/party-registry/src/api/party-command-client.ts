@@ -189,90 +189,68 @@ export const resolvePartyCommandCommit = (
     resolvePartyCommandCommitWithAuthorization(payload, authorization, options),
   );
 
-export const addContactPointWithAuthorization = (
-  payload: AddContactPointPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
+const defineCommand = <Payload, Success, Failure>(
+  operation: (
+    client: PartyCommandClient,
+    payload: Payload,
+    headers: { readonly 'idempotency-key': string },
+  ) => Effect.Effect<Success, Failure>,
+) => {
+  const authorized = (payload: Payload, ...[credential, options]: PartyCommandInvocation) =>
+    invokeAuthorized(credential, options, (client) =>
+      operation(client, payload, { 'idempotency-key': options.idempotencyKey }),
+    );
+  const execute = (payload: Payload, options: PartyCommandOptions) =>
+    invoke(options, (credential) => authorized(payload, credential, options));
+  return { authorized, execute };
+};
+
+export const { authorized: addContactPointWithAuthorization, execute: addContactPoint } =
+  defineCommand((client, payload: AddContactPointPayload, headers) =>
     Schema.encodeUnknownEffect(AddContactPointPayloadSchema)(payload).pipe(
       Effect.flatMap((endpointPayload) =>
         client.partyCommands.addContactPoint({
-          headers: { 'idempotency-key': options.idempotencyKey },
+          headers,
           payload: endpointPayload,
         }),
       ),
     ),
   );
 
-export const addContactPoint = (payload: AddContactPointPayload, options: PartyCommandOptions) =>
-  invoke(options, (authorization) =>
-    addContactPointWithAuthorization(payload, authorization, options),
-  );
-
-export const addPartyOfficialIdentifierWithAuthorization = (
-  payload: AddPartyOfficialIdentifierPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
-    Schema.encodeUnknownEffect(AddPartyOfficialIdentifierPayloadSchema)(payload).pipe(
-      Effect.flatMap((endpointPayload) =>
-        client.partyCommands.addPartyOfficialIdentifier({
-          headers: { 'idempotency-key': options.idempotencyKey },
-          payload: endpointPayload,
-        }),
-      ),
+export const {
+  authorized: addPartyOfficialIdentifierWithAuthorization,
+  execute: addPartyOfficialIdentifier,
+} = defineCommand((client, payload: AddPartyOfficialIdentifierPayload, headers) =>
+  Schema.encodeUnknownEffect(AddPartyOfficialIdentifierPayloadSchema)(payload).pipe(
+    Effect.flatMap((endpointPayload) =>
+      client.partyCommands.addPartyOfficialIdentifier({
+        headers,
+        payload: endpointPayload,
+      }),
     ),
-  );
+  ),
+);
 
-export const addPartyOfficialIdentifier = (
-  payload: AddPartyOfficialIdentifierPayload,
-  options: PartyCommandOptions,
-) =>
-  invoke(options, (authorization) =>
-    addPartyOfficialIdentifierWithAuthorization(payload, authorization, options),
-  );
-
-export const archivePartyWithAuthorization = (
-  payload: ArchivePartyPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
+export const { authorized: archivePartyWithAuthorization, execute: archiveParty } = defineCommand(
+  (client, payload: ArchivePartyPayload, headers) =>
     client.partyCommands.archiveParty({
-      headers: { 'idempotency-key': options.idempotencyKey },
+      headers,
       payload,
     }),
-  );
+);
 
-export const archiveParty = (payload: ArchivePartyPayload, options: PartyCommandOptions) =>
-  invoke(options, (authorization) =>
-    archivePartyWithAuthorization(payload, authorization, options),
-  );
+export const {
+  authorized: confirmDuplicatePartiesWithAuthorization,
+  execute: confirmDuplicateParties,
+} = defineCommand((client, payload: ConfirmDuplicatePartiesPayload, headers) =>
+  client.partyCommands.confirmDuplicateParties({
+    headers,
+    payload,
+  }),
+);
 
-export const confirmDuplicatePartiesWithAuthorization = (
-  payload: ConfirmDuplicatePartiesPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
-    client.partyCommands.confirmDuplicateParties({
-      headers: { 'idempotency-key': options.idempotencyKey },
-      payload,
-    }),
-  );
-
-export const confirmDuplicateParties = (
-  payload: ConfirmDuplicatePartiesPayload,
-  options: PartyCommandOptions,
-) =>
-  invoke(options, (authorization) =>
-    confirmDuplicatePartiesWithAuthorization(payload, authorization, options),
-  );
-
-export const correctPartyFactWithAuthorization = (
-  payload: CorrectPartyFactPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) => {
-    const headers = { 'idempotency-key': options.idempotencyKey };
+export const { authorized: correctPartyFactWithAuthorization, execute: correctPartyFact } =
+  defineCommand((client, payload: CorrectPartyFactPayload, headers) => {
     // HttpApi retains an overload for each union member; narrow without weakening its schema.
     if (payload.factKind !== 'RELATIONSHIP') {
       return client.partyCommands.correctPartyFact({ headers, payload });
@@ -283,358 +261,181 @@ export const correctPartyFactWithAuthorization = (
     return client.partyCommands.correctPartyFact({ headers, payload });
   });
 
-export const correctPartyFact = (payload: CorrectPartyFactPayload, options: PartyCommandOptions) =>
-  invoke(options, (authorization) =>
-    correctPartyFactWithAuthorization(payload, authorization, options),
-  );
-
-export const counterpartyCreateWithAuthorization = (
-  payload: CounterpartyCreatePayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
+export const { authorized: counterpartyCreateWithAuthorization, execute: counterpartyCreate } =
+  defineCommand((client, payload: CounterpartyCreatePayload, headers) =>
     client.partyCommands.counterpartyCreate({
-      headers: { 'idempotency-key': options.idempotencyKey },
+      headers,
       payload,
     }),
   );
 
-export const counterpartyCreate = (
-  payload: CounterpartyCreatePayload,
-  options: PartyCommandOptions,
-) =>
-  invoke(options, (authorization) =>
-    counterpartyCreateWithAuthorization(payload, authorization, options),
-  );
-
-export const counterpartyRoleAddWithAuthorization = (
-  payload: CounterpartyRoleAddPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
+export const { authorized: counterpartyRoleAddWithAuthorization, execute: counterpartyRoleAdd } =
+  defineCommand((client, payload: CounterpartyRoleAddPayload, headers) =>
     client.partyCommands.counterpartyRoleAdd({
-      headers: { 'idempotency-key': options.idempotencyKey },
+      headers,
       payload,
     }),
   );
 
-export const counterpartyRoleAdd = (
-  payload: CounterpartyRoleAddPayload,
-  options: PartyCommandOptions,
-) =>
-  invoke(options, (authorization) =>
-    counterpartyRoleAddWithAuthorization(payload, authorization, options),
-  );
-
-export const counterpartyRoleEndWithAuthorization = (
-  payload: CounterpartyRoleEndPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
+export const { authorized: counterpartyRoleEndWithAuthorization, execute: counterpartyRoleEnd } =
+  defineCommand((client, payload: CounterpartyRoleEndPayload, headers) =>
     client.partyCommands.counterpartyRoleEnd({
-      headers: { 'idempotency-key': options.idempotencyKey },
+      headers,
       payload,
     }),
   );
 
-export const counterpartyRoleEnd = (
-  payload: CounterpartyRoleEndPayload,
-  options: PartyCommandOptions,
-) =>
-  invoke(options, (authorization) =>
-    counterpartyRoleEndWithAuthorization(payload, authorization, options),
-  );
+export const {
+  authorized: createPartyRelationshipWithAuthorization,
+  execute: createPartyRelationship,
+} = defineCommand((client, payload: CreatePartyRelationshipPayload, headers) =>
+  client.partyCommands.createPartyRelationship({
+    headers,
+    payload,
+  }),
+);
 
-export const createPartyRelationshipWithAuthorization = (
-  payload: CreatePartyRelationshipPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
-    client.partyCommands.createPartyRelationship({
-      headers: { 'idempotency-key': options.idempotencyKey },
-      payload,
-    }),
-  );
-
-export const createPartyRelationship = (
-  payload: CreatePartyRelationshipPayload,
-  options: PartyCommandOptions,
-) =>
-  invoke(options, (authorization) =>
-    createPartyRelationshipWithAuthorization(payload, authorization, options),
-  );
-
-export const createPartyWithAuthorization = (
-  payload: CreatePartyPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
+export const { authorized: createPartyWithAuthorization, execute: createParty } = defineCommand(
+  (client, payload: CreatePartyPayload, headers) =>
     Schema.encodeUnknownEffect(CreatePartyPayloadSchema)(payload).pipe(
       Effect.flatMap((endpointPayload) =>
         client.partyCommands.createParty({
-          headers: { 'idempotency-key': options.idempotencyKey },
+          headers,
           payload: endpointPayload,
         }),
       ),
     ),
-  );
+);
 
-export const createParty = (payload: CreatePartyPayload, options: PartyCommandOptions) =>
-  invoke(options, (credential) => createPartyWithAuthorization(payload, credential, options));
+export const {
+  authorized: dismissDuplicateCandidateWithAuthorization,
+  execute: dismissDuplicateCandidate,
+} = defineCommand((client, payload: DismissDuplicateCandidatePayload, headers) =>
+  client.partyCommands.dismissDuplicateCandidate({
+    headers,
+    payload,
+  }),
+);
 
-export const dismissDuplicateCandidateWithAuthorization = (
-  payload: DismissDuplicateCandidatePayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
-    client.partyCommands.dismissDuplicateCandidate({
-      headers: { 'idempotency-key': options.idempotencyKey },
-      payload,
-    }),
-  );
-
-export const dismissDuplicateCandidate = (
-  payload: DismissDuplicateCandidatePayload,
-  options: PartyCommandOptions,
-) =>
-  invoke(options, (authorization) =>
-    dismissDuplicateCandidateWithAuthorization(payload, authorization, options),
-  );
-
-export const endContactPointWithAuthorization = (
-  payload: EndContactPointPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
+export const { authorized: endContactPointWithAuthorization, execute: endContactPoint } =
+  defineCommand((client, payload: EndContactPointPayload, headers) =>
     client.partyCommands.endContactPoint({
-      headers: { 'idempotency-key': options.idempotencyKey },
+      headers,
       payload,
     }),
   );
 
-export const endContactPoint = (payload: EndContactPointPayload, options: PartyCommandOptions) =>
-  invoke(options, (authorization) =>
-    endContactPointWithAuthorization(payload, authorization, options),
-  );
+export const {
+  authorized: endPartyOfficialIdentifierWithAuthorization,
+  execute: endPartyOfficialIdentifier,
+} = defineCommand((client, payload: EndPartyOfficialIdentifierPayload, headers) =>
+  client.partyCommands.endPartyOfficialIdentifier({
+    headers,
+    payload,
+  }),
+);
 
-export const endPartyOfficialIdentifierWithAuthorization = (
-  payload: EndPartyOfficialIdentifierPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
-    client.partyCommands.endPartyOfficialIdentifier({
-      headers: { 'idempotency-key': options.idempotencyKey },
-      payload,
-    }),
-  );
-
-export const endPartyOfficialIdentifier = (
-  payload: EndPartyOfficialIdentifierPayload,
-  options: PartyCommandOptions,
-) =>
-  invoke(options, (authorization) =>
-    endPartyOfficialIdentifierWithAuthorization(payload, authorization, options),
-  );
-
-export const endPartyRelationshipWithAuthorization = (
-  payload: EndPartyRelationshipPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
+export const { authorized: endPartyRelationshipWithAuthorization, execute: endPartyRelationship } =
+  defineCommand((client, payload: EndPartyRelationshipPayload, headers) =>
     client.partyCommands.endPartyRelationship({
-      headers: { 'idempotency-key': options.idempotencyKey },
+      headers,
       payload,
     }),
   );
 
-export const endPartyRelationship = (
-  payload: EndPartyRelationshipPayload,
-  options: PartyCommandOptions,
-) =>
-  invoke(options, (authorization) =>
-    endPartyRelationshipWithAuthorization(payload, authorization, options),
-  );
+export const {
+  authorized: markDuplicateCandidateNeedsEvidenceWithAuthorization,
+  execute: markDuplicateCandidateNeedsEvidence,
+} = defineCommand((client, payload: MarkDuplicateCandidateNeedsEvidencePayload, headers) =>
+  client.partyCommands.markDuplicateCandidateNeedsEvidence({
+    headers,
+    payload,
+  }),
+);
 
-export const markDuplicateCandidateNeedsEvidenceWithAuthorization = (
-  payload: MarkDuplicateCandidateNeedsEvidencePayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
-    client.partyCommands.markDuplicateCandidateNeedsEvidence({
-      headers: { 'idempotency-key': options.idempotencyKey },
-      payload,
-    }),
-  );
-
-export const markDuplicateCandidateNeedsEvidence = (
-  payload: MarkDuplicateCandidateNeedsEvidencePayload,
-  options: PartyCommandOptions,
-) =>
-  invoke(options, (authorization) =>
-    markDuplicateCandidateNeedsEvidenceWithAuthorization(payload, authorization, options),
-  );
-
-export const matchPartyWithAuthorization = (
-  payload: MatchPartyPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
+export const { authorized: matchPartyWithAuthorization, execute: matchParty } = defineCommand(
+  (client, payload: MatchPartyPayload, headers) =>
     client.partyCommands.matchParty({
-      headers: { 'idempotency-key': options.idempotencyKey },
+      headers,
       payload,
     }),
-  );
+);
 
-export const matchParty = (payload: MatchPartyPayload, options: PartyCommandOptions) =>
-  invoke(options, (authorization) => matchPartyWithAuthorization(payload, authorization, options));
-
-export const requestSearchRebuildWithAuthorization = (
-  payload: RequestSearchRebuildPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
+export const { authorized: requestSearchRebuildWithAuthorization, execute: requestSearchRebuild } =
+  defineCommand((client, payload: RequestSearchRebuildPayload, headers) =>
     client.partyCommands.requestSearchRebuild({
-      headers: { 'idempotency-key': options.idempotencyKey },
+      headers,
       payload,
     }),
   );
 
-export const requestSearchRebuild = (
-  payload: RequestSearchRebuildPayload,
-  options: PartyCommandOptions,
-) =>
-  invoke(options, (authorization) =>
-    requestSearchRebuildWithAuthorization(payload, authorization, options),
-  );
+export const {
+  authorized: resolveDuplicateCandidateCreateWithAuthorization,
+  execute: resolveDuplicateCandidateCreate,
+} = defineCommand((client, payload: ResolveDuplicateCandidateCreatePayload, headers) =>
+  client.partyCommands.resolveDuplicateCandidateCreate({
+    headers,
+    payload,
+  }),
+);
 
-export const resolveDuplicateCandidateCreateWithAuthorization = (
-  payload: ResolveDuplicateCandidateCreatePayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
-    client.partyCommands.resolveDuplicateCandidateCreate({
-      headers: { 'idempotency-key': options.idempotencyKey },
-      payload,
-    }),
-  );
+export const {
+  authorized: resolveDuplicateCandidateMatchWithAuthorization,
+  execute: resolveDuplicateCandidateMatch,
+} = defineCommand((client, payload: ResolveDuplicateCandidateMatchPayload, headers) =>
+  client.partyCommands.resolveDuplicateCandidateMatch({
+    headers,
+    payload,
+  }),
+);
 
-export const resolveDuplicateCandidateCreate = (
-  payload: ResolveDuplicateCandidateCreatePayload,
-  options: PartyCommandOptions,
-) =>
-  invoke(options, (authorization) =>
-    resolveDuplicateCandidateCreateWithAuthorization(payload, authorization, options),
-  );
-
-export const resolveDuplicateCandidateMatchWithAuthorization = (
-  payload: ResolveDuplicateCandidateMatchPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
-    client.partyCommands.resolveDuplicateCandidateMatch({
-      headers: { 'idempotency-key': options.idempotencyKey },
-      payload,
-    }),
-  );
-
-export const resolveDuplicateCandidateMatch = (
-  payload: ResolveDuplicateCandidateMatchPayload,
-  options: PartyCommandOptions,
-) =>
-  invoke(options, (authorization) =>
-    resolveDuplicateCandidateMatchWithAuthorization(payload, authorization, options),
-  );
-
-export const unarchivePartyWithAuthorization = (
-  payload: UnarchivePartyPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
+export const { authorized: unarchivePartyWithAuthorization, execute: unarchiveParty } =
+  defineCommand((client, payload: UnarchivePartyPayload, headers) =>
     client.partyCommands.unarchiveParty({
-      headers: { 'idempotency-key': options.idempotencyKey },
+      headers,
       payload,
     }),
   );
 
-export const unarchiveParty = (payload: UnarchivePartyPayload, options: PartyCommandOptions) =>
-  invoke(options, (authorization) =>
-    unarchivePartyWithAuthorization(payload, authorization, options),
-  );
-
-export const updateContactPointWithAuthorization = (
-  payload: UpdateContactPointPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
+export const { authorized: updateContactPointWithAuthorization, execute: updateContactPoint } =
+  defineCommand((client, payload: UpdateContactPointPayload, headers) =>
     client.partyCommands.updateContactPoint({
-      headers: { 'idempotency-key': options.idempotencyKey },
+      headers,
       payload,
     }),
   );
 
-export const updateContactPoint = (
-  payload: UpdateContactPointPayload,
-  options: PartyCommandOptions,
-) =>
-  invoke(options, (authorization) =>
-    updateContactPointWithAuthorization(payload, authorization, options),
-  );
+export const {
+  authorized: updatePartyOfficialIdentifierWithAuthorization,
+  execute: updatePartyOfficialIdentifier,
+} = defineCommand((client, payload: UpdatePartyOfficialIdentifierPayload, headers) =>
+  client.partyCommands.updatePartyOfficialIdentifier({
+    headers,
+    payload,
+  }),
+);
 
-export const updatePartyOfficialIdentifierWithAuthorization = (
-  payload: UpdatePartyOfficialIdentifierPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
-    client.partyCommands.updatePartyOfficialIdentifier({
-      headers: { 'idempotency-key': options.idempotencyKey },
-      payload,
-    }),
-  );
+export const {
+  authorized: updatePartyRelationshipWithAuthorization,
+  execute: updatePartyRelationship,
+} = defineCommand((client, payload: UpdatePartyRelationshipPayload, headers) =>
+  client.partyCommands.updatePartyRelationship({
+    headers,
+    payload,
+  }),
+);
 
-export const updatePartyOfficialIdentifier = (
-  payload: UpdatePartyOfficialIdentifierPayload,
-  options: PartyCommandOptions,
-) =>
-  invoke(options, (authorization) =>
-    updatePartyOfficialIdentifierWithAuthorization(payload, authorization, options),
-  );
-
-export const updatePartyRelationshipWithAuthorization = (
-  payload: UpdatePartyRelationshipPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
-    client.partyCommands.updatePartyRelationship({
-      headers: { 'idempotency-key': options.idempotencyKey },
-      payload,
-    }),
-  );
-
-export const updatePartyRelationship = (
-  payload: UpdatePartyRelationshipPayload,
-  options: PartyCommandOptions,
-) =>
-  invoke(options, (authorization) =>
-    updatePartyRelationshipWithAuthorization(payload, authorization, options),
-  );
-
-export const updatePartyWithAuthorization = (
-  payload: UpdatePartyPayload,
-  ...[credential, options]: PartyCommandInvocation
-) =>
-  invokeAuthorized(credential, options, (client) =>
+export const { authorized: updatePartyWithAuthorization, execute: updateParty } = defineCommand(
+  (client, payload: UpdatePartyPayload, headers) =>
     Schema.encodeUnknownEffect(UpdatePartyPayloadSchema)(payload).pipe(
       Effect.flatMap((endpointPayload) =>
         client.partyCommands.updateParty({
-          headers: { 'idempotency-key': options.idempotencyKey },
+          headers,
           payload: endpointPayload,
         }),
       ),
     ),
-  );
-
-export const updateParty = (payload: UpdatePartyPayload, options: PartyCommandOptions) =>
-  invoke(options, (authorization) => updatePartyWithAuthorization(payload, authorization, options));
+);
 
 /** Resolve commit before reading the durable result; never resubmit Create during recovery. */
 export const recoverPartyCreate = (

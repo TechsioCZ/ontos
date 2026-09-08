@@ -1,4 +1,5 @@
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
 import { Scope as NativeScope, Exit as NativeExit, Effect, Layer, Predicate, Schema } from 'effect';
 import {
   runEffectTestSync as runNativeSync,
@@ -105,6 +106,39 @@ const cookieHeader = (setCookieHeaders: readonly string[]) =>
 
 const headerValue = (headers: Headers, name: string): string => headers.get(name) ?? '';
 const optionalText = (value: string | undefined): string => value ?? '';
+/**
+ * Once a principal binding is revoked or removed, the very next session resolution must fail
+ * closed with the identity forbidden error rather than degrade to an anonymous or stale session.
+ */
+const assertSessionForbidden = async (
+  resolution: Effect.Effect<unknown, unknown>,
+): Promise<void> => {
+  const failure = await runEffectTestPromise(Effect.flip(resolution));
+  assert.ok(Schema.is(Schema.TaggedStruct('OntosIdentityForbiddenError', {}))(failure));
+};
+
+/**
+ * Verifies an issued gateway assertion against the issuer key pair and decodes its trusted
+ * principal so each gateway test keeps its own expectations instead of the jose plumbing.
+ */
+const verifiedGatewayAssertion = async (
+  assertionResponse: Response,
+  publicKey: Parameters<typeof jwtVerify>[1],
+): Promise<{ principal: typeof TrustedPrincipalContextSchema.Type; token: string }> => {
+  const assertion = Schema.decodeUnknownSync(TokenResponseSchema)(await assertionResponse.json());
+  const verified = await jwtVerify(assertion.token, publicKey, {
+    algorithms: ['EdDSA'],
+    audience: 'inventory-stock',
+    currentDate: new Date(1_700_000_001_000),
+    issuer: 'https://shell.example.test',
+  });
+  return {
+    principal: Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(
+      verified.payload['principal'],
+    ),
+    token: assertion.token,
+  };
+};
 const assertOptionalField = <Value extends object, Key extends keyof Value>(
   value: Value | null | undefined,
   key: Key,
@@ -254,61 +288,43 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
   const generatedFixtureRoot = await mkdtemp(path.join(tmpdir(), 'ontos-auth-runtime-'));
 
   const cleanup = async () => {
-    await runEffectTestPromise(
+    await purgeFixtureRows([
       coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
       coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
       coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
-    );
+    ]);
     const existingUsers = await runEffectTestPromise(
       authDatabase.select({ id: user.id }).from(user).where(eq(user.email, email)),
     );
 
     await Promise.all(
       existingUsers.map(async (existingUser) => {
-        await runEffectTestPromise(
+        await purgeFixtureRows([
           coreDatabase
             .delete(principalAuthBindings)
             .where(eq(principalAuthBindings.providerSubjectId, existingUser.id)),
-        );
-        await runEffectTestPromise(
           authDatabase.delete(session).where(eq(session.userId, existingUser.id)),
-        );
-        await runEffectTestPromise(
           authDatabase.delete(account).where(eq(account.userId, existingUser.id)),
-        );
-        await runEffectTestPromise(authDatabase.delete(user).where(eq(user.id, existingUser.id)));
+          authDatabase.delete(user).where(eq(user.id, existingUser.id)),
+        ]);
       }),
     );
 
-    await runEffectTestPromise(
+    await purgeFixtureRows([
       coreDatabase
         .delete(principalAuthBindings)
         .where(eq(principalAuthBindings.principalId, principalId)),
-    );
-    await runEffectTestPromise(
       coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
       coreDatabase
         .delete(tenantModuleStates)
         .where(eq(tenantModuleStates.tenantId, foreignTenantId)),
-    );
-    await runEffectTestPromise(
       coreDatabase.delete(principals).where(eq(principals.principalId, principalId)),
-    );
-    await runEffectTestPromise(
       coreDatabase
         .delete(legalEntities)
         .where(eq(legalEntities.legalEntityId, fixtureLegalEntityId)),
-    );
-    await runEffectTestPromise(coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)));
-    await runEffectTestPromise(
+      coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
       coreDatabase.delete(tenants).where(eq(tenants.tenantId, foreignTenantId)),
-    );
+    ]);
   };
 
   try {
@@ -883,15 +899,9 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       }),
     );
     assert.equal(assertionResponse.status, 200, await assertionResponse.clone().text());
-    const assertion = Schema.decodeUnknownSync(TokenResponseSchema)(await assertionResponse.json());
-    const verifiedAssertion = await jwtVerify(assertion.token, pair.publicKey, {
-      algorithms: ['EdDSA'],
-      audience: 'inventory-stock',
-      currentDate: new Date(1_700_000_001_000),
-      issuer: 'https://shell.example.test',
-    });
-    const verifiedPrincipal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(
-      verifiedAssertion.payload['principal'],
+    const { principal: verifiedPrincipal, token: assertionToken } = await verifiedGatewayAssertion(
+      assertionResponse,
+      pair.publicKey,
     );
     assert.equal(verifiedPrincipal.authBindingId, fixtureAuthBindingId);
     assert.match(optionalText(verifiedPrincipal.authContextRef), /^better-auth-session:/u);
@@ -937,7 +947,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     assert.ok(Predicate.isFunction(verifyActionPrincipal));
     const generatedPrincipal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(
       await runEffectTestPromise(
-        verifyActionPrincipal(`Bearer ${assertion.token}`, {
+        verifyActionPrincipal(`Bearer ${assertionToken}`, {
           currentTimeSeconds: Effect.succeed(1_700_000_001),
           environment: {
             ONTOS_GATEWAY_ISSUER: 'https://shell.example.test',
@@ -1024,14 +1034,11 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
         .set({ revokedAt: new Date('2026-09-01T00:00:00.000Z'), status: 'revoked' })
         .where(eq(principalAuthBindings.providerSubjectId, betterAuthUserId)),
     );
-    const revoked = await runEffectTestPromise(
-      Effect.flip(
-        authentication
-          .currentSession(authenticatedHeaders)
-          .pipe(Effect.provide(authenticationContextLayer)),
-      ),
+    await assertSessionForbidden(
+      authentication
+        .currentSession(authenticatedHeaders)
+        .pipe(Effect.provide(authenticationContextLayer)),
     );
-    assert.ok(Schema.is(Schema.TaggedStruct('OntosIdentityForbiddenError', {}))(revoked));
     const forbiddenModulesResponse = await unavailableHandler.handler(
       new Request(`${configuration.baseUrl}/shell/composition`, {
         headers: authenticatedHeaders,
@@ -1158,57 +1165,40 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
   );
   const handlers: { readonly dispose: () => Promise<void> }[] = [];
 
-  const cleanup = async () => {
-    await runEffectTestPromise(
+  const fixtureTenants = [firstTenantId, secondTenantId];
+  // Ordered child-before-parent so every delete respects the owned foreign keys.
+  const cleanup = async (): Promise<void> => {
+    await purgeFixtureRows([
       coreDatabase
         .delete(dataAccessEvents)
-        .where(inArray(dataAccessEvents.tenantId, [firstTenantId, secondTenantId])),
-    );
+        .where(inArray(dataAccessEvents.tenantId, fixtureTenants)),
+    ]);
     const existingUsers = await runEffectTestPromise(
       authDatabase.select({ id: user.id }).from(user).where(eq(user.email, multiEmail)),
     );
     const existingUserIds = existingUsers.map(({ id }) => id);
     if (existingUserIds.length > 0) {
-      await runEffectTestPromise(
+      await purgeFixtureRows([
         coreDatabase
           .delete(principalAuthBindings)
           .where(inArray(principalAuthBindings.providerSubjectId, existingUserIds)),
-      );
-      await runEffectTestPromise(
         authDatabase.delete(session).where(inArray(session.userId, existingUserIds)),
-      );
-      await runEffectTestPromise(
         authDatabase.delete(account).where(inArray(account.userId, existingUserIds)),
-      );
-      await runEffectTestPromise(
         authDatabase.delete(user).where(inArray(user.id, existingUserIds)),
-      );
+      ]);
     }
-    await runEffectTestPromise(
-      coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, firstTenantId)),
-    );
-    await runEffectTestPromise(
+    await purgeFixtureRows([
       coreDatabase
         .delete(tenantModuleStates)
-        .where(eq(tenantModuleStates.tenantId, secondTenantId)),
-    );
-    await runEffectTestPromise(
-      coreDatabase.delete(principals).where(eq(principals.principalId, firstPrincipalId)),
-    );
-    await runEffectTestPromise(
-      coreDatabase.delete(principals).where(eq(principals.principalId, secondPrincipalId)),
-    );
-    await runEffectTestPromise(
+        .where(inArray(tenantModuleStates.tenantId, fixtureTenants)),
+      coreDatabase
+        .delete(principals)
+        .where(inArray(principals.principalId, [firstPrincipalId, secondPrincipalId])),
       coreDatabase
         .delete(legalEntities)
         .where(inArray(legalEntities.legalEntityId, [firstLegalEntityId, secondLegalEntityId])),
-    );
-    await runEffectTestPromise(
-      coreDatabase.delete(tenants).where(eq(tenants.tenantId, firstTenantId)),
-    );
-    await runEffectTestPromise(
-      coreDatabase.delete(tenants).where(eq(tenants.tenantId, secondTenantId)),
-    );
+      coreDatabase.delete(tenants).where(inArray(tenants.tenantId, fixtureTenants)),
+    ]);
   };
 
   try {
@@ -1313,12 +1303,29 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       cookie: authenticatedCookie,
       origin: configuration.baseUrl,
     });
-    const initialSessions = await runEffectTestPromise(
-      authDatabase
-        .select({ activeTenantId: session.activeTenantId })
-        .from(session)
-        .where(eq(session.userId, betterAuthUserId)),
-    );
+    // Every tenant-switch case posts the same authenticated envelope; only the target tenant and
+    // the optional correlation header vary between the authorization, resolver, and persistence
+    // failures asserted below.
+    const tenantSwitchRequest = (target: string, extraHeaders: Record<string, string> = {}) =>
+      new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
+        body: JSON.stringify({ tenantId: target }),
+        headers: new Headers({
+          'content-type': 'application/json',
+          cookie: authenticatedCookie,
+          origin: configuration.baseUrl,
+          ...extraHeaders,
+        }),
+        method: 'POST',
+      });
+    const readActiveTenantIds = async () =>
+      await runEffectTestPromise(
+        authDatabase
+          .select({ activeTenantId: session.activeTenantId })
+          .from(session)
+          .where(eq(session.userId, betterAuthUserId)),
+      );
+
+    const initialSessions = await readActiveTenantIds();
     assertOptionalField(initialSessions[0], 'activeTenantId', firstTenantId);
 
     const pair = await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true });
@@ -1382,23 +1389,10 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     });
 
     const forbiddenResponse = await runtime.handler(
-      new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
-        body: JSON.stringify({ tenantId: '31000000-0000-4000-8000-000000000099' }),
-        headers: new Headers({
-          'content-type': 'application/json',
-          cookie: authenticatedCookie,
-          origin: configuration.baseUrl,
-        }),
-        method: 'POST',
-      }),
+      tenantSwitchRequest('31000000-0000-4000-8000-000000000099'),
     );
     assert.equal(forbiddenResponse.status, 403);
-    const sessionsAfterForbiddenSwitch = await runEffectTestPromise(
-      authDatabase
-        .select({ activeTenantId: session.activeTenantId })
-        .from(session)
-        .where(eq(session.userId, betterAuthUserId)),
-    );
+    const sessionsAfterForbiddenSwitch = await readActiveTenantIds();
     assertOptionalField(sessionsAfterForbiddenSwitch[0], 'activeTenantId', firstTenantId);
 
     await runEffectTestPromise(
@@ -1407,24 +1401,9 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         .set({ status: 'disabled' })
         .where(eq(principals.principalId, secondPrincipalId)),
     );
-    const inactiveTargetResponse = await runtime.handler(
-      new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
-        body: JSON.stringify({ tenantId: secondTenantId }),
-        headers: new Headers({
-          'content-type': 'application/json',
-          cookie: authenticatedCookie,
-          origin: configuration.baseUrl,
-        }),
-        method: 'POST',
-      }),
-    );
+    const inactiveTargetResponse = await runtime.handler(tenantSwitchRequest(secondTenantId));
     assert.equal(inactiveTargetResponse.status, 403);
-    const sessionsAfterInactiveSwitch = await runEffectTestPromise(
-      authDatabase
-        .select({ activeTenantId: session.activeTenantId })
-        .from(session)
-        .where(eq(session.userId, betterAuthUserId)),
-    );
+    const sessionsAfterInactiveSwitch = await readActiveTenantIds();
     assertOptionalField(sessionsAfterInactiveSwitch[0], 'activeTenantId', firstTenantId);
     await runEffectTestPromise(
       coreDatabase
@@ -1459,23 +1438,10 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     ).createHandler();
     handlers.push(resolverUnavailableRuntime);
     const resolverUnavailableResponse = await resolverUnavailableRuntime.handler(
-      new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
-        body: JSON.stringify({ tenantId: secondTenantId }),
-        headers: new Headers({
-          'content-type': 'application/json',
-          cookie: authenticatedCookie,
-          origin: configuration.baseUrl,
-        }),
-        method: 'POST',
-      }),
+      tenantSwitchRequest(secondTenantId),
     );
     assert.equal(resolverUnavailableResponse.status, 503);
-    const sessionsAfterResolverFailure = await runEffectTestPromise(
-      authDatabase
-        .select({ activeTenantId: session.activeTenantId })
-        .from(session)
-        .where(eq(session.userId, betterAuthUserId)),
-    );
+    const sessionsAfterResolverFailure = await readActiveTenantIds();
     assertOptionalField(sessionsAfterResolverFailure[0], 'activeTenantId', firstTenantId);
 
     // Drizzle has no query-builder failure injection. This temporary trigger raises PostgreSQL's
@@ -1509,23 +1475,10 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     );
     try {
       const persistenceUnavailableResponse = await runtime.handler(
-        new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
-          body: JSON.stringify({ tenantId: secondTenantId }),
-          headers: new Headers({
-            'content-type': 'application/json',
-            cookie: authenticatedCookie,
-            origin: configuration.baseUrl,
-          }),
-          method: 'POST',
-        }),
+        tenantSwitchRequest(secondTenantId),
       );
       assert.equal(persistenceUnavailableResponse.status, 503);
-      const sessionsAfterPersistenceFailure = await runEffectTestPromise(
-        authDatabase
-          .select({ activeTenantId: session.activeTenantId })
-          .from(session)
-          .where(eq(session.userId, betterAuthUserId)),
-      );
+      const sessionsAfterPersistenceFailure = await readActiveTenantIds();
       assertOptionalField(sessionsAfterPersistenceFailure[0], 'activeTenantId', firstTenantId);
     } finally {
       await runEffectTestPromise(
@@ -1552,17 +1505,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     );
     assertOptionalField(sessionsBeforeSwitch[0], 'activeLegalEntityId', firstLegalEntityId);
 
-    const switchResponse = await runtime.handler(
-      new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
-        body: JSON.stringify({ tenantId: secondTenantId }),
-        headers: new Headers({
-          'content-type': 'application/json',
-          cookie: authenticatedCookie,
-          origin: configuration.baseUrl,
-        }),
-        method: 'POST',
-      }),
-    );
+    const switchResponse = await runtime.handler(tenantSwitchRequest(secondTenantId));
     assert.equal(switchResponse.status, 200);
     assert.deepEqual(await switchResponse.json(), { selectedTenantId: secondTenantId });
     const sessionsAfterSwitch = await runEffectTestPromise(
@@ -1608,15 +1551,9 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         method: 'POST',
       }),
     );
-    const assertion = Schema.decodeUnknownSync(TokenResponseSchema)(await assertionResponse.json());
-    const verified = await jwtVerify(assertion.token, pair.publicKey, {
-      algorithms: ['EdDSA'],
-      audience: 'inventory-stock',
-      currentDate: new Date(1_700_000_001_000),
-      issuer: 'https://shell.example.test',
-    });
-    const verifiedPrincipal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(
-      verified.payload['principal'],
+    const { principal: verifiedPrincipal } = await verifiedGatewayAssertion(
+      assertionResponse,
+      pair.publicKey,
     );
     assert.equal(verifiedPrincipal.authBindingId, secondAuthBindingId);
     assert.match(optionalText(verifiedPrincipal.authContextRef), /^better-auth-session:/u);
@@ -1656,15 +1593,8 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     );
     try {
       const unexpectedSwitchResponse = await runtime.handler(
-        new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
-          body: JSON.stringify({ tenantId: firstTenantId }),
-          headers: new Headers({
-            'content-type': 'application/json',
-            cookie: authenticatedCookie,
-            origin: configuration.baseUrl,
-            'x-correlation-id': 'unexpected-switch-persistence-test',
-          }),
-          method: 'POST',
+        tenantSwitchRequest(firstTenantId, {
+          'x-correlation-id': 'unexpected-switch-persistence-test',
         }),
       );
       assert.equal(unexpectedSwitchResponse.status, 500);
@@ -1672,12 +1602,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         await unexpectedSwitchResponse.text(),
         /secret auth persistence defect|P0001/u,
       );
-      const sessionsAfterUnexpectedSwitchFailure = await runEffectTestPromise(
-        authDatabase
-          .select({ activeTenantId: session.activeTenantId })
-          .from(session)
-          .where(eq(session.userId, betterAuthUserId)),
-      );
+      const sessionsAfterUnexpectedSwitchFailure = await readActiveTenantIds();
       assertOptionalField(
         sessionsAfterUnexpectedSwitchFailure[0],
         'activeTenantId',
@@ -1704,12 +1629,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         await unexpectedLegacyUpgradeResponse.text(),
         /secret auth persistence defect|P0001/u,
       );
-      const sessionsAfterUnexpectedLegacyUpgrade = await runEffectTestPromise(
-        authDatabase
-          .select({ activeTenantId: session.activeTenantId })
-          .from(session)
-          .where(eq(session.userId, betterAuthUserId)),
-      );
+      const sessionsAfterUnexpectedLegacyUpgrade = await readActiveTenantIds();
       assertOptionalField(sessionsAfterUnexpectedLegacyUpgrade[0], 'activeTenantId', null);
     } finally {
       await runEffectTestPromise(
@@ -1734,12 +1654,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         .pipe(Effect.provide(multiAuthenticationContextLayer)),
     );
     assertOptionalField(upgradedSession.identity, 'tenantId', firstTenantId);
-    const upgradedSessionRows = await runEffectTestPromise(
-      authDatabase
-        .select({ activeTenantId: session.activeTenantId })
-        .from(session)
-        .where(eq(session.userId, betterAuthUserId)),
-    );
+    const upgradedSessionRows = await readActiveTenantIds();
     assertOptionalField(upgradedSessionRows[0], 'activeTenantId', firstTenantId);
 
     await runEffectTestPromise(
@@ -1753,14 +1668,11 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         .set({ revokedAt: new Date('2026-09-01T00:00:00.000Z'), status: 'revoked' })
         .where(eq(principalAuthBindings.tenantId, secondTenantId)),
     );
-    const revokedSession = await runEffectTestPromise(
-      Effect.flip(
-        authentication
-          .currentSession(authenticatedHeaders)
-          .pipe(Effect.provide(multiAuthenticationContextLayer)),
-      ),
+    await assertSessionForbidden(
+      authentication
+        .currentSession(authenticatedHeaders)
+        .pipe(Effect.provide(multiAuthenticationContextLayer)),
     );
-    assert.ok(Schema.is(Schema.TaggedStruct('OntosIdentityForbiddenError', {}))(revokedSession));
     await runEffectTestPromise(
       coreDatabase
         .update(principalAuthBindings)
@@ -1784,15 +1696,10 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         .delete(principalAuthBindings)
         .where(eq(principalAuthBindings.tenantId, secondTenantId)),
     );
-    const sessionWithRemovedBinding = await runEffectTestPromise(
-      Effect.flip(
-        authentication
-          .currentSession(authenticatedHeaders)
-          .pipe(Effect.provide(multiAuthenticationContextLayer)),
-      ),
-    );
-    assert.ok(
-      Schema.is(Schema.TaggedStruct('OntosIdentityForbiddenError', {}))(sessionWithRemovedBinding),
+    await assertSessionForbidden(
+      authentication
+        .currentSession(authenticatedHeaders)
+        .pipe(Effect.provide(multiAuthenticationContextLayer)),
     );
   } finally {
     await Promise.all(handlers.map(async ({ dispose }) => await dispose()));

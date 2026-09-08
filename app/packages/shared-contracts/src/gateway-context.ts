@@ -8,7 +8,7 @@ import {
   Schema,
   makeEffectHttpApiClient,
 } from '@modern-js/plugin-bff/effect-client';
-import type { HttpApiClient, HttpClientError } from '@modern-js/plugin-bff/effect-client';
+import type { HttpClientError } from '@modern-js/plugin-bff/effect-client';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { Context } from 'effect';
@@ -198,13 +198,6 @@ export const gatewayContextAuthorizationEntrypoints = [
   },
 ] as const;
 
-type GatewayContextApiGroups =
-  typeof GatewayContextApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;
-
-type GatewayContextClient = HttpApiClient.Client<
-  Extract<GatewayContextApiGroups, HttpApiGroup.Constraint>
->;
-
 export interface GatewayContextClientOptions {
   readonly baseUrl?: string | URL;
   readonly cookie?: string;
@@ -239,23 +232,17 @@ const gatewayContextClient = makeEffectHttpApiClient(GatewayContextApi, {
   ),
 });
 
-const invokeGatewayContextClient = <Success, Failure>(
-  options: GatewayContextClientOptions,
-  operation: (client: GatewayContextClient) => Effect.Effect<Success, Failure>,
-): Effect.Effect<Success, Failure> =>
-  gatewayContextClient.pipe(
-    Effect.flatMap(operation),
-    Effect.provideService(GatewayContextRequestOptions, options),
-  );
-
 export const issueGatewayContext = (
   payload: GatewayContextRequest,
   options: GatewayContextClientOptions = {},
 ): GatewayContextClientEffect<GatewayContextResponse> =>
   Schema.decodeUnknownEffect(GatewayContextRequestSchema)(payload).pipe(
     Effect.flatMap((decodedPayload) =>
-      invokeGatewayContextClient(options, (client) =>
-        client.gatewayContext.issueGatewayContext({ payload: decodedPayload }),
+      gatewayContextClient.pipe(
+        Effect.flatMap((client) =>
+          client.gatewayContext.issueGatewayContext({ payload: decodedPayload }),
+        ),
       ),
     ),
+    Effect.provideService(GatewayContextRequestOptions, options),
   );

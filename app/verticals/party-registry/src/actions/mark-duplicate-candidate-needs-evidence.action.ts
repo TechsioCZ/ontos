@@ -2,20 +2,18 @@
 // @ontos-action-owner party.registry
 // @ontos-action-slug mark-duplicate-candidate-needs-evidence
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
-import { PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
-import { DuplicateCandidateConflict } from '../../shared/domain/matching-contracts.ts';
-import { transitionDuplicateCandidateCase } from '../services/party-matching-persistence.service.ts';
 import {
   MarkDuplicateCandidateNeedsEvidencePayloadSchema,
   MarkDuplicateCandidateNeedsEvidenceResultSchema,
 } from '../../shared/actions/mark-duplicate-candidate-needs-evidence.ts';
-import type { MarkDuplicateCandidateNeedsEvidencePayload } from '../../shared/actions/mark-duplicate-candidate-needs-evidence.ts';
 
+import {
+  DuplicateCaseResolutionErrorSchema,
+  duplicateCaseResolutionService,
+} from './duplicate-case-resolution-service.ts';
 import { handleDuplicateCaseResolution } from './duplicate-case-resolution-handler.ts';
 
 export type { MarkDuplicateCandidateNeedsEvidencePayload } from '../../shared/actions/mark-duplicate-candidate-needs-evidence.ts';
-const ErrorSchema = Schema.Union([DuplicateCandidateConflict, PartyPersistenceUnavailable]);
 export const markDuplicateCandidateNeedsEvidenceAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -24,7 +22,7 @@ export const markDuplicateCandidateNeedsEvidenceAction = defineAction(
     },
     actionKey: 'party.registry.mark-duplicate-candidate-needs-evidence',
     auditProfile: 'standard',
-    domainErrorSchema: ErrorSchema,
+    domainErrorSchema: DuplicateCaseResolutionErrorSchema,
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -44,17 +42,7 @@ export const markDuplicateCandidateNeedsEvidenceAction = defineAction(
   },
   handleDuplicateCaseResolution,
   (transaction, scope) =>
-    Effect.succeed({
-      resolve: (payload: MarkDuplicateCandidateNeedsEvidencePayload, invocationId: string) =>
-        transitionDuplicateCandidateCase(transaction, {
-          actionInvocationId: invocationId,
-          candidateCaseId: payload.caseRef.resourceId,
-          expectedRevision: payload.expectedRevision,
-          outcome: 'NEEDS_EVIDENCE',
-          reason: payload.reason,
-          tenantId: scope.tenantId,
-        }),
-    }),
+    duplicateCaseResolutionService(transaction, scope.tenantId, 'NEEDS_EVIDENCE'),
 );
 // <generated-outbox-message-exports>
 // </generated-outbox-message-exports>

@@ -226,58 +226,47 @@ void test('resolves healthy, incompatible, and unreachable deployments independe
   ]);
 });
 
-void test('excludes every contradictory claimant while preserving unrelated deployments', () => {
-  const catalog = resolveInstalledModuleCatalog([
-    {
-      contract: contract('documents-center', 'shared.module'),
-      expectedAppId: 'documents-center',
-      outcome: 'fetched',
-    },
-    {
-      contract: contract('property-registry', 'shared.module'),
-      expectedAppId: 'property-registry',
-      outcome: 'fetched',
-    },
-    {
-      contract: contract('reporting-center', 'reporting.center'),
-      expectedAppId: 'reporting-center',
-      outcome: 'fetched',
-    },
-  ]);
-
-  assert.deepEqual(catalog.moduleIds, ['reporting.center']);
-  assert.deepEqual(catalog.deploymentStatuses, [
-    { appId: 'documents-center', reason: 'incompatible', status: 'unavailable' },
-    { appId: 'property-registry', reason: 'incompatible', status: 'unavailable' },
-    { appId: 'reporting-center', moduleId: 'reporting.center', status: 'available' },
-  ]);
-});
-
-void test('rejects duplicate deployment identities from tolerant candidate promotion', () => {
-  const catalog = resolveInstalledModuleCatalog([
-    {
-      contract: contract('property-registry', 'property.registry'),
-      expectedAppId: 'property-registry',
-      outcome: 'fetched',
-    },
-    {
-      contract: contract('property-registry', 'property.duplicate'),
-      expectedAppId: 'property-registry',
-      outcome: 'fetched',
-    },
-    {
-      contract: contract('documents-center', 'documents.center'),
-      expectedAppId: 'documents-center',
-      outcome: 'fetched',
-    },
-  ]);
-
-  assert.deepEqual(catalog.moduleIds, ['documents.center']);
-  assert.deepEqual(catalog.deploymentStatuses, [
-    { appId: 'documents-center', moduleId: 'documents.center', status: 'available' },
-    { appId: 'property-registry', reason: 'incompatible', status: 'unavailable' },
-  ]);
-});
+for (const scenario of [
+  {
+    identities: [
+      ['documents-center', 'shared.module'],
+      ['property-registry', 'shared.module'],
+      ['reporting-center', 'reporting.center'],
+    ],
+    moduleIds: ['reporting.center'],
+    name: 'excludes every contradictory claimant while preserving unrelated deployments',
+    statuses: [
+      { appId: 'documents-center', reason: 'incompatible', status: 'unavailable' },
+      { appId: 'property-registry', reason: 'incompatible', status: 'unavailable' },
+      { appId: 'reporting-center', moduleId: 'reporting.center', status: 'available' },
+    ],
+  },
+  {
+    identities: [
+      ['property-registry', 'property.registry'],
+      ['property-registry', 'property.duplicate'],
+      ['documents-center', 'documents.center'],
+    ],
+    moduleIds: ['documents.center'],
+    name: 'rejects duplicate deployment identities from tolerant candidate promotion',
+    statuses: [
+      { appId: 'documents-center', moduleId: 'documents.center', status: 'available' },
+      { appId: 'property-registry', reason: 'incompatible', status: 'unavailable' },
+    ],
+  },
+] as const) {
+  void test(scenario.name, () => {
+    const catalog = resolveInstalledModuleCatalog(
+      scenario.identities.map(([appId, moduleId]) => ({
+        contract: contract(appId, moduleId),
+        expectedAppId: appId,
+        outcome: 'fetched',
+      })),
+    );
+    assert.deepEqual(catalog.moduleIds, scenario.moduleIds);
+    assert.deepEqual(catalog.deploymentStatuses, scenario.statuses);
+  });
+}
 
 void test('keeps authoritative revocation ahead of a stale fetched candidate', () => {
   const catalog = resolveInstalledModuleCatalog([

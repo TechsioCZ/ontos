@@ -2,20 +2,18 @@
 // @ontos-action-owner party.registry
 // @ontos-action-slug dismiss-duplicate-candidate
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
-import { PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
-import { DuplicateCandidateConflict } from '../../shared/domain/matching-contracts.ts';
-import { transitionDuplicateCandidateCase } from '../services/party-matching-persistence.service.ts';
 import {
   DismissDuplicateCandidatePayloadSchema,
   DismissDuplicateCandidateResultSchema,
 } from '../../shared/actions/dismiss-duplicate-candidate.ts';
-import type { DismissDuplicateCandidatePayload } from '../../shared/actions/dismiss-duplicate-candidate.ts';
 
+import {
+  DuplicateCaseResolutionErrorSchema,
+  duplicateCaseResolutionService,
+} from './duplicate-case-resolution-service.ts';
 import { handleDuplicateCaseResolution } from './duplicate-case-resolution-handler.ts';
 
 export type { DismissDuplicateCandidatePayload } from '../../shared/actions/dismiss-duplicate-candidate.ts';
-const ErrorSchema = Schema.Union([DuplicateCandidateConflict, PartyPersistenceUnavailable]);
 export const dismissDuplicateCandidateAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -24,7 +22,7 @@ export const dismissDuplicateCandidateAction = defineAction(
     },
     actionKey: 'party.registry.dismiss-duplicate-candidate',
     auditProfile: 'standard',
-    domainErrorSchema: ErrorSchema,
+    domainErrorSchema: DuplicateCaseResolutionErrorSchema,
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -44,17 +42,7 @@ export const dismissDuplicateCandidateAction = defineAction(
   },
   handleDuplicateCaseResolution,
   (transaction, scope) =>
-    Effect.succeed({
-      resolve: (payload: DismissDuplicateCandidatePayload, invocationId: string) =>
-        transitionDuplicateCandidateCase(transaction, {
-          actionInvocationId: invocationId,
-          candidateCaseId: payload.caseRef.resourceId,
-          expectedRevision: payload.expectedRevision,
-          outcome: 'DISMISSED_AS_NON_SUBJECT',
-          reason: payload.reason,
-          tenantId: scope.tenantId,
-        }),
-    }),
+    duplicateCaseResolutionService(transaction, scope.tenantId, 'DISMISSED_AS_NON_SUBJECT'),
 );
 // <generated-outbox-message-exports>
 // </generated-outbox-message-exports>

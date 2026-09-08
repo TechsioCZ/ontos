@@ -1,5 +1,5 @@
+import { failAuthenticatedProblem } from './fail-authenticated-problem.ts';
 import type { ActionCoreError } from '@app/core-runtime';
-import { Effect, HttpEffect, HttpServerResponse } from '@modern-js/plugin-bff/effect-edge';
 import { Match, Result, Schema } from 'effect';
 
 import {
@@ -118,14 +118,9 @@ export const engagementProblem = {
     ),
 };
 
-const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
-  Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
-);
 export const isEngagementAuthenticationProblem = Schema.is(ContactsAuthenticationProblemSchema);
 export const failEngagementProblem = <Problem extends ContactsProblem>(mapped: Problem) =>
-  (isEngagementAuthenticationProblem(mapped) ? bearerChallenge : Effect.void).pipe(
-    Effect.andThen(Effect.fail(mapped)),
-  );
+  failAuthenticatedProblem(mapped, isEngagementAuthenticationProblem);
 
 export const mapEngagementActionProblem = (error: EngagementActionError): ContactsProblem =>
   Match.value(error).pipe(

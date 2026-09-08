@@ -2336,20 +2336,6 @@ const assertAnyOf = (relativePaths: readonly string[]): void => {
     `Missing one of: ${relativePaths.join(', ')}`,
   );
 };
-const requiredShellWorkerCompositionPath = (shellPath: string): string => {
-  const workerCompositionPath = `${shellPath}/src/routes/vertical-components.worker.tsx`;
-  if (fs.existsSync(path.join(root, workerCompositionPath))) {
-    return workerCompositionPath;
-  }
-
-  const browserComposition = readText(`${shellPath}/src/routes/vertical-components.tsx`);
-  const frameworkGeneratedComposition =
-    browserComposition.includes('const createRemoteComponent =') &&
-    browserComposition.includes('export const VerticalShowcase =');
-  return frameworkGeneratedComposition
-    ? workerCompositionPath
-    : `${shellPath}/src/federated-components.worker.tsx`;
-};
 const sortedCopy = <Value,>(
   values: readonly Value[],
   compare: (left: Value, right: Value) => number,
@@ -3965,7 +3951,12 @@ const requiredMicroVerticalPaths = (vertical: FullStackVertical): string[] => [
         `${vertical.path}/src/routes/layout.tsx`,
         `${vertical.path}/src/routes/ultramodern-route-head.tsx`,
         `${vertical.path}/src/routes/ultramodern-route-metadata.ts`,
-        ...(vertical.hasOwnerPage ? [`${vertical.path}/src/routes/[lang]/page.tsx`] : []),
+        ...(vertical.hasOwnerPage
+          ? [
+              `${vertical.path}/src/routes/[lang]/page.tsx`,
+              `${vertical.path}/src/routes/ultramodern-jsonld.ts`,
+            ]
+          : []),
         ...(vertical.exposes.includes('./Widget')
           ? [`${vertical.path}/src/routes/[lang]/_mf/fragment/widget/page.tsx`]
           : []),
@@ -3986,6 +3977,9 @@ const requiredMicroVerticalPaths = (vertical: FullStackVertical): string[] => [
 // UI/MF artifacts an `api-only` unit must NOT emit (headless invariant), and
 // API/BFF artifacts a `ui-only`/Horizontal Remote unit must NOT emit.
 const forbiddenMicroVerticalPaths = (vertical: FullStackVertical): string[] => [
+  // Structured data is owner-page-only: a unit that renders no owner page emits no
+  // `application/ld+json`, so it must not ship the JSON-LD helper module either.
+  ...(vertical.hasOwnerPage ? [] : [`${vertical.path}/src/routes/ultramodern-jsonld.ts`]),
   ...(vertical.emitsUi
     ? []
     : [
@@ -5015,10 +5009,6 @@ const assertPublicHeadContract = (
     `${appId} structured data inference must stay disabled`,
   );
   assert(
-    publicHead.structuredData.helperModule === './src/routes/ultramodern-jsonld',
-    `${appId} structured data helper module is incorrect`,
-  );
-  assert(
     publicHead.structuredData.sanitizesHtmlOpenBracket,
     `${appId} structured data must sanitize HTML open brackets`,
   );
@@ -5044,6 +5034,10 @@ const assertPublicHeadContract = (
     }
     return;
   }
+  assert(
+    publicHead.structuredData.helperModule === './src/routes/ultramodern-jsonld',
+    `${appId} structured data helper module is incorrect`,
+  );
   for (const snippet of [
     "from '@modern-js/runtime/head'",
     '<title>{title}</title>',
@@ -5322,10 +5316,9 @@ const requiredPaths = [
   'apps/shell-super-app/src/routes/index.css',
   'apps/shell-super-app/src/routes/layout.tsx',
   'apps/shell-super-app/src/routes/shell-frame.tsx',
+  'apps/shell-super-app/src/routes/ultramodern-jsonld.ts',
   'apps/shell-super-app/src/routes/ultramodern-route-head.tsx',
   'apps/shell-super-app/src/routes/ultramodern-route-metadata.ts',
-  'apps/shell-super-app/src/routes/vertical-components.tsx',
-  requiredShellWorkerCompositionPath(SHARED_VALIDATOR_STRING_047),
   'apps/shell-super-app/src/routes/[lang]/page.tsx',
   ...shellRouteMetaPaths,
   SHARED_VALIDATOR_STRING_093,
@@ -5387,8 +5380,6 @@ for (const shell of expectedAdditionalShells) {
     `${shell.path}/src/routes/index.css`,
     `${shell.path}/src/routes/layout.tsx`,
     `${shell.path}/src/routes/shell-frame.tsx`,
-    `${shell.path}/src/routes/vertical-components.tsx`,
-    requiredShellWorkerCompositionPath(shell.path),
     `${shell.path}/src/routes/ultramodern-route-head.tsx`,
     `${shell.path}/src/routes/ultramodern-route-metadata.ts`,
     `${shell.path}/src/routes/[lang]/page.tsx`,
@@ -6163,8 +6154,6 @@ const assertAdditionalShellSources = (shell: (typeof expectedAdditionalShells)[n
   const styles = readText(`${shell.path}/src/routes/index.css`);
   const shellFrame = readText(`${shell.path}/src/routes/shell-frame.tsx`);
   const routePage = readText(`${shell.path}/src/routes/[lang]/page.tsx`);
-  const remoteComponents = readText(`${shell.path}/src/routes/vertical-components.tsx`);
-  const workerRemoteComponents = readText(requiredShellWorkerCompositionPath(shell.path));
   assert(
     modernConfig.includes(`const appId = '${shell.id}';`),
     `${shell.id} modern.config.ts appId is incorrect`,
@@ -6188,17 +6177,8 @@ const assertAdditionalShellSources = (shell: (typeof expectedAdditionalShells)[n
     `${shell.id} runtime boundary metadata must identify its own shell`,
   );
   assert(
-    routePage.includes('ShellFrame') && routePage.includes('VerticalShowcase'),
+    routePage.includes('ShellFrame'),
     `${shell.id} route page must use its own shell composition host`,
-  );
-  assert(
-    remoteComponents.includes(`data-modern-boundary-id="${shell.mfName}"`),
-    `${shell.id} remote composition boundary must use its own MF identity`,
-  );
-  assert(
-    !workerRemoteComponents.includes('@module-federation') &&
-      !workerRemoteComponents.includes('import('),
-    `${shell.id} Worker SSR must not include native Module Federation runtime or remote imports`,
   );
   if (tailwindEnabled) {
     assert(
@@ -6212,24 +6192,8 @@ const assertAdditionalShellSources = (shell: (typeof expectedAdditionalShells)[n
   );
   if ((shell.verticalRefs ?? []).length > 0) {
     assert(
-      workerRemoteComponents.includes('DistributedSsrBoundary'),
-      `${shell.id} Worker SSR must use distributed fragment boundaries`,
-    );
-    assert(
       shell.degradedState?.required ?? false,
       `${shell.id} degraded-state contract must be required for remote consumption`,
-    );
-    assert(
-      remoteComponents.includes(`${shell.tailwindPrefix}:text-red-900`),
-      `${shell.id} degraded fallback must report its own shell identity`,
-    );
-    assert(
-      remoteComponents.includes('fallback: <RemoteUnavailable />'),
-      `${shell.id} consumption points must have a degraded fallback`,
-    );
-    assert(
-      !remoteComponents.includes('data-modern-boundary-id="shellSuperApp"'),
-      `${shell.id} degraded fallback must not report the primary shell`,
     );
   }
 };

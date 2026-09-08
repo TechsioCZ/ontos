@@ -1,5 +1,4 @@
-import { loadEnvironmentFileProvider } from './environment-file-provider.ts';
-import { APP_ENV_PATH } from '@app/core-runtime/workspace-environment';
+import { loadConfigurationProvider } from './configuration-provider.ts';
 import { Config, ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
 
 const AuthConfigError = Schema.TaggedError<unknown>()('AuthConfigError', {
@@ -7,7 +6,7 @@ const AuthConfigError = Schema.TaggedError<unknown>()('AuthConfigError', {
 });
 type AuthConfigFailure = InstanceType<typeof AuthConfigError>;
 
-export const ROOT_ENV_PATH = APP_ENV_PATH;
+export { APP_ENV_PATH as ROOT_ENV_PATH } from '@app/core-runtime/workspace-environment';
 
 const EnvironmentKeySchema = Schema.Literals([
   'BETTER_AUTH_SECRET',
@@ -122,20 +121,10 @@ const parseAuthConfigFromProvider = Effect.fn('AuthConfig.parseAuthConfigFromPro
   },
 );
 
-const environmentProvider = (environment: Environment): ConfigProvider.ConfigProvider =>
-  ConfigProvider.fromEnvRecord({
-    BETTER_AUTH_SECRET: environment.BETTER_AUTH_SECRET,
-    BETTER_AUTH_SUPPORT_USER_IDS: environment.BETTER_AUTH_SUPPORT_USER_IDS,
-    BETTER_AUTH_TRUSTED_ORIGINS: environment.BETTER_AUTH_TRUSTED_ORIGINS,
-    BETTER_AUTH_URL: environment.BETTER_AUTH_URL,
-    DATABASE_URL: environment.DATABASE_URL,
-    NODE_ENV: environment.NODE_ENV,
-  });
-
 export const parseAuthConfig = (
   environment: Environment,
 ): Effect.Effect<AuthConfigValue, AuthConfigFailure> =>
-  parseAuthConfigFromProvider(environmentProvider(environment));
+  parseAuthConfigFromProvider(ConfigProvider.fromEnvRecord(environment));
 
 export interface LoadAuthConfigOptions {
   readonly environment?: Environment;
@@ -145,15 +134,8 @@ export interface LoadAuthConfigOptions {
 export const loadAuthConfig = (
   options: LoadAuthConfigOptions = {},
 ): Effect.Effect<AuthConfigValue, AuthConfigFailure> =>
-  loadEnvironmentFileProvider(options.envPath ?? ROOT_ENV_PATH, unableToLoadEnvironment).pipe(
-    Effect.flatMap((fileProvider) =>
-      parseAuthConfigFromProvider(
-        (options.environment === undefined
-          ? ConfigProvider.fromEnv()
-          : environmentProvider(options.environment)
-        ).pipe(ConfigProvider.orElse(fileProvider)),
-      ),
-    ),
+  loadConfigurationProvider(options, unableToLoadEnvironment).pipe(
+    Effect.flatMap(parseAuthConfigFromProvider),
   );
 
 export const AuthConfigLive = Layer.effect(AuthConfig, loadAuthConfig());

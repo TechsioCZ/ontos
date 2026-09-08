@@ -286,3 +286,27 @@ test('shared reference policies preserve declaration keys and TS expression edge
   assert.equal(isInTypePosition(schema[0]!, new Set(['TSAsExpression'])), false);
   assert.equal(isInTypePosition(schema[1]!, new Set(['TSAsExpression'])), true);
 });
+
+test('Schema identity syntax policy survives aliases without widening default members', () => {
+  for (const key of ['`decodeUnknownSync`', '("decodeUnknownSync" as const)']) {
+    const program = parse(
+      `import { Schema } from "effect"; const S = Schema; const codec = S[${key}]; codec;`,
+    );
+    const { context } = contextFor(program);
+    const node = lastExpression(program);
+    assert.equal(schemaIdentity(context, node), null);
+    assert.equal(
+      schemaIdentity(context, node, [], 0, { templates: true, unwrap: {} }),
+      'decodeUnknownSync',
+    );
+  }
+});
+
+test('Schema identity preserves rule-specific expression wrapper limits', () => {
+  const program = parse('import { Schema } from "effect"; const S = Schema as unknown; S.Json;');
+  const { context } = contextFor(program);
+  const node = lastExpression(program);
+  assert.equal(schemaIdentity(context, node), 'Json');
+  assert.equal(schemaIdentity(context, node, [], 0, { unwrap: { wrappers: new Set() } }), null);
+  assert.equal(schemaIdentity(context, node, [], 0, { unwrap: { maxDepth: 0 } }), null);
+});

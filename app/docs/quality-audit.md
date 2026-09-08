@@ -8,6 +8,9 @@ mise exec -- pnpm quality:audit --tool knip
 mise exec -- pnpm quality:audit --tool jscpd
 mise exec -- pnpm quality:audit --tool fallow
 mise exec -- pnpm quality:audit:test
+# Enforce only after a fresh full audit (not --tool):
+mise exec -- pnpm quality:audit
+mise exec -- pnpm quality:audit:gate
 ```
 
 The audit reports findings. Existing unused-code, duplication, and complexity findings do not fail the audit command. Missing tools, invalid reports, configuration failures, or an empty analysis are failures and retain diagnostics. A successful report does not prove every reported item should be removed or extracted.
@@ -16,7 +19,13 @@ The runner verifies each installed analyzer and invokes its package's JavaScript
 
 The default output is `.codex/reports/quality-audit/`. Use `--output <path>` to select another directory outside the configured source roots. An output such as `scripts/reports`, including a symlink that resolves there, fails before analyzer snapshots are written, so reports cannot become source inputs. Read `summary.md` for the result, `summary.json` for structured status, and the raw analyzer reports and stderr for evidence. Reports are generated artifacts and should not be committed as an accepted baseline. Local run artifacts remain available until the user removes them; this deliberately retains review evidence. The runner does not automatically delete an arbitrary directory supplied through `--output`.
 
-The separate **Quality Audit Reports** workflow publishes reports on pull requests and pushes to `main` and `stage`; it can also be run manually. It is not added to branch-required checks or stage deployment prerequisites in this rollout. Existing formatting, lint, type, architecture, and behavioral gates retain their current behavior. The audit does not install or activate local Git hooks. CI installs dependencies with `--ignore-scripts` to avoid lifecycle-script mutations while collecting reports.
+The separate **Quality Audit** workflow runs the full audit, enforces calibrated guardrails, and publishes reports on pull requests and pushes to `main` and `stage`; it can also be run manually. It is not added to branch-required checks or stage deployment prerequisites in this rollout. Existing formatting, lint, type, architecture, and behavioral gates retain their current behavior. The audit does not install or activate local Git hooks. CI installs dependencies with `--ignore-scripts` to avoid lifecycle-script mutations while collecting reports. Summary publication and artifact upload run even when the audit or gate fails.
+
+## Enforced guardrails
+
+`quality:audit` remains report-only. `quality:audit:gate` reads the resulting `summary.json` and fails for any calibrated Knip finding, JSCPD token clone pair, Fallow strict clone group, or normalized control-flow health finding. Fallow semantic similarity and UI-only weighted cognitive findings remain advisory. The gate consumes the runner's normalization; it does not recompute analyzer findings or treat native Knip modeled usages as debt.
+
+The gate requires all six unique expected analyzer results, reported statuses, empty error diagnostics, valid nonnegative integer counts, nonempty analysis coverage, and consistent normalized totals. Missing, duplicate, unknown, malformed, failed, or partial `--tool` summaries cannot pass. The preceding full audit establishes freshness; no timestamp, hash receipt, or accepted-debt baseline is involved. For a custom audit output, pass `quality:audit:gate --summary <output>/summary.json`.
 
 ## What each report answers
 

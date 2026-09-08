@@ -76,6 +76,24 @@ export type PartyLifecycle = typeof PartyLifecycleSchema.Type;
 type PartyUnarchiveLifecycle = typeof PartyUnarchiveLifecycleSchema.Type;
 
 const MATCH_RULE_VERSION = 'party-exact-claims.v1';
+export const findOpenDuplicateCandidateCase = (
+  transaction: Pick<PartyTransaction, 'select'>,
+  tenantId: string,
+  evaluationFingerprint: string,
+) =>
+  transaction
+    .select()
+    .from(duplicateCandidateCases)
+    .where(
+      and(
+        eq(duplicateCandidateCases.tenantId, tenantId),
+        eq(duplicateCandidateCases.evaluationFingerprint, evaluationFingerprint),
+        eq(duplicateCandidateCases.matchRuleVersion, MATCH_RULE_VERSION),
+        inArray(duplicateCandidateCases.lifecycleState, ['OPEN', 'NEEDS_EVIDENCE']),
+      ),
+    )
+    .limit(1);
+
 const instantAsDate = (instant: string | DateTime.Utc): Date =>
   DateTime.toDateUtc(DateTime.makeUnsafe(instant));
 const ClaimKeyJsonCodec = Schema.fromJsonString(
@@ -832,19 +850,11 @@ const createUnarchiveReviewCase = Effect.fn(
     evaluatedEvidence,
     partyIds,
   );
-  const [open] = yield* transaction
-    .select()
-    .from(duplicateCandidateCases)
-    .where(
-      and(
-        eq(duplicateCandidateCases.tenantId, tenantId),
-        eq(duplicateCandidateCases.evaluationFingerprint, evaluationFingerprint),
-        eq(duplicateCandidateCases.matchRuleVersion, MATCH_RULE_VERSION),
-        inArray(duplicateCandidateCases.lifecycleState, ['OPEN', 'NEEDS_EVIDENCE']),
-      ),
-    )
-    .limit(1)
-    .pipe(Effect.mapError(unavailable));
+  const [open] = yield* findOpenDuplicateCandidateCase(
+    transaction,
+    tenantId,
+    evaluationFingerprint,
+  ).pipe(Effect.mapError(unavailable));
   if (open !== undefined) {
     return open;
   }

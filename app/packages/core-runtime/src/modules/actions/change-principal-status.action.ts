@@ -30,15 +30,12 @@ export type ChangePrincipalStatusPayload = Schema.Schema.Type<
   typeof ChangePrincipalStatusPayloadSchema
 >;
 const ChangePrincipalStatusResultSchema = Schema.Struct({ previousStatus: status, status });
-type ChangePrincipalStatus = PrincipalManagementRepositoryService['changePrincipalStatus'];
-type Input = Parameters<ChangePrincipalStatus>[0];
-type Result = ReturnType<ChangePrincipalStatus>;
 const handle = Effect.fn('ChangePrincipalStatusAction.handle')(
   function* changePrincipalStatusActionHandle(
     payload: ChangePrincipalStatusPayload,
     context: ActionHandlerContext<
       Readonly<Record<never, never>>,
-      { readonly change: (input: Input) => Result }
+      { readonly change: PrincipalManagementRepositoryService['changePrincipalStatus'] }
     >,
   ) {
     const result = yield* context.services.change({ ...payload, tenantId: context.scope.tenantId });

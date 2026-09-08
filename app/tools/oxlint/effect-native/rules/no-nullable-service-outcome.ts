@@ -112,18 +112,7 @@ const VOID_LIKE_TYPES = new Set([
   'TSUnknownKeyword',
 ]);
 
-interface RuleOptions {
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly ignoreTests: boolean;
-  readonly includeAsyncFunctions: boolean;
-  readonly promiseTypes: readonly string[];
-  readonly checkEffect: boolean;
-  readonly resolveAliases: boolean;
-  readonly aliasDepth: number;
-}
-
-function readOptions(context: Context): RuleOptions {
+function readOptions(context: Context) {
   const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),

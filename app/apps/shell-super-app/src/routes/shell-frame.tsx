@@ -5,6 +5,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Menu } from '@techsio/ui-kit/molecules/menu';
 import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
 import { Select } from '@techsio/ui-kit/molecules/select';
+import type { SelectItem } from '@techsio/ui-kit/molecules/select';
 import { SearchForm } from '@techsio/ui-kit/molecules/search-form';
 import { Header } from '@techsio/ui-kit/organisms/header';
 import { useEffect, useState } from 'react';
@@ -77,6 +78,20 @@ interface DashboardLegalEntitySelectorProps {
   readonly onLegalEntityChange: (legalEntityId: string) => void;
 }
 
+interface DashboardSelectorProps {
+  readonly ariaLabel?: string;
+  readonly currentValue: string | undefined;
+  readonly disabled: boolean;
+  readonly items: SelectItem[];
+  readonly label: string;
+  readonly name: string;
+  readonly onChange: (value: string) => void;
+  readonly placeholder: string;
+  readonly status: 'default' | 'error' | 'warning';
+  readonly statusId: string;
+  readonly statusText: string | null;
+}
+
 interface DashboardSearchProps {
   readonly onSearch: (query: string) => void;
   readonly onValueChange: (value: string) => void;
@@ -132,15 +147,58 @@ const selectorStatusText = (
   return unavailable ? messages.unavailable : null;
 };
 
-const tenantSelectorDisabled = (
-  tenantState: AuthenticatedDashboardLayoutProps['tenantState'],
-  tenantSwitchPending: boolean,
-  tenantItems: readonly { readonly value: string }[],
-  currentTenantId: string,
-): boolean =>
-  tenantState === 'unavailable' ||
-  tenantSwitchPending ||
-  !tenantItems.some((item) => item.value !== currentTenantId);
+const DashboardSelector = ({
+  ariaLabel,
+  currentValue,
+  disabled,
+  items,
+  label,
+  name,
+  onChange,
+  placeholder,
+  status,
+  statusId,
+  statusText,
+}: DashboardSelectorProps) => (
+  <Select
+    disabled={disabled}
+    items={items}
+    name={name}
+    onValueChange={({ value }) => {
+      const [selected] = value;
+      if (value.length === 1 && selected !== undefined && selected !== currentValue) {
+        onChange(selected);
+      }
+    }}
+    validateStatus={status}
+    value={currentValue === undefined ? [] : [currentValue]}
+  >
+    <Select.Label>{label}</Select.Label>
+    <Select.Control>
+      <Select.Trigger
+        aria-describedby={statusText === null ? undefined : statusId}
+        aria-label={ariaLabel}
+      >
+        <Select.ValueText placeholder={placeholder} />
+      </Select.Trigger>
+    </Select.Control>
+    <Select.Positioner>
+      <Select.Content>
+        {items.map((item) => (
+          <Select.Item item={item} key={item.value}>
+            <Select.ItemText />
+            <Select.ItemIndicator />
+          </Select.Item>
+        ))}
+      </Select.Content>
+    </Select.Positioner>
+    {statusText === null ? null : (
+      <Select.StatusText aria-live="polite" id={statusId} showIcon status={status}>
+        {statusText}
+      </Select.StatusText>
+    )}
+  </Select>
+);
 
 const DashboardTenantSelector = ({
   currentTenantId,
@@ -157,68 +215,31 @@ const DashboardTenantSelector = ({
     value: tenantId,
   }));
   const tenantUnavailable = tenantState === 'unavailable';
-  const tenantStatus = selectorStatus(tenantSwitchFailed, tenantUnavailable);
-  const tenantStatusText = selectorStatusText(
-    tenantSwitchPending,
-    tenantSwitchFailed,
-    tenantUnavailable,
-    {
-      failed: t('shell.dashboard.tenant.failed'),
-      pending: t('shell.dashboard.tenant.pending'),
-      unavailable: t('shell.dashboard.tenant.unavailable'),
-    },
-  );
-  const tenantSelectDisabled = tenantSelectorDisabled(
-    tenantState,
-    tenantSwitchPending,
-    tenantItems,
-    currentTenantId,
-  );
+  const accessibleLabel = t('shell.dashboard.tenant.accessibleLabel');
+  const unavailableText = t('shell.dashboard.tenant.unavailable');
 
   return (
-    <Select
-      disabled={tenantSelectDisabled}
+    <DashboardSelector
+      ariaLabel={accessibleLabel}
+      currentValue={currentTenantId}
+      disabled={
+        tenantUnavailable ||
+        tenantSwitchPending ||
+        !tenantItems.some((item) => item.value !== currentTenantId)
+      }
       items={tenantItems}
+      label={accessibleLabel}
       name="tenant"
-      onValueChange={({ value }) => {
-        const [tenantId] = value;
-        if (value.length === 1 && tenantId !== undefined && tenantId !== currentTenantId) {
-          onTenantChange(tenantId);
-        }
-      }}
-      validateStatus={tenantStatus}
-      value={[currentTenantId]}
-    >
-      <Select.Label>{t('shell.dashboard.tenant.accessibleLabel')}</Select.Label>
-      <Select.Control>
-        <Select.Trigger
-          aria-describedby={tenantStatusText === null ? undefined : 'tenant-switch-status'}
-          aria-label={t('shell.dashboard.tenant.accessibleLabel')}
-        >
-          <Select.ValueText placeholder={t('shell.dashboard.tenant.unavailable')} />
-        </Select.Trigger>
-      </Select.Control>
-      <Select.Positioner>
-        <Select.Content>
-          {tenantItems.map((item) => (
-            <Select.Item item={item} key={item.value}>
-              <Select.ItemText />
-              <Select.ItemIndicator />
-            </Select.Item>
-          ))}
-        </Select.Content>
-      </Select.Positioner>
-      {tenantStatusText === null ? null : (
-        <Select.StatusText
-          aria-live="polite"
-          id="tenant-switch-status"
-          showIcon
-          status={tenantStatus}
-        >
-          {tenantStatusText}
-        </Select.StatusText>
-      )}
-    </Select>
+      onChange={onTenantChange}
+      placeholder={unavailableText}
+      status={selectorStatus(tenantSwitchFailed, tenantUnavailable)}
+      statusId="tenant-switch-status"
+      statusText={selectorStatusText(tenantSwitchPending, tenantSwitchFailed, tenantUnavailable, {
+        failed: t('shell.dashboard.tenant.failed'),
+        pending: t('shell.dashboard.tenant.pending'),
+        unavailable: unavailableText,
+      })}
+    />
   );
 };
 
@@ -237,67 +258,29 @@ const DashboardLegalEntitySelector = ({
     value: legalEntityId,
   }));
   const legalEntityUnavailable = legalEntityState === 'unavailable';
-  const legalEntityStatus = selectorStatus(legalEntitySwitchFailed, legalEntityUnavailable);
-  const legalEntityStatusText = selectorStatusText(
-    legalEntitySwitchPending,
-    legalEntitySwitchFailed,
-    legalEntityUnavailable,
-    {
-      failed: t('shell.dashboard.legalEntity.failed'),
-      pending: t('shell.dashboard.legalEntity.pending'),
-      unavailable: t('shell.dashboard.legalEntity.unavailable'),
-    },
-  );
 
   return (
-    <Select
+    <DashboardSelector
+      currentValue={currentLegalEntityId}
       disabled={legalEntityUnavailable || legalEntitySwitchPending}
       items={legalEntityItems}
+      label={t('shell.dashboard.legalEntity.accessibleLabel')}
       name="legalEntity"
-      onValueChange={({ value }) => {
-        const [legalEntityId] = value;
-        if (
-          value.length === 1 &&
-          legalEntityId !== undefined &&
-          legalEntityId !== currentLegalEntityId
-        ) {
-          onLegalEntityChange(legalEntityId);
-        }
-      }}
-      validateStatus={legalEntityStatus}
-      value={currentLegalEntityId === undefined ? [] : [currentLegalEntityId]}
-    >
-      <Select.Label>{t('shell.dashboard.legalEntity.accessibleLabel')}</Select.Label>
-      <Select.Control>
-        <Select.Trigger
-          aria-describedby={
-            legalEntityStatusText === null ? undefined : 'legal-entity-switch-status'
-          }
-        >
-          <Select.ValueText placeholder={t('shell.dashboard.legalEntity.placeholder')} />
-        </Select.Trigger>
-      </Select.Control>
-      <Select.Positioner>
-        <Select.Content>
-          {legalEntityItems.map((item) => (
-            <Select.Item item={item} key={item.value}>
-              <Select.ItemText />
-              <Select.ItemIndicator />
-            </Select.Item>
-          ))}
-        </Select.Content>
-      </Select.Positioner>
-      {legalEntityStatusText === null ? null : (
-        <Select.StatusText
-          aria-live="polite"
-          id="legal-entity-switch-status"
-          showIcon
-          status={legalEntityStatus}
-        >
-          {legalEntityStatusText}
-        </Select.StatusText>
+      onChange={onLegalEntityChange}
+      placeholder={t('shell.dashboard.legalEntity.placeholder')}
+      status={selectorStatus(legalEntitySwitchFailed, legalEntityUnavailable)}
+      statusId="legal-entity-switch-status"
+      statusText={selectorStatusText(
+        legalEntitySwitchPending,
+        legalEntitySwitchFailed,
+        legalEntityUnavailable,
+        {
+          failed: t('shell.dashboard.legalEntity.failed'),
+          pending: t('shell.dashboard.legalEntity.pending'),
+          unavailable: t('shell.dashboard.legalEntity.unavailable'),
+        },
       )}
-    </Select>
+    />
   );
 };
 

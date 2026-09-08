@@ -113,21 +113,26 @@ effectTest(
   }),
 );
 
+const makeAllowedPermissionRecorder = () => {
+  const observed: string[] = [];
+  const service = makeContextAccess(
+    makeClient((request) =>
+      Effect.sync(() => {
+        observed.push(...request.items.map(({ permission }) => permission));
+        return responseFor(
+          request,
+          request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
+        );
+      }),
+    ),
+  );
+  return { observed, service };
+};
+
 effectTest(
   'forwards every closed tenant permission key without widening it',
   Effect.gen(function* forwardsTenantPermissionKeys() {
-    const observed: string[] = [];
-    const service = makeContextAccess(
-      makeClient((request) =>
-        Effect.sync(() => {
-          observed.push(...request.items.map(({ permission }) => permission));
-          return responseFor(
-            request,
-            request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
-          );
-        }),
-      ),
-    );
+    const { observed, service } = makeAllowedPermissionRecorder();
 
     yield* Effect.all(
       TENANT_PERMISSION_KEYS.map((permission) =>
@@ -147,18 +152,7 @@ effectTest(
 effectTest(
   'forwards every closed Legal Entity permission key without widening it',
   Effect.gen(function* forwardsLegalEntityPermissionKeys() {
-    const observed: string[] = [];
-    const service = makeContextAccess(
-      makeClient((request) =>
-        Effect.sync(() => {
-          observed.push(...request.items.map(({ permission }) => permission));
-          return responseFor(
-            request,
-            request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
-          );
-        }),
-      ),
-    );
+    const { observed, service } = makeAllowedPermissionRecorder();
 
     yield* Effect.all(
       LEGAL_ENTITY_PERMISSION_KEYS.map((permission) =>

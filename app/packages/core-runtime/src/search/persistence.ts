@@ -604,6 +604,15 @@ const transactionOperations = makeTransactionOperations();
 export const makePostgresCoreSearchProjectionStore = (
   database: CoreSearchPersistenceDatabase,
 ): CoreSearchProjectionStoreService => {
+  const runTransaction = <Value, Failure>(
+    body: (transaction: CoreTransaction) => Effect.Effect<Value, Failure>,
+  ) =>
+    database.executor.transaction(body).pipe(
+      Effect.catchDefect((defect) =>
+        isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
+      ),
+      Effect.catchTag('SqlError', (failure) => Effect.fail(unavailable(failure))),
+    );
   const apply: CoreSearchProjectionStoreService['apply'] = Effect.fn(
     'CoreSearchProjectionStore.applyPostgres',
   )(function* applyCoreSearchProjection(input: CoreSearchProjectionInput) {
@@ -611,24 +620,14 @@ export const makePostgresCoreSearchProjectionStore = (
     const updatedAt = DateTime.toDateUtc(yield* DateTime.now);
     const transactionBody = (transaction: CoreTransaction) =>
       transactionOperations.applyMutationTransaction(transaction, mutation, updatedAt);
-    yield* database.executor.transaction(transactionBody).pipe(
-      Effect.catchDefect((defect) =>
-        isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
-      ),
-      Effect.catchTag('SqlError', (failure) => Effect.fail(unavailable(failure))),
-    );
+    yield* runTransaction(transactionBody);
   });
   const queryCandidates: CoreSearchProjectionStoreService['queryCandidates'] = Effect.fn(
     'CoreSearchProjectionStore.queryCandidatesPostgres',
   )(function* queryCoreSearchCandidates(input: CoreSearchQuery) {
     const transactionBody = (transaction: CoreTransaction) =>
       transactionOperations.queryCandidatesTransaction(transaction, input);
-    const documents = yield* database.executor.transaction(transactionBody).pipe(
-      Effect.catchDefect((defect) =>
-        isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
-      ),
-      Effect.catchTag('SqlError', (failure) => Effect.fail(unavailable(failure))),
-    );
+    const documents = yield* runTransaction(transactionBody);
     return yield* Schema.decodeUnknownEffect(Schema.Array(CoreSearchProjectionDocumentSchema))(
       documents,
     ).pipe(Effect.mapError(unavailable));
@@ -640,12 +639,7 @@ export const makePostgresCoreSearchProjectionStore = (
     const updatedAt = DateTime.toDateUtc(yield* DateTime.now);
     const transactionBody = (transaction: CoreTransaction) =>
       transactionOperations.replaceProjectionTransaction(transaction, replacement, updatedAt);
-    yield* database.executor.transaction(transactionBody).pipe(
-      Effect.catchDefect((defect) =>
-        isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
-      ),
-      Effect.catchTag('SqlError', (failure) => Effect.fail(unavailable(failure))),
-    );
+    yield* runTransaction(transactionBody);
   });
   return Object.freeze({ apply, queryCandidates, replace });
 };

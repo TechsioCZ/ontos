@@ -23,15 +23,12 @@ const CreateNonHumanPrincipalResultSchema = Schema.Struct({
   principalId: PrincipalIdSchema,
   status: Schema.Literal('active'),
 });
-type CreateNonHumanPrincipal = PrincipalManagementRepositoryService['createNonHumanPrincipal'];
-type Input = Parameters<CreateNonHumanPrincipal>[0];
-type Result = ReturnType<CreateNonHumanPrincipal>;
 
 const handle = (
   payload: CreateNonHumanPrincipalPayload,
   context: ActionHandlerContext<
     Readonly<Record<never, never>>,
-    { readonly create: (input: Input) => Result }
+    { readonly create: PrincipalManagementRepositoryService['createNonHumanPrincipal'] }
   >,
 ) =>
   context.services.create({ ...payload, tenantId: context.scope.tenantId }).pipe(

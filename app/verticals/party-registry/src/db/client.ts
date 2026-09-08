@@ -28,12 +28,7 @@ const connectionFailure = (cause: unknown): PartyDatabaseConnectionError =>
       reason: 'Unable to initialize the Party Registry PostgreSQL connection pool',
     }),
     'cause',
-    {
-      configurable: false,
-      enumerable: false,
-      value: cause,
-      writable: false,
-    },
+    { value: cause },
   );
 
 export const acquirePoolResource = <Resource extends PoolResource>(

@@ -3,29 +3,19 @@
 // @ontos-outbox-worker-owner party.registry
 // @ontos-outbox-worker-producer party.registry
 // @ontos-outbox-worker-topic party.registry.official-identifier-updated.v1
-import { Effect } from 'effect';
-import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
-import { PartySearchProjector } from '../services/party-search-projection.service.ts';
+import { defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { definePartySearchWorker } from './party-search-worker.ts';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/party-registry/outbox/party-registry-official-identifier-updated-v1';
 
-export const handleProjectOfficialIdentifierUpdatedToSearch = Effect.fn(
-  'handleProjectOfficialIdentifierUpdatedToSearch',
-)(function* projectCommittedIdentifierUpdate(
-  payload: typeof OutboxPayloadSchema.Type,
-  context: OutboxWorkerHandlerContext,
-) {
-  const projector = yield* PartySearchProjector;
-  yield* projector.project(context, { partyId: payload.partyRef.resourceId });
-});
-
-export const projectOfficialIdentifierUpdatedToSearchWorker = defineOutboxWorker(
+export const {
+  worker: projectOfficialIdentifierUpdatedToSearchWorker,
+  handle: handleProjectOfficialIdentifierUpdatedToSearch,
+} = definePartySearchWorker(
   {
-    consumerModuleKey: 'party.registry',
     entrypoint: defineTenantModuleEntrypoint({
       access: 'background',
       authorization: { kind: 'owner_local_background' },
@@ -33,17 +23,12 @@ export const projectOfficialIdentifierUpdatedToSearchWorker = defineOutboxWorker
       moduleKey: 'party.registry',
       role: 'worker',
     }),
-    leaseDurationMs: 30_000,
     payloadSchema: OutboxPayloadSchema,
     producerModuleKey: outboxProducerModuleKey,
-    retryPolicy: {
-      initialBackoffMs: 1000,
-      maxAttempts: 5,
-      maxBackoffMs: 60_000,
-      multiplier: 2,
-    },
     topic: outboxTopic,
-    workerKey: 'party.registry.project-official-identifier-updated-to-search',
   },
-  handleProjectOfficialIdentifierUpdatedToSearch,
+  {
+    spanName: 'handleProjectOfficialIdentifierUpdatedToSearch',
+    target: (payload) => ({ partyId: payload.partyRef.resourceId }),
+  },
 );

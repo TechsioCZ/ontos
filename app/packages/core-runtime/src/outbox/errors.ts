@@ -53,18 +53,6 @@ const OutboxClaimLostErrorValue = Schema.TaggedError<OutboxClaimLostErrorSelf>()
 export type OutboxClaimLostError = InstanceType<typeof OutboxClaimLostErrorValue>;
 export { OutboxClaimLostErrorValue as OutboxClaimLostError };
 
-const OutboxModuleStateErrorContract = Schema.TaggedStruct('OutboxModuleStateError', {
-  code: Schema.Literal('outbox_consumer_module_inactive'),
-  ...reason,
-});
-type OutboxModuleStateErrorSelf = typeof OutboxModuleStateErrorContract.Type & Cause.YieldableError;
-const OutboxModuleStateErrorValue = Schema.TaggedError<OutboxModuleStateErrorSelf>()(
-  'OutboxModuleStateError',
-  { code: Schema.Literal('outbox_consumer_module_inactive'), ...reason },
-);
-export type OutboxModuleStateError = InstanceType<typeof OutboxModuleStateErrorValue>;
-export { OutboxModuleStateErrorValue as OutboxModuleStateError };
-
 const OutboxHandlerExecutionErrorContract = Schema.TaggedStruct('OutboxHandlerExecutionError', {
   code: Schema.Literal('outbox_handler_execution_failed'),
   ...reason,
@@ -90,15 +78,6 @@ const OutboxPollerConfigErrorValue = Schema.TaggedError<OutboxPollerConfigErrorS
 );
 export type OutboxPollerConfigError = InstanceType<typeof OutboxPollerConfigErrorValue>;
 export { OutboxPollerConfigErrorValue as OutboxPollerConfigError };
-
-export type OutboxWorkerError =
-  | OutboxClaimLostError
-  | OutboxHandlerExecutionError
-  | OutboxModuleStateError
-  | OutboxPayloadDecodeError
-  | OutboxPollerConfigError
-  | OutboxPersistenceError
-  | OutboxWorkerDescriptorError;
 
 const PERSISTENCE_CAUSE_PROPERTY = 'ontosOutboxPersistenceCause';
 

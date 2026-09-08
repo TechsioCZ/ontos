@@ -132,18 +132,9 @@ const WRAPPER_TYPES: ReadonlySet<string> = new Set([
   'TSSatisfiesExpression',
 ]);
 
-interface RuleOptions {
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly includeTests: boolean;
-  readonly includeScripts: boolean;
-  readonly includeFunctionCallees: boolean;
-  readonly orderingCalleePattern: string;
-  readonly genMembers: readonly string[];
-  readonly effectModules: readonly string[];
-}
+type RuleOptions = Readonly<ReturnType<typeof readOptions>>;
 
-function readOptions(context: Context): RuleOptions {
+function readOptions(context: Context) {
   const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),

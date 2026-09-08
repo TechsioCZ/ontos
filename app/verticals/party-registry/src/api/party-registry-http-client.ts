@@ -31,17 +31,6 @@ export interface PartyRegistryHttpClientOptions {
   readonly [traceparentOption]?: string;
 }
 
-export type PartyRegistryAuthorizedInvocation<Options> = readonly [
-  credential: string,
-  requestCorrelation: string,
-  options?: Options,
-];
-
-export type PartyRegistryOperationInvocation<Options> = readonly [
-  requestCorrelation: string,
-  options?: Options,
-];
-
 export interface PartyRegistryHttpRequestContextValue {
   readonly baseUrl: string | URL;
   readonly credential?: Redacted.Redacted<string>;

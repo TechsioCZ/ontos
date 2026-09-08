@@ -7,14 +7,7 @@ import {
   engagementProfileOperationContexts,
   partyRegistryOperationContexts,
 } from '../../shared/api.ts';
-import type {
-  AttachOrganizationEngagementPayload,
-  AttachPersonEngagementPayload,
-  OperationContext,
-  OrganizationEngagementLifecyclePayload,
-  PartyRegistryReadiness,
-  PersonEngagementLifecyclePayload,
-} from '../../shared/api.ts';
+import type { OperationContext, PartyRegistryReadiness } from '../../shared/api.ts';
 import { operationGateway } from './action-gateway.ts';
 import {
   authenticatePartyRegistryHttpRequest,
@@ -74,9 +67,20 @@ const invoke = <Success, Failure>(
     return invokePartyRegistryHttpClient(requestContext, operation);
   }, options.gateway);
 
-const mutationHeaders = (options: ContactsMutationOptions) => ({
-  'idempotency-key': options.idempotencyKey,
-});
+const engagementMutation =
+  <Payload, Success, Failure>(
+    context: OperationContext,
+    endpoint: (
+      client: ContactsClient,
+    ) => (request: {
+      headers: { 'idempotency-key': string };
+      payload: Payload;
+    }) => Effect.Effect<Success, Failure>,
+  ) =>
+  (payload: Payload, options: ContactsMutationOptions) =>
+    invoke(options, context, (client) =>
+      endpoint(client)({ headers: { 'idempotency-key': options.idempotencyKey }, payload }),
+    );
 
 export const getContactsReadiness = (
   options: ContactsClientOptions = {},
@@ -86,59 +90,32 @@ export const getContactsReadiness = (
     operationContext: options.operationContext ?? partyRegistryOperationContexts.readiness,
   }).pipe(Effect.flatMap((client) => client.foundation.readiness({})));
 
-export const attachOrganizationEngagement = (
-  payload: AttachOrganizationEngagementPayload,
-  options: ContactsMutationOptions,
-) =>
-  invoke(options, engagementProfileOperationContexts.attachOrganizationEngagement, (client) =>
-    client.organizationEngagementMutations.attach({
-      headers: mutationHeaders(options),
-      payload,
-    }),
-  );
+export const attachOrganizationEngagement = engagementMutation(
+  engagementProfileOperationContexts.attachOrganizationEngagement,
+  (client) => client.organizationEngagementMutations.attach,
+);
 
-export const archiveOrganizationEngagement = (
-  payload: OrganizationEngagementLifecyclePayload,
-  options: ContactsMutationOptions,
-) =>
-  invoke(options, engagementProfileOperationContexts.archiveOrganizationEngagement, (client) =>
-    client.organizationEngagementMutations.archive({
-      headers: mutationHeaders(options),
-      payload,
-    }),
-  );
+export const archiveOrganizationEngagement = engagementMutation(
+  engagementProfileOperationContexts.archiveOrganizationEngagement,
+  (client) => client.organizationEngagementMutations.archive,
+);
 
-export const unarchiveOrganizationEngagement = (
-  payload: OrganizationEngagementLifecyclePayload,
-  options: ContactsMutationOptions,
-) =>
-  invoke(options, engagementProfileOperationContexts.unarchiveOrganizationEngagement, (client) =>
-    client.organizationEngagementMutations.unarchive({
-      headers: mutationHeaders(options),
-      payload,
-    }),
-  );
+export const unarchiveOrganizationEngagement = engagementMutation(
+  engagementProfileOperationContexts.unarchiveOrganizationEngagement,
+  (client) => client.organizationEngagementMutations.unarchive,
+);
 
-export const attachPersonEngagement = (
-  payload: AttachPersonEngagementPayload,
-  options: ContactsMutationOptions,
-) =>
-  invoke(options, engagementProfileOperationContexts.attachPersonEngagement, (client) =>
-    client.personEngagementMutations.attach({ headers: mutationHeaders(options), payload }),
-  );
+export const attachPersonEngagement = engagementMutation(
+  engagementProfileOperationContexts.attachPersonEngagement,
+  (client) => client.personEngagementMutations.attach,
+);
 
-export const archivePersonEngagement = (
-  payload: PersonEngagementLifecyclePayload,
-  options: ContactsMutationOptions,
-) =>
-  invoke(options, engagementProfileOperationContexts.archivePersonEngagement, (client) =>
-    client.personEngagementMutations.archive({ headers: mutationHeaders(options), payload }),
-  );
+export const archivePersonEngagement = engagementMutation(
+  engagementProfileOperationContexts.archivePersonEngagement,
+  (client) => client.personEngagementMutations.archive,
+);
 
-export const unarchivePersonEngagement = (
-  payload: PersonEngagementLifecyclePayload,
-  options: ContactsMutationOptions,
-) =>
-  invoke(options, engagementProfileOperationContexts.unarchivePersonEngagement, (client) =>
-    client.personEngagementMutations.unarchive({ headers: mutationHeaders(options), payload }),
-  );
+export const unarchivePersonEngagement = engagementMutation(
+  engagementProfileOperationContexts.unarchivePersonEngagement,
+  (client) => client.personEngagementMutations.unarchive,
+);

@@ -115,19 +115,9 @@ const MAX_UNWRAP_DEPTH = 32;
 /** Longest discriminant rendering embedded in a diagnostic message. */
 const MAX_DISCRIMINANT_LENGTH = 60;
 
-interface RuleOptions {
-  readonly tagProperties: readonly string[];
-  readonly discriminantProperties: readonly string[];
-  readonly minLiteralCases: number;
-  readonly allowExhaustive: boolean;
-  readonly exhaustiveHelpers: readonly string[];
-  readonly adtTags: readonly string[];
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly ignoreTests: boolean;
-}
+type RuleOptions = Readonly<ReturnType<typeof readOptions>>;
 
-function readOptions(context: Context): RuleOptions {
+function readOptions(context: Context) {
   const record = optionRecord(context.options?.[0]);
   return {
     tagProperties: stringArray(record.tagProperties, DEFAULT_TAG_PROPERTIES),

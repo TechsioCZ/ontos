@@ -301,15 +301,11 @@ const changePrincipalStatusFor = (persistence: PrincipalManagementPersistence) =
     if (target.value.status !== input.expectedStatus) {
       return yield* conflict('The principal status changed concurrently');
     }
-    if (target.value.status === 'archived' || input.newStatus === target.value.status) {
+    if (!principalTransitionAllowed(target.value.status, input.newStatus)) {
       return yield* conflict('The principal status transition is not allowed');
     }
     if (input.newStatus !== 'active' && !hasStatusChangeReason(input.reason)) {
       return yield* invalid('A reason is required for disable or archive');
-    }
-    const allowed = principalTransitionAllowed(target.value.status, input.newStatus);
-    if (!allowed) {
-      return yield* conflict('The principal status transition is not allowed');
     }
     const updated = yield* persistence.updatePrincipalStatus(input);
     if (Option.isNone(updated)) {
@@ -422,18 +418,11 @@ const setApiKeyBindingStatusFor = (persistence: PrincipalManagementPersistence) 
     if (binding.value.bindingStatus !== input.expectedStatus) {
       return yield* conflict('The binding status changed concurrently');
     }
-    if (
-      binding.value.bindingStatus === 'revoked' ||
-      binding.value.bindingStatus === input.newStatus
-    ) {
+    if (!bindingTransitionAllowed(binding.value.bindingStatus, input.newStatus)) {
       return yield* conflict('The binding transition is not allowed');
     }
     if (input.newStatus === 'revoked' && !hasStatusChangeReason(input.reason)) {
       return yield* invalid('A reason is required for revocation');
-    }
-    const allowed = bindingTransitionAllowed(binding.value.bindingStatus, input.newStatus);
-    if (!allowed) {
-      return yield* conflict('The binding transition is not allowed');
     }
     const updated = yield* persistence.updateApiKeyBindingStatus(input);
     if (Option.isNone(updated)) {

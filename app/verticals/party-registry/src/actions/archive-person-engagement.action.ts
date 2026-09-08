@@ -7,12 +7,8 @@ import {
   defineTenantModuleEntrypoint,
   OperationContextUnavailable,
 } from '@app/core-runtime';
-import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect } from 'effect';
 import {
-  EngagementProfileConflict,
-  EngagementProfileNotFound,
-  EngagementProfilePersistenceUnavailable,
   PersonEngagementLifecyclePayloadSchema,
   PersonEngagementProfileSchema,
 } from '../../shared/domain/engagement-profile.ts';
@@ -21,37 +17,10 @@ import type {
   PersonEngagementProfile,
 } from '../../shared/domain/engagement-profile.ts';
 import { transitionPersonEngagementProfile } from '../services/engagement-profile-persistence.service.ts';
-import type { LifecycleResult } from '../services/engagement-profile-persistence.service.ts';
-import { resolveEngagementLifecycle } from './engagement-lifecycle.ts';
-
-const ArchivePersonEngagementPayload = PersonEngagementLifecyclePayloadSchema;
-const ArchivePersonEngagementResult = PersonEngagementProfileSchema;
-const ArchivePersonEngagementError = Schema.Union([
-  EngagementProfileConflict,
-  EngagementProfileNotFound,
-  EngagementProfilePersistenceUnavailable,
-]);
-
-interface Services {
-  readonly archive: (
-    profileId: string,
-  ) => Effect.Effect<
-    LifecycleResult<PersonEngagementProfile>,
-    EngagementProfilePersistenceUnavailable
-  >;
-}
-
-const handleArchivePersonEngagement = (
-  payload: PersonEngagementLifecyclePayload,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
-) =>
-  context.services
-    .archive(payload.profileRef.resourceId)
-    .pipe(
-      Effect.flatMap((result) =>
-        resolveEngagementLifecycle(result, payload.profileRef.resourceId, 'archived'),
-      ),
-    );
+import {
+  EngagementLifecycleErrorSchema,
+  handleEngagementLifecycle,
+} from './engagement-lifecycle-handler.ts';
 
 export const archivePersonEngagementAction = defineAction(
   {
@@ -61,7 +30,7 @@ export const archivePersonEngagementAction = defineAction(
     },
     actionKey: 'party.registry.archive-person-engagement',
     auditProfile: 'standard',
-    domainErrorSchema: ArchivePersonEngagementError,
+    domainErrorSchema: EngagementLifecycleErrorSchema,
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -73,7 +42,7 @@ export const archivePersonEngagementAction = defineAction(
     idempotency: 'required',
     legalEntityScope: 'required',
     owningModuleKey: 'party.registry',
-    payloadSchema: ArchivePersonEngagementPayload,
+    payloadSchema: PersonEngagementLifecyclePayloadSchema,
     policies: [],
     resourcePermission: defineActionResourcePermission<PersonEngagementLifecyclePayload>(
       (payload) => ({
@@ -85,10 +54,10 @@ export const archivePersonEngagementAction = defineAction(
         },
       }),
     ),
-    resultSchema: ArchivePersonEngagementResult,
+    resultSchema: PersonEngagementProfileSchema,
     schemaVersion: '1',
   },
-  handleArchivePersonEngagement,
+  handleEngagementLifecycle<PersonEngagementLifecyclePayload, PersonEngagementProfile>('archived'),
   (transaction, scope) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(
@@ -99,7 +68,7 @@ export const archivePersonEngagementAction = defineAction(
       );
     }
     return Effect.succeed({
-      archive: (profileId) =>
+      transition: (profileId) =>
         transitionPersonEngagementProfile(transaction, scope.tenantId, profileId, 'archived'),
     });
   },

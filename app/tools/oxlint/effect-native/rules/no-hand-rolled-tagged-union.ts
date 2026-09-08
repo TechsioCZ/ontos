@@ -112,18 +112,9 @@ const DEFAULT_WRAPPER_TYPES: readonly string[] = [
 /** Depth guard for the ancestor walk; real type nesting never approaches this. */
 const MAX_ANCESTOR_DEPTH = 64;
 
-interface RuleOptions {
-  readonly discriminantKeys: readonly string[];
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly ignoreTests: boolean;
-  readonly wrapperTypes: readonly string[];
-  readonly includeNestedTypes: boolean;
-  readonly includeClassFields: boolean;
-  readonly ignoreAmbient: boolean;
-}
+type RuleOptions = Readonly<ReturnType<typeof readOptions>>;
 
-function readOptions(context: Context): RuleOptions {
+function readOptions(context: Context) {
   const record = optionRecord(context.options?.[0]);
   return {
     discriminantKeys: stringArray(record.discriminantKeys, DEFAULT_DISCRIMINANT_KEYS),

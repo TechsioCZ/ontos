@@ -63,27 +63,7 @@ const MAX_TYPE_DEPTH = 12;
 
 type AnyNode = ESTree.Node & { readonly parent?: ESTree.Node | null };
 
-interface RuleOptions {
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly includeTests: boolean;
-  readonly includeTsx: boolean;
-  readonly exportedOnly: boolean;
-  readonly includeReturnTypeAliases: boolean;
-  readonly includePromiseMembers: boolean;
-  readonly allowLayerConstruction: boolean;
-  readonly requireTagPerContract: boolean;
-  readonly serviceNamePattern: string;
-  readonly dataTypePattern: string;
-  readonly effectTypes: readonly string[];
-  readonly promiseTypes: readonly string[];
-  readonly tagMembers: readonly string[];
-  readonly tagNamespaces: readonly string[];
-  readonly layerMembers: readonly string[];
-  readonly allowNames: readonly string[];
-}
-
-function readOptions(context: Context): RuleOptions {
+function readOptions(context: Context) {
   const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),

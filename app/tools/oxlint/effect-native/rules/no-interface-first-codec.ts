@@ -95,23 +95,7 @@ const DEFAULT_REEXPORT_MODULES = [
 const SUSPEND_MEMBER = 'suspend';
 const PIPE_MEMBER = 'pipe';
 
-interface RuleOptions {
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly ignoreTests: boolean;
-  readonly allowSuspend: boolean;
-  readonly codecTypes: readonly string[];
-  readonly ignoreTypeArguments: readonly string[];
-  readonly requireTypeArguments: boolean;
-  readonly allowDerivedTypeArguments: boolean;
-  readonly requireSchemaInitializer: boolean;
-  readonly checkSatisfies: boolean;
-  readonly checkAsExpressions: boolean;
-  readonly checkClassProperties: boolean;
-  readonly reexportModules: readonly string[];
-}
-
-function readOptions(context: Context): RuleOptions {
+function readOptions(context: Context) {
   const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),

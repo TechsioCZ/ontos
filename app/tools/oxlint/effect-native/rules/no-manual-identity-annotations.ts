@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
 import { collectEffectBindings } from '../shared/effect-imports.ts';
-import { isTestFile, matchesGlobs, scopePath as legacyScopePath } from '../shared/paths.ts';
+import { isTestFile, matchesGlobs, rootedScopePath } from '../shared/paths.ts';
 import { stringArray } from '../shared/options.ts';
 import {
   unwrapNode as unwrap,
@@ -91,20 +91,9 @@ const DEFAULT_SPAN_MEMBERS = ['Effect.withSpan', 'Effect.withLogSpan'];
 /** Barrels that re-export Effect namespaces verbatim; `Effect` from them is Effect's `Effect`. */
 const DEFAULT_REEXPORT_MODULES = ['@modern-js/plugin-bff/effect-edge'];
 
-interface RuleOptions {
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly seamFiles: readonly string[];
-  readonly identityKeys: readonly string[];
-  readonly annotationMembers: readonly string[];
-  readonly spanMembers: readonly string[];
-  readonly reexportModules: readonly string[];
-  readonly flagSpreadHelpers: boolean;
-  readonly includeTests: boolean;
-  readonly includeScripts: boolean;
-}
+type RuleOptions = Readonly<ReturnType<typeof readOptions>>;
 
-function readOptions(context: Context): RuleOptions {
+function readOptions(context: Context) {
   const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
@@ -122,12 +111,7 @@ function readOptions(context: Context): RuleOptions {
 
 /** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
 function scopePath(filename: string): string {
-  const unified = filename.replaceAll('\\', '/');
-  const fixture =
-    /(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u.exec(unified);
-  if (fixture?.[1]) return fixture[1];
-  const root = fileURLToPath(new URL('../../../../', import.meta.url)).replaceAll('\\', '/');
-  return unified.startsWith(root) ? unified.slice(root.length) : legacyScopePath(unified);
+  return rootedScopePath(filename, fileURLToPath(new URL('../../../../', import.meta.url)));
 }
 
 /** `x-correlation-id`, `correlation_id` and `correlationId` all collapse to `correlationid`. */

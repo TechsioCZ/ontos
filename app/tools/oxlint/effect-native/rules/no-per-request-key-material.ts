@@ -157,24 +157,9 @@ const FUNCTION_TYPES = new Set([
 const TEMPLATE_WRAPPER_MARKER =
   /\b(?:Layer\.(?:effect|scoped|sync|unwrap|unwrapScoped|succeed)|Effect\.(?:cached|cachedWithTTL|cachedFunction|cachedInvalidateWithTTL|once))\s*\(/u;
 
-interface RuleOptions {
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly joseModules: readonly string[];
-  readonly joseMembers: readonly string[];
-  readonly nodeCryptoModules: readonly string[];
-  readonly nodeCryptoMembers: readonly string[];
-  readonly subtleMembers: readonly string[];
-  readonly layerWrappers: readonly string[];
-  readonly layerBuilderWrappers: readonly string[];
-  readonly effectWrappers: readonly string[];
-  readonly reexportModules: readonly string[];
-  readonly includeTests: boolean;
-  readonly scanGeneratorTemplates: boolean;
-  readonly generatorFiles: readonly string[];
-}
+type RuleOptions = Readonly<ReturnType<typeof readOptions>>;
 
-function readOptions(context: Context): RuleOptions {
+function readOptions(context: Context) {
   const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),

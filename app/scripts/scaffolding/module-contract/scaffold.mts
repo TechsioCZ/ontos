@@ -1,3 +1,4 @@
+import { topLevelSeparators } from '../../boundary-source-structure.mts';
 import { Array as EffectArray, Effect, FileSystem, Option, Predicate, Schema } from 'effect';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
@@ -105,30 +106,8 @@ export const governedHttpApi = HttpApi.make('${toCamelCase(vertical.slug)}Govern
   .pipe(identity);
 `;
 
-const topLevelStatementEnd = (structure: string, start: number): number => {
-  let roundDepth = 0;
-  let squareDepth = 0;
-  let curlyDepth = 0;
-  for (let index = start; index < structure.length; index += 1) {
-    const character = structure[index];
-    if (character === '(') {
-      roundDepth += 1;
-    } else if (character === ')') {
-      roundDepth -= 1;
-    } else if (character === '[') {
-      squareDepth += 1;
-    } else if (character === ']') {
-      squareDepth -= 1;
-    } else if (character === '{') {
-      curlyDepth += 1;
-    } else if (character === '}') {
-      curlyDepth -= 1;
-    } else if (character === ';' && roundDepth === 0 && squareDepth === 0 && curlyDepth === 0) {
-      return index;
-    }
-  }
-  return -1;
-};
+const topLevelStatementEnd = (structure: string, start: number): number =>
+  topLevelSeparators(structure, ';', start)[0] ?? -1;
 
 const initializeGovernedHttpApiRoot = (source: string, vertical: VerticalMetadata): string => {
   if (
