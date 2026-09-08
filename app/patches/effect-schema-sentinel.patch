@@ -1,8 +1,9 @@
 diff --git a/dist/Schema.d.ts b/dist/Schema.d.ts
-index 1f86aac..b01e02d 100644
+index 9547bd05cb7b91e5e5decc43b64c10a47a86186a..e58693c3742604ccb703045dedd259fca2c66b6e 100644
 --- a/dist/Schema.d.ts
 +++ b/dist/Schema.d.ts
-@@ -10813,6 +10813,6 @@ export declare namespace Annotations {
+@@ -10812,7 +10812,7 @@ export declare namespace Annotations {
+          *
           * Reserved to internal use only.
           */
 -        readonly "~sentinels"?: ReadonlyArray<SchemaAST.Sentinel> | undefined;
@@ -10,3 +11,24 @@ index 1f86aac..b01e02d 100644
      }
      /**
       * Annotations for filter schema nodes (created via `Schema.filter`). Extends
+diff --git a/dist/unstable/cli/Param.d.ts b/dist/unstable/cli/Param.d.ts
+index 707f44eef3212747e1b9ad4101ecaa7432c48cce..52ebc128c5c66c86bcd2493fb8b46d7214221295 100644
+--- a/dist/unstable/cli/Param.d.ts
++++ b/dist/unstable/cli/Param.d.ts
+@@ -2309,5 +2309,16 @@ export declare const orElseResult: {
+      */
+     <Kind extends ParamKind, A, B>(self: Param<Kind, A>, orElse: LazyArg<Param<Kind, B>>): Param<Kind, Result.Result<A, B>>;
+ };
++/**
++ * Gets param metadata by traversing the structure.
++ *
++ * @internal
++ */
++export declare const getParamMetadata: <Kind extends ParamKind, A>(param: Param<Kind, A>) => {
++    readonly isOptional: boolean;
++    readonly isVariadic: boolean;
++    readonly variadicMin: Option.Option<number>;
++    readonly variadicMax: Option.Option<number>;
++};
+ export {};
+ //# sourceMappingURL=Param.d.ts.map

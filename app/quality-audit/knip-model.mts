@@ -57,7 +57,7 @@ const unprovenResolver = { kind: 'resolver-unproven' } as const;
 
 export const KnipModelEvidenceSchema = Schema.Struct({
   anchor: Schema.optional(Schema.String),
-  column: Schema.optional(Schema.Number),
+  column: Schema.optional(Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
   kind: Schema.Literals([
     'entry',
     'file',
@@ -67,7 +67,7 @@ export const KnipModelEvidenceSchema = Schema.Struct({
     unprovenResolver.kind,
     'compiler-option',
   ]),
-  line: Schema.Number,
+  line: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
   owningManifest: Schema.optional(Schema.String),
   producerManifest: Schema.optional(Schema.String),
   producerResolved: Schema.optional(Schema.String),
@@ -218,11 +218,9 @@ const parseSource = Effect.fn('QualityAudit.parseKnipModelSource')(function* par
     try: () => parseSync(file, source),
   });
   if (result.errors.length > 0) {
-    return yield* Effect.fail(
-      new KnipModelError({
-        reason: `Invalid quality model source ${file}: ${result.errors[0]?.message}`,
-      }),
-    );
+    return yield* new KnipModelError({
+      reason: `Invalid quality model source ${file}: ${result.errors[0]?.message}`,
+    });
   }
   return { file, program: result.program, source, variables: declarations(result.program) };
 });
@@ -501,7 +499,8 @@ const validatedBuildExport = (
     return undefined;
   }
   const expected = staticString(node.arguments[0], variables);
-  const name = expected?.match(/^export const (?<name>[A-Za-z_$][A-Za-z0-9_$]*)\b/u)?.groups?.name;
+  const { name } =
+    expected?.match(/^export const (?<name>[A-Za-z_$][A-Za-z0-9_$]*)\b/u)?.groups ?? {};
   return name === undefined ? undefined : { name, source: node.callee.object };
 };
 

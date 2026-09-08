@@ -17,15 +17,16 @@ patchedDependencies:
   '@better-fetch/fetch@1.3.1': 9276628e25c79910215b343c608abe336b3636f093565a04953069224d890747
   '@bleedingdev/modern-js-app-tools@3.8.2-ultramodern.12': 92106508bb75f01d2d27454563d5030569bcf89a49155b2cc91a2b9111360d4c
   '@bleedingdev/modern-js-builder@3.8.2-ultramodern.12': c5bdbbf89a17e39cb43c17f66a1904ed29a1462b09fd19aaf05c7301cbe4601c
-  '@bleedingdev/modern-js-code-tools@3.8.2-ultramodern.12': f47cc9b656ff270a7ec5d1407c048fa8ff807bd72b5c491490b4ae07ffffc595
-  '@bleedingdev/modern-js-create@3.8.2-ultramodern.12': 94333aea6925d878a885616925eaefbc1668fcc0b91bf03f5e7caa12e79da131
+  '@bleedingdev/modern-js-code-tools@3.8.2-ultramodern.12': 227ad960c0ce793da1dee90eeaba8edc310b14a58334be185c7cce71ae59a110
+  '@bleedingdev/modern-js-create@3.8.2-ultramodern.12': c0b541c048a1d25b651f0d6bac2df86969944fc47d3e39f3af6ee7e83250faba
   '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12': e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0
   '@bleedingdev/modern-js-server-utils@3.8.2-ultramodern.12': 254be68a353f0c3a57aed91447a2de7b86afe26d1badeb9786945fd466fe760d
   '@module-federation/bridge-react@2.8.0': 54bfc79e097473222f83cbfa6d717792e3026bf16b5097c2ed91715b7da126be
   '@module-federation/modern-js-v3@2.8.0': 56ff0f8c26c40b18be1de105abd019422ebaa648941607d1d30b94cd620b57f3
   '@tanstack/router-core@1.171.21': 413c2453d06aa521ed65ab7fcfb16bac8700e58e97693c2ba4d40727d7c9790d
   '@vercel/nft@0.29.2': c0ed4897b98e9055716031187bb8ea16739f6ae0843d35e4873f1a177472cac7
-  effect@4.0.0-beta.107: ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f
+  drizzle-orm@1.0.0-rc.5-ab785fc: b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe
+  effect@4.0.0-beta.107: 88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98
 
 importers:
 
@@ -36,35 +37,35 @@ importers:
         version: 1.6.1
       '@effect/sql-pg':
         specifier: 4.0.0-beta.107
-        version: 4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))
+        version: 4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))
       better-auth:
         specifier: 1.7.2
-        version: 1.7.2(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(pg@8.22.0)(zod@4.4.3))(pg@8.22.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        version: 1.7.2(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))(pg@8.22.0)(zod@4.4.3))(pg@8.22.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
-        version: 1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(pg@8.22.0)(zod@4.4.3)
+        version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))(pg@8.22.0)(zod@4.4.3)
       pg:
         specifier: 8.22.0
         version: 8.22.0
     devDependencies:
       '@effect/platform-node':
         specifier: 4.0.0-beta.107
-        version: 4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(ioredis@5.11.1(supports-color@10.2.2))
+        version: 4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))(ioredis@5.11.1(supports-color@10.2.2))
       '@effect/tsgo':
         specifier: 0.19.0
         version: 0.19.0
       '@modern-js/code-tools':
         specifier: npm:@bleedingdev/modern-js-code-tools@3.8.2-ultramodern.12
-        version: '@bleedingdev/modern-js-code-tools@3.8.2-ultramodern.12(patch_hash=f47cc9b656ff270a7ec5d1407c048fa8ff807bd72b5c491490b4ae07ffffc595)(oxlint-tsgolint@7.0.2001)'
+        version: '@bleedingdev/modern-js-code-tools@3.8.2-ultramodern.12(patch_hash=227ad960c0ce793da1dee90eeaba8edc310b14a58334be185c7cce71ae59a110)(oxlint-tsgolint@7.0.2001)'
       '@modern-js/codesmith':
         specifier: 2.6.9
         version: 2.6.9(supports-color@10.2.2)
       '@modern-js/create':
         specifier: npm:@bleedingdev/modern-js-create@3.8.2-ultramodern.12
-        version: '@bleedingdev/modern-js-create@3.8.2-ultramodern.12(patch_hash=94333aea6925d878a885616925eaefbc1668fcc0b91bf03f5e7caa12e79da131)(oxlint@1.79.0(oxlint-tsgolint@7.0.2001))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)'
+        version: '@bleedingdev/modern-js-create@3.8.2-ultramodern.12(patch_hash=c0b541c048a1d25b651f0d6bac2df86969944fc47d3e39f3af6ee7e83250faba)(oxlint@1.79.0(oxlint-tsgolint@7.0.2001))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)'
       '@modern-js/plugin-bff':
         specifier: npm:@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12
-        version: '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12(patch_hash=e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0)(02f8732f8d0ac3252ab424ea7a1b32c5)'
+        version: '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12(patch_hash=e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0)(3a233a8c5baa0ff66c13c170d030459d)'
       '@nkzw/eslint-plugin':
         specifier: 2.0.0
         version: 2.0.0(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))
@@ -88,7 +89,7 @@ importers:
         version: typescript@7.0.2
       effect:
         specifier: 4.0.0-beta.107
-        version: 4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)
+        version: 4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)
       esbuild:
         specifier: 0.28.1
         version: 0.28.1
@@ -160,16 +161,16 @@ importers:
         version: 1.6.1
       '@better-auth/api-key':
         specifier: 1.7.2
-        version: 1.7.2(@better-auth/core@1.7.2(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1(patch_hash=9276628e25c79910215b343c608abe336b3636f093565a04953069224d890747))(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.4.3))(jose@6.2.5)(kysely@0.29.4)(nanostores@1.4.2))(@better-auth/utils@0.4.2)(better-auth@1.7.2(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(pg@8.22.0)(zod@4.4.3))(pg@8.22.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(better-call@1.4.0(zod@4.4.3))
+        version: 1.7.2(831f340a6e103a07b479cd8fecebd372)
       '@better-auth/drizzle-adapter':
         specifier: 1.7.2
-        version: 1.7.2(@better-auth/core@1.7.2(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1(patch_hash=9276628e25c79910215b343c608abe336b3636f093565a04953069224d890747))(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.4.3))(jose@6.2.5)(kysely@0.29.4)(nanostores@1.4.2))(@better-auth/utils@0.4.2)(drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(pg@8.22.0)(zod@4.4.3))
+        version: 1.7.2(@better-auth/core@1.7.2(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1(patch_hash=9276628e25c79910215b343c608abe336b3636f093565a04953069224d890747))(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.4.3))(jose@6.2.5)(kysely@0.29.4)(nanostores@1.4.2))(@better-auth/utils@0.4.2)(drizzle-orm@1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))(pg@8.22.0)(zod@4.4.3))
       '@effect/sql-pg':
         specifier: 4.0.0-beta.107
-        version: 4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))
+        version: 4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))
       '@modern-js/plugin-bff':
         specifier: npm:@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12
-        version: '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12(patch_hash=e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0)(76a9f4d76a32c6bb3b280341cf123861)'
+        version: '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12(patch_hash=e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0)(e7b2bba40f7fca088d40067165acde85)'
       '@modern-js/plugin-i18n':
         specifier: npm:@bleedingdev/modern-js-plugin-i18n@3.8.2-ultramodern.12
         version: '@bleedingdev/modern-js-plugin-i18n@3.8.2-ultramodern.12(@bleedingdev/modern-js-runtime@3.8.2-ultramodern.12(@module-federation/runtime-tools@2.8.0)(core-js@3.49.0)(react-dom@19.2.8(react@19.2.8))(react-server-dom-rspack@0.1.0(@rspack/core@2.2.0(@module-federation/runtime-tools@2.8.0)(@swc/helpers@0.5.23))(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8))(@module-federation/runtime-tools@2.8.0)(core-js@3.49.0)(i18next@26.3.6(typescript@7.0.2))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
@@ -190,13 +191,13 @@ importers:
         version: 0.25.1(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       better-auth:
         specifier: 1.7.2
-        version: 1.7.2(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(pg@8.22.0)(zod@4.4.3))(pg@8.22.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        version: 1.7.2(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))(pg@8.22.0)(zod@4.4.3))(pg@8.22.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
-        version: 1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(pg@8.22.0)(zod@4.4.3)
+        version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))(pg@8.22.0)(zod@4.4.3)
       effect:
         specifier: 4.0.0-beta.107
-        version: 4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)
+        version: 4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)
       i18next:
         specifier: 26.3.6
         version: 26.3.6(typescript@7.0.2)
@@ -284,16 +285,16 @@ importers:
         version: 1.6.1
       '@effect/platform-node':
         specifier: 4.0.0-beta.107
-        version: 4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(ioredis@5.11.1(supports-color@10.2.2))
+        version: 4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))(ioredis@5.11.1(supports-color@10.2.2))
       '@effect/sql-pg':
         specifier: 4.0.0-beta.107
-        version: 4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))
+        version: 4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
-        version: 1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(pg@8.22.0)(zod@4.4.3)
+        version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))(pg@8.22.0)(zod@4.4.3)
       effect:
         specifier: 4.0.0-beta.107
-        version: 4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)
+        version: 4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -318,7 +319,7 @@ importers:
         version: link:../shared-contracts
       effect:
         specifier: 4.0.0-beta.107
-        version: 4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)
+        version: 4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)
       jose:
         specifier: 6.2.5
         version: 6.2.5
@@ -334,10 +335,10 @@ importers:
         version: link:../core-runtime
       '@modern-js/plugin-bff':
         specifier: npm:@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12
-        version: '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12(patch_hash=e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0)(76a9f4d76a32c6bb3b280341cf123861)'
+        version: '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12(patch_hash=e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0)(e7b2bba40f7fca088d40067165acde85)'
       effect:
         specifier: 4.0.0-beta.107
-        version: 4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)
+        version: 4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)
     devDependencies:
       '@types/node':
         specifier: 20.19.43
@@ -361,13 +362,13 @@ importers:
         version: link:../../packages/shared-design-tokens
       '@effect/opentelemetry':
         specifier: 4.0.0-beta.107
-        version: 4.0.0-beta.107(@opentelemetry/api-logs@0.220.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.220.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))
+        version: 4.0.0-beta.107(@opentelemetry/api-logs@0.220.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.220.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))
       '@effect/sql-pg':
         specifier: 4.0.0-beta.107
-        version: 4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))
+        version: 4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))
       '@modern-js/plugin-bff':
         specifier: npm:@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12
-        version: '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12(patch_hash=e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0)(76a9f4d76a32c6bb3b280341cf123861)'
+        version: '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12(patch_hash=e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0)(e7b2bba40f7fca088d40067165acde85)'
       '@modern-js/plugin-i18n':
         specifier: npm:@bleedingdev/modern-js-plugin-i18n@3.8.2-ultramodern.12
         version: '@bleedingdev/modern-js-plugin-i18n@3.8.2-ultramodern.12(@bleedingdev/modern-js-runtime@3.8.2-ultramodern.12(@module-federation/runtime-tools@2.8.0)(core-js@3.49.0)(react-dom@19.2.8(react@19.2.8))(react-server-dom-rspack@0.1.0(@rspack/core@2.2.0(@module-federation/runtime-tools@2.8.0)(@swc/helpers@0.5.23))(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8))(@module-federation/runtime-tools@2.8.0)(core-js@3.49.0)(i18next@26.3.6(typescript@7.0.2))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
@@ -388,10 +389,10 @@ importers:
         version: 1.170.25(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
-        version: 1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(pg@8.22.0)(zod@4.4.3)
+        version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))(pg@8.22.0)(zod@4.4.3)
       effect:
         specifier: 4.0.0-beta.107
-        version: 4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)
+        version: 4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)
       i18next:
         specifier: 26.3.6
         version: 26.3.6(typescript@7.0.2)
@@ -9168,11 +9169,11 @@ snapshots:
       '@babel/helper-string-parser': 8.0.0
       '@babel/helper-validator-identifier': 8.0.4
 
-  '@better-auth/api-key@1.7.2(@better-auth/core@1.7.2(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1(patch_hash=9276628e25c79910215b343c608abe336b3636f093565a04953069224d890747))(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.4.3))(jose@6.2.5)(kysely@0.29.4)(nanostores@1.4.2))(@better-auth/utils@0.4.2)(better-auth@1.7.2(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(pg@8.22.0)(zod@4.4.3))(pg@8.22.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(better-call@1.4.0(zod@4.4.3))':
+  '@better-auth/api-key@1.7.2(831f340a6e103a07b479cd8fecebd372)':
     dependencies:
       '@better-auth/core': 1.7.2(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1(patch_hash=9276628e25c79910215b343c608abe336b3636f093565a04953069224d890747))(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.4.3))(jose@6.2.5)(kysely@0.29.4)(nanostores@1.4.2)
       '@better-auth/utils': 0.4.2
-      better-auth: 1.7.2(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(pg@8.22.0)(zod@4.4.3))(pg@8.22.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      better-auth: 1.7.2(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))(pg@8.22.0)(zod@4.4.3))(pg@8.22.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       better-call: 1.4.0(zod@4.4.3)
       zod: 4.4.3
 
@@ -9191,12 +9192,12 @@ snapshots:
       '@cloudflare/workers-types': 5.20260810.1
       '@opentelemetry/api': 1.9.1
 
-  '@better-auth/drizzle-adapter@1.7.2(@better-auth/core@1.7.2(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1(patch_hash=9276628e25c79910215b343c608abe336b3636f093565a04953069224d890747))(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.4.3))(jose@6.2.5)(kysely@0.29.4)(nanostores@1.4.2))(@better-auth/utils@0.4.2)(drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(pg@8.22.0)(zod@4.4.3))':
+  '@better-auth/drizzle-adapter@1.7.2(@better-auth/core@1.7.2(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1(patch_hash=9276628e25c79910215b343c608abe336b3636f093565a04953069224d890747))(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.4.3))(jose@6.2.5)(kysely@0.29.4)(nanostores@1.4.2))(@better-auth/utils@0.4.2)(drizzle-orm@1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))(pg@8.22.0)(zod@4.4.3))':
     dependencies:
       '@better-auth/core': 1.7.2(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1(patch_hash=9276628e25c79910215b343c608abe336b3636f093565a04953069224d890747))(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.4.3))(jose@6.2.5)(kysely@0.29.4)(nanostores@1.4.2)
       '@better-auth/utils': 0.4.2
     optionalDependencies:
-      drizzle-orm: 1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(pg@8.22.0)(zod@4.4.3)
+      drizzle-orm: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))(pg@8.22.0)(zod@4.4.3)
 
   '@better-auth/kysely-adapter@1.7.2(@better-auth/core@1.7.2(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1(patch_hash=9276628e25c79910215b343c608abe336b3636f093565a04953069224d890747))(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.4.3))(jose@6.2.5)(kysely@0.29.4)(nanostores@1.4.2))(@better-auth/utils@0.4.2)(kysely@0.29.4)':
     dependencies:
@@ -9456,7 +9457,7 @@ snapshots:
       - utf-8-validate
       - webpack
 
-  '@bleedingdev/modern-js-code-tools@3.8.2-ultramodern.12(patch_hash=f47cc9b656ff270a7ec5d1407c048fa8ff807bd72b5c491490b4ae07ffffc595)(oxlint-tsgolint@7.0.2001)':
+  '@bleedingdev/modern-js-code-tools@3.8.2-ultramodern.12(patch_hash=227ad960c0ce793da1dee90eeaba8edc310b14a58334be185c7cce71ae59a110)(oxlint-tsgolint@7.0.2001)':
     dependencies:
       oxlint: 1.78.0(oxlint-tsgolint@7.0.2001)
     transitivePeerDependencies:
@@ -9475,7 +9476,7 @@ snapshots:
       - react
       - react-dom
 
-  '@bleedingdev/modern-js-create@3.8.2-ultramodern.12(patch_hash=94333aea6925d878a885616925eaefbc1668fcc0b91bf03f5e7caa12e79da131)(oxlint@1.79.0(oxlint-tsgolint@7.0.2001))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)':
+  '@bleedingdev/modern-js-create@3.8.2-ultramodern.12(patch_hash=c0b541c048a1d25b651f0d6bac2df86969944fc47d3e39f3af6ee7e83250faba)(oxlint@1.79.0(oxlint-tsgolint@7.0.2001))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)':
     dependencies:
       '@modern-js/codesmith': 2.6.9(supports-color@10.2.2)
       '@modern-js/i18n-utils': '@bleedingdev/modern-js-i18n-utils@3.8.2-ultramodern.12(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
@@ -9499,7 +9500,7 @@ snapshots:
       - react
       - react-dom
 
-  '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12(patch_hash=e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0)(02f8732f8d0ac3252ab424ea7a1b32c5)':
+  '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12(patch_hash=e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0)(3a233a8c5baa0ff66c13c170d030459d)':
     dependencies:
       '@modern-js/bff-core': '@bleedingdev/modern-js-bff-core@3.8.2-ultramodern.12(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tsconfig-paths@4.2.0)(zod@4.4.3)'
       '@modern-js/builder': '@bleedingdev/modern-js-builder@3.8.2-ultramodern.12(patch_hash=c5bdbbf89a17e39cb43c17f66a1904ed29a1462b09fd19aaf05c7301cbe4601c)(@emnapi/core@1.11.3)(@emnapi/runtime@1.11.3)(@module-federation/runtime-tools@2.8.0)(@rspack/core@2.2.0(@module-federation/runtime-tools@2.8.0)(@swc/helpers@0.5.23))(clean-css@5.3.3)(csso@5.0.5)(esbuild@0.28.1)(lightningcss@1.33.0)(react-dom@19.2.8(react@19.2.8))(react-server-dom-rspack@0.1.0(@rspack/core@2.2.0(@module-federation/runtime-tools@2.8.0)(@swc/helpers@0.5.23))(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)(rsbuild-plugin-rsc@0.1.1(@rsbuild/core@2.2.0-rc.0(@module-federation/runtime-tools@2.8.0)(core-js@3.49.0))(react-server-dom-rspack@0.1.0(@rspack/core@2.2.0(@module-federation/runtime-tools@2.8.0)(@swc/helpers@0.5.23))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)))(supports-color@10.2.2)(tslib@2.8.1)(typescript@7.0.2)(webpack@5.108.4(@swc/core@1.15.43(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@8.0.2(postcss@8.5.26))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.26))'
@@ -9523,8 +9524,8 @@ snapshots:
       qs: 6.15.3
       type-is: 2.1.0
     optionalDependencies:
-      '@effect/opentelemetry': 4.0.0-beta.107(@opentelemetry/api-logs@0.220.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.220.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))
-      effect: 4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)
+      '@effect/opentelemetry': 4.0.0-beta.107(@opentelemetry/api-logs@0.220.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.220.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))
+      effect: 4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)
     transitivePeerDependencies:
       - '@emnapi/core'
       - '@emnapi/runtime'
@@ -9550,7 +9551,7 @@ snapshots:
       - webpack
       - zod
 
-  '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12(patch_hash=e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0)(76a9f4d76a32c6bb3b280341cf123861)':
+  '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12(patch_hash=e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0)(e7b2bba40f7fca088d40067165acde85)':
     dependencies:
       '@modern-js/bff-core': '@bleedingdev/modern-js-bff-core@3.8.2-ultramodern.12(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tsconfig-paths@4.2.0)(zod@4.4.3)'
       '@modern-js/builder': '@bleedingdev/modern-js-builder@3.8.2-ultramodern.12(patch_hash=c5bdbbf89a17e39cb43c17f66a1904ed29a1462b09fd19aaf05c7301cbe4601c)(@emnapi/core@1.11.3)(@emnapi/runtime@1.11.3)(@module-federation/runtime-tools@2.8.0)(@rspack/core@2.2.0(@module-federation/runtime-tools@2.8.0)(@swc/helpers@0.5.23))(clean-css@5.3.3)(csso@5.0.5)(esbuild@0.28.1)(lightningcss@1.33.0)(react-dom@19.2.8(react@19.2.8))(react-server-dom-rspack@0.1.0(@rspack/core@2.2.0(@module-federation/runtime-tools@2.8.0)(@swc/helpers@0.5.23))(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)(rsbuild-plugin-rsc@0.1.1(@rsbuild/core@2.2.0(@module-federation/runtime-tools@2.8.0)(core-js@3.49.0))(react-server-dom-rspack@0.1.0(@rspack/core@2.2.0(@module-federation/runtime-tools@2.8.0)(@swc/helpers@0.5.23))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)))(supports-color@10.2.2)(tslib@2.8.1)(typescript@7.0.2)(webpack@5.108.4(@swc/core@1.15.43(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@8.0.2(postcss@8.5.26))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.26))'
@@ -9574,8 +9575,8 @@ snapshots:
       qs: 6.15.3
       type-is: 2.1.0
     optionalDependencies:
-      '@effect/opentelemetry': 4.0.0-beta.107(@opentelemetry/api-logs@0.220.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.220.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))
-      effect: 4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)
+      '@effect/opentelemetry': 4.0.0-beta.107(@opentelemetry/api-logs@0.220.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.220.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))
+      effect: 4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)
     transitivePeerDependencies:
       - '@emnapi/core'
       - '@emnapi/runtime'
@@ -9904,10 +9905,10 @@ snapshots:
 
   '@drizzle-team/brocli@0.12.0': {}
 
-  '@effect/opentelemetry@4.0.0-beta.107(@opentelemetry/api-logs@0.220.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.220.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))':
+  '@effect/opentelemetry@4.0.0-beta.107(@opentelemetry/api-logs@0.220.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.220.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))':
     dependencies:
       '@opentelemetry/semantic-conventions': 1.43.0
-      effect: 4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)
+      effect: 4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/api-logs': 0.220.0
@@ -9918,19 +9919,19 @@ snapshots:
       '@opentelemetry/sdk-trace-node': 2.9.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/sdk-trace-web': 2.9.0(@opentelemetry/api@1.9.1)
 
-  '@effect/platform-node-shared@4.0.0-rc.112(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))':
+  '@effect/platform-node-shared@4.0.0-rc.112(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))':
     dependencies:
       '@types/ws': 8.18.1
-      effect: 4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)
+      effect: 4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)
       ws: 8.21.3
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(ioredis@5.11.1(supports-color@10.2.2))':
+  '@effect/platform-node@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))(ioredis@5.11.1(supports-color@10.2.2))':
     dependencies:
-      '@effect/platform-node-shared': 4.0.0-rc.112(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))
-      effect: 4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)
+      '@effect/platform-node-shared': 4.0.0-rc.112(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))
+      effect: 4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)
       ioredis: 5.11.1(supports-color@10.2.2)
       mime: 4.1.0
       undici: 8.10.1
@@ -9938,9 +9939,9 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))':
+  '@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))':
     dependencies:
-      effect: 4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)
+      effect: 4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)
       pg: 8.22.0
       pg-connection-string: 2.14.0
       pg-cursor: 2.22.0(pg@8.22.0)
@@ -13245,10 +13246,10 @@ snapshots:
 
   baseline-browser-mapping@2.11.19: {}
 
-  better-auth@1.7.2(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(pg@8.22.0)(zod@4.4.3))(pg@8.22.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+  better-auth@1.7.2(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))(pg@8.22.0)(zod@4.4.3))(pg@8.22.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     dependencies:
       '@better-auth/core': 1.7.2(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1(patch_hash=9276628e25c79910215b343c608abe336b3636f093565a04953069224d890747))(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.4.3))(jose@6.2.5)(kysely@0.29.4)(nanostores@1.4.2)
-      '@better-auth/drizzle-adapter': 1.7.2(@better-auth/core@1.7.2(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1(patch_hash=9276628e25c79910215b343c608abe336b3636f093565a04953069224d890747))(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.4.3))(jose@6.2.5)(kysely@0.29.4)(nanostores@1.4.2))(@better-auth/utils@0.4.2)(drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(pg@8.22.0)(zod@4.4.3))
+      '@better-auth/drizzle-adapter': 1.7.2(@better-auth/core@1.7.2(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1(patch_hash=9276628e25c79910215b343c608abe336b3636f093565a04953069224d890747))(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.4.3))(jose@6.2.5)(kysely@0.29.4)(nanostores@1.4.2))(@better-auth/utils@0.4.2)(drizzle-orm@1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))(pg@8.22.0)(zod@4.4.3))
       '@better-auth/kysely-adapter': 1.7.2(@better-auth/core@1.7.2(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1(patch_hash=9276628e25c79910215b343c608abe336b3636f093565a04953069224d890747))(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.4.3))(jose@6.2.5)(kysely@0.29.4)(nanostores@1.4.2))(@better-auth/utils@0.4.2)(kysely@0.29.4)
       '@better-auth/memory-adapter': 1.7.2(@better-auth/core@1.7.2(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1(patch_hash=9276628e25c79910215b343c608abe336b3636f093565a04953069224d890747))(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.4.3))(jose@6.2.5)(kysely@0.29.4)(nanostores@1.4.2))(@better-auth/utils@0.4.2)
       '@better-auth/mongo-adapter': 1.7.2(@better-auth/core@1.7.2(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1(patch_hash=9276628e25c79910215b343c608abe336b3636f093565a04953069224d890747))(@cloudflare/workers-types@5.20260810.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.4.3))(jose@6.2.5)(kysely@0.29.4)(nanostores@1.4.2))(@better-auth/utils@0.4.2)
@@ -13266,7 +13267,7 @@ snapshots:
       zod: 4.4.3
     optionalDependencies:
       drizzle-kit: 1.0.0-rc.5-ab785fc
-      drizzle-orm: 1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(pg@8.22.0)(zod@4.4.3)
+      drizzle-orm: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))(pg@8.22.0)(zod@4.4.3)
       pg: 8.22.0
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
@@ -13826,15 +13827,15 @@ snapshots:
       get-tsconfig: 4.14.3
       jiti: 2.7.0
 
-  drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))(pg@8.22.0)(zod@4.4.3):
+  drizzle-orm@1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260810.1)(@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))(pg@8.22.0)(zod@4.4.3):
     optionalDependencies:
       '@cloudflare/workers-types': 5.20260810.1
-      '@effect/sql-pg': 4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f))
+      '@effect/sql-pg': 4.0.0-beta.107(effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98))
       '@opentelemetry/api': 1.9.1
       '@sinclair/typebox': 0.34.52
       '@types/pg': 8.20.0
       bun-types: 1.4.0
-      effect: 4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f)
+      effect: 4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98)
       pg: 8.22.0
       zod: 4.4.3
 
@@ -13846,7 +13847,7 @@ snapshots:
 
   eastasianwidth@0.2.0: {}
 
-  effect@4.0.0-beta.107(patch_hash=ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f):
+  effect@4.0.0-beta.107(patch_hash=88f3b14039aa2f5b39430af1b0034f5dfed1b4d4191bef99e8dfc58fc9ab3e98):
     dependencies:
       '@standard-schema/spec': 1.1.0
       fast-check: 4.9.0

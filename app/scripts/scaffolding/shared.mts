@@ -1593,23 +1593,13 @@ const isGeneratedSlotFluentBoundary = (
   /\n\s*\.$/u.test(source) &&
   isCompleteFluentSlotTail(state, source.slice(0, -1));
 
-const splitGeneratedSlotEntries = (slotBody: string): readonly string[] => {
-  const body = dedentGeneratedSlotBody(slotBody);
-  if (body.length === 0) {
-    return [];
-  }
-  const entries: string[] = [];
-  const fluentTailBoundaries: number[] = [];
+const scanGeneratedSlotEntries = (
+  body: string,
+  state: GeneratedSlotScanState,
+  entries: string[],
+  fluentTailBoundaries: number[],
+): string => {
   let current = '';
-  const state: GeneratedSlotScanState = {
-    blockComment: false,
-    braces: 0,
-    brackets: 0,
-    escaped: false,
-    lineComment: false,
-    parentheses: 0,
-    quote: null,
-  };
   for (let index = 0; index < body.length; index += 1) {
     const character = body.charAt(index);
     const previousCharacter = body.charAt(index - 1);
@@ -1633,6 +1623,26 @@ const splitGeneratedSlotEntries = (slotBody: string): readonly string[] => {
       fluentTailBoundaries.length = 0;
     }
   }
+  return current;
+};
+
+const splitGeneratedSlotEntries = (slotBody: string): readonly string[] => {
+  const body = dedentGeneratedSlotBody(slotBody);
+  if (body.length === 0) {
+    return [];
+  }
+  const entries: string[] = [];
+  const fluentTailBoundaries: number[] = [];
+  const state: GeneratedSlotScanState = {
+    blockComment: false,
+    braces: 0,
+    brackets: 0,
+    escaped: false,
+    lineComment: false,
+    parentheses: 0,
+    quote: null,
+  };
+  let current = scanGeneratedSlotEntries(body, state, entries, fluentTailBoundaries);
   if (isCompleteFluentSlotTail(state, current)) {
     entries.push(
       ...[0, ...fluentTailBoundaries].map((start, index) =>

@@ -14,9 +14,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Schema } from 'effect';
+import { Effect, Layer, Schema } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
-import { runEffectTestPromise } from '../../packages/core-runtime/src/testing/effect-runtime.ts';
+import {
+  makeEffectTestCallback,
+  runEffectTestPromise,
+} from '../../packages/core-runtime/src/testing/effect-runtime.ts';
 import { auditSteps, runQualityAudit, validateReport } from '../quality-audit.mts';
 
 const FALLOW_CLONES = 'fallow-clones';
@@ -24,6 +27,8 @@ const FALLOW_SIMILARITY = 'fallow-similarity';
 const FALLOW_HEALTH = 'fallow-health';
 const CONFIG_DIRECTORY = 'quality-audit';
 const REPORT_DIRECTORY = 'reports';
+const SUMMARY_FILE = 'summary.json';
+const GITIGNORE_FILE = '.gitignore';
 const KNIP_CONFIG = 'quality-audit/knip.json';
 const CALLER_OWNED_FILE = 'caller-owned.txt';
 const ProvenanceSchema = Schema.fromJsonString(
@@ -212,7 +217,7 @@ const SummarySchema = Schema.Struct({
 const summary = async (output: string) =>
   await runEffectTestPromise(
     Schema.decodeUnknownEffect(Schema.fromJsonString(SummarySchema))(
-      readFileSync(path.join(output, 'summary.json'), 'utf-8'),
+      readFileSync(path.join(output, SUMMARY_FILE), 'utf-8'),
     ),
   );
 
@@ -430,7 +435,7 @@ await test('missing binaries and an empty source scope fail with preserved summa
       },
     ]);
     assert.match(
-      readFileSync(path.join(output, 'summary.json'), 'utf-8'),
+      readFileSync(path.join(output, SUMMARY_FILE), 'utf-8'),
       /Source inventory: analysis contains no files/u,
     );
   } finally {
@@ -455,6 +460,10 @@ await test('the CLI handles escaped paths, foreign cwd and untracked source prov
     );
     const executable = path.join(root, 'scripts/quality audit.mts');
     copyFileSync(path.join(appRoot, 'scripts/quality-audit.mts'), executable);
+    copyFileSync(
+      path.join(appRoot, 'scripts/quality-cli-lifecycle.mts'),
+      path.join(root, 'scripts/quality-cli-lifecycle.mts'),
+    );
     for (const file of ['knip-model.mts', 'knip-runtime-model.mts']) {
       copyFileSync(
         path.join(appRoot, CONFIG_DIRECTORY, file),
@@ -486,6 +495,62 @@ await test('the CLI handles escaped paths, foreign cwd and untracked source prov
     rmSync(root, { force: true, recursive: true });
   }
 });
+
+void test(
+  'external report directories preserve valid Fallow exclusions and source coverage',
+  makeEffectTestCallback(
+    Effect.scoped(
+      Layer.build(
+        Layer.effectDiscard(
+          Effect.gen(function* externalReportDirectory() {
+            const root = yield* Effect.acquireRelease(Effect.promise(createFixture), (directory) =>
+              Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
+            );
+            const output = yield* Effect.acquireRelease(
+              Effect.sync(() => mkdtempSync(path.join(tmpdir(), 'ontos-external-report-'))),
+              (directory) => Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
+            );
+            const generatedTypes = path.join(root, 'apps/shell/@mf-types/remote');
+            mkdirSync(generatedTypes, { recursive: true });
+            writeFileSync(path.join(root, GITIGNORE_FILE), '**/@mf-types/\n');
+            const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+            const initialized = yield* spawner.exitCode(
+              ChildProcess.make('git', ['init', '-q'], { cwd: root }),
+            );
+            assert.equal(Number(initialized), 0);
+            writeFileSync(
+              path.join(generatedTypes, 'index.d.ts'),
+              'export declare const remoteComponent: unknown;\n',
+            );
+            yield* runQualityAudit(root, output, 'fallow');
+            const result = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(SummarySchema))(
+              readFileSync(path.join(output, SUMMARY_FILE), 'utf-8'),
+            );
+            assert.equal(result.status, 'reported');
+            assert.equal(result.results.length, 4);
+            assert.ok(result.results.every((row) => row.status === 'reported' && row.files > 0));
+            const coverage = yield* Schema.decodeUnknownEffect(
+              Schema.fromJsonString(
+                Schema.Struct({
+                  extra: Schema.Array(Schema.String),
+                  intendedSources: Schema.Number,
+                  missing: Schema.Array(Schema.String),
+                }),
+              ),
+            )(readFileSync(path.join(result.runDirectory, 'coverage.json'), 'utf-8'));
+            // Two authored fixture sources plus the copied Knip reporter, not remote declarations.
+            assert.deepEqual(coverage, { extra: [], intendedSources: 3, missing: [] });
+            assert.ok(result.results.some((row) => row.name === FALLOW_HEALTH && row.findings > 0));
+            assert.equal(
+              readFileSync(path.join(result.runDirectory, 'configs/fallow.json'), 'utf-8'),
+              readFileSync(path.join(root, 'quality-audit/fallow.json'), 'utf-8'),
+            );
+          }),
+        ).pipe(Layer.provide(NodeServices.layer)),
+      ),
+    ),
+  ),
+);
 
 await test('output inside a source root fails before creating analyzer snapshots', async () => {
   const root = await createFixture();
@@ -538,13 +603,13 @@ await test('custom output does not mark clean source provenance as modified', as
   const root = await createFixture();
   const output = path.join(root, REPORT_DIRECTORY);
   try {
-    writeFileSync(path.join(root, '.gitignore'), 'node_modules\n.codex\n');
+    writeFileSync(path.join(root, GITIGNORE_FILE), 'node_modules\n.codex\n');
     await runEffectTestPromise(
       Effect.gen(function* commitFixture() {
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const commands = [
           ['init', '-q'],
-          ['add', '.gitignore', 'package.json', CONFIG_DIRECTORY, 'scripts'],
+          ['add', GITIGNORE_FILE, 'package.json', CONFIG_DIRECTORY, 'scripts'],
           [
             '-c',
             `core.hooksPath=${path.join(root, '.git/no-hooks')}`,

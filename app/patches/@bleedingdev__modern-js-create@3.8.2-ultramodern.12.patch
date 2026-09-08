@@ -703,7 +703,7 @@ index 45a7179587e8ab49d1828ba05d25241acad5db82..3fcaa7833e9a1f1b3917470796a6ea34
  const moduleFederationConfig: Parameters<
    typeof createModuleFederationConfig
 diff --git a/dist/cjs/ultramodern-workspace/module-federation/reexport-module.cjs b/dist/cjs/ultramodern-workspace/module-federation/reexport-module.cjs
-index ef811e6023d5790d8d0bb388455f3b59e9a25707..69a2929c4a71799340a5838d8b52cbed879e8130 100644
+index ef811e6023d5790d8d0bb388455f3b59e9a25707..6267913c4afa69b78b07cd7fb4d82e146ad7e1f9 100644
 --- a/dist/cjs/ultramodern-workspace/module-federation/reexport-module.cjs
 +++ b/dist/cjs/ultramodern-workspace/module-federation/reexport-module.cjs
 @@ -47,14 +47,24 @@ function createUltramodernBuildModule(scope, app) {
@@ -739,6 +739,29 @@ index ef811e6023d5790d8d0bb388455f3b59e9a25707..69a2929c4a71799340a5838d8b52cbed
  const ultramodernBuildArtifact = {
    ...ultramodernGeneratedBuildArtifact,
    deliveryUnit: {
+@@ -79,22 +89,17 @@ const ultramodernBuildArtifact = {
+   },
+ } as const;
+ 
+-export { ultramodernBuildArtifact };
+-
+ export const ultramodernDeliveryUnit =
+   ultramodernBuildArtifact.deliveryUnit;
+-export const ultramodernVerticalIdentity = ultramodernDeliveryUnit;
+ export const ultramodernUiMarker = ultramodernBuildArtifact.surfaces.ui;
+ export const ultramodernApiMarker = ultramodernBuildArtifact.surfaces.api;
+ `;
+ }
+ function createUltramodernBuildReexportModule() {
+     return `export {
+-  ultramodernBuildArtifact,
+   ultramodernApiMarker,
+   ultramodernDeliveryUnit,
+   ultramodernUiMarker,
+-  ultramodernVerticalIdentity,
+ } from '../shared/ultramodern-build';
+ `;
+ }
 diff --git a/dist/cjs/ultramodern-workspace/package-json.cjs b/dist/cjs/ultramodern-workspace/package-json.cjs
 index 312a3b3c5caa8c007906c22f589972928efa71e6..d5f2acfbb76cea1d40615f4cf702bd3d845baa51 100644
 --- a/dist/cjs/ultramodern-workspace/package-json.cjs
@@ -872,6 +895,913 @@ index b239e505a9db2a5d5620a223c96ae986c36b11db..6e124abb2f2c7fb3dacc05bd82671d03
      (0, external_workspace_scripts_cjs_namespaceObject.writeGeneratedWorkspaceScripts)(options.targetDir, scope, enableTailwind, initialVerticals, releaseCohort);
      const preliminaryAfterFiles = (0, external_generation_result_cjs_namespaceObject.createFileSnapshot)(options.targetDir);
      const preliminaryDiff = (0, external_generation_result_cjs_namespaceObject.diffFileSnapshots)(beforeFiles, preliminaryAfterFiles);
+diff --git a/dist/esm/ultramodern-workspace/api/client.js b/dist/esm/ultramodern-workspace/api/client.js
+index 254d58c84d5ba27b142539059961de4abb4749ab..7ac63ef2b979028a220cbfa2154562a78528d49e 100644
+--- a/dist/esm/ultramodern-workspace/api/client.js
++++ b/dist/esm/ultramodern-workspace/api/client.js
+@@ -118,7 +118,7 @@ export const ${readinessName} = (
+     operationContext:
+       options.operationContext ?? ${groupName}OperationContexts.readiness,
+   }).pipe(
+-    Effect.flatMap(client => client.${groupName}.readiness({})),
++    Effect.flatMap(client => client.foundation.readiness({})),
+   );
+ 
+ export const ${getName} = (
+diff --git a/dist/esm/ultramodern-workspace/api/service.js b/dist/esm/ultramodern-workspace/api/service.js
+index 92e2c050f9b499571236d28f6bb0c6fffc085e47..ef0047a0a8be2983ddcc26809e9317b99aa121a0 100644
+--- a/dist/esm/ultramodern-workspace/api/service.js
++++ b/dist/esm/ultramodern-workspace/api/service.js
+@@ -4,23 +4,20 @@ import { packageName } from "../naming.js";
+ import { createCheckoutCartServerHandlers, createCheckoutCartServerState } from "./checkout-cart.js";
+ import { verticalApiExport, verticalApiGroupName, verticalApiNotFoundErrorExport } from "./names.js";
+ import { createRpcApiServiceEntry, rpcPath, verticalRpcContractExport, verticalRpcGroupExport } from "./rpc.js";
+-function createApiServiceEntry(service, contractImportPath) {
++function createApiServiceEntry(scope, service, contractImportPath) {
+     if ((service.api?.protocol ?? 'rest') === 'rpc') return createRpcApiServiceEntry(service);
+     const apiExport = verticalApiExport(service);
+     const groupName = verticalApiGroupName(service);
+     const notFoundErrorExport = verticalApiNotFoundErrorExport(service);
+     const stem = resolveApiStem(service);
+-    return `import {
+-  defineEffectBff,
++    const sharedContractsPackage = packageName(scope, 'shared-contracts');
++    return `import { assembleEffectBffRuntime } from '${packageName(scope, 'shared-contracts')}/server/effect-bff-runtime';
++import {
+   Effect,
+   HttpApiBuilder,
+   Layer,
+ } from '@modern-js/plugin-bff/effect-edge';
+-import type {
+-  EffectBffDefinition,
+-  EffectBffRuntime,
+-  EffectRuntimeLayer,
+-} from '@modern-js/plugin-bff/effect-edge';
++import { microVerticalOperationAttributes } from '${sharedContractsPackage}';
+ import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
+ import {
+   ${apiExport},
+@@ -28,7 +25,6 @@ import {
+ } from '${contractImportPath}';
+ import type {
+   ${notFoundErrorExport},
+-  OperationContext,
+ } from '${contractImportPath}';
+ 
+ const ${groupName}Items = [
+@@ -40,15 +36,29 @@ const ${groupName}Items = [
+ ];
+ ${createCheckoutCartServerState(service)}
+ 
+-const operationAttributes = (operationContext: OperationContext) => ({
+-    'modernjs.operation.id': operationContext.operationId,
+-    'modernjs.operation.method': operationContext.method,
+-    'modernjs.operation.route': operationContext.routePath,
+-    'modernjs.operation.source': operationContext.source,
+-    ...(typeof operationContext.traceId === 'string'
+-      ? { 'modernjs.trace.id': operationContext.traceId }
+-      : {}),
+-  });
++const ${groupName}ReadinessLayer = HttpApiBuilder.group(
++  ${apiExport},
++  'foundation',
++  handlers =>
++    handlers.handle('readiness', () =>
++      Effect.succeed({
++        checks: {
++          api: 'ready' as const,
++          moduleFederation: 'ready' as const,
++          ssr: 'ready' as const,
++          translations: 'ready' as const,
++        },
++        marker: ultramodernApiMarker,
++        status: 'ready' as const,
++        versionSkew: 'none' as const,
++      }).pipe(
++        Effect.withSpan('ultramodern.api.${groupName}.readiness', {
++          attributes: microVerticalOperationAttributes(${groupName}OperationContexts.readiness),
++          kind: 'server',
++        }),
++      ),
++    ),
++);
+ 
+ const ${groupName}Layer = HttpApiBuilder.group(
+   ${apiExport},
+@@ -63,25 +73,7 @@ const ${groupName}Layer = HttpApiBuilder.group(
+               : ${groupName}Items,
+         }).pipe(
+           Effect.withSpan('ultramodern.api.${groupName}.list', {
+-            attributes: operationAttributes(${groupName}OperationContexts.list),
+-            kind: 'server',
+-          }),
+-        ),
+-      )
+-      .handle('readiness', () =>
+-        Effect.succeed({
+-          checks: {
+-            api: 'ready' as const,
+-            moduleFederation: 'ready' as const,
+-            ssr: 'ready' as const,
+-            translations: 'ready' as const,
+-          },
+-          marker: ultramodernApiMarker,
+-          status: 'ready' as const,
+-          versionSkew: 'none' as const,
+-        }).pipe(
+-          Effect.withSpan('ultramodern.api.${groupName}.readiness', {
+-            attributes: operationAttributes(${groupName}OperationContexts.readiness),
++            attributes: microVerticalOperationAttributes(${groupName}OperationContexts.list),
+             kind: 'server',
+           }),
+         ),
+@@ -101,7 +93,7 @@ const ${groupName}Layer = HttpApiBuilder.group(
+ 
+         return result.pipe(
+             Effect.withSpan('ultramodern.api.${groupName}.get', {
+-              attributes: operationAttributes(${groupName}OperationContexts.get),
++              attributes: microVerticalOperationAttributes(${groupName}OperationContexts.get),
+               kind: 'server',
+             }),
+           );
+@@ -118,21 +110,21 @@ const ${groupName}Layer = HttpApiBuilder.group(
+           },
+         }).pipe(
+           Effect.withSpan('ultramodern.api.${groupName}.create', {
+-            attributes: operationAttributes(${groupName}OperationContexts.create),
++            attributes: microVerticalOperationAttributes(${groupName}OperationContexts.create),
+             kind: 'server',
+           }),
+         ),
+       )${createCheckoutCartServerHandlers(service)},
+ );
+ 
+-const layer = HttpApiBuilder.layer(${apiExport}).pipe(
+-  Layer.provide(${groupName}Layer),
+-) satisfies EffectRuntimeLayer;
+-const apiRuntime: EffectBffDefinition<typeof ${apiExport}, EffectRuntimeLayer> &
+-  EffectBffRuntime<typeof ${apiExport}, EffectRuntimeLayer> = defineEffectBff({
+-  api: ${apiExport},
+-  layer,
+-});
++const apiHandlersLive = Layer.mergeAll(${groupName}Layer, ${groupName}ReadinessLayer);
++export const make${apiExport[0].toUpperCase()}${apiExport.slice(1)}Runtime = () => {
++  return assembleEffectBffRuntime({
++    api: ${apiExport},
++    handlers: apiHandlersLive,
++  });
++};
++const apiRuntime = make${apiExport[0].toUpperCase()}${apiExport.slice(1)}Runtime();
+ 
+ export default apiRuntime;
+ `;
+diff --git a/dist/esm/ultramodern-workspace/api/shared.js b/dist/esm/ultramodern-workspace/api/shared.js
+index a01a243a186a98d9b48fbc420d8b74a8e3b0095e..3e99a71932122d02acffeacbea0ff99454a768a4 100644
+--- a/dist/esm/ultramodern-workspace/api/shared.js
++++ b/dist/esm/ultramodern-workspace/api/shared.js
+@@ -1,9 +1,10 @@
+ import { resolveApiPrefix, resolveApiStem } from "../descriptors.js";
+ import { renderTemplate } from "../fs-io.js";
+-import { toPascalCase } from "../naming.js";
++import { packageName, toPascalCase } from "../naming.js";
+ import { createCheckoutCartApiContractFields, createCheckoutCartEndpointDefinitions, createCheckoutCartOperationContexts, createCheckoutCartSharedSchemas } from "./checkout-cart.js";
+ import { verticalApiCreatePayloadSchemaExport, verticalApiExport, verticalApiGroupName, verticalApiMarkerSchemaExport, verticalApiName, verticalApiNotFoundErrorExport, verticalApiNotFoundSchemaExport, verticalApiReadinessSchemaExport, verticalApiSchemaExport } from "./names.js";
+-function createSharedApiImports() {
++function createSharedApiImports(scope) {
++    const sharedContractsPackage = packageName(scope, 'shared-contracts');
+     return `import {
+   HttpApi,
+   HttpApiEndpoint,
+@@ -11,6 +12,16 @@ function createSharedApiImports() {
+   HttpApiSchema,
+   Schema,
+ } from '@modern-js/plugin-bff/effect-client';
++import {
++  MicroVerticalBuildMarkerSchema,
++  MicroVerticalReadinessSchema,
++  createMicroVerticalOperationContext,
++} from '${sharedContractsPackage}';
++import type {
++  MicroVerticalBuildMarker,
++  MicroVerticalOperationContext,
++  MicroVerticalReadiness,
++} from '${sharedContractsPackage}';
+ `;
+ }
+ function createSharedApiContract(service) {
+@@ -34,30 +45,26 @@ function createSharedApiContract(service) {
+     const apiPrefix = resolveApiPrefix(service);
+     const checkoutCartSharedSchemas = createCheckoutCartSharedSchemas(service);
+     const checkoutCartSharedSchemaSection = '' === checkoutCartSharedSchemas ? '' : `${checkoutCartSharedSchemas}\n`;
+-    const createOperationContext = `  create: {
++    const createOperationContext = `  create: createMicroVerticalOperationContext({
+     method: 'POST',
+     operationId: '${apiName}:${groupName}:create',
+     routePath: '/${stem}',
+-    source: 'generated-client',
+-  },`;
+-    const getOperationContext = `  get: {
++  }),`;
++    const getOperationContext = `  get: createMicroVerticalOperationContext({
+     method: 'GET',
+     operationId: '${apiName}:${groupName}:get',
+     routePath: '/${stem}/:id',
+-    source: 'generated-client',
+-  },`;
+-    const listOperationContext = `  list: {
++  }),`;
++    const listOperationContext = `  list: createMicroVerticalOperationContext({
+     method: 'GET',
+     operationId: '${apiName}:${groupName}:list',
+     routePath: '/${stem}',
+-    source: 'generated-client',
+-  },`;
+-    const readinessOperationContext = `  readiness: {
++  }),`;
++    const readinessOperationContext = `  readiness: createMicroVerticalOperationContext({
+     method: 'GET',
+     operationId: '${apiName}:${groupName}:readiness',
+     routePath: '/${stem}/readiness',
+-    source: 'generated-client',
+-  },`;
++  }),`;
+     const checkoutCartOperationContextTemplate = createCheckoutCartOperationContexts(service);
+     const operationContextEntries = '' === checkoutCartOperationContextTemplate ? [
+         createOperationContext,
+@@ -70,17 +77,7 @@ function createSharedApiContract(service) {
+         listOperationContext,
+         readinessOperationContext
+     }).trim();
+-    return `export interface ${markerType} {
+-  readonly appId: string;
+-  readonly build: string;
+-  readonly buildMarker: string;
+-  readonly deployProfile: string;
+-  readonly packageName: string;
+-  readonly sourceRevision: string;
+-  readonly surface: string;
+-  readonly unitId: string;
+-  readonly version: string;
+-}
++    return `export type ${markerType} = MicroVerticalBuildMarker;
+ 
+ export interface ${itemType} {
+   readonly id: string;
+@@ -88,17 +85,7 @@ export interface ${itemType} {
+   readonly title: string;
+ }
+ 
+-export interface ${readinessType} {
+-  readonly checks: {
+-    readonly api: 'ready';
+-    readonly moduleFederation: 'ready';
+-    readonly ssr: 'ready';
+-    readonly translations: 'ready';
+-  };
+-  readonly marker: ${markerType};
+-  readonly status: 'ready';
+-  readonly versionSkew: 'none';
+-}
++export type ${readinessType} = MicroVerticalReadiness;
+ 
+ export interface ${createPayloadType} {
+   readonly title: string;
+@@ -117,17 +104,8 @@ export interface ${notFoundErrorExport} {
+   readonly id: string;
+ }
+ 
+-export const ${markerSchemaExport}: Schema.Codec<${markerType}> = Schema.Struct({
+-  appId: Schema.String,
+-  build: Schema.String,
+-  buildMarker: Schema.String,
+-  deployProfile: Schema.String,
+-  packageName: Schema.String,
+-  sourceRevision: Schema.String,
+-  surface: Schema.String,
+-  unitId: Schema.String,
+-  version: Schema.String,
+-});
++export const ${markerSchemaExport}: Schema.Codec<${markerType}> =
++  MicroVerticalBuildMarkerSchema;
+ 
+ export const ${schemaExport}: Schema.Codec<${itemType}> = Schema.Struct({
+   id: Schema.String,
+@@ -135,17 +113,8 @@ export const ${schemaExport}: Schema.Codec<${itemType}> = Schema.Struct({
+   title: Schema.String,
+ });
+ 
+-export const ${readinessSchemaExport}: Schema.Codec<${readinessType}> = Schema.Struct({
+-  checks: Schema.Struct({
+-    api: Schema.Literal('ready'),
+-    moduleFederation: Schema.Literal('ready'),
+-    ssr: Schema.Literal('ready'),
+-    translations: Schema.Literal('ready'),
+-  }),
+-  marker: ${markerSchemaExport},
+-  status: Schema.Literal('ready'),
+-  versionSkew: Schema.Literal('none'),
+-});
++export const ${readinessSchemaExport}: Schema.Codec<${readinessType}> =
++  MicroVerticalReadinessSchema;
+ 
+ export const ${createPayloadSchemaExport}: Schema.Codec<${createPayloadType}> = Schema.Struct({
+   title: Schema.String,
+@@ -157,38 +126,31 @@ ${checkoutCartSharedSchemaSection}export const ${notFoundSchemaExport}: Schema.C
+   HttpApiSchema.status(404),
+ );
+ 
+-export interface OperationContext {
+-  method: string;
+-  operationId: string;
+-  routePath: string;
+-  source:
+-    | 'client'
+-    | 'server'
+-    | 'generated-client'
+-    | 'effect-adapter'
+-    | 'data-platform'
+-    | 'unknown';
+-  traceId?: string;
+-}
++export type OperationContext = MicroVerticalOperationContext;
+ 
+-export const ${apiExport} = HttpApi.make('${apiName}').add(
+-  HttpApiGroup.make('${groupName}')
+-    .add(
+-      HttpApiEndpoint.get('list', '/${stem}', {
+-        query: {
+-          limit: Schema.optional(Schema.FiniteFromString),
+-        },
+-        success: Schema.Struct({
+-          items: Schema.Array(${schemaExport}),
++export const ${groupName}FoundationApi = HttpApi.make('${apiName}Foundation').add(
++  HttpApiGroup.make('foundation').add(
++    HttpApiEndpoint.get('readiness', '/${stem}/readiness', {
++      success: ${readinessSchemaExport},
++    }),
++  ),
++);
++
++export const ${apiExport} = HttpApi.make('${apiName}')
++  .addHttpApi(${groupName}FoundationApi)
++  .add(
++    HttpApiGroup.make('${groupName}')
++      .add(
++        HttpApiEndpoint.get('list', '/${stem}', {
++          query: {
++            limit: Schema.optional(Schema.FiniteFromString),
++          },
++          success: Schema.Struct({
++            items: Schema.Array(${schemaExport}),
++          }),
+         }),
+-      }),
+-    )
+-    .add(
+-      HttpApiEndpoint.get('readiness', '/${stem}/readiness', {
+-        success: ${readinessSchemaExport},
+-      }),
+-    )
+-    .add(
++      )
++      .add(
+       HttpApiEndpoint.get('get', '/${stem}/:id', {
+         error: ${notFoundSchemaExport},
+         params: {
+@@ -219,8 +181,8 @@ ${createCheckoutCartApiContractFields(service)}  ownerId: '${service.id}',
+ } as const;
+ `;
+ }
+-function createSharedApi(service) {
+-    return `${createSharedApiImports()}
++function createSharedApi(scope, service) {
++    return `${createSharedApiImports(scope)}
+ ${createSharedApiContract(service)}`;
+ }
+ export { createSharedApi };
+diff --git a/dist/esm/ultramodern-workspace/demo-components.js b/dist/esm/ultramodern-workspace/demo-components.js
+index 4baf232ad01064de66c3dcf8b913a99b4754e5ce..3b5ff3fbf21fdd396bd0a230457798e07a6603fd 100644
+--- a/dist/esm/ultramodern-workspace/demo-components.js
++++ b/dist/esm/ultramodern-workspace/demo-components.js
+@@ -266,13 +266,13 @@ function createLayout(appId) {
+     return `import { Outlet } from '@modern-js/plugin-tanstack/runtime';
+ import './index.css';
+ 
+-export default function Layout() {
+-  return (
+-    <div data-app-id="${appId}">
+-      <Outlet />
+-    </div>
+-  );
+-}
++const Layout = () => (
++  <div data-app-id="${appId}">
++    <Outlet />
++  </div>
++);
++
++export default Layout;
+ `;
+ }
+ function createRemoteEntry(app) {
+diff --git a/dist/esm/ultramodern-workspace/mf-validation/constants.js b/dist/esm/ultramodern-workspace/mf-validation/constants.js
+index eb2e286b9e3f8dfd6fdb3b0e4473efcc87d2f0a6..32509a4e998fa4dec3ef4d53fc58a5a2b92c3a20 100644
+--- a/dist/esm/ultramodern-workspace/mf-validation/constants.js
++++ b/dist/esm/ultramodern-workspace/mf-validation/constants.js
+@@ -1,5 +1,5 @@
+ const moduleFederationConfigFile = 'module-federation.config.ts';
+-const mfTypesArchive = 'dist/@mf-types.zip';
++const mfTypesArchive = process.env.ULTRAMODERN_MF_TYPES_ARCHIVE || 'dist/@mf-types.zip';
+ const generatedMetadataPaths = [
+     '.modernjs/ultramodern.json'
+ ];
+diff --git a/dist/esm/ultramodern-workspace/mf-validation/inspect.js b/dist/esm/ultramodern-workspace/mf-validation/inspect.js
+index d3d50e38814b4f1c95815a1bb61065c163ab8772..7f8bc5f5d7699225fadf3d711ab0571fbc4f2e68 100644
+--- a/dist/esm/ultramodern-workspace/mf-validation/inspect.js
++++ b/dist/esm/ultramodern-workspace/mf-validation/inspect.js
+@@ -11,8 +11,12 @@ function extractExposes(configPath, value) {
+     if (array) return array.sort();
+     throw new Error(`Cannot statically extract Module Federation exposes from ${configPath}; use a literal exposes object or string array.`);
+ }
+-function extractDtsSettings(configPath, value) {
++function extractDtsSettings(configPath, value, allowDisabled) {
+     if (void 0 === value) return {};
++    if (value.trim() === 'false') {
++        if (!allowDisabled) throw new Error(`Module Federation DTS cannot be disabled for exposed app ${configPath}.`);
++        return {};
++    }
+     const dts = parseObjectLiteral(value);
+     if (!dts || dts.hasSpread) throw new Error(`Cannot statically extract Module Federation DTS settings from ${configPath}; use a literal dts object.`);
+     const generateTypes = parseObjectLiteral(dts.properties.get('generateTypes'));
+@@ -38,7 +42,7 @@ function inspectModuleFederationConfigSource(source, appDir, configPath) {
+     return {
+         appDir,
+         configPath,
+-        dts: extractDtsSettings(configPath, properties.properties.get('dts')),
++        dts: extractDtsSettings(configPath, properties.properties.get('dts'), exposes.length === 0),
+         exposes,
+         hostOnlyNoExposes
+     };
+diff --git a/dist/esm/ultramodern-workspace/module-federation/config.js b/dist/esm/ultramodern-workspace/module-federation/config.js
+index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..eb3e2e74650a06d7130b77594239ef8b6b3c16a0 100644
+--- a/dist/esm/ultramodern-workspace/module-federation/config.js
++++ b/dist/esm/ultramodern-workspace/module-federation/config.js
+@@ -11,19 +11,18 @@ import { createSharedModuleFederationConfig, formatTsObjectLiteral } from "./sha
+ function createAppModernConfig(scope, app, remotes = [], enableTailwind = true, configuredDevPorts) {
+     const deliveryUnit = createDeliveryUnitRecord(scope, app);
+     const emitsUi = appEmitsBrowserUi(app);
+-    const bffImport = appHasApi(app) ? "import { bffPlugin } from '@modern-js/plugin-bff';\n" : '';
++    const hasApi = appHasApi(app);
++    const bffImport = hasApi ? "import { bffPlugin } from '@modern-js/plugin-bff';\n" : '';
+     const uiImports = emitsUi ? `import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
+ import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
+ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
++
++const localisedUrls = ultramodernLocalisedUrls;
+ ` : '';
+-    const zephyrPluginSource = emitsUi ? `const zephyrRspackPlugin = () => ({
++    const zephyrPluginSource = emitsUi ? `const zephyrRspackPlugin = (): CliPlugin<AppTools> => ({
+   name: 'ultramodern-zephyr-rspack-plugin',
+   pre: ['@modern-js/plugin-module-federation-config'],
+-  setup(api: {
+-    modifyRspackConfig: (
+-      handler: ReturnType<typeof withZephyrRspack>,
+-    ) => void;
+-  }) {
++  setup(api) {
+     // Zephyr uploads federated build artifacts to Zephyr Cloud (the fast
+     // rollback path). Uploading REQUIRES a Zephyr Cloud account and, in CI, a
+     // deploy-scoped ZE_CI_TOKEN; without it Zephyr fatally fails to load its
+@@ -34,8 +33,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
+     // (this gate keys on Zephyr's native deploy token, not any UltraModern
+     // opt-out). When deploying, ZE_FAIL_BUILD=true makes an upload failure a
+     // hard build failure.
+-    const zephyrCiDeploy =
+-      (getBuildConfigEnvironment('ZE_CI_TOKEN') ?? '').length > 0;
++    const zephyrCiDeploy = envValue('ZE_CI_TOKEN') !== undefined;
+     if (!zephyrCiDeploy) {
+       return;
+     }
+@@ -46,7 +44,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
+ });
+ 
+ ` : '';
+-    const localisedUrlsEntry = emitsUi ? '            localisedUrls: ultramodernLocalisedUrls as Record<string, Record<string, string>>,\n' : '';
++    const localisedUrlsEntry = emitsUi ? '            localisedUrls,\n' : '';
+     const uiPluginEntries = emitsUi ? '        moduleFederationPlugin(),\n        zephyrRspackPlugin(),\n' : '';
+     const tailwindImport = enableTailwind ? "import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';\n" : '';
+     const bffConfig = appHasApi(app) ? `      bff: {
+@@ -82,17 +80,16 @@ ${distributedSsrExposes(service).map((expose)=>`                {
+           ],
+ ` : '';
+     const defaultAssetPrefixSource = 'shell' === app.kind ? "const defaultAssetPrefix = '/';" : `const remoteAssetOrigin =
+-  configuredCloudflareUrl ||
+-  inferredCloudflareUrl ||
++  configuredCloudflareUrl ??
++  inferredCloudflareUrl ??
+   (cloudflareDeployEnabled ? '' : \`http://localhost:\${port}\`);
+ // When deploying to Cloudflare without a configured public URL, publish an
+ // 'auto' publicPath so the remote resolves its chunks from the origin its
+ // remoteEntry.js was loaded from (the vertical's Worker), not the host shell's
+ // origin — otherwise cross-origin chunk loading 404s and MF reports an empty
+ // moduleId. A configured/inferred URL still wins as an absolute prefix.
+-const defaultRemoteAssetPrefix = remoteAssetOrigin
+-  ? \`\${remoteAssetOrigin.replace(/\\/+$/u, '')}/\`
+-  : 'auto';
++const defaultRemoteAssetPrefix =
++  remoteAssetOrigin.length > 0 ? \`\${remoteAssetOrigin.replace(/\\/+$/u, '')}/\` : 'auto';
+ const defaultAssetPrefix = defaultRemoteAssetPrefix;`;
+     const devAssetPrefixSource = 'shell' === app.kind ? `        // Keep shell dev assets origin-relative so the shell works through
+         // tunnels and local previews without rewriting its own chunks.
+@@ -107,7 +104,7 @@ const defaultAssetPrefix = defaultRemoteAssetPrefix;`;
+         ]).filter((port)=>'number' == typeof port && Number.isFinite(port)))
+     ].toSorted((left, right)=>left - right);
+     const legacyCorsSource = `const moduleFederationDevServerOrigin =
+-  envValue('ULTRAMODERN_MF_DEV_ORIGIN') || 'http://localhost:${shellApp.port}';`;
++  envValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:${shellApp.port}';`;
+     const configuredCorsSource = `const moduleFederationDevServerAllowedOrigins = [
+ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+ ];`;
+@@ -119,7 +116,125 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+           },
+         },`;
+     const useConfiguredCorsAllowlist = void 0 !== configuredDevPorts;
++    const hasApiRspackCompatibility = hasApi;
++    const apiRspackImports = hasApiRspackCompatibility ? "import path from 'node:path';\nimport { fileURLToPath } from 'node:url';\n" : '';
++    const apiRspackRuntimeSource = hasApiRspackCompatibility ? `const resolvePostgresProtocolCommonJsEntry = () =>
++  fileURLToPath(new URL('../pg-protocol/dist/index.js', import.meta.resolve('pg/package.json')));
++const resolvePostgresPoolCommonJsEntry = () =>
++  createRequire(import.meta.resolve('pg/package.json')).resolve('pg-pool');
++const resolveEffectApiSourceDirectory = () => fileURLToPath(new URL('api/', import.meta.url));
++const nodeBuiltinRequests = new Set(
++  cloudflareDeployEnabled ? builtinModules.flatMap((name) => [name, \`node:\${name}\`]) : [],
++);
++/* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. expires: 2026-12-31. */
++const cloudflareRuntimeExternal = (
++  { dependencyType, request }: { dependencyType?: string; request?: string },
++  callback: (error?: Error, result?: string | string[], type?: 'module-import') => void,
++) => {
++  const nativeModuleImport = (specifier: string) =>
++    dependencyType?.startsWith('commonjs') === true ? [specifier, 'default'] : specifier;
++  if (request === 'cloudflare:sockets') {
++    callback(undefined, nativeModuleImport(request), 'module-import');
++    return;
++  }
++  if (request !== undefined && nodeBuiltinRequests.has(request)) {
++    callback(
++      undefined,
++      nativeModuleImport(request.startsWith('node:') ? request : \`node:\${request}\`),
++      'module-import',
++    );
++    return;
++  }
++  callback();
++};
++/* oxlint-enable promise/prefer-await-to-callbacks */\n` : '';
++    const apiRspackToolsSource = hasApiRspackCompatibility ? `        rspack: (config, { environment, rspack }) => {
++          if (!cloudflareDeployEnabled) {
++            return;
++          }
++          const configuredAliases = config.resolve.alias;
++          config.resolve.alias =
++            configuredAliases === false || configuredAliases === undefined ? {} : configuredAliases;
++          Object.assign(config.resolve.alias, {
++            'pg-pool$': resolvePostgresPoolCommonJsEntry(),
++            'pg-protocol$': resolvePostgresProtocolCommonJsEntry(),
++          });
++          const configuredExternals = config.externals;
++          config.externals = [cloudflareRuntimeExternal];
++          if (configuredExternals !== undefined) {
++            config.externals.push(
++              ...(Array.isArray(configuredExternals) ? configuredExternals : [configuredExternals]),
++            );
++          }
++          if (environment.name === 'workerSSR') {
++            const effectApiSourceDirectory = resolveEffectApiSourceDirectory();
++            const configuredNode = config.node;
++            config.node =
++              configuredNode === false || configuredNode === undefined ? {} : configuredNode;
++            Object.assign(config.node, {
++              __dirname: false,
++              __filename: false,
++            });
++            config.plugins.push(
++              new rspack.DefinePlugin({
++                'globalThis.FinalizationRegistry': 'undefined',
++              }),
++              new rspack.NormalModuleReplacementPlugin(/[?&]loaderId=/u, (resource) => {
++                resource.request = resource.request.replace(
++                  /(?<separator>[?&])retain=[^&]*/u,
++                  '$<separator>retain=true',
++                );
++              }),
++              new rspack.NormalModuleReplacementPlugin(/^\\.\\.?[/\\\\]/u, (resource) => {
++                const [requestPath] = resource.request.split('?', 1);
++                if (
++                  requestPath !== undefined &&
++                  path
++                    .resolve(resource.context, requestPath)
++                    .startsWith(effectApiSourceDirectory) &&
++                  !resource.request.includes('modern-bff-runtime-source')
++                ) {
++                  resource.request = \`\${resource.request}?modern-bff-runtime-source\`;
++                }
++              }),
++            );
++          }
++        },
++` : '';
++    const legacyCorsHeadersSource = `const appDevServerHeaders: NonNullable<
++  NonNullable<NonNullable<AppToolsUserConfig['dev']>['server']>['headers']
++> = {
++  'Access-Control-Allow-Headers': 'Accept, Authorization, Content-Type, X-Requested-With',
++  'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
++  'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,
++};
++
++`;
++    const legacyCorsDevServer = `        server: {
++          headers: appDevServerHeaders,
++        },`;
+     const configuredCorsHeader = useConfiguredCorsAllowlist ? 1 === developmentPorts.length ? "'Access-Control-Allow-Origin': moduleFederationDevServerAllowedOrigins[0]," : '' : "'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,";
++    const servesModuleContract = 'shell' !== app.kind;
++    const developmentContractImport = servesModuleContract ? "import { readFileSync } from 'node:fs';\n" : '';
++    const developmentContractSource = servesModuleContract ? `const resolveDevelopmentModuleContractPath = () => fileURLToPath(
++  new URL('.dev-public/.well-known/ontos-module-manifest.json', import.meta.url),
++);` : '';
++    const developmentContractMiddleware = servesModuleContract ? `
++        setupMiddlewares: [
++          ({ unshift }) => {
++            unshift((request, response, next) => {
++              if (request.url?.split('?', 1)[0] !== '/.well-known/ontos-module-manifest.json') {
++                next();
++                return;
++              }
++              const contract = readFileSync(resolveDevelopmentModuleContractPath());
++              response.setHeader('Cache-Control', 'no-cache');
++              response.setHeader('Content-Type', 'application/json');
++              response.setHeader('Content-Length', String(contract.byteLength));
++              response.end(contract);
++            });
++          },
++        ],` : '';
+     return renderFileTemplate('workspace/apps/modern.config.ts', {
+         value0: `${bffImport}${tailwindImport}`,
+         value1: app.id,
+@@ -141,7 +256,7 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+         value17: createRspackChunkLoadingGlobal(app),
+         value18: tailwindBuilderPluginsConfig,
+         value19: useConfiguredCorsAllowlist ? configuredCorsSource : legacyCorsSource,
+-        value20: useConfiguredCorsAllowlist ? configuredCorsDevServer : '',
++        value20: useConfiguredCorsAllowlist ? configuredCorsDevServer : legacyCorsDevServer,
+         value21: configuredCorsHeader,
+         value22: uiImports,
+         value23: zephyrPluginSource,
+@@ -149,7 +264,19 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
+         value25: uiPluginEntries,
+         value26: deliveryUnit.unitId,
+         value27: deliveryUnit.buildMarker,
+-        value28: deliveryUnit.version
++        value28: deliveryUnit.version,
++        value29: hasApiRspackCompatibility ? 'builtinModules, ' : '',
++        value30: apiRspackImports,
++        value31: apiRspackRuntimeSource,
++        value32: apiRspackToolsSource,
++        value33: useConfiguredCorsAllowlist ? '' : legacyCorsHeadersSource,
++        value34: emitsUi ? 'AppTools, ' : '',
++        value35: emitsUi ? ', CliPlugin' : '',
++        value36: developmentContractImport,
++        value37: developmentContractSource,
++        value38: developmentContractMiddleware,
++        value39: servesModuleContract ? "              '/.well-known'," : '',
++        value40: servesModuleContract ? ", './.dev-public'" : ''
+     });
+ }
+ function createModuleFederationBridgeConfig(enableBridgeRouter) {
+@@ -204,15 +331,15 @@ export default moduleFederationConfig;
+ function createBackendModuleFederationConfig(app) {
+     return `import { createRequire } from 'node:module';
+ import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
++import * as Schema from 'effect/Schema';
+ import { dependencies } from './package.json';
+ 
+ const require = createRequire(import.meta.url);
+-const bffVersion = (
+-  require('@modern-js/plugin-bff/package.json') as { version: string }
+-).version;
+-const effectVersion = (
+-  require('effect/package.json') as { version: string }
+-).version;
++const PackageVersionSchema = Schema.Struct({ version: Schema.String });
++const packageVersion = (specifier: string): string =>
++  Schema.decodeUnknownSync(PackageVersionSchema)(require(specifier)).version;
++const bffVersion = packageVersion('@modern-js/plugin-bff/package.json');
++const effectVersion = packageVersion('effect/package.json');
+ 
+ const moduleFederationConfig: Parameters<
+   typeof createModuleFederationConfig
+diff --git a/dist/esm/ultramodern-workspace/module-federation/reexport-module.js b/dist/esm/ultramodern-workspace/module-federation/reexport-module.js
+index 1e2bef1edab5bff011cc1913b7746c39312ca90b..b1df6c180dd1fc1a1008b41fad0d9fcfb3047ed8 100644
+--- a/dist/esm/ultramodern-workspace/module-federation/reexport-module.js
++++ b/dist/esm/ultramodern-workspace/module-federation/reexport-module.js
+@@ -13,14 +13,24 @@ function createUltramodernBuildModule(scope, app) {
+ declare const ULTRAMODERN_SOURCE_REVISION: string;
+ 
+ const ultramodernGeneratedBuildArtifact = ${JSON.stringify(createUltramodernBuildArtifact(record), null, 2)} as const;
+-const ultramodernBuildMarker =
+-  typeof ULTRAMODERN_BUILD_MARKER === 'string'
+-    ? ULTRAMODERN_BUILD_MARKER
+-    : ultramodernGeneratedBuildArtifact.deliveryUnit.buildMarker;
+-const ultramodernSourceRevision =
+-  typeof ULTRAMODERN_SOURCE_REVISION === 'string'
+-    ? ULTRAMODERN_SOURCE_REVISION
+-    : ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision;
++const readInjectedBuildMarker = (): string => {
++  try {
++    return ULTRAMODERN_BUILD_MARKER;
++  } catch {
++    return ultramodernGeneratedBuildArtifact.deliveryUnit.buildMarker;
++  }
++};
++
++const readInjectedSourceRevision = (): string => {
++  try {
++    return ULTRAMODERN_SOURCE_REVISION;
++  } catch {
++    return ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision;
++  }
++};
++
++const ultramodernBuildMarker = readInjectedBuildMarker();
++const ultramodernSourceRevision = readInjectedSourceRevision();
+ const ultramodernBuildArtifact = {
+   ...ultramodernGeneratedBuildArtifact,
+   deliveryUnit: {
+@@ -45,22 +55,17 @@ const ultramodernBuildArtifact = {
+   },
+ } as const;
+ 
+-export { ultramodernBuildArtifact };
+-
+ export const ultramodernDeliveryUnit =
+   ultramodernBuildArtifact.deliveryUnit;
+-export const ultramodernVerticalIdentity = ultramodernDeliveryUnit;
+ export const ultramodernUiMarker = ultramodernBuildArtifact.surfaces.ui;
+ export const ultramodernApiMarker = ultramodernBuildArtifact.surfaces.api;
+ `;
+ }
+ function createUltramodernBuildReexportModule() {
+     return `export {
+-  ultramodernBuildArtifact,
+   ultramodernApiMarker,
+   ultramodernDeliveryUnit,
+   ultramodernUiMarker,
+-  ultramodernVerticalIdentity,
+ } from '../shared/ultramodern-build';
+ `;
+ }
+diff --git a/dist/esm/ultramodern-workspace/package-json.js b/dist/esm/ultramodern-workspace/package-json.js
+index d97db9c90294bd70a94d5ccc10296a0079cd014e..053864d01b5e842b49f083a26753c60b91aa648f 100644
+--- a/dist/esm/ultramodern-workspace/package-json.js
++++ b/dist/esm/ultramodern-workspace/package-json.js
+@@ -171,7 +171,7 @@ function createAppPackage(scope, app, packageSource, enableTailwind, remotes = [
+     if (Object.keys(packageExports).length > 0) packageJson.exports = packageExports;
+     return packageJson;
+ }
+-function createSharedPackage(scope, id, description) {
++function createSharedPackage(scope, id, description, packageSource) {
+     const packageJson = {
+         private: true,
+         name: packageName(scope, id),
+@@ -188,10 +188,21 @@ function createSharedPackage(scope, id, description) {
+             '@effect/tsgo': ULTRAMODERN_PACKAGE_PINS.appDevDependencies["@effect/tsgo"]
+         }
+     };
++    if ('shared-contracts' === id) packageJson.dependencies = {
++        effect: ULTRAMODERN_PACKAGE_PINS.bffEffectDependencies.effect
++    };
+     if ('shared-design-tokens' === id) packageJson.exports = {
+         ...packageJson.exports,
+         './tokens.css': './src/tokens.css'
+     };
++    if ('shared-contracts' === id) packageJson.exports = {
++        ...packageJson.exports,
++        './server/effect-bff-runtime': './src/effect-bff-runtime.ts'
++    };
++    if ('shared-contracts' === id) packageJson.dependencies = {
++        '@modern-js/plugin-bff': modernPackageSpecifier('@modern-js/plugin-bff', packageSource),
++        effect: ULTRAMODERN_PACKAGE_PINS.bffEffectDependencies.effect
++    };
+     return packageJson;
+ }
+ function createSharedContractsIndex() {
+diff --git a/dist/esm/ultramodern-workspace/workspace-script-plan.js b/dist/esm/ultramodern-workspace/workspace-script-plan.js
+index 683e43743c53e41b163455e8c8138929a44480c2..2d082066f2c5f5b489ec69d9fd7faa4dad5a8ce6 100644
+--- a/dist/esm/ultramodern-workspace/workspace-script-plan.js
++++ b/dist/esm/ultramodern-workspace/workspace-script-plan.js
+@@ -108,7 +108,7 @@ function createWorkspaceRootScriptPlan(remotes = [], options = {}) {
+         migrateStrictEffect: rootToolingWrapperCommand('migrateStrictEffect'),
+         zeropsMaterialize: "node ./scripts/materialize-zerops-runtime.mjs",
+         contractCheck: rootToolingWrapperCommand('validate'),
+-        typecheck: options.typecheck ?? `${rootToolingWrapperCommand('typecheck')} --project tsconfig.json`,
++        typecheck: options.typecheck ?? `${rootToolingWrapperCommand('typecheck')} --build tsconfig.json`,
+         check: `pnpm format:check && pnpm lint && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness${bridgeCheck}`
+     };
+ }
+diff --git a/dist/esm/ultramodern-workspace/workspace-scripts.js b/dist/esm/ultramodern-workspace/workspace-scripts.js
+index ce720ef74bd8b5c9a09d29d87db247834d54121e..b31c1beef859c3374dea6b6473d97d2ab5eaef91 100644
+--- a/dist/esm/ultramodern-workspace/workspace-scripts.js
++++ b/dist/esm/ultramodern-workspace/workspace-scripts.js
+@@ -115,6 +115,9 @@ function createWorkspaceI18nBoundaryValidationScript() {
+ function createWorkspaceApiBoundaryValidationScript() {
+     return external_fs_io_js_readFileTemplate("workspace-scripts/check-ultramodern-api-boundaries.mts");
+ }
++function createMicroVerticalApiBaselineBoundaryScript() {
++    return external_fs_io_js_readFileTemplate("workspace-scripts/microvertical-api-baseline-boundary.mts");
++}
+ function createPerformanceReadinessConfigScript() {
+     return external_fs_io_js_readFileTemplate("workspace-scripts/ultramodern-performance-readiness.config.mjs");
+ }
+@@ -129,6 +132,7 @@ function writeGeneratedWorkspaceScripts(targetDir, scope, enableTailwind, remote
+     const hasBackendSurface = remotes.some(appHasApi);
+     writeWorkspaceOwnedMtsScript(targetDir, 'check-ultramodern-i18n-boundaries', createWorkspaceI18nBoundaryValidationScript());
+     writeWorkspaceOwnedMtsScript(targetDir, 'check-ultramodern-api-boundaries', createWorkspaceApiBoundaryValidationScript());
++    writeWorkspaceOwnedMtsScript(targetDir, 'microvertical-api-baseline-boundary', createMicroVerticalApiBaselineBoundaryScript());
+     if (!shellOnly) {
+         writeFileReplacing(targetDir, "scripts/materialize-zerops-runtime.mjs", createZeropsRuntimeMaterializationScript());
+         writeWorkspaceOwnedMtsScript(targetDir, 'proof-workerd-ssr', createWorkerdSsrProofScript());
+@@ -161,6 +165,10 @@ function migratedWorkspaceScriptArtifacts(options) {
+             content: createWorkspaceApiBoundaryValidationScript(),
+             legacyPath: "scripts/check-ultramodern-api-boundaries.mjs"
+         },
++        {
++            relativePath: "scripts/microvertical-api-baseline-boundary.mts",
++            content: createMicroVerticalApiBaselineBoundaryScript()
++        },
+         {
+             relativePath: "scripts/ultramodern-performance-readiness.config.mjs",
+             content: createPerformanceReadinessConfigScript()
+@@ -192,6 +200,7 @@ function migratedWorkspaceScriptArtifacts(options) {
+ const migratedWorkspaceScriptBasenames = [
+     'check-ultramodern-i18n-boundaries',
+     'check-ultramodern-api-boundaries',
++    'microvertical-api-baseline-boundary',
+     'bootstrap-agent-skills',
+     'setup-agent-reference-repos',
+     'proof-workerd-ssr',
+diff --git a/dist/esm/ultramodern-workspace/write-app.js b/dist/esm/ultramodern-workspace/write-app.js
+index 15a02949f43f418dd305a50e9c2edebd7f7db907..b99e450abba5a47f2cc0c768425b4d5c484ce3ed 100644
+--- a/dist/esm/ultramodern-workspace/write-app.js
++++ b/dist/esm/ultramodern-workspace/write-app.js
+@@ -88,8 +88,8 @@ function writeAppRouteAndShellFiles({ targetDir, scope, resolvedApp, emitsUi, re
+ function writeAppApiAndRemoteExposeFiles({ targetDir, scope, resolvedApp, emitsUi, writeAppFile }) {
+     if (appHasApi(resolvedApp)) {
+         const rpcProtocol = 'rpc' === resolveApiProtocol(resolvedApp);
+-        rpcProtocol ? writeFile(targetDir, `${resolvedApp.directory}/shared/rpc.ts`, createRpcContractFile(resolvedApp)) : writeFile(targetDir, `${resolvedApp.directory}/shared/api.ts`, createSharedApi(resolvedApp));
+-        writeFile(targetDir, `${resolvedApp.directory}/api/index.ts`, createApiServiceEntry(resolvedApp, rpcProtocol ? '../shared/rpc.ts' : '../shared/api.ts'));
++        rpcProtocol ? writeFile(targetDir, `${resolvedApp.directory}/shared/rpc.ts`, createRpcContractFile(resolvedApp)) : writeFile(targetDir, `${resolvedApp.directory}/shared/api.ts`, createSharedApi(scope, resolvedApp));
++        writeFile(targetDir, `${resolvedApp.directory}/api/index.ts`, createApiServiceEntry(scope, resolvedApp, rpcProtocol ? '../shared/rpc.ts' : '../shared/api.ts'));
+         writeFile(targetDir, `${resolvedApp.directory}/api/backend-federation.ts`, createBackendFederationContractFile(resolvedApp));
+         writeFile(targetDir, `${resolvedApp.directory}/api/effect-api.ts`, createBackendEffectApiExpose(scope, resolvedApp));
+         rpcProtocol ? writeFile(targetDir, `${resolvedApp.directory}/src/api/${resolvedApp.api.stem}-rpc-client.ts`, createRpcClientFile(resolvedApp)) : writeFile(targetDir, `${resolvedApp.directory}/src/api/${resolvedApp.api.stem}-client.ts`, createApiClient(resolvedApp, '../../shared/api'));
+diff --git a/dist/esm/ultramodern-workspace/write-workspace.js b/dist/esm/ultramodern-workspace/write-workspace.js
+index afd450197f1a313fe7f8edd6b349d10b9e0ad8a2..0e34c9589d469b542916dd57ff3fead0384c4591 100644
+--- a/dist/esm/ultramodern-workspace/write-workspace.js
++++ b/dist/esm/ultramodern-workspace/write-workspace.js
+@@ -4,7 +4,7 @@ import { createSharedDesignTokensCss } from "./app-files.js";
+ import { normalizeUltramodernBridgeConfig } from "./bridge-config.js";
+ import { createDevelopmentOverlay, createOwnership, createTopology, createUltramodernConfig } from "./contracts.js";
+ import { ULTRAMODERN_CONFIG_PATH, createShellHost, sharedPackages, shellApp } from "./descriptors.js";
+-import { copyRootTemplate, formatGeneratedWorkspaceFiles, writeFile, writeFileReplacing, writeJson } from "./fs-io.js";
++import { copyRootTemplate, formatGeneratedWorkspaceFiles, readFileTemplate, writeFile, writeFileReplacing, writeJson } from "./fs-io.js";
+ import { createFileSnapshot, createGenerationResult, diffFileSnapshots } from "./generation-result.js";
+ import { assertUniqueTailwindPrefixes, toPackageScope } from "./naming.js";
+ import { runCodeSmithOverlays } from "./overlays.js";
+@@ -18,12 +18,13 @@ import { createZeropsYaml } from "./zerops.js";
+ function hasExplicitInstallRequest(options) {
+     return void 0 !== options.packageSource && 'workspace' !== options.packageSource.strategy;
+ }
+-function writeSharedPackages(targetDir, scope) {
++function writeSharedPackages(targetDir, scope, packageSource) {
+     for (const sharedPackage of sharedPackages){
+-        writeJson(targetDir, `${sharedPackage.directory}/package.json`, createSharedPackage(scope, sharedPackage.id, sharedPackage.description));
++        writeJson(targetDir, `${sharedPackage.directory}/package.json`, createSharedPackage(scope, sharedPackage.id, sharedPackage.description, packageSource));
+         writeJson(targetDir, `${sharedPackage.directory}/tsconfig.json`, createSharedPackageTsConfig(sharedPackage.directory));
+     }
+     writeFile(targetDir, 'packages/shared-contracts/src/index.ts', createSharedContractsIndex());
++    writeFile(targetDir, 'packages/shared-contracts/src/effect-bff-runtime.ts', readFileTemplate('packages/effect-bff-runtime.ts'));
+     writeFile(targetDir, 'packages/shared-design-tokens/src/index.ts', `export const sharedDesignTokens = {
+   color: {
+     accent: '#2f8f68',
+@@ -134,7 +135,7 @@ function generateUltramodernWorkspace(options) {
+     writeJson(options.targetDir, ULTRAMODERN_CONFIG_PATH, createCompactUltramodernConfig(scope, options.modernVersion, packageSource, createdApps, enableTailwind, bridge));
+     writeApp(options.targetDir, scope, shellApp, packageSource, enableTailwind, initialVerticals, bridge);
+     for (const remote of initialVerticals)writeApp(options.targetDir, scope, remote, packageSource, enableTailwind, initialVerticals, bridge);
+-    writeSharedPackages(options.targetDir, scope);
++    writeSharedPackages(options.targetDir, scope, packageSource);
+     writeGeneratedWorkspaceScripts(options.targetDir, scope, enableTailwind, initialVerticals, releaseCohort);
+     const preliminaryAfterFiles = createFileSnapshot(options.targetDir);
+     const preliminaryDiff = diffFileSnapshots(beforeFiles, preliminaryAfterFiles);
 diff --git a/dist/esm-node/ultramodern-workspace/api/client.js b/dist/esm-node/ultramodern-workspace/api/client.js
 index 8016fe8802c9d52562473063de93081154d5175c..7ab89bf22dd14a0a72f20725edc8c739e848ffb8 100644
 --- a/dist/esm-node/ultramodern-workspace/api/client.js
@@ -1580,7 +2510,7 @@ index 5956501f8ec070d086690b2be4096c40c0c249c0..6ac78eac22d08322d0546fc25bcd5c64
  const moduleFederationConfig: Parameters<
    typeof createModuleFederationConfig
 diff --git a/dist/esm-node/ultramodern-workspace/module-federation/reexport-module.js b/dist/esm-node/ultramodern-workspace/module-federation/reexport-module.js
-index be7c63e9f560d2f31a3ee28d4047d700a51b2abb..74714165cdb59faf8158bee5779a5432076e9e5d 100644
+index be7c63e9f560d2f31a3ee28d4047d700a51b2abb..6e7cf4f8d2162d7f5a6af390bff98261db5a3fbe 100644
 --- a/dist/esm-node/ultramodern-workspace/module-federation/reexport-module.js
 +++ b/dist/esm-node/ultramodern-workspace/module-federation/reexport-module.js
 @@ -14,14 +14,24 @@ function createUltramodernBuildModule(scope, app) {
@@ -1616,6 +2546,29 @@ index be7c63e9f560d2f31a3ee28d4047d700a51b2abb..74714165cdb59faf8158bee5779a5432
  const ultramodernBuildArtifact = {
    ...ultramodernGeneratedBuildArtifact,
    deliveryUnit: {
+@@ -46,22 +56,17 @@ const ultramodernBuildArtifact = {
+   },
+ } as const;
+ 
+-export { ultramodernBuildArtifact };
+-
+ export const ultramodernDeliveryUnit =
+   ultramodernBuildArtifact.deliveryUnit;
+-export const ultramodernVerticalIdentity = ultramodernDeliveryUnit;
+ export const ultramodernUiMarker = ultramodernBuildArtifact.surfaces.ui;
+ export const ultramodernApiMarker = ultramodernBuildArtifact.surfaces.api;
+ `;
+ }
+ function createUltramodernBuildReexportModule() {
+     return `export {
+-  ultramodernBuildArtifact,
+   ultramodernApiMarker,
+   ultramodernDeliveryUnit,
+   ultramodernUiMarker,
+-  ultramodernVerticalIdentity,
+ } from '../shared/ultramodern-build';
+ `;
+ }
 diff --git a/dist/esm-node/ultramodern-workspace/package-json.js b/dist/esm-node/ultramodern-workspace/package-json.js
 index f901de089342afc1a1462696799a58e5821fe68e..f2690ad470ea517556177e6d109f9060e7bde92f 100644
 --- a/dist/esm-node/ultramodern-workspace/package-json.js
@@ -1750,890 +2703,6 @@ index 5b5c2103812a3a6be778cb9aa4a591614ecf88bd..7f3dcf6d110aa65295167396c44bc4f5
    color: {
      accent: '#2f8f68',
 @@ -135,7 +136,7 @@ function generateUltramodernWorkspace(options) {
-     writeJson(options.targetDir, ULTRAMODERN_CONFIG_PATH, createCompactUltramodernConfig(scope, options.modernVersion, packageSource, createdApps, enableTailwind, bridge));
-     writeApp(options.targetDir, scope, shellApp, packageSource, enableTailwind, initialVerticals, bridge);
-     for (const remote of initialVerticals)writeApp(options.targetDir, scope, remote, packageSource, enableTailwind, initialVerticals, bridge);
--    writeSharedPackages(options.targetDir, scope);
-+    writeSharedPackages(options.targetDir, scope, packageSource);
-     writeGeneratedWorkspaceScripts(options.targetDir, scope, enableTailwind, initialVerticals, releaseCohort);
-     const preliminaryAfterFiles = createFileSnapshot(options.targetDir);
-     const preliminaryDiff = diffFileSnapshots(beforeFiles, preliminaryAfterFiles);
-diff --git a/dist/esm/ultramodern-workspace/api/client.js b/dist/esm/ultramodern-workspace/api/client.js
-index 254d58c84d5ba27b142539059961de4abb4749ab..7ac63ef2b979028a220cbfa2154562a78528d49e 100644
---- a/dist/esm/ultramodern-workspace/api/client.js
-+++ b/dist/esm/ultramodern-workspace/api/client.js
-@@ -118,7 +118,7 @@ export const ${readinessName} = (
-     operationContext:
-       options.operationContext ?? ${groupName}OperationContexts.readiness,
-   }).pipe(
--    Effect.flatMap(client => client.${groupName}.readiness({})),
-+    Effect.flatMap(client => client.foundation.readiness({})),
-   );
- 
- export const ${getName} = (
-diff --git a/dist/esm/ultramodern-workspace/api/service.js b/dist/esm/ultramodern-workspace/api/service.js
-index 92e2c050f9b499571236d28f6bb0c6fffc085e47..ef0047a0a8be2983ddcc26809e9317b99aa121a0 100644
---- a/dist/esm/ultramodern-workspace/api/service.js
-+++ b/dist/esm/ultramodern-workspace/api/service.js
-@@ -4,23 +4,20 @@ import { packageName } from "../naming.js";
- import { createCheckoutCartServerHandlers, createCheckoutCartServerState } from "./checkout-cart.js";
- import { verticalApiExport, verticalApiGroupName, verticalApiNotFoundErrorExport } from "./names.js";
- import { createRpcApiServiceEntry, rpcPath, verticalRpcContractExport, verticalRpcGroupExport } from "./rpc.js";
--function createApiServiceEntry(service, contractImportPath) {
-+function createApiServiceEntry(scope, service, contractImportPath) {
-     if ((service.api?.protocol ?? 'rest') === 'rpc') return createRpcApiServiceEntry(service);
-     const apiExport = verticalApiExport(service);
-     const groupName = verticalApiGroupName(service);
-     const notFoundErrorExport = verticalApiNotFoundErrorExport(service);
-     const stem = resolveApiStem(service);
--    return `import {
--  defineEffectBff,
-+    const sharedContractsPackage = packageName(scope, 'shared-contracts');
-+    return `import { assembleEffectBffRuntime } from '${packageName(scope, 'shared-contracts')}/server/effect-bff-runtime';
-+import {
-   Effect,
-   HttpApiBuilder,
-   Layer,
- } from '@modern-js/plugin-bff/effect-edge';
--import type {
--  EffectBffDefinition,
--  EffectBffRuntime,
--  EffectRuntimeLayer,
--} from '@modern-js/plugin-bff/effect-edge';
-+import { microVerticalOperationAttributes } from '${sharedContractsPackage}';
- import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
- import {
-   ${apiExport},
-@@ -28,7 +25,6 @@ import {
- } from '${contractImportPath}';
- import type {
-   ${notFoundErrorExport},
--  OperationContext,
- } from '${contractImportPath}';
- 
- const ${groupName}Items = [
-@@ -40,15 +36,29 @@ const ${groupName}Items = [
- ];
- ${createCheckoutCartServerState(service)}
- 
--const operationAttributes = (operationContext: OperationContext) => ({
--    'modernjs.operation.id': operationContext.operationId,
--    'modernjs.operation.method': operationContext.method,
--    'modernjs.operation.route': operationContext.routePath,
--    'modernjs.operation.source': operationContext.source,
--    ...(typeof operationContext.traceId === 'string'
--      ? { 'modernjs.trace.id': operationContext.traceId }
--      : {}),
--  });
-+const ${groupName}ReadinessLayer = HttpApiBuilder.group(
-+  ${apiExport},
-+  'foundation',
-+  handlers =>
-+    handlers.handle('readiness', () =>
-+      Effect.succeed({
-+        checks: {
-+          api: 'ready' as const,
-+          moduleFederation: 'ready' as const,
-+          ssr: 'ready' as const,
-+          translations: 'ready' as const,
-+        },
-+        marker: ultramodernApiMarker,
-+        status: 'ready' as const,
-+        versionSkew: 'none' as const,
-+      }).pipe(
-+        Effect.withSpan('ultramodern.api.${groupName}.readiness', {
-+          attributes: microVerticalOperationAttributes(${groupName}OperationContexts.readiness),
-+          kind: 'server',
-+        }),
-+      ),
-+    ),
-+);
- 
- const ${groupName}Layer = HttpApiBuilder.group(
-   ${apiExport},
-@@ -63,25 +73,7 @@ const ${groupName}Layer = HttpApiBuilder.group(
-               : ${groupName}Items,
-         }).pipe(
-           Effect.withSpan('ultramodern.api.${groupName}.list', {
--            attributes: operationAttributes(${groupName}OperationContexts.list),
--            kind: 'server',
--          }),
--        ),
--      )
--      .handle('readiness', () =>
--        Effect.succeed({
--          checks: {
--            api: 'ready' as const,
--            moduleFederation: 'ready' as const,
--            ssr: 'ready' as const,
--            translations: 'ready' as const,
--          },
--          marker: ultramodernApiMarker,
--          status: 'ready' as const,
--          versionSkew: 'none' as const,
--        }).pipe(
--          Effect.withSpan('ultramodern.api.${groupName}.readiness', {
--            attributes: operationAttributes(${groupName}OperationContexts.readiness),
-+            attributes: microVerticalOperationAttributes(${groupName}OperationContexts.list),
-             kind: 'server',
-           }),
-         ),
-@@ -101,7 +93,7 @@ const ${groupName}Layer = HttpApiBuilder.group(
- 
-         return result.pipe(
-             Effect.withSpan('ultramodern.api.${groupName}.get', {
--              attributes: operationAttributes(${groupName}OperationContexts.get),
-+              attributes: microVerticalOperationAttributes(${groupName}OperationContexts.get),
-               kind: 'server',
-             }),
-           );
-@@ -118,21 +110,21 @@ const ${groupName}Layer = HttpApiBuilder.group(
-           },
-         }).pipe(
-           Effect.withSpan('ultramodern.api.${groupName}.create', {
--            attributes: operationAttributes(${groupName}OperationContexts.create),
-+            attributes: microVerticalOperationAttributes(${groupName}OperationContexts.create),
-             kind: 'server',
-           }),
-         ),
-       )${createCheckoutCartServerHandlers(service)},
- );
- 
--const layer = HttpApiBuilder.layer(${apiExport}).pipe(
--  Layer.provide(${groupName}Layer),
--) satisfies EffectRuntimeLayer;
--const apiRuntime: EffectBffDefinition<typeof ${apiExport}, EffectRuntimeLayer> &
--  EffectBffRuntime<typeof ${apiExport}, EffectRuntimeLayer> = defineEffectBff({
--  api: ${apiExport},
--  layer,
--});
-+const apiHandlersLive = Layer.mergeAll(${groupName}Layer, ${groupName}ReadinessLayer);
-+export const make${apiExport[0].toUpperCase()}${apiExport.slice(1)}Runtime = () => {
-+  return assembleEffectBffRuntime({
-+    api: ${apiExport},
-+    handlers: apiHandlersLive,
-+  });
-+};
-+const apiRuntime = make${apiExport[0].toUpperCase()}${apiExport.slice(1)}Runtime();
- 
- export default apiRuntime;
- `;
-diff --git a/dist/esm/ultramodern-workspace/api/shared.js b/dist/esm/ultramodern-workspace/api/shared.js
-index a01a243a186a98d9b48fbc420d8b74a8e3b0095e..3e99a71932122d02acffeacbea0ff99454a768a4 100644
---- a/dist/esm/ultramodern-workspace/api/shared.js
-+++ b/dist/esm/ultramodern-workspace/api/shared.js
-@@ -1,9 +1,10 @@
- import { resolveApiPrefix, resolveApiStem } from "../descriptors.js";
- import { renderTemplate } from "../fs-io.js";
--import { toPascalCase } from "../naming.js";
-+import { packageName, toPascalCase } from "../naming.js";
- import { createCheckoutCartApiContractFields, createCheckoutCartEndpointDefinitions, createCheckoutCartOperationContexts, createCheckoutCartSharedSchemas } from "./checkout-cart.js";
- import { verticalApiCreatePayloadSchemaExport, verticalApiExport, verticalApiGroupName, verticalApiMarkerSchemaExport, verticalApiName, verticalApiNotFoundErrorExport, verticalApiNotFoundSchemaExport, verticalApiReadinessSchemaExport, verticalApiSchemaExport } from "./names.js";
--function createSharedApiImports() {
-+function createSharedApiImports(scope) {
-+    const sharedContractsPackage = packageName(scope, 'shared-contracts');
-     return `import {
-   HttpApi,
-   HttpApiEndpoint,
-@@ -11,6 +12,16 @@ function createSharedApiImports() {
-   HttpApiSchema,
-   Schema,
- } from '@modern-js/plugin-bff/effect-client';
-+import {
-+  MicroVerticalBuildMarkerSchema,
-+  MicroVerticalReadinessSchema,
-+  createMicroVerticalOperationContext,
-+} from '${sharedContractsPackage}';
-+import type {
-+  MicroVerticalBuildMarker,
-+  MicroVerticalOperationContext,
-+  MicroVerticalReadiness,
-+} from '${sharedContractsPackage}';
- `;
- }
- function createSharedApiContract(service) {
-@@ -34,30 +45,26 @@ function createSharedApiContract(service) {
-     const apiPrefix = resolveApiPrefix(service);
-     const checkoutCartSharedSchemas = createCheckoutCartSharedSchemas(service);
-     const checkoutCartSharedSchemaSection = '' === checkoutCartSharedSchemas ? '' : `${checkoutCartSharedSchemas}\n`;
--    const createOperationContext = `  create: {
-+    const createOperationContext = `  create: createMicroVerticalOperationContext({
-     method: 'POST',
-     operationId: '${apiName}:${groupName}:create',
-     routePath: '/${stem}',
--    source: 'generated-client',
--  },`;
--    const getOperationContext = `  get: {
-+  }),`;
-+    const getOperationContext = `  get: createMicroVerticalOperationContext({
-     method: 'GET',
-     operationId: '${apiName}:${groupName}:get',
-     routePath: '/${stem}/:id',
--    source: 'generated-client',
--  },`;
--    const listOperationContext = `  list: {
-+  }),`;
-+    const listOperationContext = `  list: createMicroVerticalOperationContext({
-     method: 'GET',
-     operationId: '${apiName}:${groupName}:list',
-     routePath: '/${stem}',
--    source: 'generated-client',
--  },`;
--    const readinessOperationContext = `  readiness: {
-+  }),`;
-+    const readinessOperationContext = `  readiness: createMicroVerticalOperationContext({
-     method: 'GET',
-     operationId: '${apiName}:${groupName}:readiness',
-     routePath: '/${stem}/readiness',
--    source: 'generated-client',
--  },`;
-+  }),`;
-     const checkoutCartOperationContextTemplate = createCheckoutCartOperationContexts(service);
-     const operationContextEntries = '' === checkoutCartOperationContextTemplate ? [
-         createOperationContext,
-@@ -70,17 +77,7 @@ function createSharedApiContract(service) {
-         listOperationContext,
-         readinessOperationContext
-     }).trim();
--    return `export interface ${markerType} {
--  readonly appId: string;
--  readonly build: string;
--  readonly buildMarker: string;
--  readonly deployProfile: string;
--  readonly packageName: string;
--  readonly sourceRevision: string;
--  readonly surface: string;
--  readonly unitId: string;
--  readonly version: string;
--}
-+    return `export type ${markerType} = MicroVerticalBuildMarker;
- 
- export interface ${itemType} {
-   readonly id: string;
-@@ -88,17 +85,7 @@ export interface ${itemType} {
-   readonly title: string;
- }
- 
--export interface ${readinessType} {
--  readonly checks: {
--    readonly api: 'ready';
--    readonly moduleFederation: 'ready';
--    readonly ssr: 'ready';
--    readonly translations: 'ready';
--  };
--  readonly marker: ${markerType};
--  readonly status: 'ready';
--  readonly versionSkew: 'none';
--}
-+export type ${readinessType} = MicroVerticalReadiness;
- 
- export interface ${createPayloadType} {
-   readonly title: string;
-@@ -117,17 +104,8 @@ export interface ${notFoundErrorExport} {
-   readonly id: string;
- }
- 
--export const ${markerSchemaExport}: Schema.Codec<${markerType}> = Schema.Struct({
--  appId: Schema.String,
--  build: Schema.String,
--  buildMarker: Schema.String,
--  deployProfile: Schema.String,
--  packageName: Schema.String,
--  sourceRevision: Schema.String,
--  surface: Schema.String,
--  unitId: Schema.String,
--  version: Schema.String,
--});
-+export const ${markerSchemaExport}: Schema.Codec<${markerType}> =
-+  MicroVerticalBuildMarkerSchema;
- 
- export const ${schemaExport}: Schema.Codec<${itemType}> = Schema.Struct({
-   id: Schema.String,
-@@ -135,17 +113,8 @@ export const ${schemaExport}: Schema.Codec<${itemType}> = Schema.Struct({
-   title: Schema.String,
- });
- 
--export const ${readinessSchemaExport}: Schema.Codec<${readinessType}> = Schema.Struct({
--  checks: Schema.Struct({
--    api: Schema.Literal('ready'),
--    moduleFederation: Schema.Literal('ready'),
--    ssr: Schema.Literal('ready'),
--    translations: Schema.Literal('ready'),
--  }),
--  marker: ${markerSchemaExport},
--  status: Schema.Literal('ready'),
--  versionSkew: Schema.Literal('none'),
--});
-+export const ${readinessSchemaExport}: Schema.Codec<${readinessType}> =
-+  MicroVerticalReadinessSchema;
- 
- export const ${createPayloadSchemaExport}: Schema.Codec<${createPayloadType}> = Schema.Struct({
-   title: Schema.String,
-@@ -157,38 +126,31 @@ ${checkoutCartSharedSchemaSection}export const ${notFoundSchemaExport}: Schema.C
-   HttpApiSchema.status(404),
- );
- 
--export interface OperationContext {
--  method: string;
--  operationId: string;
--  routePath: string;
--  source:
--    | 'client'
--    | 'server'
--    | 'generated-client'
--    | 'effect-adapter'
--    | 'data-platform'
--    | 'unknown';
--  traceId?: string;
--}
-+export type OperationContext = MicroVerticalOperationContext;
- 
--export const ${apiExport} = HttpApi.make('${apiName}').add(
--  HttpApiGroup.make('${groupName}')
--    .add(
--      HttpApiEndpoint.get('list', '/${stem}', {
--        query: {
--          limit: Schema.optional(Schema.FiniteFromString),
--        },
--        success: Schema.Struct({
--          items: Schema.Array(${schemaExport}),
-+export const ${groupName}FoundationApi = HttpApi.make('${apiName}Foundation').add(
-+  HttpApiGroup.make('foundation').add(
-+    HttpApiEndpoint.get('readiness', '/${stem}/readiness', {
-+      success: ${readinessSchemaExport},
-+    }),
-+  ),
-+);
-+
-+export const ${apiExport} = HttpApi.make('${apiName}')
-+  .addHttpApi(${groupName}FoundationApi)
-+  .add(
-+    HttpApiGroup.make('${groupName}')
-+      .add(
-+        HttpApiEndpoint.get('list', '/${stem}', {
-+          query: {
-+            limit: Schema.optional(Schema.FiniteFromString),
-+          },
-+          success: Schema.Struct({
-+            items: Schema.Array(${schemaExport}),
-+          }),
-         }),
--      }),
--    )
--    .add(
--      HttpApiEndpoint.get('readiness', '/${stem}/readiness', {
--        success: ${readinessSchemaExport},
--      }),
--    )
--    .add(
-+      )
-+      .add(
-       HttpApiEndpoint.get('get', '/${stem}/:id', {
-         error: ${notFoundSchemaExport},
-         params: {
-@@ -219,8 +181,8 @@ ${createCheckoutCartApiContractFields(service)}  ownerId: '${service.id}',
- } as const;
- `;
- }
--function createSharedApi(service) {
--    return `${createSharedApiImports()}
-+function createSharedApi(scope, service) {
-+    return `${createSharedApiImports(scope)}
- ${createSharedApiContract(service)}`;
- }
- export { createSharedApi };
-diff --git a/dist/esm/ultramodern-workspace/demo-components.js b/dist/esm/ultramodern-workspace/demo-components.js
-index 4baf232ad01064de66c3dcf8b913a99b4754e5ce..3b5ff3fbf21fdd396bd0a230457798e07a6603fd 100644
---- a/dist/esm/ultramodern-workspace/demo-components.js
-+++ b/dist/esm/ultramodern-workspace/demo-components.js
-@@ -266,13 +266,13 @@ function createLayout(appId) {
-     return `import { Outlet } from '@modern-js/plugin-tanstack/runtime';
- import './index.css';
- 
--export default function Layout() {
--  return (
--    <div data-app-id="${appId}">
--      <Outlet />
--    </div>
--  );
--}
-+const Layout = () => (
-+  <div data-app-id="${appId}">
-+    <Outlet />
-+  </div>
-+);
-+
-+export default Layout;
- `;
- }
- function createRemoteEntry(app) {
-diff --git a/dist/esm/ultramodern-workspace/mf-validation/constants.js b/dist/esm/ultramodern-workspace/mf-validation/constants.js
-index eb2e286b9e3f8dfd6fdb3b0e4473efcc87d2f0a6..32509a4e998fa4dec3ef4d53fc58a5a2b92c3a20 100644
---- a/dist/esm/ultramodern-workspace/mf-validation/constants.js
-+++ b/dist/esm/ultramodern-workspace/mf-validation/constants.js
-@@ -1,5 +1,5 @@
- const moduleFederationConfigFile = 'module-federation.config.ts';
--const mfTypesArchive = 'dist/@mf-types.zip';
-+const mfTypesArchive = process.env.ULTRAMODERN_MF_TYPES_ARCHIVE || 'dist/@mf-types.zip';
- const generatedMetadataPaths = [
-     '.modernjs/ultramodern.json'
- ];
-diff --git a/dist/esm/ultramodern-workspace/mf-validation/inspect.js b/dist/esm/ultramodern-workspace/mf-validation/inspect.js
-index d3d50e38814b4f1c95815a1bb61065c163ab8772..7f8bc5f5d7699225fadf3d711ab0571fbc4f2e68 100644
---- a/dist/esm/ultramodern-workspace/mf-validation/inspect.js
-+++ b/dist/esm/ultramodern-workspace/mf-validation/inspect.js
-@@ -11,8 +11,12 @@ function extractExposes(configPath, value) {
-     if (array) return array.sort();
-     throw new Error(`Cannot statically extract Module Federation exposes from ${configPath}; use a literal exposes object or string array.`);
- }
--function extractDtsSettings(configPath, value) {
-+function extractDtsSettings(configPath, value, allowDisabled) {
-     if (void 0 === value) return {};
-+    if (value.trim() === 'false') {
-+        if (!allowDisabled) throw new Error(`Module Federation DTS cannot be disabled for exposed app ${configPath}.`);
-+        return {};
-+    }
-     const dts = parseObjectLiteral(value);
-     if (!dts || dts.hasSpread) throw new Error(`Cannot statically extract Module Federation DTS settings from ${configPath}; use a literal dts object.`);
-     const generateTypes = parseObjectLiteral(dts.properties.get('generateTypes'));
-@@ -38,7 +42,7 @@ function inspectModuleFederationConfigSource(source, appDir, configPath) {
-     return {
-         appDir,
-         configPath,
--        dts: extractDtsSettings(configPath, properties.properties.get('dts')),
-+        dts: extractDtsSettings(configPath, properties.properties.get('dts'), exposes.length === 0),
-         exposes,
-         hostOnlyNoExposes
-     };
-diff --git a/dist/esm/ultramodern-workspace/module-federation/config.js b/dist/esm/ultramodern-workspace/module-federation/config.js
-index d5dead9cf23d170edaa7d30fc60c2f7d64c217df..eb3e2e74650a06d7130b77594239ef8b6b3c16a0 100644
---- a/dist/esm/ultramodern-workspace/module-federation/config.js
-+++ b/dist/esm/ultramodern-workspace/module-federation/config.js
-@@ -11,19 +11,18 @@ import { createSharedModuleFederationConfig, formatTsObjectLiteral } from "./sha
- function createAppModernConfig(scope, app, remotes = [], enableTailwind = true, configuredDevPorts) {
-     const deliveryUnit = createDeliveryUnitRecord(scope, app);
-     const emitsUi = appEmitsBrowserUi(app);
--    const bffImport = appHasApi(app) ? "import { bffPlugin } from '@modern-js/plugin-bff';\n" : '';
-+    const hasApi = appHasApi(app);
-+    const bffImport = hasApi ? "import { bffPlugin } from '@modern-js/plugin-bff';\n" : '';
-     const uiImports = emitsUi ? `import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
- import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
- import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
-+
-+const localisedUrls = ultramodernLocalisedUrls;
- ` : '';
--    const zephyrPluginSource = emitsUi ? `const zephyrRspackPlugin = () => ({
-+    const zephyrPluginSource = emitsUi ? `const zephyrRspackPlugin = (): CliPlugin<AppTools> => ({
-   name: 'ultramodern-zephyr-rspack-plugin',
-   pre: ['@modern-js/plugin-module-federation-config'],
--  setup(api: {
--    modifyRspackConfig: (
--      handler: ReturnType<typeof withZephyrRspack>,
--    ) => void;
--  }) {
-+  setup(api) {
-     // Zephyr uploads federated build artifacts to Zephyr Cloud (the fast
-     // rollback path). Uploading REQUIRES a Zephyr Cloud account and, in CI, a
-     // deploy-scoped ZE_CI_TOKEN; without it Zephyr fatally fails to load its
-@@ -34,8 +33,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
-     // (this gate keys on Zephyr's native deploy token, not any UltraModern
-     // opt-out). When deploying, ZE_FAIL_BUILD=true makes an upload failure a
-     // hard build failure.
--    const zephyrCiDeploy =
--      (getBuildConfigEnvironment('ZE_CI_TOKEN') ?? '').length > 0;
-+    const zephyrCiDeploy = envValue('ZE_CI_TOKEN') !== undefined;
-     if (!zephyrCiDeploy) {
-       return;
-     }
-@@ -46,7 +44,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
- });
- 
- ` : '';
--    const localisedUrlsEntry = emitsUi ? '            localisedUrls: ultramodernLocalisedUrls as Record<string, Record<string, string>>,\n' : '';
-+    const localisedUrlsEntry = emitsUi ? '            localisedUrls,\n' : '';
-     const uiPluginEntries = emitsUi ? '        moduleFederationPlugin(),\n        zephyrRspackPlugin(),\n' : '';
-     const tailwindImport = enableTailwind ? "import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';\n" : '';
-     const bffConfig = appHasApi(app) ? `      bff: {
-@@ -82,17 +80,16 @@ ${distributedSsrExposes(service).map((expose)=>`                {
-           ],
- ` : '';
-     const defaultAssetPrefixSource = 'shell' === app.kind ? "const defaultAssetPrefix = '/';" : `const remoteAssetOrigin =
--  configuredCloudflareUrl ||
--  inferredCloudflareUrl ||
-+  configuredCloudflareUrl ??
-+  inferredCloudflareUrl ??
-   (cloudflareDeployEnabled ? '' : \`http://localhost:\${port}\`);
- // When deploying to Cloudflare without a configured public URL, publish an
- // 'auto' publicPath so the remote resolves its chunks from the origin its
- // remoteEntry.js was loaded from (the vertical's Worker), not the host shell's
- // origin — otherwise cross-origin chunk loading 404s and MF reports an empty
- // moduleId. A configured/inferred URL still wins as an absolute prefix.
--const defaultRemoteAssetPrefix = remoteAssetOrigin
--  ? \`\${remoteAssetOrigin.replace(/\\/+$/u, '')}/\`
--  : 'auto';
-+const defaultRemoteAssetPrefix =
-+  remoteAssetOrigin.length > 0 ? \`\${remoteAssetOrigin.replace(/\\/+$/u, '')}/\` : 'auto';
- const defaultAssetPrefix = defaultRemoteAssetPrefix;`;
-     const devAssetPrefixSource = 'shell' === app.kind ? `        // Keep shell dev assets origin-relative so the shell works through
-         // tunnels and local previews without rewriting its own chunks.
-@@ -107,7 +104,7 @@ const defaultAssetPrefix = defaultRemoteAssetPrefix;`;
-         ]).filter((port)=>'number' == typeof port && Number.isFinite(port)))
-     ].toSorted((left, right)=>left - right);
-     const legacyCorsSource = `const moduleFederationDevServerOrigin =
--  envValue('ULTRAMODERN_MF_DEV_ORIGIN') || 'http://localhost:${shellApp.port}';`;
-+  envValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:${shellApp.port}';`;
-     const configuredCorsSource = `const moduleFederationDevServerAllowedOrigins = [
- ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
- ];`;
-@@ -119,7 +116,125 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
-           },
-         },`;
-     const useConfiguredCorsAllowlist = void 0 !== configuredDevPorts;
-+    const hasApiRspackCompatibility = hasApi;
-+    const apiRspackImports = hasApiRspackCompatibility ? "import path from 'node:path';\nimport { fileURLToPath } from 'node:url';\n" : '';
-+    const apiRspackRuntimeSource = hasApiRspackCompatibility ? `const resolvePostgresProtocolCommonJsEntry = () =>
-+  fileURLToPath(new URL('../pg-protocol/dist/index.js', import.meta.resolve('pg/package.json')));
-+const resolvePostgresPoolCommonJsEntry = () =>
-+  createRequire(import.meta.resolve('pg/package.json')).resolve('pg-pool');
-+const resolveEffectApiSourceDirectory = () => fileURLToPath(new URL('api/', import.meta.url));
-+const nodeBuiltinRequests = new Set(
-+  cloudflareDeployEnabled ? builtinModules.flatMap((name) => [name, \`node:\${name}\`]) : [],
-+);
-+/* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. expires: 2026-12-31. */
-+const cloudflareRuntimeExternal = (
-+  { dependencyType, request }: { dependencyType?: string; request?: string },
-+  callback: (error?: Error, result?: string | string[], type?: 'module-import') => void,
-+) => {
-+  const nativeModuleImport = (specifier: string) =>
-+    dependencyType?.startsWith('commonjs') === true ? [specifier, 'default'] : specifier;
-+  if (request === 'cloudflare:sockets') {
-+    callback(undefined, nativeModuleImport(request), 'module-import');
-+    return;
-+  }
-+  if (request !== undefined && nodeBuiltinRequests.has(request)) {
-+    callback(
-+      undefined,
-+      nativeModuleImport(request.startsWith('node:') ? request : \`node:\${request}\`),
-+      'module-import',
-+    );
-+    return;
-+  }
-+  callback();
-+};
-+/* oxlint-enable promise/prefer-await-to-callbacks */\n` : '';
-+    const apiRspackToolsSource = hasApiRspackCompatibility ? `        rspack: (config, { environment, rspack }) => {
-+          if (!cloudflareDeployEnabled) {
-+            return;
-+          }
-+          const configuredAliases = config.resolve.alias;
-+          config.resolve.alias =
-+            configuredAliases === false || configuredAliases === undefined ? {} : configuredAliases;
-+          Object.assign(config.resolve.alias, {
-+            'pg-pool$': resolvePostgresPoolCommonJsEntry(),
-+            'pg-protocol$': resolvePostgresProtocolCommonJsEntry(),
-+          });
-+          const configuredExternals = config.externals;
-+          config.externals = [cloudflareRuntimeExternal];
-+          if (configuredExternals !== undefined) {
-+            config.externals.push(
-+              ...(Array.isArray(configuredExternals) ? configuredExternals : [configuredExternals]),
-+            );
-+          }
-+          if (environment.name === 'workerSSR') {
-+            const effectApiSourceDirectory = resolveEffectApiSourceDirectory();
-+            const configuredNode = config.node;
-+            config.node =
-+              configuredNode === false || configuredNode === undefined ? {} : configuredNode;
-+            Object.assign(config.node, {
-+              __dirname: false,
-+              __filename: false,
-+            });
-+            config.plugins.push(
-+              new rspack.DefinePlugin({
-+                'globalThis.FinalizationRegistry': 'undefined',
-+              }),
-+              new rspack.NormalModuleReplacementPlugin(/[?&]loaderId=/u, (resource) => {
-+                resource.request = resource.request.replace(
-+                  /(?<separator>[?&])retain=[^&]*/u,
-+                  '$<separator>retain=true',
-+                );
-+              }),
-+              new rspack.NormalModuleReplacementPlugin(/^\\.\\.?[/\\\\]/u, (resource) => {
-+                const [requestPath] = resource.request.split('?', 1);
-+                if (
-+                  requestPath !== undefined &&
-+                  path
-+                    .resolve(resource.context, requestPath)
-+                    .startsWith(effectApiSourceDirectory) &&
-+                  !resource.request.includes('modern-bff-runtime-source')
-+                ) {
-+                  resource.request = \`\${resource.request}?modern-bff-runtime-source\`;
-+                }
-+              }),
-+            );
-+          }
-+        },
-+` : '';
-+    const legacyCorsHeadersSource = `const appDevServerHeaders: NonNullable<
-+  NonNullable<NonNullable<AppToolsUserConfig['dev']>['server']>['headers']
-+> = {
-+  'Access-Control-Allow-Headers': 'Accept, Authorization, Content-Type, X-Requested-With',
-+  'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-+  'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,
-+};
-+
-+`;
-+    const legacyCorsDevServer = `        server: {
-+          headers: appDevServerHeaders,
-+        },`;
-     const configuredCorsHeader = useConfiguredCorsAllowlist ? 1 === developmentPorts.length ? "'Access-Control-Allow-Origin': moduleFederationDevServerAllowedOrigins[0]," : '' : "'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,";
-+    const servesModuleContract = 'shell' !== app.kind;
-+    const developmentContractImport = servesModuleContract ? "import { readFileSync } from 'node:fs';\n" : '';
-+    const developmentContractSource = servesModuleContract ? `const resolveDevelopmentModuleContractPath = () => fileURLToPath(
-+  new URL('.dev-public/.well-known/ontos-module-manifest.json', import.meta.url),
-+);` : '';
-+    const developmentContractMiddleware = servesModuleContract ? `
-+        setupMiddlewares: [
-+          ({ unshift }) => {
-+            unshift((request, response, next) => {
-+              if (request.url?.split('?', 1)[0] !== '/.well-known/ontos-module-manifest.json') {
-+                next();
-+                return;
-+              }
-+              const contract = readFileSync(resolveDevelopmentModuleContractPath());
-+              response.setHeader('Cache-Control', 'no-cache');
-+              response.setHeader('Content-Type', 'application/json');
-+              response.setHeader('Content-Length', String(contract.byteLength));
-+              response.end(contract);
-+            });
-+          },
-+        ],` : '';
-     return renderFileTemplate('workspace/apps/modern.config.ts', {
-         value0: `${bffImport}${tailwindImport}`,
-         value1: app.id,
-@@ -141,7 +256,7 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
-         value17: createRspackChunkLoadingGlobal(app),
-         value18: tailwindBuilderPluginsConfig,
-         value19: useConfiguredCorsAllowlist ? configuredCorsSource : legacyCorsSource,
--        value20: useConfiguredCorsAllowlist ? configuredCorsDevServer : '',
-+        value20: useConfiguredCorsAllowlist ? configuredCorsDevServer : legacyCorsDevServer,
-         value21: configuredCorsHeader,
-         value22: uiImports,
-         value23: zephyrPluginSource,
-@@ -149,7 +264,19 @@ ${developmentPorts.map((port)=>`  'http://localhost:${port}',`).join('\n')}
-         value25: uiPluginEntries,
-         value26: deliveryUnit.unitId,
-         value27: deliveryUnit.buildMarker,
--        value28: deliveryUnit.version
-+        value28: deliveryUnit.version,
-+        value29: hasApiRspackCompatibility ? 'builtinModules, ' : '',
-+        value30: apiRspackImports,
-+        value31: apiRspackRuntimeSource,
-+        value32: apiRspackToolsSource,
-+        value33: useConfiguredCorsAllowlist ? '' : legacyCorsHeadersSource,
-+        value34: emitsUi ? 'AppTools, ' : '',
-+        value35: emitsUi ? ', CliPlugin' : '',
-+        value36: developmentContractImport,
-+        value37: developmentContractSource,
-+        value38: developmentContractMiddleware,
-+        value39: servesModuleContract ? "              '/.well-known'," : '',
-+        value40: servesModuleContract ? ", './.dev-public'" : ''
-     });
- }
- function createModuleFederationBridgeConfig(enableBridgeRouter) {
-@@ -204,15 +331,15 @@ export default moduleFederationConfig;
- function createBackendModuleFederationConfig(app) {
-     return `import { createRequire } from 'node:module';
- import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
-+import * as Schema from 'effect/Schema';
- import { dependencies } from './package.json';
- 
- const require = createRequire(import.meta.url);
--const bffVersion = (
--  require('@modern-js/plugin-bff/package.json') as { version: string }
--).version;
--const effectVersion = (
--  require('effect/package.json') as { version: string }
--).version;
-+const PackageVersionSchema = Schema.Struct({ version: Schema.String });
-+const packageVersion = (specifier: string): string =>
-+  Schema.decodeUnknownSync(PackageVersionSchema)(require(specifier)).version;
-+const bffVersion = packageVersion('@modern-js/plugin-bff/package.json');
-+const effectVersion = packageVersion('effect/package.json');
- 
- const moduleFederationConfig: Parameters<
-   typeof createModuleFederationConfig
-diff --git a/dist/esm/ultramodern-workspace/module-federation/reexport-module.js b/dist/esm/ultramodern-workspace/module-federation/reexport-module.js
-index 1e2bef1edab5bff011cc1913b7746c39312ca90b..d8b5407100b33140151d7044abbcf828ea61017a 100644
---- a/dist/esm/ultramodern-workspace/module-federation/reexport-module.js
-+++ b/dist/esm/ultramodern-workspace/module-federation/reexport-module.js
-@@ -13,14 +13,24 @@ function createUltramodernBuildModule(scope, app) {
- declare const ULTRAMODERN_SOURCE_REVISION: string;
- 
- const ultramodernGeneratedBuildArtifact = ${JSON.stringify(createUltramodernBuildArtifact(record), null, 2)} as const;
--const ultramodernBuildMarker =
--  typeof ULTRAMODERN_BUILD_MARKER === 'string'
--    ? ULTRAMODERN_BUILD_MARKER
--    : ultramodernGeneratedBuildArtifact.deliveryUnit.buildMarker;
--const ultramodernSourceRevision =
--  typeof ULTRAMODERN_SOURCE_REVISION === 'string'
--    ? ULTRAMODERN_SOURCE_REVISION
--    : ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision;
-+const readInjectedBuildMarker = (): string => {
-+  try {
-+    return ULTRAMODERN_BUILD_MARKER;
-+  } catch {
-+    return ultramodernGeneratedBuildArtifact.deliveryUnit.buildMarker;
-+  }
-+};
-+
-+const readInjectedSourceRevision = (): string => {
-+  try {
-+    return ULTRAMODERN_SOURCE_REVISION;
-+  } catch {
-+    return ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision;
-+  }
-+};
-+
-+const ultramodernBuildMarker = readInjectedBuildMarker();
-+const ultramodernSourceRevision = readInjectedSourceRevision();
- const ultramodernBuildArtifact = {
-   ...ultramodernGeneratedBuildArtifact,
-   deliveryUnit: {
-diff --git a/dist/esm/ultramodern-workspace/package-json.js b/dist/esm/ultramodern-workspace/package-json.js
-index d97db9c90294bd70a94d5ccc10296a0079cd014e..053864d01b5e842b49f083a26753c60b91aa648f 100644
---- a/dist/esm/ultramodern-workspace/package-json.js
-+++ b/dist/esm/ultramodern-workspace/package-json.js
-@@ -171,7 +171,7 @@ function createAppPackage(scope, app, packageSource, enableTailwind, remotes = [
-     if (Object.keys(packageExports).length > 0) packageJson.exports = packageExports;
-     return packageJson;
- }
--function createSharedPackage(scope, id, description) {
-+function createSharedPackage(scope, id, description, packageSource) {
-     const packageJson = {
-         private: true,
-         name: packageName(scope, id),
-@@ -188,10 +188,21 @@ function createSharedPackage(scope, id, description) {
-             '@effect/tsgo': ULTRAMODERN_PACKAGE_PINS.appDevDependencies["@effect/tsgo"]
-         }
-     };
-+    if ('shared-contracts' === id) packageJson.dependencies = {
-+        effect: ULTRAMODERN_PACKAGE_PINS.bffEffectDependencies.effect
-+    };
-     if ('shared-design-tokens' === id) packageJson.exports = {
-         ...packageJson.exports,
-         './tokens.css': './src/tokens.css'
-     };
-+    if ('shared-contracts' === id) packageJson.exports = {
-+        ...packageJson.exports,
-+        './server/effect-bff-runtime': './src/effect-bff-runtime.ts'
-+    };
-+    if ('shared-contracts' === id) packageJson.dependencies = {
-+        '@modern-js/plugin-bff': modernPackageSpecifier('@modern-js/plugin-bff', packageSource),
-+        effect: ULTRAMODERN_PACKAGE_PINS.bffEffectDependencies.effect
-+    };
-     return packageJson;
- }
- function createSharedContractsIndex() {
-diff --git a/dist/esm/ultramodern-workspace/workspace-script-plan.js b/dist/esm/ultramodern-workspace/workspace-script-plan.js
-index 683e43743c53e41b163455e8c8138929a44480c2..2d082066f2c5f5b489ec69d9fd7faa4dad5a8ce6 100644
---- a/dist/esm/ultramodern-workspace/workspace-script-plan.js
-+++ b/dist/esm/ultramodern-workspace/workspace-script-plan.js
-@@ -108,7 +108,7 @@ function createWorkspaceRootScriptPlan(remotes = [], options = {}) {
-         migrateStrictEffect: rootToolingWrapperCommand('migrateStrictEffect'),
-         zeropsMaterialize: "node ./scripts/materialize-zerops-runtime.mjs",
-         contractCheck: rootToolingWrapperCommand('validate'),
--        typecheck: options.typecheck ?? `${rootToolingWrapperCommand('typecheck')} --project tsconfig.json`,
-+        typecheck: options.typecheck ?? `${rootToolingWrapperCommand('typecheck')} --build tsconfig.json`,
-         check: `pnpm format:check && pnpm lint && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness${bridgeCheck}`
-     };
- }
-diff --git a/dist/esm/ultramodern-workspace/workspace-scripts.js b/dist/esm/ultramodern-workspace/workspace-scripts.js
-index ce720ef74bd8b5c9a09d29d87db247834d54121e..b31c1beef859c3374dea6b6473d97d2ab5eaef91 100644
---- a/dist/esm/ultramodern-workspace/workspace-scripts.js
-+++ b/dist/esm/ultramodern-workspace/workspace-scripts.js
-@@ -115,6 +115,9 @@ function createWorkspaceI18nBoundaryValidationScript() {
- function createWorkspaceApiBoundaryValidationScript() {
-     return external_fs_io_js_readFileTemplate("workspace-scripts/check-ultramodern-api-boundaries.mts");
- }
-+function createMicroVerticalApiBaselineBoundaryScript() {
-+    return external_fs_io_js_readFileTemplate("workspace-scripts/microvertical-api-baseline-boundary.mts");
-+}
- function createPerformanceReadinessConfigScript() {
-     return external_fs_io_js_readFileTemplate("workspace-scripts/ultramodern-performance-readiness.config.mjs");
- }
-@@ -129,6 +132,7 @@ function writeGeneratedWorkspaceScripts(targetDir, scope, enableTailwind, remote
-     const hasBackendSurface = remotes.some(appHasApi);
-     writeWorkspaceOwnedMtsScript(targetDir, 'check-ultramodern-i18n-boundaries', createWorkspaceI18nBoundaryValidationScript());
-     writeWorkspaceOwnedMtsScript(targetDir, 'check-ultramodern-api-boundaries', createWorkspaceApiBoundaryValidationScript());
-+    writeWorkspaceOwnedMtsScript(targetDir, 'microvertical-api-baseline-boundary', createMicroVerticalApiBaselineBoundaryScript());
-     if (!shellOnly) {
-         writeFileReplacing(targetDir, "scripts/materialize-zerops-runtime.mjs", createZeropsRuntimeMaterializationScript());
-         writeWorkspaceOwnedMtsScript(targetDir, 'proof-workerd-ssr', createWorkerdSsrProofScript());
-@@ -161,6 +165,10 @@ function migratedWorkspaceScriptArtifacts(options) {
-             content: createWorkspaceApiBoundaryValidationScript(),
-             legacyPath: "scripts/check-ultramodern-api-boundaries.mjs"
-         },
-+        {
-+            relativePath: "scripts/microvertical-api-baseline-boundary.mts",
-+            content: createMicroVerticalApiBaselineBoundaryScript()
-+        },
-         {
-             relativePath: "scripts/ultramodern-performance-readiness.config.mjs",
-             content: createPerformanceReadinessConfigScript()
-@@ -192,6 +200,7 @@ function migratedWorkspaceScriptArtifacts(options) {
- const migratedWorkspaceScriptBasenames = [
-     'check-ultramodern-i18n-boundaries',
-     'check-ultramodern-api-boundaries',
-+    'microvertical-api-baseline-boundary',
-     'bootstrap-agent-skills',
-     'setup-agent-reference-repos',
-     'proof-workerd-ssr',
-diff --git a/dist/esm/ultramodern-workspace/write-app.js b/dist/esm/ultramodern-workspace/write-app.js
-index 15a02949f43f418dd305a50e9c2edebd7f7db907..b99e450abba5a47f2cc0c768425b4d5c484ce3ed 100644
---- a/dist/esm/ultramodern-workspace/write-app.js
-+++ b/dist/esm/ultramodern-workspace/write-app.js
-@@ -88,8 +88,8 @@ function writeAppRouteAndShellFiles({ targetDir, scope, resolvedApp, emitsUi, re
- function writeAppApiAndRemoteExposeFiles({ targetDir, scope, resolvedApp, emitsUi, writeAppFile }) {
-     if (appHasApi(resolvedApp)) {
-         const rpcProtocol = 'rpc' === resolveApiProtocol(resolvedApp);
--        rpcProtocol ? writeFile(targetDir, `${resolvedApp.directory}/shared/rpc.ts`, createRpcContractFile(resolvedApp)) : writeFile(targetDir, `${resolvedApp.directory}/shared/api.ts`, createSharedApi(resolvedApp));
--        writeFile(targetDir, `${resolvedApp.directory}/api/index.ts`, createApiServiceEntry(resolvedApp, rpcProtocol ? '../shared/rpc.ts' : '../shared/api.ts'));
-+        rpcProtocol ? writeFile(targetDir, `${resolvedApp.directory}/shared/rpc.ts`, createRpcContractFile(resolvedApp)) : writeFile(targetDir, `${resolvedApp.directory}/shared/api.ts`, createSharedApi(scope, resolvedApp));
-+        writeFile(targetDir, `${resolvedApp.directory}/api/index.ts`, createApiServiceEntry(scope, resolvedApp, rpcProtocol ? '../shared/rpc.ts' : '../shared/api.ts'));
-         writeFile(targetDir, `${resolvedApp.directory}/api/backend-federation.ts`, createBackendFederationContractFile(resolvedApp));
-         writeFile(targetDir, `${resolvedApp.directory}/api/effect-api.ts`, createBackendEffectApiExpose(scope, resolvedApp));
-         rpcProtocol ? writeFile(targetDir, `${resolvedApp.directory}/src/api/${resolvedApp.api.stem}-rpc-client.ts`, createRpcClientFile(resolvedApp)) : writeFile(targetDir, `${resolvedApp.directory}/src/api/${resolvedApp.api.stem}-client.ts`, createApiClient(resolvedApp, '../../shared/api'));
-diff --git a/dist/esm/ultramodern-workspace/write-workspace.js b/dist/esm/ultramodern-workspace/write-workspace.js
-index afd450197f1a313fe7f8edd6b349d10b9e0ad8a2..0e34c9589d469b542916dd57ff3fead0384c4591 100644
---- a/dist/esm/ultramodern-workspace/write-workspace.js
-+++ b/dist/esm/ultramodern-workspace/write-workspace.js
-@@ -4,7 +4,7 @@ import { createSharedDesignTokensCss } from "./app-files.js";
- import { normalizeUltramodernBridgeConfig } from "./bridge-config.js";
- import { createDevelopmentOverlay, createOwnership, createTopology, createUltramodernConfig } from "./contracts.js";
- import { ULTRAMODERN_CONFIG_PATH, createShellHost, sharedPackages, shellApp } from "./descriptors.js";
--import { copyRootTemplate, formatGeneratedWorkspaceFiles, writeFile, writeFileReplacing, writeJson } from "./fs-io.js";
-+import { copyRootTemplate, formatGeneratedWorkspaceFiles, readFileTemplate, writeFile, writeFileReplacing, writeJson } from "./fs-io.js";
- import { createFileSnapshot, createGenerationResult, diffFileSnapshots } from "./generation-result.js";
- import { assertUniqueTailwindPrefixes, toPackageScope } from "./naming.js";
- import { runCodeSmithOverlays } from "./overlays.js";
-@@ -18,12 +18,13 @@ import { createZeropsYaml } from "./zerops.js";
- function hasExplicitInstallRequest(options) {
-     return void 0 !== options.packageSource && 'workspace' !== options.packageSource.strategy;
- }
--function writeSharedPackages(targetDir, scope) {
-+function writeSharedPackages(targetDir, scope, packageSource) {
-     for (const sharedPackage of sharedPackages){
--        writeJson(targetDir, `${sharedPackage.directory}/package.json`, createSharedPackage(scope, sharedPackage.id, sharedPackage.description));
-+        writeJson(targetDir, `${sharedPackage.directory}/package.json`, createSharedPackage(scope, sharedPackage.id, sharedPackage.description, packageSource));
-         writeJson(targetDir, `${sharedPackage.directory}/tsconfig.json`, createSharedPackageTsConfig(sharedPackage.directory));
-     }
-     writeFile(targetDir, 'packages/shared-contracts/src/index.ts', createSharedContractsIndex());
-+    writeFile(targetDir, 'packages/shared-contracts/src/effect-bff-runtime.ts', readFileTemplate('packages/effect-bff-runtime.ts'));
-     writeFile(targetDir, 'packages/shared-design-tokens/src/index.ts', `export const sharedDesignTokens = {
-   color: {
-     accent: '#2f8f68',
-@@ -134,7 +135,7 @@ function generateUltramodernWorkspace(options) {
      writeJson(options.targetDir, ULTRAMODERN_CONFIG_PATH, createCompactUltramodernConfig(scope, options.modernVersion, packageSource, createdApps, enableTailwind, bridge));
      writeApp(options.targetDir, scope, shellApp, packageSource, enableTailwind, initialVerticals, bridge);
      for (const remote of initialVerticals)writeApp(options.targetDir, scope, remote, packageSource, enableTailwind, initialVerticals, bridge);
@@ -2844,6 +2913,292 @@ index 198beb018e1d6985953748cea5000448f381abe5..7d2acb37a8058c1c7b94c1df033d34e7
  export type UltramodernPublicSitemapChangeFrequency =
    | 'always'
    | 'hourly'
+diff --git a/templates/workspace/apps/modern.config.ts.handlebars b/templates/workspace/apps/modern.config.ts.handlebars
+index 2144abc7232f756a7d824e18bd90ce881e0dadc2..000ece862905b277cc002c7437ce3746da48d75e 100644
+--- a/templates/workspace/apps/modern.config.ts.handlebars
++++ b/templates/workspace/apps/modern.config.ts.handlebars
+@@ -1,25 +1,60 @@
+-import {
++{{value36}}import { {{value29}}createRequire } from 'node:module';
++{{value30}}import {
+   appTools,
+   defineConfig,
+   presetUltramodern,
+ } from '@modern-js/app-tools';
++import type {
++  {{value34}}AppToolsUserConfig{{value35}}
++} from '@modern-js/app-tools';
+ import {
+   getBuildConfigEnvironment,
+   withBuildConfigEnvironment,
+ } from '@modern-js/app-tools/config';
+ {{value0}}import { i18nPlugin } from '@modern-js/plugin-i18n';
+ import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
++import { Config, Option, Result, Schema } from 'effect';
+ {{value22}}
+-const cloudflareDeployEnabled =
+-  getBuildConfigEnvironment('MODERNJS_DEPLOY') === 'cloudflare';
+-
++Object.assign(globalThis, { require: createRequire(import.meta.url) });
++{{value37}}
++const nonEmptyBuildStringSchema = Schema.Trim.pipe(Schema.check(Schema.isMinLength(1)));
++const getOptionalBuildConfig = (name: string): string | undefined => {
++  const decoded = Schema.decodeUnknownResult(
++    Schema.OptionFromUndefinedOr(nonEmptyBuildStringSchema),
++  )(getBuildConfigEnvironment(name));
++  return Result.isSuccess(decoded) ? Option.getOrUndefined(decoded.success) : undefined;
++};
++const envValue = getOptionalBuildConfig;
++const getBuildBoolean = (name: string): boolean =>
++  Option.getOrElse(
++    Result.getOrThrow(
++      Schema.decodeUnknownResult(Schema.OptionFromUndefinedOr(Config.Boolean))(
++        getBuildConfigEnvironment(name),
++      ),
++    ),
++    () => false,
++  );
++const cloudflareDeployMode = Result.getOrThrow(
++  Schema.decodeUnknownResult(Schema.OptionFromUndefinedOr(Schema.Literals(['cloudflare', 'node'])))(
++    getBuildConfigEnvironment('MODERNJS_DEPLOY'),
++  ),
++);
++const cloudflareDeployEnabled = Option.contains(cloudflareDeployMode, 'cloudflare');
++{{value31}}
+ {{value23}}const appId = '{{value1}}';
+ const cloudflareWorkerName = '{{value2}}';
+-const port = Number(getBuildConfigEnvironment('{{value3}}') ?? {{value4}});
+-const envValue = (name: string) => {
+-  const value = getBuildConfigEnvironment(name)?.trim();
+-  return value !== undefined && value.length > 0 ? value : undefined;
+-};
++const port = Option.getOrElse(
++  Result.getOrThrow(
++    Schema.decodeUnknownResult(
++      Schema.OptionFromUndefinedOr(
++        Schema.NumberFromString.pipe(
++          Schema.check(Schema.isInt(), Schema.isBetween({ maximum: 65_535, minimum: 1 })),
++        ),
++      ),
++    )(getBuildConfigEnvironment('{{value3}}')),
++  ),
++  () => {{value4}},
++);
+ const configuredSiteUrl = envValue('MODERN_PUBLIC_SITE_URL');
+ const configuredCloudflareUrl = envValue('{{value5}}');
+ const configuredUltramodernAssetPrefix = envValue('ULTRAMODERN_ASSET_PREFIX');
+@@ -35,16 +70,16 @@ const inferredCloudflareUrl =
+ // Site origin (SEO: canonical/hreflang URLs) prefers the site-wide public URL;
+ // the per-app deployment URL only fills in when no site origin is configured.
+ const siteUrl =
+-  configuredSiteUrl ||
+-  configuredCloudflareUrl ||
+-  inferredCloudflareUrl ||
++  configuredSiteUrl ??
++  configuredCloudflareUrl ??
++  inferredCloudflareUrl ??
+   `http://localhost:${port}`;
+ {{value7}}
+ // Asset loading is intentionally independent from the canonical site URL.
+ // Module Federation remotes must publish an absolute publicPath so browsers
+ // load remoteEntry.js and exposed chunks from the remote origin, not the host.
+ const assetPrefix =
+-  configuredModernAssetPrefix || configuredUltramodernAssetPrefix || defaultAssetPrefix;
++  configuredModernAssetPrefix ?? configuredUltramodernAssetPrefix ?? defaultAssetPrefix;
+ const buildTarget = cloudflareDeployEnabled ? 'cloudflare' : 'web';
+ const buildOutputRoot = cloudflareDeployEnabled ? 'dist-cloudflare' : 'dist';
+ const buildTempDirectory = `node_modules/.modern-js-${appId}-${buildTarget}`;
+@@ -52,7 +87,7 @@ const buildCacheDirectory = `node_modules/.cache/rspack-${appId}-${buildTarget}`
+ 
+ if (
+   cloudflareDeployEnabled &&
+-  getBuildConfigEnvironment('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') === 'true' &&
++  getBuildBoolean('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') &&
+   configuredCloudflareUrl === undefined &&
+   configuredSiteUrl === undefined &&
+   inferredCloudflareUrl === undefined
+@@ -62,23 +97,26 @@ if (
+   );
+ }
+ 
++const whenEnabled = <Configuration>(enabled: boolean, configuration: Configuration) =>
++  enabled ? configuration : undefined;
++
++{{value33}}const cloudflareDeployment = whenEnabled(cloudflareDeployEnabled, {
++  deploy: {
++    worker: {
++      compatibilityDate: '{{value10}}',
++      name: cloudflareWorkerName,
++      security: {{value11}},
++{{value12}}      ssr: true,
++    },
++  },
++} satisfies Pick<AppToolsUserConfig, 'deploy'>);
++
+ export default defineConfig(
+   presetUltramodern(
+     {
+-{{value9}}{{value18}}      ...(cloudflareDeployEnabled
+-        ? {
+-            deploy: {
+-              worker: {
+-              compatibilityDate: '{{value10}}',
+-              name: cloudflareWorkerName,
+-              security: {{value11}},
+-{{value12}}              ssr: true,
+-            },
+-          },
+-          }
+-        : {}),
++{{value9}}{{value18}}      ...cloudflareDeployment,
+       dev: {
+-{{value13}}{{value20}}
++{{value13}}{{value20}}{{value38}}
+       },
+       html: {
+         outputStructure: 'flat',
+@@ -101,7 +139,7 @@ export default defineConfig(
+         },
+         rsdoctor: {
+           disableClientServer: true,
+-          enabled: getBuildConfigEnvironment('ULTRAMODERN_RSDOCTOR') === 'true',
++          enabled: getBuildBoolean('ULTRAMODERN_RSDOCTOR'),
+         },
+       },
+       plugins: [
+@@ -115,6 +153,7 @@ export default defineConfig(
+           localeDetection: {
+             fallbackLanguage: 'en',
+             ignoreRedirectRoutes: [
++{{value39}}
+               '/@mf-types',
+               '/assets',
+               '/bundles',
+@@ -137,7 +176,7 @@ export default defineConfig(
+ {{value15}}{{value25}}      ],
+       server: {
+         port,
+-        publicDir: ['./locales', './assets'],
++        publicDir: ['./locales', './assets'{{value40}}],
+       },
+       source: {
+         alias: {
+@@ -145,6 +184,8 @@ export default defineConfig(
+             '@modern-js/plugin-i18n/runtime/no-react-i18next',
+         },
+         globalVars: {
++          ULTRAMODERN_SHELL_ORIGIN:
++            envValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:{{value6}}',
+           ULTRAMODERN_SITE_URL: siteUrl,
+         },
+         mainEntryName: 'index',
+@@ -153,21 +194,13 @@ export default defineConfig(
+         autoprefixer: {
+           overrideBrowserslist: ['defaults'],
+         },
+-        bundlerChain: chain => {
++        bundlerChain: (chain) => {
+           chain.output
+             .uniqueName('{{value16}}')
+             .chunkLoadingGlobal('{{value17}}');
+         },
+-        devServer: {
+-          headers: {
+-            'Access-Control-Allow-Headers':
+-              'Accept, Authorization, Content-Type, X-Requested-With',
+-            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+-            {{value21}}
+-          },
+-        },
+-      },
+-    },
++{{value32}}      },
++    } satisfies AppToolsUserConfig,
+     {
+       appId,
+       deliveryUnit: {
+diff --git a/templates/workspace/verticals/server/checkout-cart-handlers.ts.handlebars b/templates/workspace/verticals/server/checkout-cart-handlers.ts.handlebars
+index 881ed1c31b29fa7a6db8da25bdf95fe23aefb84b..b8e360c82fcb543c4afccc994503277c20782690 100644
+--- a/templates/workspace/verticals/server/checkout-cart-handlers.ts.handlebars
++++ b/templates/workspace/verticals/server/checkout-cart-handlers.ts.handlebars
+@@ -2,7 +2,7 @@
+       .handle('getCart', () =>
+         Effect.sync(() => createCheckoutCartSnapshot()).pipe(
+           Effect.withSpan('ultramodern.api.{{value0}}.checkout.getCart', {
+-            attributes: operationAttributes({{value1}}OperationContexts.getCart),
++            attributes: microVerticalOperationAttributes({{value1}}OperationContexts.getCart),
+             kind: 'server',
+           }),
+         ),
+@@ -20,7 +20,7 @@
+           return createCheckoutCartSnapshot();
+         }).pipe(
+           Effect.withSpan('ultramodern.api.{{value2}}.checkout.addCartItem', {
+-            attributes: operationAttributes({{value3}}OperationContexts.addCartItem),
++            attributes: microVerticalOperationAttributes({{value3}}OperationContexts.addCartItem),
+             kind: 'server',
+           }),
+         ),
+@@ -31,7 +31,7 @@
+           return createCheckoutCartSnapshot();
+         }).pipe(
+           Effect.withSpan('ultramodern.api.{{value4}}.checkout.removeCartItem', {
+-            attributes: operationAttributes({{value5}}OperationContexts.removeCartItem),
++            attributes: microVerticalOperationAttributes({{value5}}OperationContexts.removeCartItem),
+             kind: 'server',
+           }),
+         ),
+@@ -42,7 +42,7 @@
+           return createCheckoutCartSnapshot();
+         }).pipe(
+           Effect.withSpan('ultramodern.api.{{value6}}.checkout.clearCart', {
+-            attributes: operationAttributes({{value7}}OperationContexts.clearCart),
++            attributes: microVerticalOperationAttributes({{value7}}OperationContexts.clearCart),
+             kind: 'server',
+           }),
+         ),
+diff --git a/templates/workspace/verticals/shared/api.checkout-cart-operation-contexts.ts.handlebars b/templates/workspace/verticals/shared/api.checkout-cart-operation-contexts.ts.handlebars
+index 04820fd4264e7df2d2fa5c803df181e3e1401a34..3eb4b2387a43ba4a163f93b3dc309df37b9bdd14 100644
+--- a/templates/workspace/verticals/shared/api.checkout-cart-operation-contexts.ts.handlebars
++++ b/templates/workspace/verticals/shared/api.checkout-cart-operation-contexts.ts.handlebars
+@@ -1,29 +1,25 @@
+ 
+-  addCartItem: {
++  addCartItem: createMicroVerticalOperationContext({
+     method: 'POST',
+     operationId: '{{value0}}:{{value1}}:addCartItem',
+     routePath: '/checkout/cart/items',
+-    source: 'generated-client',
+-  },
+-  clearCart: {
++  }),
++  clearCart: createMicroVerticalOperationContext({
+     method: 'POST',
+     operationId: '{{value2}}:{{value3}}:clearCart',
+     routePath: '/checkout/cart/clear',
+-    source: 'generated-client',
+-  },
++  }),
+ {{createOperationContext}}
+ {{getOperationContext}}
+-  getCart: {
++  getCart: createMicroVerticalOperationContext({
+     method: 'GET',
+     operationId: '{{value4}}:{{value5}}:getCart',
+     routePath: '/checkout/cart',
+-    source: 'generated-client',
+-  },
++  }),
+ {{listOperationContext}}
+ {{readinessOperationContext}}
+-  removeCartItem: {
++  removeCartItem: createMicroVerticalOperationContext({
+     method: 'POST',
+     operationId: '{{value6}}:{{value7}}:removeCartItem',
+     routePath: '/checkout/cart/remove',
+-    source: 'generated-client',
+-  },
++  }),
 diff --git a/templates/workspace-scripts/check-ultramodern-api-boundaries.mts b/templates/workspace-scripts/check-ultramodern-api-boundaries.mts
 index d606a2265cb438d32a612cfdd6ebb9561529d4f5..b31f281e7ab5bbea289fc2aae117fe39202023cf 100644
 --- a/templates/workspace-scripts/check-ultramodern-api-boundaries.mts
@@ -4162,10 +4517,10 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..b31f281e7ab5bbea289fc2aae117fe39
        assert(
 diff --git a/templates/workspace-scripts/microvertical-api-baseline-boundary.mts b/templates/workspace-scripts/microvertical-api-baseline-boundary.mts
 new file mode 100644
-index 0000000000000000000000000000000000000000..d39b20299baf434ed109fea7d93c586cc99f421e
+index 0000000000000000000000000000000000000000..6101ce929421a39eaa8fd41af0130453e5827db4
 --- /dev/null
 +++ b/templates/workspace-scripts/microvertical-api-baseline-boundary.mts
-@@ -0,0 +1,686 @@
+@@ -0,0 +1,685 @@
 +import {
 +  isAsExpression,
 +  isCallExpression,
@@ -4333,6 +4688,15 @@ index 0000000000000000000000000000000000000000..d39b20299baf434ed109fea7d93c586c
 +  return assignments;
 +};
 +
++const exactCall = (
++  expression: Expression | undefined,
++  callee: readonly string[],
++  argumentCount: number,
++): CallExpression | undefined => {
++  const call = callExpression(expression, callee);
++  return call?.arguments.length === argumentCount ? call : undefined;
++};
++
 +interface SharedSchemaObject {
 +  readonly assignments: ReadonlyMap<string, PropertyAssignment>;
 +  readonly identity: boolean;
@@ -4350,25 +4714,18 @@ index 0000000000000000000000000000000000000000..d39b20299baf434ed109fea7d93c586c
 +  if (isIdentifier(initializer) && initializer.text === sharedSchemaName) {
 +    return { assignments: new Map(), identity: true };
 +  }
-+  const struct = callExpression(initializer, ['Schema', 'Struct']);
++  const struct = exactCall(initializer, ['Schema', 'Struct'], 1);
 +  const schemaObject = objectLiteral(struct?.arguments[0]);
-+  if (struct?.arguments.length !== 1 || schemaObject === undefined) {
++  if (schemaObject === undefined) {
 +    return undefined;
 +  }
-+  const sharedSpreads = schemaObject.properties.filter(
-+    (property) =>
-+      isSpreadAssignment(property) &&
-+      isAccessPath(property.expression, [sharedSchemaName, 'fields']),
++  const spreads = schemaObject.properties.filter(isSpreadAssignment);
++  const assignments = propertyAssignments(
++    schemaObject.properties.filter((property) => !isSpreadAssignment(property)),
 +  );
-+  const nonSpreadProperties = schemaObject.properties.filter(
-+    (property) => !isSpreadAssignment(property),
-+  );
-+  const assignments = propertyAssignments(nonSpreadProperties);
 +  if (
-+    sharedSpreads.length !== 1 ||
-+    schemaObject.properties.some(
-+      (property) => isSpreadAssignment(property) && property !== sharedSpreads[0],
-+    ) ||
++    spreads.length !== 1 ||
++    !spreads.every((spread) => isAccessPath(spread.expression, [sharedSchemaName, 'fields'])) ||
 +    assignments === undefined ||
 +    protectedFields.some((field) => assignments.has(field))
 +  ) {
@@ -4405,15 +4762,6 @@ index 0000000000000000000000000000000000000000..d39b20299baf434ed109fea7d93c586c
 +  return { base: current, methods };
 +};
 +
-+const exactCall = (
-+  expression: Expression | undefined,
-+  callee: readonly string[],
-+  argumentCount: number,
-+): CallExpression | undefined => {
-+  const call = callExpression(expression, callee);
-+  return call?.arguments.length === argumentCount ? call : undefined;
-+};
-+
 +const brandedStringSchemaIsExact = (
 +  declaration: VariableDeclaration | undefined,
 +  brand: string,
@@ -4436,33 +4784,36 @@ index 0000000000000000000000000000000000000000..d39b20299baf434ed109fea7d93c586c
 +  return stringLiteral(brandCall?.arguments[0]) === brand;
 +};
 +
++const importedRuntimeNames = (statement: Node, expectedPackage: string): readonly string[] => {
++  if (
++    !isImportDeclaration(statement) ||
++    stringLiteral(statement.moduleSpecifier) !== expectedPackage
++  ) {
++    return [];
++  }
++  const clause = statement.importClause;
++  const bindings = clause?.namedBindings;
++  if (
++    clause?.phaseModifier === SyntaxKind.TypeKeyword ||
++    bindings === undefined ||
++    !isNamedImports(bindings)
++  ) {
++    return [];
++  }
++  return bindings.elements
++    .filter((element) => !element.isTypeOnly && element.propertyName === undefined)
++    .map((element) => element.name.text);
++};
++
 +const importsExactBindings = (
 +  sourceFile: SourceFile,
 +  expectedPackage: string,
 +  expectedBindings: readonly string[],
 +): boolean => {
-+  const required = new Set(expectedBindings);
-+  for (const statement of sourceFile.statements) {
-+    if (
-+      !isImportDeclaration(statement) ||
-+      stringLiteral(statement.moduleSpecifier) !== expectedPackage ||
-+      statement.importClause?.phaseModifier === SyntaxKind.TypeKeyword ||
-+      statement.importClause?.namedBindings === undefined ||
-+      !isNamedImports(statement.importClause.namedBindings)
-+    ) {
-+      continue;
-+    }
-+    for (const element of statement.importClause.namedBindings.elements) {
-+      if (
-+        !element.isTypeOnly &&
-+        element.propertyName === undefined &&
-+        required.has(element.name.text)
-+      ) {
-+        required.delete(element.name.text);
-+      }
-+    }
-+  }
-+  return required.size === 0;
++  const names = new Set(
++    sourceFile.statements.flatMap((statement) => importedRuntimeNames(statement, expectedPackage)),
++  );
++  return expectedBindings.every((name) => names.has(name));
 +};
 +
 +const importsSharedBaselinePrimitives = (
@@ -4475,41 +4826,40 @@ index 0000000000000000000000000000000000000000..d39b20299baf434ed109fea7d93c586c
 +    'createMicroVerticalOperationContext',
 +  ]);
 +
-+// oxlint-disable-next-line complexity -- The AST shape is intentionally validated fail-closed in one expression. expires: 2026-12-31.
++const singleAddedArgument = (
++  expression: Expression | undefined,
++  factory: readonly string[],
++  names: readonly string[],
++): Expression | undefined => {
++  const chain = directCallChain(expression);
++  if (chain === undefined || !isAccessPath(chain.base.expression, factory)) {
++    return undefined;
++  }
++  const [method] = chain.methods;
++  if (
++    chain.base.arguments.length !== 1 ||
++    !names.includes(stringLiteral(chain.base.arguments[0]) ?? '') ||
++    chain.methods.length !== 1 ||
++    method?.name !== 'add' ||
++    method.arguments.length !== 1
++  ) {
++    return undefined;
++  }
++  return method.arguments[0];
++};
++
 +const foundationIsExact = (
 +  declaration: VariableDeclaration | undefined,
 +  stem: string,
 +  readinessSchemaName: string,
 +): boolean => {
-+  const chain = directCallChain(declaration?.initializer);
-+  const expectedApiNames = new Set([
-+    `${pascalCaseStem(stem)}FoundationApi`,
-+    `${pascalCaseStem(stem)}ApiFoundation`,
-+  ]);
-+  if (
-+    chain === undefined ||
-+    !isAccessPath(chain.base.expression, ['HttpApi', 'make']) ||
-+    chain.base.arguments.length !== 1 ||
-+    !expectedApiNames.has(stringLiteral(chain.base.arguments[0]) ?? '') ||
-+    chain.methods.length !== 1 ||
-+    chain.methods[0]?.name !== 'add' ||
-+    chain.methods[0].arguments.length !== 1
-+  ) {
-+    return false;
-+  }
-+  const groupChain = directCallChain(chain.methods[0].arguments[0]);
-+  if (
-+    groupChain === undefined ||
-+    !isAccessPath(groupChain.base.expression, ['HttpApiGroup', 'make']) ||
-+    groupChain.base.arguments.length !== 1 ||
-+    stringLiteral(groupChain.base.arguments[0]) !== 'foundation' ||
-+    groupChain.methods.length !== 1 ||
-+    groupChain.methods[0]?.name !== 'add' ||
-+    groupChain.methods[0].arguments.length !== 1
-+  ) {
-+    return false;
-+  }
-+  const endpoint = exactCall(groupChain.methods[0].arguments[0], ['HttpApiEndpoint', 'get'], 3);
++  const group = singleAddedArgument(
++    declaration?.initializer,
++    ['HttpApi', 'make'],
++    [`${pascalCaseStem(stem)}FoundationApi`, `${pascalCaseStem(stem)}ApiFoundation`],
++  );
++  const endpointExpression = singleAddedArgument(group, ['HttpApiGroup', 'make'], ['foundation']);
++  const endpoint = exactCall(endpointExpression, ['HttpApiEndpoint', 'get'], 3);
 +  const endpointOptions = objectLiteral(endpoint?.arguments[2]);
 +  const endpointProperties =
 +    endpointOptions === undefined ? undefined : propertyAssignments(endpointOptions.properties);
@@ -4551,19 +4901,22 @@ index 0000000000000000000000000000000000000000..d39b20299baf434ed109fea7d93c586c
 +  );
 +};
 +
-+// oxlint-disable-next-line complexity -- One fail-closed predicate ties each generated operation identity to its method and route. expires: 2026-12-31.
-+const operationContextIsConstructed = (
-+  property: PropertyAssignment,
-+  stem: string,
-+  propertyKey: string,
-+): boolean => {
++const operationContextFields = (property: PropertyAssignment) => {
 +  const constructorCall = exactCall(
 +    property.initializer,
 +    ['createMicroVerticalOperationContext'],
 +    1,
 +  );
 +  const input = objectLiteral(constructorCall?.arguments[0]);
-+  const fields = input === undefined ? undefined : propertyAssignments(input.properties);
++  return input === undefined ? undefined : propertyAssignments(input.properties);
++};
++
++const operationContextIdentity = (
++  property: PropertyAssignment,
++):
++  | { readonly method: string; readonly operationId: string; readonly routePath: string }
++  | undefined => {
++  const fields = operationContextFields(property);
 +  const method = stringLiteral(fields?.get('method')?.initializer);
 +  const operationId = stringLiteral(fields?.get('operationId')?.initializer);
 +  const routePath = stringLiteral(fields?.get('routePath')?.initializer);
@@ -4571,35 +4924,46 @@ index 0000000000000000000000000000000000000000..d39b20299baf434ed109fea7d93c586c
 +    fields?.size !== 3 ||
 +    method === undefined ||
 +    operationId === undefined ||
-+    routePath === undefined ||
-+    !/^[A-Z]+$/u.test(method) ||
-+    !/^\/(?!.*(?:^|\/)\.\.?\/)[^\s?#]*$/u.test(routePath)
++    routePath === undefined
 +  ) {
++    return undefined;
++  }
++  return { method, operationId, routePath };
++};
++
++const operationContextIsConstructed = (
++  property: PropertyAssignment,
++  stem: string,
++  propertyKey: string,
++): boolean => {
++  const identity = operationContextIdentity(property);
++  if (identity === undefined) {
++    return false;
++  }
++  const { method, operationId, routePath } = identity;
++  if (!/^[A-Z]+$/u.test(method) || !/^\/(?!.*(?:^|\/)\.\.?\/)[^\s?#]*$/u.test(routePath)) {
 +    return false;
 +  }
 +  const apiName = `${pascalCaseStem(stem)}Api`;
-+  if (propertyKey !== 'readiness') {
-+    const generatedOperation = new Map([
-+      ['addCartItem', { method: 'POST', routePath: `/${stem}/cart/items` }],
-+      ['clearCart', { method: 'POST', routePath: `/${stem}/cart/clear` }],
-+      ['create', { method: 'POST', routePath: `/${stem}` }],
-+      ['get', { method: 'GET', routePath: `/${stem}/:id` }],
-+      ['getCart', { method: 'GET', routePath: `/${stem}/cart` }],
-+      ['list', { method: 'GET', routePath: `/${stem}` }],
-+      ['removeCartItem', { method: 'POST', routePath: `/${stem}/cart/remove` }],
-+    ]).get(propertyKey);
-+    return (
-+      operationId === `${apiName}:${routePath}` ||
-+      (operationId === `${apiName}:${camelCaseStem(stem)}:${propertyKey}` &&
-+        generatedOperation?.method === method &&
-+        generatedOperation.routePath === routePath)
-+    );
++  const generatedOperation = new Map([
++    ['addCartItem', ['POST', `/${stem}/cart/items`]],
++    ['clearCart', ['POST', `/${stem}/cart/clear`]],
++    ['create', ['POST', `/${stem}`]],
++    ['get', ['GET', `/${stem}/:id`]],
++    ['getCart', ['GET', `/${stem}/cart`]],
++    ['list', ['GET', `/${stem}`]],
++    ['readiness', ['GET', `/${stem}/readiness`]],
++    ['removeCartItem', ['POST', `/${stem}/cart/remove`]],
++  ]).get(propertyKey);
++  const requestedOperation = [method, routePath];
++  const matchesGenerated =
++    generatedOperation?.every((value, index) => value === requestedOperation[index]) === true;
++  if (propertyKey === 'readiness' && !matchesGenerated) {
++    return false;
 +  }
 +  return (
-+    method === 'GET' &&
-+    routePath === `/${stem}/readiness` &&
-+    (operationId === `${apiName}:/${stem}/readiness` ||
-+      operationId === `${apiName}:${camelCaseStem(stem)}:readiness`)
++    operationId === `${apiName}:${routePath}` ||
++    (operationId === `${apiName}:${camelCaseStem(stem)}:${propertyKey}` && matchesGenerated)
 +  );
 +};
 +
@@ -4636,27 +5000,19 @@ index 0000000000000000000000000000000000000000..d39b20299baf434ed109fea7d93c586c
 +): boolean => {
 +  const object = constAssertionObject(declaration);
 +  const fields = object === undefined ? undefined : propertyAssignments(object.properties);
-+  const expectedFields = new Map([
++  const expectedFields = [
 +    ['apiPrefix', expectation.apiPrefix],
 +    ['basePath', expectation.basePath],
 +    ['ownerId', expectation.ownerId],
 +    ['readinessPath', expectation.readinessPath],
 +    ...Object.entries(expectation.additionalPaths),
-+  ]);
-+  if (
-+    fields === undefined ||
-+    fields.size !== expectedFields.size ||
-+    [...expectedFields].some(
-+      ([field, value]) => stringLiteral(fields.get(field)?.initializer) !== value,
-+    )
-+  ) {
-+    return false;
-+  }
++  ] as const;
 +  return (
-+    stringLiteral(fields.get('apiPrefix')?.initializer) === expectation.apiPrefix &&
-+    stringLiteral(fields.get('basePath')?.initializer) === expectation.basePath &&
-+    stringLiteral(fields.get('ownerId')?.initializer) === expectation.ownerId &&
-+    stringLiteral(fields.get('readinessPath')?.initializer) === expectation.readinessPath
++    fields !== undefined &&
++    fields.size === new Map(expectedFields).size &&
++    [...expectedFields].every(
++      ([field, value]) => stringLiteral(fields.get(field)?.initializer) === value,
++    )
 +  );
 +};
 +
@@ -4676,29 +5032,27 @@ index 0000000000000000000000000000000000000000..d39b20299baf434ed109fea7d93c586c
 +  if (schema === undefined || schema.identity) {
 +    return schema?.identity === true;
 +  }
-+  if (
-+    [...schema.assignments.keys()].some(
-+      (field) => !['appId', 'kind', 'schemaVersion', 'unitId'].includes(field),
-+    ) ||
-+    (schema.assignments.has('appId') &&
-+      (identifierName(schema.assignments.get('appId')?.initializer) !== 'AppIdSchema' ||
-+        !brandedStringSchemaIsExact(localConst(sourceFile, 'AppIdSchema'), 'AppId'))) ||
-+    (schema.assignments.has('unitId') &&
-+      (identifierName(schema.assignments.get('unitId')?.initializer) !== 'UnitIdSchema' ||
-+        !brandedStringSchemaIsExact(localConst(sourceFile, 'UnitIdSchema'), 'UnitId')))
-+  ) {
-+    return false;
-+  }
-+  const kind = exactCall(schema.assignments.get('kind')?.initializer, ['Schema', 'Literal'], 1);
-+  const schemaVersion = exactCall(
-+    schema.assignments.get('schemaVersion')?.initializer,
-+    ['Schema', 'Literal'],
-+    1,
-+  );
-+  return (
-+    (!schema.assignments.has('kind') ||
-+      stringLiteral(kind?.arguments[0]) === 'microvertical-delivery-unit') &&
-+    (!schema.assignments.has('schemaVersion') || numericLiteral(schemaVersion?.arguments[0]) === 1)
++  const brandedField = (property: PropertyAssignment, brand: string): boolean =>
++    identifierName(property.initializer) === `${brand}Schema` &&
++    brandedStringSchemaIsExact(localConst(sourceFile, `${brand}Schema`), brand);
++  const validators = new Map<string, (property: PropertyAssignment) => boolean>([
++    ['appId', (property) => brandedField(property, 'AppId')],
++    ['unitId', (property) => brandedField(property, 'UnitId')],
++    [
++      'kind',
++      (property) =>
++        stringLiteral(exactCall(property.initializer, ['Schema', 'Literal'], 1)?.arguments[0]) ===
++        'microvertical-delivery-unit',
++    ],
++    [
++      'schemaVersion',
++      (property) =>
++        numericLiteral(exactCall(property.initializer, ['Schema', 'Literal'], 1)?.arguments[0]) ===
++        1,
++    ],
++  ]);
++  return [...schema.assignments].every(
++    ([field, property]) => validators.get(field)?.(property) === true,
 +  );
 +};
 +
@@ -4991,289 +5345,3 @@ index 75c2005c26ed73272eae9dfa6bd59466d7819944..2177b087999ed0729b6bb0cdbd5b99c1
  }
  assert(rootPackage.scripts?.['contract:check'] === 'node ./scripts/validate-ultramodern-workspace.mts', 'Root must expose contract:check');
  assert(rootPackage.scripts?.['api:check'] === 'node ./scripts/check-ultramodern-api-boundaries.mts', 'Root must expose api:check');
-diff --git a/templates/workspace/apps/modern.config.ts.handlebars b/templates/workspace/apps/modern.config.ts.handlebars
-index 2144abc7232f756a7d824e18bd90ce881e0dadc2..000ece862905b277cc002c7437ce3746da48d75e 100644
---- a/templates/workspace/apps/modern.config.ts.handlebars
-+++ b/templates/workspace/apps/modern.config.ts.handlebars
-@@ -1,25 +1,60 @@
--import {
-+{{value36}}import { {{value29}}createRequire } from 'node:module';
-+{{value30}}import {
-   appTools,
-   defineConfig,
-   presetUltramodern,
- } from '@modern-js/app-tools';
-+import type {
-+  {{value34}}AppToolsUserConfig{{value35}}
-+} from '@modern-js/app-tools';
- import {
-   getBuildConfigEnvironment,
-   withBuildConfigEnvironment,
- } from '@modern-js/app-tools/config';
- {{value0}}import { i18nPlugin } from '@modern-js/plugin-i18n';
- import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
-+import { Config, Option, Result, Schema } from 'effect';
- {{value22}}
--const cloudflareDeployEnabled =
--  getBuildConfigEnvironment('MODERNJS_DEPLOY') === 'cloudflare';
--
-+Object.assign(globalThis, { require: createRequire(import.meta.url) });
-+{{value37}}
-+const nonEmptyBuildStringSchema = Schema.Trim.pipe(Schema.check(Schema.isMinLength(1)));
-+const getOptionalBuildConfig = (name: string): string | undefined => {
-+  const decoded = Schema.decodeUnknownResult(
-+    Schema.OptionFromUndefinedOr(nonEmptyBuildStringSchema),
-+  )(getBuildConfigEnvironment(name));
-+  return Result.isSuccess(decoded) ? Option.getOrUndefined(decoded.success) : undefined;
-+};
-+const envValue = getOptionalBuildConfig;
-+const getBuildBoolean = (name: string): boolean =>
-+  Option.getOrElse(
-+    Result.getOrThrow(
-+      Schema.decodeUnknownResult(Schema.OptionFromUndefinedOr(Config.Boolean))(
-+        getBuildConfigEnvironment(name),
-+      ),
-+    ),
-+    () => false,
-+  );
-+const cloudflareDeployMode = Result.getOrThrow(
-+  Schema.decodeUnknownResult(Schema.OptionFromUndefinedOr(Schema.Literals(['cloudflare', 'node'])))(
-+    getBuildConfigEnvironment('MODERNJS_DEPLOY'),
-+  ),
-+);
-+const cloudflareDeployEnabled = Option.contains(cloudflareDeployMode, 'cloudflare');
-+{{value31}}
- {{value23}}const appId = '{{value1}}';
- const cloudflareWorkerName = '{{value2}}';
--const port = Number(getBuildConfigEnvironment('{{value3}}') ?? {{value4}});
--const envValue = (name: string) => {
--  const value = getBuildConfigEnvironment(name)?.trim();
--  return value !== undefined && value.length > 0 ? value : undefined;
--};
-+const port = Option.getOrElse(
-+  Result.getOrThrow(
-+    Schema.decodeUnknownResult(
-+      Schema.OptionFromUndefinedOr(
-+        Schema.NumberFromString.pipe(
-+          Schema.check(Schema.isInt(), Schema.isBetween({ maximum: 65_535, minimum: 1 })),
-+        ),
-+      ),
-+    )(getBuildConfigEnvironment('{{value3}}')),
-+  ),
-+  () => {{value4}},
-+);
- const configuredSiteUrl = envValue('MODERN_PUBLIC_SITE_URL');
- const configuredCloudflareUrl = envValue('{{value5}}');
- const configuredUltramodernAssetPrefix = envValue('ULTRAMODERN_ASSET_PREFIX');
-@@ -35,16 +70,16 @@ const inferredCloudflareUrl =
- // Site origin (SEO: canonical/hreflang URLs) prefers the site-wide public URL;
- // the per-app deployment URL only fills in when no site origin is configured.
- const siteUrl =
--  configuredSiteUrl ||
--  configuredCloudflareUrl ||
--  inferredCloudflareUrl ||
-+  configuredSiteUrl ??
-+  configuredCloudflareUrl ??
-+  inferredCloudflareUrl ??
-   `http://localhost:${port}`;
- {{value7}}
- // Asset loading is intentionally independent from the canonical site URL.
- // Module Federation remotes must publish an absolute publicPath so browsers
- // load remoteEntry.js and exposed chunks from the remote origin, not the host.
- const assetPrefix =
--  configuredModernAssetPrefix || configuredUltramodernAssetPrefix || defaultAssetPrefix;
-+  configuredModernAssetPrefix ?? configuredUltramodernAssetPrefix ?? defaultAssetPrefix;
- const buildTarget = cloudflareDeployEnabled ? 'cloudflare' : 'web';
- const buildOutputRoot = cloudflareDeployEnabled ? 'dist-cloudflare' : 'dist';
- const buildTempDirectory = `node_modules/.modern-js-${appId}-${buildTarget}`;
-@@ -52,7 +87,7 @@ const buildCacheDirectory = `node_modules/.cache/rspack-${appId}-${buildTarget}`
- 
- if (
-   cloudflareDeployEnabled &&
--  getBuildConfigEnvironment('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') === 'true' &&
-+  getBuildBoolean('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') &&
-   configuredCloudflareUrl === undefined &&
-   configuredSiteUrl === undefined &&
-   inferredCloudflareUrl === undefined
-@@ -62,23 +97,26 @@ if (
-   );
- }
- 
-+const whenEnabled = <Configuration>(enabled: boolean, configuration: Configuration) =>
-+  enabled ? configuration : undefined;
-+
-+{{value33}}const cloudflareDeployment = whenEnabled(cloudflareDeployEnabled, {
-+  deploy: {
-+    worker: {
-+      compatibilityDate: '{{value10}}',
-+      name: cloudflareWorkerName,
-+      security: {{value11}},
-+{{value12}}      ssr: true,
-+    },
-+  },
-+} satisfies Pick<AppToolsUserConfig, 'deploy'>);
-+
- export default defineConfig(
-   presetUltramodern(
-     {
--{{value9}}{{value18}}      ...(cloudflareDeployEnabled
--        ? {
--            deploy: {
--              worker: {
--              compatibilityDate: '{{value10}}',
--              name: cloudflareWorkerName,
--              security: {{value11}},
--{{value12}}              ssr: true,
--            },
--          },
--          }
--        : {}),
-+{{value9}}{{value18}}      ...cloudflareDeployment,
-       dev: {
--{{value13}}{{value20}}
-+{{value13}}{{value20}}{{value38}}
-       },
-       html: {
-         outputStructure: 'flat',
-@@ -101,7 +139,7 @@ export default defineConfig(
-         },
-         rsdoctor: {
-           disableClientServer: true,
--          enabled: getBuildConfigEnvironment('ULTRAMODERN_RSDOCTOR') === 'true',
-+          enabled: getBuildBoolean('ULTRAMODERN_RSDOCTOR'),
-         },
-       },
-       plugins: [
-@@ -115,6 +153,7 @@ export default defineConfig(
-           localeDetection: {
-             fallbackLanguage: 'en',
-             ignoreRedirectRoutes: [
-+{{value39}}
-               '/@mf-types',
-               '/assets',
-               '/bundles',
-@@ -137,7 +176,7 @@ export default defineConfig(
- {{value15}}{{value25}}      ],
-       server: {
-         port,
--        publicDir: ['./locales', './assets'],
-+        publicDir: ['./locales', './assets'{{value40}}],
-       },
-       source: {
-         alias: {
-@@ -145,6 +184,8 @@ export default defineConfig(
-             '@modern-js/plugin-i18n/runtime/no-react-i18next',
-         },
-         globalVars: {
-+          ULTRAMODERN_SHELL_ORIGIN:
-+            envValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:{{value6}}',
-           ULTRAMODERN_SITE_URL: siteUrl,
-         },
-         mainEntryName: 'index',
-@@ -153,21 +194,13 @@ export default defineConfig(
-         autoprefixer: {
-           overrideBrowserslist: ['defaults'],
-         },
--        bundlerChain: chain => {
-+        bundlerChain: (chain) => {
-           chain.output
-             .uniqueName('{{value16}}')
-             .chunkLoadingGlobal('{{value17}}');
-         },
--        devServer: {
--          headers: {
--            'Access-Control-Allow-Headers':
--              'Accept, Authorization, Content-Type, X-Requested-With',
--            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
--            {{value21}}
--          },
--        },
--      },
--    },
-+{{value32}}      },
-+    } satisfies AppToolsUserConfig,
-     {
-       appId,
-       deliveryUnit: {
-diff --git a/templates/workspace/verticals/server/checkout-cart-handlers.ts.handlebars b/templates/workspace/verticals/server/checkout-cart-handlers.ts.handlebars
-index 881ed1c31b29fa7a6db8da25bdf95fe23aefb84b..b8e360c82fcb543c4afccc994503277c20782690 100644
---- a/templates/workspace/verticals/server/checkout-cart-handlers.ts.handlebars
-+++ b/templates/workspace/verticals/server/checkout-cart-handlers.ts.handlebars
-@@ -2,7 +2,7 @@
-       .handle('getCart', () =>
-         Effect.sync(() => createCheckoutCartSnapshot()).pipe(
-           Effect.withSpan('ultramodern.api.{{value0}}.checkout.getCart', {
--            attributes: operationAttributes({{value1}}OperationContexts.getCart),
-+            attributes: microVerticalOperationAttributes({{value1}}OperationContexts.getCart),
-             kind: 'server',
-           }),
-         ),
-@@ -20,7 +20,7 @@
-           return createCheckoutCartSnapshot();
-         }).pipe(
-           Effect.withSpan('ultramodern.api.{{value2}}.checkout.addCartItem', {
--            attributes: operationAttributes({{value3}}OperationContexts.addCartItem),
-+            attributes: microVerticalOperationAttributes({{value3}}OperationContexts.addCartItem),
-             kind: 'server',
-           }),
-         ),
-@@ -31,7 +31,7 @@
-           return createCheckoutCartSnapshot();
-         }).pipe(
-           Effect.withSpan('ultramodern.api.{{value4}}.checkout.removeCartItem', {
--            attributes: operationAttributes({{value5}}OperationContexts.removeCartItem),
-+            attributes: microVerticalOperationAttributes({{value5}}OperationContexts.removeCartItem),
-             kind: 'server',
-           }),
-         ),
-@@ -42,7 +42,7 @@
-           return createCheckoutCartSnapshot();
-         }).pipe(
-           Effect.withSpan('ultramodern.api.{{value6}}.checkout.clearCart', {
--            attributes: operationAttributes({{value7}}OperationContexts.clearCart),
-+            attributes: microVerticalOperationAttributes({{value7}}OperationContexts.clearCart),
-             kind: 'server',
-           }),
-         ),
-diff --git a/templates/workspace/verticals/shared/api.checkout-cart-operation-contexts.ts.handlebars b/templates/workspace/verticals/shared/api.checkout-cart-operation-contexts.ts.handlebars
-index 04820fd4264e7df2d2fa5c803df181e3e1401a34..3eb4b2387a43ba4a163f93b3dc309df37b9bdd14 100644
---- a/templates/workspace/verticals/shared/api.checkout-cart-operation-contexts.ts.handlebars
-+++ b/templates/workspace/verticals/shared/api.checkout-cart-operation-contexts.ts.handlebars
-@@ -1,29 +1,25 @@
- 
--  addCartItem: {
-+  addCartItem: createMicroVerticalOperationContext({
-     method: 'POST',
-     operationId: '{{value0}}:{{value1}}:addCartItem',
-     routePath: '/checkout/cart/items',
--    source: 'generated-client',
--  },
--  clearCart: {
-+  }),
-+  clearCart: createMicroVerticalOperationContext({
-     method: 'POST',
-     operationId: '{{value2}}:{{value3}}:clearCart',
-     routePath: '/checkout/cart/clear',
--    source: 'generated-client',
--  },
-+  }),
- {{createOperationContext}}
- {{getOperationContext}}
--  getCart: {
-+  getCart: createMicroVerticalOperationContext({
-     method: 'GET',
-     operationId: '{{value4}}:{{value5}}:getCart',
-     routePath: '/checkout/cart',
--    source: 'generated-client',
--  },
-+  }),
- {{listOperationContext}}
- {{readinessOperationContext}}
--  removeCartItem: {
-+  removeCartItem: createMicroVerticalOperationContext({
-     method: 'POST',
-     operationId: '{{value6}}:{{value7}}:removeCartItem',
-     routePath: '/checkout/cart/remove',
--    source: 'generated-client',
--  },
-+  }),

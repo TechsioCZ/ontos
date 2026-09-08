@@ -24,7 +24,7 @@ const documentsBuiltInPlugin = (readme: string): boolean =>
   readme.includes('"name": "@effect/language-service"');
 class InvalidTsconfig extends Schema.TaggedError<InvalidTsconfig>()('InvalidTsconfig', {
   file: Schema.String,
-  offset: Schema.Number,
+  offset: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
 }) {}
 const Tsconfig = Schema.Struct({
   compilerOptions: Schema.optional(
@@ -42,7 +42,7 @@ const parseTsconfig = Effect.fn('QualityAudit.parseTsconfig')(function* parseTsc
   const parsed: unknown = parseJsonc(source, errors, { allowTrailingComma: true });
   const [error] = errors;
   if (error !== undefined) {
-    yield* new InvalidTsconfig({ file, offset: error.offset });
+    return yield* new InvalidTsconfig({ file, offset: error.offset });
   }
   return yield* Schema.decodeUnknownEffect(Tsconfig)(parsed);
 });
@@ -90,8 +90,8 @@ const uncomment = (file: string, source: string | undefined): string | undefined
 };
 
 const invokedShell = (command: string): string | undefined => {
-  const shell = /^(?:sh|bash)\s+(?:\.\/)?(?<shell>[\w./-]+\.sh)(?:\s|$)/u.exec(command)?.groups
-    ?.shell;
+  const { shell } =
+    /^(?:sh|bash)\s+(?:\.\/)?(?<shell>[\w./-]+\.sh)(?:\s|$)/u.exec(command)?.groups ?? {};
   if (shell === undefined || shell.includes('..')) {
     return undefined;
   }
@@ -110,7 +110,8 @@ const cssDependencies = (
   for (const match of withoutComments.matchAll(
     /@import\s+(?:url\(\s*)?["'](?<specifier>[^"']+)["']/gu,
   )) {
-    const target = packageName(match.groups?.specifier ?? '');
+    const { specifier = '' } = match.groups ?? {};
+    const target = packageName(specifier);
     if (target === undefined || target.length === 0) {
       continue;
     }
@@ -183,7 +184,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
       for (const match of source.matchAll(
         /^\s*node\s+(?<target>[\w./-]+\.[cm]?[jt]s)(?:\s|$)/gmu,
       )) {
-        const target = match.groups?.target;
+        const { target } = match.groups ?? {};
         if (
           target !== undefined &&
           !target.includes('..') &&
@@ -280,7 +281,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         for (const match of source.matchAll(
           /^\s*-\s+cd app && (?:[A-Z_]+=\S+\s+)*node\s+(?<target>[\w./-]+\.[cm]?[jt]s)(?:\s|$)/gmu,
         )) {
-          const target = match.groups?.target;
+          const { target } = match.groups ?? {};
           if (
             target !== undefined &&
             !target.includes('..') &&
@@ -392,9 +393,11 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
           vendor.includes('import(moduleUrl)')
         ) {
           const match = /const configPath = '(?<target>[^']+)'/u.exec(vendor);
-          const target = match?.groups?.target;
+          if (match === null) {
+            return;
+          }
+          const [, target] = match;
           if (
-            match !== null &&
             target !== undefined &&
             !target.includes('..') &&
             (yield* read(target)) !== undefined
@@ -437,7 +440,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         for (const match of source.matchAll(
           /^(?:pre-commit|pre-push):\r?\n(?<body>(?:^[ \t].*(?:\r?\n|$))*)/gmu,
         )) {
-          const body = match.groups?.body ?? '';
+          const { body = '' } = match.groups ?? {};
           if (/^\s+commands:\s*$/mu.test(body) && /^\s+run:\s+\S.+$/mu.test(body)) {
             evidence.push(
               at(

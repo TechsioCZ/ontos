@@ -533,7 +533,7 @@ const workspaceValidationContractDefinition = {
       'node --test scripts/scaffolding/tests/module-contract-generator.test.mts scripts/scaffolding/tests/resource-generator.test.mts scripts/scaffolding/tests/retire-contribution.test.mts scripts/scaffolding/tests/scaffold-generators.test.mts',
     'test:integration': 'pnpm -r --if-present run test:integration',
     'test:scripts':
-      'node --test scripts/tests/boundary-source-structure.test.mts scripts/local-environment-values.test.mts scripts/tests/audit-database-trust-boundaries.test.mts scripts/tests/authorization-rollout-contract.test.mts scripts/tests/check-authorization-readiness.test.mts scripts/tests/database-access-boundaries.test.mts scripts/tests/initialize-local-development.test.mts scripts/tests/locki-feature.test.mts scripts/tests/migrate-contacts-authorization.test.mts scripts/tests/module-entrypoint-boundaries.test.mts scripts/tests/plan-deployment-impact.test.mts scripts/tests/protected-entrypoint-inventory.test.mts scripts/tests/provision-current-action-authorization.test.mts scripts/tests/report-fail-closed-authorization-impact.test.mts scripts/tests/api-only-tooling.test.mts scripts/tests/root-environment.test.mts scripts/tests/typecheck-project-references.test.mts scripts/tests/ultramodern-command.test.mts',
+      'node --test scripts/tests/boundary-source-structure.test.mts scripts/local-environment-values.test.mts scripts/tests/audit-database-trust-boundaries.test.mts scripts/tests/authorization-rollout-contract.test.mts scripts/tests/check-authorization-readiness.test.mts scripts/tests/database-access-boundaries.test.mts scripts/tests/initialize-local-development.test.mts scripts/tests/locki-feature.test.mts scripts/tests/migrate-contacts-authorization.test.mts scripts/tests/module-entrypoint-boundaries.test.mts scripts/tests/plan-deployment-impact.test.mts scripts/tests/protected-entrypoint-inventory.test.mts scripts/tests/provision-current-action-authorization.test.mts scripts/tests/report-fail-closed-authorization-impact.test.mts scripts/tests/api-only-tooling.test.mts scripts/tests/generated-slot-entries.test.mts scripts/tests/root-environment.test.mts scripts/tests/typecheck-project-references.test.mts scripts/tests/ultramodern-command.test.mts scripts/tests/code-tools-i18n.test.mts scripts/tests/dependency-declarations.test.mts',
     'test:unit': 'pnpm -r --if-present run test:unit && pnpm -r --if-present run test:component',
   },
   cloudflareSecurity: createCloudflareSecurityContract(),
@@ -1960,21 +1960,6 @@ interface CompactApp {
   readonly port?: number;
   readonly portEnv?: string;
 }
-interface CompactShell {
-  readonly deliveryUnit?: DeliveryUnit;
-  readonly id: string;
-  readonly kind: string;
-  readonly mfName?: string;
-  readonly moduleFederation: Json;
-  readonly name: string;
-  readonly owner?: AdditionalShell['owner'];
-  readonly package: string;
-  readonly path: string;
-  readonly port: number;
-  readonly portEnv: string;
-  readonly tailwindPrefix: string;
-  readonly verticalRefs?: readonly string[];
-}
 interface BridgeConfig {
   readonly enabled: boolean;
   readonly gates?: readonly {
@@ -1990,7 +1975,7 @@ interface CompactConfig extends Omit<
 > {
   readonly bridge?: BridgeConfig;
   readonly packageSource: CompactConfigDocument['packageSource'] & { readonly registry?: string };
-  readonly shells?: readonly CompactShell[];
+  readonly shells?: unknown;
   readonly topology: Omit<CompactConfigDocument['topology'], 'apps'> & {
     readonly apps?: readonly CompactApp[];
   };
@@ -2067,27 +2052,6 @@ interface DeliveryUnit {
   readonly unitId?: string;
   readonly version?: string;
 }
-type AdditionalShell = IdentifierEntry & {
-  readonly degradedState?: {
-    readonly appId: string;
-    readonly required: boolean;
-    readonly status: string;
-  };
-  readonly deliveryUnit?: DeliveryUnit;
-  readonly id: string;
-  readonly mfName: string;
-  readonly moduleFederation: Json;
-  readonly owner: {
-    readonly id: string;
-    readonly kind: string;
-  };
-  readonly packageName: string;
-  readonly path: string;
-  readonly port: number;
-  readonly portEnv: string;
-  readonly tailwindPrefix: string;
-  readonly verticalRefs?: readonly string[];
-};
 const StringValuesSchema = Schema.Record(Schema.String, Schema.String);
 const PackageJsonSchema = Schema.Struct({
   dependencies: Schema.optionalKey(StringValuesSchema),
@@ -2197,7 +2161,7 @@ type WorkspaceValidationContract = Omit<
   typeof workspaceValidationContractDefinition,
   'cohort' | 'generatedSurfacePolicy'
 > & {
-  readonly additionalShells?: readonly AdditionalShell[];
+  readonly additionalShells?: unknown;
   readonly cohort: Omit<
     typeof workspaceValidationContractDefinition.cohort,
     | 'additionalShellBuildMarkerIds'
@@ -2268,8 +2232,6 @@ const { shellRouteMetaPaths } = workspaceValidationContract;
 const compactConfigPath = workspaceValidationContract.metadata.compactConfig.path;
 const { retiredMetadataPaths } = workspaceValidationContract.legacy;
 const modernPackageCohort = workspaceValidationContract.cohort.modernPackages;
-const expectedAdditionalShellIds = workspaceValidationContract.cohort.additionalShellIds ?? [];
-const expectedAdditionalShells = workspaceValidationContract.additionalShells ?? [];
 const expectedPrimaryShellVerticalIds =
   workspaceValidationContract.topology?.referenceTopology?.shell?.verticalRefs ??
   workspaceValidationContract.cohort.verticalIds;
@@ -2615,28 +2577,6 @@ const assertWorkspaceValidationContract = (contract: WorkspaceValidationContract
   );
   assertUniqueStrings(contract.cohort.appIds, 'workspace validation contract app cohort');
   assertUniqueStrings(
-    contract.cohort.additionalShellIds ?? [],
-    'workspace validation contract additional-shell cohort',
-  );
-  const additionalShellCohortChecks: readonly (readonly [AdditionalShellCohortField, string])[] = [
-    [SHARED_VALIDATOR_STRING_043, 'workspace validation contract additional-shell owner cohort'],
-    [
-      SHARED_VALIDATOR_STRING_042,
-      'workspace validation contract additional-shell delivery-unit cohort',
-    ],
-    [
-      SHARED_VALIDATOR_STRING_041,
-      'workspace validation contract additional-shell degraded-state cohort',
-    ],
-    [
-      SHARED_VALIDATOR_STRING_040,
-      'workspace validation contract additional-shell build-marker cohort',
-    ],
-  ];
-  for (const [field, label] of additionalShellCohortChecks) {
-    assertUniqueStrings(contract.cohort[field] ?? [], label);
-  }
-  assertUniqueStrings(
     contract.cohort.backendAppIds,
     'workspace validation contract backend app cohort',
   );
@@ -2796,6 +2736,10 @@ const findGeneratedSurfacePolicyMatch = (
 };
 const assertSingleShellDeclarations = (): void => {
   assert(
+    workspaceValidationContract.cohort.additionalShellIds === undefined,
+    'Single-shell workspace must not declare additionalShellIds',
+  );
+  assert(
     workspaceValidationContract.cohort?.additionalShellManifests === undefined,
     'Single-shell workspace must not declare additional-shell manifests',
   );
@@ -2808,33 +2752,6 @@ const assertSingleShellDeclarations = (): void => {
       workspaceValidationContract.cohort?.[field] === undefined,
       `Single-shell workspace must not declare ${field}`,
     );
-  }
-};
-const assertGeneratedAdditionalShellDeclarations = (): void => {
-  if ((workspaceValidationContract.cohort?.additionalShellIds ?? []).length > 0) {
-    const additionalShellIds = workspaceValidationContract.cohort.additionalShellIds ?? [];
-    for (const field of additionalShellCohortFields) {
-      assertSameJson(
-        workspaceValidationContract.cohort?.[field],
-        additionalShellIds,
-        `workspace validation contract ${field}`,
-        'restore every generated additional-shell cohort',
-      );
-    }
-    assertSameIdCohort(
-      workspaceValidationContract.cohort?.additionalShellManifests,
-      additionalShellIds,
-      'workspace validation contract additional-shell manifests',
-      'restore every generated additional-shell package manifest',
-    );
-    assertSameIdCohort(
-      workspaceValidationContract.additionalShells,
-      additionalShellIds,
-      'workspace validation contract additional-shell records',
-      'restore every generated additional-shell contract record',
-    );
-  } else {
-    assertSingleShellDeclarations();
   }
 };
 const assertGeneratedSurfacePolicy = () => {
@@ -2855,7 +2772,7 @@ const assertGeneratedSurfacePolicy = () => {
       }
     }
   }
-  assertGeneratedAdditionalShellDeclarations();
+  assertSingleShellDeclarations();
 };
 const compactConfigPolicyView = (config: CompactConfig): Json => ({
   agentSkills: config.agentSkills,
@@ -4199,39 +4116,25 @@ const assertShellDependenciesForVertical = (
   vertical: FullStackVertical,
   expectedShellVerticalIds: readonly string[],
 ): void => {
-  const shellPackages = [
-    {
-      path: SHARED_VALIDATOR_STRING_047,
-      pkg: shellPackage,
-      uiRefs: expectedShellVerticalIds,
-    },
-    ...expectedAdditionalShells.map((shell) => ({
-      path: shell.path,
-      pkg: readJson(PackageJsonSchema, `${shell.path}/package.json`),
-      uiRefs: shell.verticalRefs ?? [],
-    })),
-  ];
-  for (const shellEntry of shellPackages) {
-    const composed = shellEntry.uiRefs.includes(vertical.id) && vertical.exposes.length > 0;
-    if (vertical.emitsApi || composed) {
-      assertSameJson(
-        valueForKey(Object.entries(shellEntry.pkg.dependencies ?? {}), vertical.packageName),
-        SHARED_VALIDATOR_STRING_169,
-        `${shellEntry.path}/package.json dependencies.${vertical.packageName}`,
-        'restore shell dependency for the MicroVertical consumer',
-      );
-    }
-    if (composed) {
-      assertSameJson(
-        valueForKey(
-          Object.entries(shellEntry.pkg[SHARED_VALIDATOR_STRING_173] ?? {}),
-          vertical.zephyrAlias,
-        ),
-        `${vertical.packageName}@workspace:*`,
-        `${shellEntry.path}/package.json zephyr:dependencies.${vertical.zephyrAlias}`,
-        'restore shell Zephyr dependency metadata for the MicroVertical',
-      );
-    }
+  const composed = expectedShellVerticalIds.includes(vertical.id) && vertical.exposes.length > 0;
+  if (vertical.emitsApi || composed) {
+    assertSameJson(
+      valueForKey(Object.entries(shellPackage.dependencies ?? {}), vertical.packageName),
+      SHARED_VALIDATOR_STRING_169,
+      `${SHARED_VALIDATOR_STRING_047}/package.json dependencies.${vertical.packageName}`,
+      'restore shell dependency for the MicroVertical consumer',
+    );
+  }
+  if (composed) {
+    assertSameJson(
+      valueForKey(
+        Object.entries(shellPackage[SHARED_VALIDATOR_STRING_173] ?? {}),
+        vertical.zephyrAlias,
+      ),
+      `${vertical.packageName}@workspace:*`,
+      `${SHARED_VALIDATOR_STRING_047}/package.json zephyr:dependencies.${vertical.zephyrAlias}`,
+      'restore shell Zephyr dependency metadata for the MicroVertical',
+    );
   }
 };
 const generatedVerticalFederationView = (contractEntry: ReturnType<typeof createAppContract>) => ({
@@ -4626,48 +4529,6 @@ const assertVerticalTsConfigReferenceGraph = (vertical: FullStackVertical): void
   );
 };
 
-const assertAdditionalShellTsConfigReferences = (
-  shell: (typeof expectedAdditionalShells)[number],
-): void => {
-  const additionalShellTsConfig = readJson(TsConfigSchema, `${shell.path}/tsconfig.json`);
-  const additionalShellMfTypesTsConfig = readJson(
-    TsConfigSchema,
-    `${shell.path}/tsconfig.mf-types.json`,
-  );
-  const expectedAdditionalShellReferences = [
-    ...sharedPackagePaths,
-    ...(shell.verticalRefs ?? [])
-      .flatMap((verticalRef) => {
-        const referencedVertical = fullStackVerticals.find(
-          (candidate) => candidate.id === verticalRef,
-        );
-        return referencedVertical === undefined ? [] : [referencedVertical];
-      })
-      .map((referencedVertical) => referencedVertical.path),
-  ].map((referencePath) => referenceFrom(shell.path, referencePath));
-  assertSameJson(
-    additionalShellTsConfig.references ?? [],
-    expectedAdditionalShellReferences,
-    `${shell.path}/tsconfig.json references`,
-    'restore the generated additional-shell project-reference graph',
-  );
-  assertSameJson(
-    additionalShellTsConfig.include ?? [],
-    ['src', SHARED_VALIDATOR_STRING_075, SHARED_VALIDATOR_STRING_091, 'shared'],
-    `${shell.path}/tsconfig.json include`,
-    'restore the generated additional-shell typecheck boundary',
-  );
-  assertProjectReferenceEmitConfig(additionalShellTsConfig, shell.path);
-  assertSameJson(
-    additionalShellMfTypesTsConfig,
-    {
-      extends: SHARED_VALIDATOR_STRING_001,
-      include: [SHARED_VALIDATOR_STRING_137],
-    },
-    `${shell.path}/tsconfig.mf-types.json`,
-    'restore the generated additional-shell Module Federation DTS boundary',
-  );
-};
 const primaryShellTsConfigReferences = () => {
   const expectedShellReferences = [
     SHARED_VALIDATOR_STRING_092,
@@ -4747,10 +4608,6 @@ const assertTsConfigReferenceGraph = () => {
 
   for (const vertical of fullStackVerticals) {
     assertVerticalTsConfigReferenceGraph(vertical);
-  }
-
-  for (const shell of expectedAdditionalShells) {
-    assertAdditionalShellTsConfigReferences(shell);
   }
 };
 const packageJsonFiles = (startDir: string): string[] => {
@@ -5364,34 +5221,6 @@ for (const vertical of fullStackVerticals) {
   // config in a headless api-only unit, or an API contract in a UI-only unit).
   for (const forbiddenPath of forbiddenMicroVerticalPaths(vertical)) {
     assertForbiddenVerticalFile(vertical)(forbiddenPath);
-  }
-}
-for (const shell of expectedAdditionalShells) {
-  requiredPaths.push(
-    `${shell.path}/package.json`,
-    `${shell.path}/tsconfig.json`,
-    `${shell.path}/tsconfig.mf-types.json`,
-    `${shell.path}/modern.config.ts`,
-    `${shell.path}/module-federation.config.ts`,
-    `${shell.path}/src/modern-app-env.d.ts`,
-    `${shell.path}/src/modern.runtime.ts`,
-    `${shell.path}/src/api/vertical-clients.ts`,
-    `${shell.path}/locales/en/translation.json`,
-    `${shell.path}/locales/en/${shellNamespace}.json`,
-    `${shell.path}/locales/cs/translation.json`,
-    `${shell.path}/locales/cs/${shellNamespace}.json`,
-    `${shell.path}/src/routes/index.css`,
-    `${shell.path}/src/routes/layout.tsx`,
-    `${shell.path}/src/routes/shell-frame.tsx`,
-    `${shell.path}/src/routes/ultramodern-route-head.tsx`,
-    `${shell.path}/src/routes/ultramodern-route-metadata.ts`,
-    `${shell.path}/src/routes/[lang]/page.tsx`,
-    ...shellRouteMetaPaths.map((relativePath) =>
-      relativePath.replace(/^apps\/shell-super-app/u, shell.path),
-    ),
-  );
-  if (tailwindEnabled) {
-    requiredPaths.push(`${shell.path}/tailwind.config.ts`);
   }
 }
 for (const requiredPath of requiredPaths) {
@@ -6150,217 +5979,7 @@ const assertStructuralShellPolicy = (): void => {
   }
 };
 assertStructuralShellPolicy();
-const assertAdditionalShellSources = (shell: (typeof expectedAdditionalShells)[number]): void => {
-  const modernConfig = readText(`${shell.path}/modern.config.ts`);
-  const moduleFederationConfig = readText(`${shell.path}/module-federation.config.ts`);
-  const runtimeConfig = readText(`${shell.path}/src/modern.runtime.ts`);
-  const styles = readText(`${shell.path}/src/routes/index.css`);
-  const shellFrame = readText(`${shell.path}/src/routes/shell-frame.tsx`);
-  const routePage = readText(`${shell.path}/src/routes/[lang]/page.tsx`);
-  assert(
-    modernConfig.includes(`const appId = '${shell.id}';`),
-    `${shell.id} modern.config.ts appId is incorrect`,
-  );
-  assert(
-    modernConfig.includes(
-      `const port = Number(getBuildConfigEnvironment('${shell.portEnv}') ?? ${shell.port});`,
-    ),
-    `${shell.id} modern.config.ts port is incorrect`,
-  );
-  assert(
-    modernConfig.includes(`uniqueName('${shell.mfName}')`),
-    `${shell.id} modern.config.ts Rspack identity is incorrect`,
-  );
-  assert(
-    moduleFederationConfig.includes(`name: '${shell.mfName}'`),
-    `${shell.id} Module Federation container name is incorrect`,
-  );
-  assert(
-    new RegExp(`appId:\\s*['"]${shell.id}['"]`, 'u').test(runtimeConfig),
-    `${shell.id} runtime boundary metadata must identify its own shell`,
-  );
-  assert(
-    routePage.includes('ShellFrame'),
-    `${shell.id} route page must use its own shell composition host`,
-  );
-  if (tailwindEnabled) {
-    assert(
-      styles.includes(`prefix(${shell.tailwindPrefix})`),
-      `${shell.id} styles must use its shell-specific Tailwind prefix`,
-    );
-  }
-  assert(
-    shellFrame.includes(`${shell.tailwindPrefix}:`),
-    `${shell.id} shell-frame must use its shell-specific Tailwind prefix`,
-  );
-  if ((shell.verticalRefs ?? []).length > 0) {
-    assert(
-      shell.degradedState?.required ?? false,
-      `${shell.id} degraded-state contract must be required for remote consumption`,
-    );
-  }
-};
-
-const assertAdditionalShellOwnerAndDeliveryUnit = (
-  shell: (typeof expectedAdditionalShells)[number],
-  configShell: CompactShell,
-): boolean => {
-  const { owner } = configShell;
-  assertObject(
-    owner,
-    `${compactConfigPath} shells.${shell.id}.owner`,
-    'record exactly one owner for every configured Delivery Unit',
-  );
-  if (owner === undefined) {
-    return false;
-  }
-  assert(
-    ['team', 'agent', 'agent-team'].includes(owner.kind) &&
-      isString(owner.id) &&
-      owner.id.length > 0,
-    `${compactConfigPath} shells.${shell.id}.owner must identify one accountable owner`,
-  );
-  assertSameJson(
-    owner,
-    shell.owner,
-    `${compactConfigPath} shells.${shell.id}.owner`,
-    'restore the generated additional-shell owner attribution',
-  );
-  assertObject(
-    configShell.deliveryUnit,
-    `${compactConfigPath} shells.${shell.id}.deliveryUnit`,
-    'restore the generated additional-shell Delivery Unit identity',
-  );
-  if (configShell.deliveryUnit === undefined) {
-    return false;
-  }
-  assert(
-    isString(configShell.deliveryUnit.unitId) &&
-      configShell.deliveryUnit.unitId.length > 0 &&
-      isString(configShell.deliveryUnit.buildMarker) &&
-      configShell.deliveryUnit.buildMarker.length > 0,
-    `${compactConfigPath} shells.${shell.id}.deliveryUnit must carry unitId and buildMarker`,
-  );
-  return true;
-};
-const assertAdditionalShellPackage = (shell: (typeof expectedAdditionalShells)[number]): void => {
-  const packagePath = `${shell.path}/package.json`;
-  const packageJson = readJson(PackageJsonSchema, packagePath);
-  assert(packageJson.name === shell.packageName, `${shell.id} package name is incorrect`);
-  assert(
-    packageJson.modernjs?.appId === shell.id,
-    `${shell.id} package modernjs.appId is incorrect`,
-  );
-  assert(packageJson.modernjs?.role === 'shell', `${shell.id} package modernjs.role must be shell`);
-  assert(
-    packageJson.scripts?.[SHARED_VALIDATOR_STRING_060] === SHARED_VALIDATOR_STRING_144,
-    `${shell.id} must expose cloudflare:deploy`,
-  );
-  assert(
-    packageJson.scripts?.[SHARED_VALIDATOR_STRING_061]?.includes(`--app ${shell.id}`) ?? false,
-    `${shell.id} must expose cloudflare:proof`,
-  );
-};
-const assertAdditionalShellContract = (
-  shell: (typeof expectedAdditionalShells)[number],
-  configuredShellById: ReadonlyMap<string, CompactShell>,
-): void => {
-  const configShell = configuredShellById.get(shell.id);
-  assertObject(
-    configShell,
-    `${compactConfigPath} shells.${shell.id}`,
-    'restore the generated additional-shell config record',
-  );
-  if (configShell === undefined) {
-    return;
-  }
-  assertSameJson(
-    {
-      deliveryUnit: configShell.deliveryUnit,
-      id: configShell.id,
-      kind: configShell.kind,
-      mfName: configShell.mfName,
-      moduleFederation: configShell.moduleFederation,
-      name: configShell.name,
-      owner: configShell.owner,
-      package: configShell.package,
-      path: configShell.path,
-      port: configShell.port,
-      portEnv: configShell.portEnv,
-      verticalRefs: configShell.verticalRefs,
-    },
-    {
-      deliveryUnit: shell.deliveryUnit,
-      id: shell.id,
-      kind: 'shell',
-      mfName: shell.mfName,
-      moduleFederation: shell.moduleFederation,
-      name: shell.id.replace(/^shell-/u, ''),
-      owner: shell.owner,
-      package: shell.packageName,
-      path: shell.path,
-      port: shell.port,
-      portEnv: shell.portEnv,
-      verticalRefs: shell.verticalRefs,
-    },
-    `${compactConfigPath} shells.${shell.id}`,
-    'restore the complete additional-shell config record',
-  );
-  assert(
-    !Object.hasOwn(overlay.ports ?? {}, shell.id),
-    `${shell.id} port must stay in config.shells, not the development overlay`,
-  );
-  if (!assertAdditionalShellOwnerAndDeliveryUnit(shell, configShell)) {
-    return;
-  }
-
-  assertAdditionalShellPackage(shell);
-  const buildArtifact = readJson(
-    BuildArtifactSchema,
-    `${shell.path}/shared/ultramodern-build.json`,
-  );
-  const buildSource = readText(`${shell.path}/shared/ultramodern-build.ts`);
-  assert(
-    buildArtifact.deliveryUnit?.appId === shell.id,
-    `${shell.id} build artifact appId is incorrect`,
-  );
-  assert(
-    buildArtifact.deliveryUnit?.buildMarker === shell.deliveryUnit?.buildMarker,
-    `${shell.id} build marker is not participating in the build artifact`,
-  );
-  assertSameJson(
-    deliveryUnitBlock(configShell.deliveryUnit),
-    deliveryUnitBlock(shell.deliveryUnit),
-    `${compactConfigPath} shells.${shell.id}.deliveryUnit`,
-    deliveryUnitIdentityFixArea,
-  );
-  assertSameJson(
-    deliveryUnitBlock(buildArtifact.deliveryUnit),
-    deliveryUnitBlock(shell.deliveryUnit),
-    `${shell.path}/shared/ultramodern-build.json deliveryUnit`,
-    deliveryUnitIdentityFixArea,
-  );
-  assert(
-    buildSource.includes(
-      'export const ultramodernDeliveryUnit = ultramodernBuildArtifact.deliveryUnit;',
-    ),
-    `${shell.path}/shared/ultramodern-build.ts must expose the shell delivery-unit identity`,
-  );
-  assertBuildFacadeExport(
-    buildSource,
-    SHARED_VALIDATOR_STRING_152,
-    'ultramodernBuildArtifact.surfaces.ui',
-    `${shell.path}/shared/ultramodern-build.ts ultramodernUiMarker`,
-  );
-  assert(
-    shell.degradedState?.appId === shell.id && shell.degradedState?.status === 'degraded',
-    `${shell.id} degraded-state contract must identify its own shell`,
-  );
-
-  assertAdditionalShellSources(shell);
-};
-
-const configuredShellPorts = () => {
+const assertConfiguredDevelopmentPorts = (): void => {
   const primaryShellConfig = findById(
     ultramodernConfig.topology?.apps,
     SHARED_VALIDATOR_STRING_131,
@@ -6371,10 +5990,6 @@ const configuredShellPorts = () => {
     ...(Object.hasOwn(overlayPorts, SHARED_VALIDATOR_STRING_131)
       ? []
       : [{ id: SHARED_VALIDATOR_STRING_131, port: primaryShellConfig?.port }]),
-    ...expectedAdditionalShells.map((shell) => ({
-      id: shell.id,
-      port: shell.port,
-    })),
   ];
   const portsByValue = new Map<number, string>();
   for (const { id, port } of configuredPorts) {
@@ -6390,110 +6005,12 @@ const configuredShellPorts = () => {
     );
     portsByValue.set(port, id);
   }
-
-  return { portsByValue, primaryShellConfig };
 };
-const assertAdditionalShellZeropsServices = (): void => {
-  // Zerops artifacts exist whenever the workspace has delivery units at all
-  // (ui-only and horizontal-remote units deploy too); a shell-only workspace
-  // must not carry one.
-  if (hasDeliveryUnits) {
-    assertExists(SHARED_VALIDATOR_STRING_174);
-    const zeropsYaml = readText(SHARED_VALIDATOR_STRING_174);
-    assert(
-      zeropsYaml.includes(`setup: ${quoteYamlString(SHARED_VALIDATOR_STRING_132)}`),
-      'shell-super-app must have a Zerops service',
-    );
-    for (const shell of expectedAdditionalShells) {
-      const runtimePath = `.zerops/runtime/${shell.id}`;
-      assert(
-        zeropsYaml.includes(`setup: ${quoteYamlString(shell.id)}`),
-        `${shell.id} must have a Zerops service`,
-      );
-      assert(
-        zeropsYaml.includes(`start: cd ${quoteShellValue(runtimePath)} && npm run serve`),
-        `${shell.id} Zerops service start command is missing`,
-      );
-      assert(
-        zeropsYaml.includes(`        ${shell.portEnv}: ${quoteYamlString(String(shell.port))}`),
-        `${shell.id} Zerops service port environment is missing`,
-      );
-    }
-  } else {
-    assertNotExists(SHARED_VALIDATOR_STRING_174);
-  }
-};
-const assertAdditionalShellCohort = () => {
-  const { portsByValue, primaryShellConfig } = configuredShellPorts();
-
-  if (expectedAdditionalShellIds.length === 0) {
-    assert(
-      ultramodernConfig.shells === undefined,
-      'Single-shell workspace must not declare config.shells',
-    );
-    return;
-  }
-
-  assertSameIdCohort(
-    ultramodernConfig.shells,
-    expectedAdditionalShellIds,
-    `${compactConfigPath} shells`,
-    'restore every configured additional shell',
-  );
-  const configuredShellRecords = ultramodernConfig.shells ?? [];
-  const configuredShellById = new Map(configuredShellRecords.map((shell) => [shell.id, shell]));
-  assertUniqueStrings(
-    [
-      primaryShellConfig?.moduleFederation?.name,
-      ...expectedAdditionalShells.map((shell) => shell.mfName),
-    ].flatMap((name) => (name === undefined ? [] : [name])),
-    'configured shell Module Federation identities',
-  );
-  assertUniqueStrings(
-    expectedAdditionalShells.flatMap((shell) => {
-      const marker = shell.deliveryUnit?.buildMarker;
-      return marker === undefined ? [] : [marker];
-    }),
-    'configured shell build markers',
-  );
-
-  const configuredOrigins = sortedCopy([...portsByValue.keys()], (left, right) => left - right).map(
-    (port) => `http://localhost:${port}`,
-  );
-
-  for (const shell of expectedAdditionalShells) {
-    assertAdditionalShellContract(shell, configuredShellById);
-  }
-
-  for (const appPath of [
-    SHARED_VALIDATOR_STRING_047,
-    ...expectedAdditionalShells.map((shell) => shell.path),
-    ...fullStackVerticals.map((vertical) => vertical.path),
-  ]) {
-    const modernConfig = readText(`${appPath}/modern.config.ts`);
-    for (const origin of configuredOrigins) {
-      assert(
-        modernConfig.includes(`'${origin}'`),
-        `${appPath} MF dev CORS must allow configured origin ${origin}`,
-      );
-    }
-    assert(
-      modernConfig.includes('credentials: false'),
-      `${appPath} MF asset CORS must disable credentials`,
-    );
-    assert(
-      !modernConfig.includes('credentials: true'),
-      `${appPath} MF asset CORS must not enable credentials`,
-    );
-    assert(
-      !/origin:\s*(?:true|\*|['"]\*['"])/u.test(modernConfig),
-      `${appPath} MF dev CORS must not reflect arbitrary origins`,
-    );
-  }
-
-  assertAdditionalShellZeropsServices();
-};
-assertAdditionalShellCohort();
+assertConfiguredDevelopmentPorts();
+assert(
+  ultramodernConfig.shells === undefined,
+  'Single-shell workspace must not declare config.shells',
+);
 assert(
   rootPackage.devDependencies?.[SHARED_VALIDATOR_STRING_024] ===
     expectedModernPackageSpecifier(SHARED_VALIDATOR_STRING_024),

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-import { NodeRuntime, NodeServices } from '@effect/platform-node';
-import { Console, Data, Effect, FileSystem, Layer, Match, Path, Schema } from 'effect';
+import { Console, Data, Effect, FileSystem, Match, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
+import { runQualityCli } from './quality-cli-lifecycle.mts';
 
 const FALLOW_FILES = 'fallow-files';
 const FALLOW_HEALTH = 'fallow-health';
-const Count = Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
+const Count = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
 const PositiveCount = Count.check(Schema.isGreaterThan(0));
 const Counts = Schema.Record(Schema.String, Count);
 const base = {
@@ -156,12 +156,5 @@ const cli = Command.make(
 );
 
 if (Schema.is(Schema.Struct({ main: Schema.Literal(true) }))(import.meta)) {
-  const mainLayer = Layer.effectDiscard(
-    Command.run(cli, { version: '1.0.0' }).pipe(
-      Effect.tapError((issue) => Console.error(String(issue))),
-    ),
-  ).pipe(Layer.provide(NodeServices.layer));
-  NodeRuntime.runMain(Effect.scoped(Layer.build(mainLayer)).pipe(Effect.asVoid), {
-    disableErrorReporting: true,
-  });
+  runQualityCli(Command.run(cli, { version: '1.0.0' }));
 }

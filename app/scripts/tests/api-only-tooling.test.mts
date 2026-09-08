@@ -2144,11 +2144,17 @@ const evaluatedInfrastructureSource = async (
   const code = result.outputFiles[0]?.text;
   assert.ok(code);
   const effectUrl = pathToFileURL(require.resolve('effect')).href;
+  const buildIdentityUrl = pathToFileURL(
+    createRequire(path.join(partyRoot, fileName)).resolve(
+      '@app/shared-contracts/ultramodern-build',
+    ),
+  ).href;
   return runNode([
     '--input-type=module',
     '-e',
     `
 import * as effect from ${JSON.stringify(effectUrl)};
+import * as buildIdentity from ${JSON.stringify(buildIdentityUrl)};
 import * as nodeModule from 'node:module';
 import * as nodePath from 'node:path';
 import * as nodeUrl from 'node:url';
@@ -2175,7 +2181,7 @@ runInNewContext(${JSON.stringify(code)}, {
   exports: module.exports, module, URL,
   ULTRAMODERN_BUILD_MARKER: 'injected-build', ULTRAMODERN_SOURCE_REVISION: 'injected-revision',
   __resolve: name => 'file:///dependencies/' + name,
-  require: name => ({ effect, 'node:module': moduleShim, 'node:path': nodePath, 'node:url': nodeUrl }[name] ?? framework),
+  require: name => ({ effect, '@app/shared-contracts/ultramodern-build': buildIdentity, 'node:module': moduleShim, 'node:path': nodePath, 'node:url': nodeUrl }[name] ?? framework),
 });
 const configuration = module.exports.default;
 const observations = {};
@@ -2456,6 +2462,11 @@ void test('all published scaffold formats emit the executable AST baseline valid
       const checker = artifacts.find(({ relativePath }) => relativePath === apiBoundaryCheckerPath);
       assert.ok(helper, `${moduleFormat} must emit the AST baseline helper`);
       assert.ok(checker, `${moduleFormat} must emit the API checker`);
+      assert.equal(
+        helper.content,
+        expectedHelper,
+        `${moduleFormat} must emit byte-exact baseline source`,
+      );
       assert.equal(
         await normalizedGeneratedSource('microvertical-api-baseline-boundary.mts', helper.content),
         await normalizedGeneratedSource('microvertical-api-baseline-boundary.mts', expectedHelper),

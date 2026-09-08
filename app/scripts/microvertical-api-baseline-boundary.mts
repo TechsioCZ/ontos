@@ -165,6 +165,15 @@ const propertyAssignments = (
   return assignments;
 };
 
+const exactCall = (
+  expression: Expression | undefined,
+  callee: readonly string[],
+  argumentCount: number,
+): CallExpression | undefined => {
+  const call = callExpression(expression, callee);
+  return call?.arguments.length === argumentCount ? call : undefined;
+};
+
 interface SharedSchemaObject {
   readonly assignments: ReadonlyMap<string, PropertyAssignment>;
   readonly identity: boolean;
@@ -182,25 +191,18 @@ const sharedSchemaObject = (
   if (isIdentifier(initializer) && initializer.text === sharedSchemaName) {
     return { assignments: new Map(), identity: true };
   }
-  const struct = callExpression(initializer, ['Schema', 'Struct']);
+  const struct = exactCall(initializer, ['Schema', 'Struct'], 1);
   const schemaObject = objectLiteral(struct?.arguments[0]);
-  if (struct?.arguments.length !== 1 || schemaObject === undefined) {
+  if (schemaObject === undefined) {
     return undefined;
   }
-  const sharedSpreads = schemaObject.properties.filter(
-    (property) =>
-      isSpreadAssignment(property) &&
-      isAccessPath(property.expression, [sharedSchemaName, 'fields']),
+  const spreads = schemaObject.properties.filter(isSpreadAssignment);
+  const assignments = propertyAssignments(
+    schemaObject.properties.filter((property) => !isSpreadAssignment(property)),
   );
-  const nonSpreadProperties = schemaObject.properties.filter(
-    (property) => !isSpreadAssignment(property),
-  );
-  const assignments = propertyAssignments(nonSpreadProperties);
   if (
-    sharedSpreads.length !== 1 ||
-    schemaObject.properties.some(
-      (property) => isSpreadAssignment(property) && property !== sharedSpreads[0],
-    ) ||
+    spreads.length !== 1 ||
+    !spreads.every((spread) => isAccessPath(spread.expression, [sharedSchemaName, 'fields'])) ||
     assignments === undefined ||
     protectedFields.some((field) => assignments.has(field))
   ) {
@@ -237,15 +239,6 @@ const directCallChain = (expression: Expression | undefined): DirectCallChain | 
   return { base: current, methods };
 };
 
-const exactCall = (
-  expression: Expression | undefined,
-  callee: readonly string[],
-  argumentCount: number,
-): CallExpression | undefined => {
-  const call = callExpression(expression, callee);
-  return call?.arguments.length === argumentCount ? call : undefined;
-};
-
 const brandedStringSchemaIsExact = (
   declaration: VariableDeclaration | undefined,
   brand: string,
@@ -268,33 +261,36 @@ const brandedStringSchemaIsExact = (
   return stringLiteral(brandCall?.arguments[0]) === brand;
 };
 
+const importedRuntimeNames = (statement: Node, expectedPackage: string): readonly string[] => {
+  if (
+    !isImportDeclaration(statement) ||
+    stringLiteral(statement.moduleSpecifier) !== expectedPackage
+  ) {
+    return [];
+  }
+  const clause = statement.importClause;
+  const bindings = clause?.namedBindings;
+  if (
+    clause?.phaseModifier === SyntaxKind.TypeKeyword ||
+    bindings === undefined ||
+    !isNamedImports(bindings)
+  ) {
+    return [];
+  }
+  return bindings.elements
+    .filter((element) => !element.isTypeOnly && element.propertyName === undefined)
+    .map((element) => element.name.text);
+};
+
 const importsExactBindings = (
   sourceFile: SourceFile,
   expectedPackage: string,
   expectedBindings: readonly string[],
 ): boolean => {
-  const required = new Set(expectedBindings);
-  for (const statement of sourceFile.statements) {
-    if (
-      !isImportDeclaration(statement) ||
-      stringLiteral(statement.moduleSpecifier) !== expectedPackage ||
-      statement.importClause?.phaseModifier === SyntaxKind.TypeKeyword ||
-      statement.importClause?.namedBindings === undefined ||
-      !isNamedImports(statement.importClause.namedBindings)
-    ) {
-      continue;
-    }
-    for (const element of statement.importClause.namedBindings.elements) {
-      if (
-        !element.isTypeOnly &&
-        element.propertyName === undefined &&
-        required.has(element.name.text)
-      ) {
-        required.delete(element.name.text);
-      }
-    }
-  }
-  return required.size === 0;
+  const names = new Set(
+    sourceFile.statements.flatMap((statement) => importedRuntimeNames(statement, expectedPackage)),
+  );
+  return expectedBindings.every((name) => names.has(name));
 };
 
 const importsSharedBaselinePrimitives = (
@@ -307,41 +303,40 @@ const importsSharedBaselinePrimitives = (
     'createMicroVerticalOperationContext',
   ]);
 
-// oxlint-disable-next-line complexity -- The AST shape is intentionally validated fail-closed in one expression. expires: 2026-12-31.
+const singleAddedArgument = (
+  expression: Expression | undefined,
+  factory: readonly string[],
+  names: readonly string[],
+): Expression | undefined => {
+  const chain = directCallChain(expression);
+  if (chain === undefined || !isAccessPath(chain.base.expression, factory)) {
+    return undefined;
+  }
+  const [method] = chain.methods;
+  if (
+    chain.base.arguments.length !== 1 ||
+    !names.includes(stringLiteral(chain.base.arguments[0]) ?? '') ||
+    chain.methods.length !== 1 ||
+    method?.name !== 'add' ||
+    method.arguments.length !== 1
+  ) {
+    return undefined;
+  }
+  return method.arguments[0];
+};
+
 const foundationIsExact = (
   declaration: VariableDeclaration | undefined,
   stem: string,
   readinessSchemaName: string,
 ): boolean => {
-  const chain = directCallChain(declaration?.initializer);
-  const expectedApiNames = new Set([
-    `${pascalCaseStem(stem)}FoundationApi`,
-    `${pascalCaseStem(stem)}ApiFoundation`,
-  ]);
-  if (
-    chain === undefined ||
-    !isAccessPath(chain.base.expression, ['HttpApi', 'make']) ||
-    chain.base.arguments.length !== 1 ||
-    !expectedApiNames.has(stringLiteral(chain.base.arguments[0]) ?? '') ||
-    chain.methods.length !== 1 ||
-    chain.methods[0]?.name !== 'add' ||
-    chain.methods[0].arguments.length !== 1
-  ) {
-    return false;
-  }
-  const groupChain = directCallChain(chain.methods[0].arguments[0]);
-  if (
-    groupChain === undefined ||
-    !isAccessPath(groupChain.base.expression, ['HttpApiGroup', 'make']) ||
-    groupChain.base.arguments.length !== 1 ||
-    stringLiteral(groupChain.base.arguments[0]) !== 'foundation' ||
-    groupChain.methods.length !== 1 ||
-    groupChain.methods[0]?.name !== 'add' ||
-    groupChain.methods[0].arguments.length !== 1
-  ) {
-    return false;
-  }
-  const endpoint = exactCall(groupChain.methods[0].arguments[0], ['HttpApiEndpoint', 'get'], 3);
+  const group = singleAddedArgument(
+    declaration?.initializer,
+    ['HttpApi', 'make'],
+    [`${pascalCaseStem(stem)}FoundationApi`, `${pascalCaseStem(stem)}ApiFoundation`],
+  );
+  const endpointExpression = singleAddedArgument(group, ['HttpApiGroup', 'make'], ['foundation']);
+  const endpoint = exactCall(endpointExpression, ['HttpApiEndpoint', 'get'], 3);
   const endpointOptions = objectLiteral(endpoint?.arguments[2]);
   const endpointProperties =
     endpointOptions === undefined ? undefined : propertyAssignments(endpointOptions.properties);
@@ -383,19 +378,22 @@ const rootComposesFoundation = (
   );
 };
 
-// oxlint-disable-next-line complexity -- One fail-closed predicate ties each generated operation identity to its method and route. expires: 2026-12-31.
-const operationContextIsConstructed = (
-  property: PropertyAssignment,
-  stem: string,
-  propertyKey: string,
-): boolean => {
+const operationContextFields = (property: PropertyAssignment) => {
   const constructorCall = exactCall(
     property.initializer,
     ['createMicroVerticalOperationContext'],
     1,
   );
   const input = objectLiteral(constructorCall?.arguments[0]);
-  const fields = input === undefined ? undefined : propertyAssignments(input.properties);
+  return input === undefined ? undefined : propertyAssignments(input.properties);
+};
+
+const operationContextIdentity = (
+  property: PropertyAssignment,
+):
+  | { readonly method: string; readonly operationId: string; readonly routePath: string }
+  | undefined => {
+  const fields = operationContextFields(property);
   const method = stringLiteral(fields?.get('method')?.initializer);
   const operationId = stringLiteral(fields?.get('operationId')?.initializer);
   const routePath = stringLiteral(fields?.get('routePath')?.initializer);
@@ -403,35 +401,46 @@ const operationContextIsConstructed = (
     fields?.size !== 3 ||
     method === undefined ||
     operationId === undefined ||
-    routePath === undefined ||
-    !/^[A-Z]+$/u.test(method) ||
-    !/^\/(?!.*(?:^|\/)\.\.?\/)[^\s?#]*$/u.test(routePath)
+    routePath === undefined
   ) {
+    return undefined;
+  }
+  return { method, operationId, routePath };
+};
+
+const operationContextIsConstructed = (
+  property: PropertyAssignment,
+  stem: string,
+  propertyKey: string,
+): boolean => {
+  const identity = operationContextIdentity(property);
+  if (identity === undefined) {
+    return false;
+  }
+  const { method, operationId, routePath } = identity;
+  if (!/^[A-Z]+$/u.test(method) || !/^\/(?!.*(?:^|\/)\.\.?\/)[^\s?#]*$/u.test(routePath)) {
     return false;
   }
   const apiName = `${pascalCaseStem(stem)}Api`;
-  if (propertyKey !== 'readiness') {
-    const generatedOperation = new Map([
-      ['addCartItem', { method: 'POST', routePath: `/${stem}/cart/items` }],
-      ['clearCart', { method: 'POST', routePath: `/${stem}/cart/clear` }],
-      ['create', { method: 'POST', routePath: `/${stem}` }],
-      ['get', { method: 'GET', routePath: `/${stem}/:id` }],
-      ['getCart', { method: 'GET', routePath: `/${stem}/cart` }],
-      ['list', { method: 'GET', routePath: `/${stem}` }],
-      ['removeCartItem', { method: 'POST', routePath: `/${stem}/cart/remove` }],
-    ]).get(propertyKey);
-    return (
-      operationId === `${apiName}:${routePath}` ||
-      (operationId === `${apiName}:${camelCaseStem(stem)}:${propertyKey}` &&
-        generatedOperation?.method === method &&
-        generatedOperation.routePath === routePath)
-    );
+  const generatedOperation = new Map([
+    ['addCartItem', ['POST', `/${stem}/cart/items`]],
+    ['clearCart', ['POST', `/${stem}/cart/clear`]],
+    ['create', ['POST', `/${stem}`]],
+    ['get', ['GET', `/${stem}/:id`]],
+    ['getCart', ['GET', `/${stem}/cart`]],
+    ['list', ['GET', `/${stem}`]],
+    ['readiness', ['GET', `/${stem}/readiness`]],
+    ['removeCartItem', ['POST', `/${stem}/cart/remove`]],
+  ]).get(propertyKey);
+  const requestedOperation = [method, routePath];
+  const matchesGenerated =
+    generatedOperation?.every((value, index) => value === requestedOperation[index]) === true;
+  if (propertyKey === 'readiness' && !matchesGenerated) {
+    return false;
   }
   return (
-    method === 'GET' &&
-    routePath === `/${stem}/readiness` &&
-    (operationId === `${apiName}:/${stem}/readiness` ||
-      operationId === `${apiName}:${camelCaseStem(stem)}:readiness`)
+    operationId === `${apiName}:${routePath}` ||
+    (operationId === `${apiName}:${camelCaseStem(stem)}:${propertyKey}` && matchesGenerated)
   );
 };
 
@@ -468,27 +477,19 @@ const metadataIsExact = (
 ): boolean => {
   const object = constAssertionObject(declaration);
   const fields = object === undefined ? undefined : propertyAssignments(object.properties);
-  const expectedFields = new Map([
+  const expectedFields = [
     ['apiPrefix', expectation.apiPrefix],
     ['basePath', expectation.basePath],
     ['ownerId', expectation.ownerId],
     ['readinessPath', expectation.readinessPath],
     ...Object.entries(expectation.additionalPaths),
-  ]);
-  if (
-    fields === undefined ||
-    fields.size !== expectedFields.size ||
-    [...expectedFields].some(
-      ([field, value]) => stringLiteral(fields.get(field)?.initializer) !== value,
-    )
-  ) {
-    return false;
-  }
+  ] as const;
   return (
-    stringLiteral(fields.get('apiPrefix')?.initializer) === expectation.apiPrefix &&
-    stringLiteral(fields.get('basePath')?.initializer) === expectation.basePath &&
-    stringLiteral(fields.get('ownerId')?.initializer) === expectation.ownerId &&
-    stringLiteral(fields.get('readinessPath')?.initializer) === expectation.readinessPath
+    fields !== undefined &&
+    fields.size === new Map(expectedFields).size &&
+    [...expectedFields].every(
+      ([field, value]) => stringLiteral(fields.get(field)?.initializer) === value,
+    )
   );
 };
 
@@ -508,29 +509,27 @@ const markerSchemaIsShared = (
   if (schema === undefined || schema.identity) {
     return schema?.identity === true;
   }
-  if (
-    [...schema.assignments.keys()].some(
-      (field) => !['appId', 'kind', 'schemaVersion', 'unitId'].includes(field),
-    ) ||
-    (schema.assignments.has('appId') &&
-      (identifierName(schema.assignments.get('appId')?.initializer) !== 'AppIdSchema' ||
-        !brandedStringSchemaIsExact(localConst(sourceFile, 'AppIdSchema'), 'AppId'))) ||
-    (schema.assignments.has('unitId') &&
-      (identifierName(schema.assignments.get('unitId')?.initializer) !== 'UnitIdSchema' ||
-        !brandedStringSchemaIsExact(localConst(sourceFile, 'UnitIdSchema'), 'UnitId')))
-  ) {
-    return false;
-  }
-  const kind = exactCall(schema.assignments.get('kind')?.initializer, ['Schema', 'Literal'], 1);
-  const schemaVersion = exactCall(
-    schema.assignments.get('schemaVersion')?.initializer,
-    ['Schema', 'Literal'],
-    1,
-  );
-  return (
-    (!schema.assignments.has('kind') ||
-      stringLiteral(kind?.arguments[0]) === 'microvertical-delivery-unit') &&
-    (!schema.assignments.has('schemaVersion') || numericLiteral(schemaVersion?.arguments[0]) === 1)
+  const brandedField = (property: PropertyAssignment, brand: string): boolean =>
+    identifierName(property.initializer) === `${brand}Schema` &&
+    brandedStringSchemaIsExact(localConst(sourceFile, `${brand}Schema`), brand);
+  const validators = new Map<string, (property: PropertyAssignment) => boolean>([
+    ['appId', (property) => brandedField(property, 'AppId')],
+    ['unitId', (property) => brandedField(property, 'UnitId')],
+    [
+      'kind',
+      (property) =>
+        stringLiteral(exactCall(property.initializer, ['Schema', 'Literal'], 1)?.arguments[0]) ===
+        'microvertical-delivery-unit',
+    ],
+    [
+      'schemaVersion',
+      (property) =>
+        numericLiteral(exactCall(property.initializer, ['Schema', 'Literal'], 1)?.arguments[0]) ===
+        1,
+    ],
+  ]);
+  return [...schema.assignments].every(
+    ([field, property]) => validators.get(field)?.(property) === true,
   );
 };
 
