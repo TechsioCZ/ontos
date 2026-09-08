@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Predicate, Schema } from 'effect';
+import { Effect, FileSystem, Schema } from 'effect';
 import {
   discoverOntosModuleEffect,
   ensureUniqueMutationPaths,
@@ -9,6 +9,7 @@ import {
   toCamelCase,
   toPascalCase,
   updateMutation,
+  createScaffoldErrorTools,
 } from '../shared.mts';
 import type {
   Mutation,
@@ -29,20 +30,11 @@ class SearchProviderAccessScaffoldError extends Schema.TaggedError<SearchProvide
   },
 ) {}
 
-const scaffoldError = (message: string, cause?: unknown): SearchProviderAccessScaffoldError =>
-  new SearchProviderAccessScaffoldError(cause === undefined ? { message } : { cause, message });
-
-const trySync = <Value,>(operation: () => Value) =>
-  Effect.try({
-    catch: (cause) =>
-      Schema.is(SearchProviderAccessScaffoldError)(cause)
-        ? cause
-        : scaffoldError(
-            Predicate.isError(cause) ? cause.message : 'search provider access update failed',
-            cause,
-          ),
-    try: operation,
-  });
+const { scaffoldError, trySync } = createScaffoldErrorTools(
+  SearchProviderAccessScaffoldError,
+  Schema.is(SearchProviderAccessScaffoldError),
+  'search provider access update failed',
+);
 
 const replaceOwnedLine = (
   content: string,

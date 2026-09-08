@@ -104,6 +104,24 @@ export const MODULE_REGISTRATION_SEARCH_SLOT_END = '// </generated-module-regist
 export const MODULE_REGISTRATION_WORKER_SLOT_START = '// <generated-module-registration-workers>';
 export const MODULE_REGISTRATION_WORKER_SLOT_END = '// </generated-module-registration-workers>';
 
+export const createScaffoldErrorTools = <Failure,>(
+  ErrorClass: new (fields: { readonly cause?: unknown; readonly message: string }) => Failure,
+  isOwnError: Predicate.Refinement<unknown, Failure>,
+  fallbackMessage: string,
+) => {
+  const scaffoldError = (message: string, cause?: unknown): Failure =>
+    new ErrorClass(cause === undefined ? { message } : { cause, message });
+  const trySync = <Value,>(operation: () => Value): Effect.Effect<Value, Failure> =>
+    Effect.try({
+      catch: (cause) =>
+        isOwnError(cause)
+          ? cause
+          : scaffoldError(Predicate.isError(cause) ? cause.message : fallbackMessage, cause),
+      try: operation,
+    });
+  return { scaffoldError, trySync };
+};
+
 interface VerticalActionScaffoldConfig {
   readonly action: string;
   readonly authorization: 'action_execution';

@@ -1,5 +1,5 @@
 import { topLevelSeparators } from '../../boundary-source-structure.mts';
-import { Array as EffectArray, Effect, FileSystem, Option, Predicate, Schema } from 'effect';
+import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   MODULE_CONTRACT_GENERATOR_HEADER,
@@ -76,6 +76,7 @@ import {
   toCamelCase,
   toTitle,
   updateMutation,
+  createScaffoldErrorTools,
 } from '../shared.mts';
 import type {
   JsonValue,
@@ -248,20 +249,11 @@ class ModuleContractScaffoldError extends Schema.TaggedError<ModuleContractScaff
   },
 ) {}
 
-const scaffoldError = (message: string, cause?: unknown): ModuleContractScaffoldError =>
-  new ModuleContractScaffoldError(cause === undefined ? { message } : { cause, message });
-
-const trySync = <Value,>(operation: () => Value) =>
-  Effect.try({
-    catch: (cause) =>
-      Schema.is(ModuleContractScaffoldError)(cause)
-        ? cause
-        : scaffoldError(
-            Predicate.isError(cause) ? cause.message : 'module contract update failed',
-            cause,
-          ),
-    try: operation,
-  });
+const { scaffoldError, trySync } = createScaffoldErrorTools(
+  ModuleContractScaffoldError,
+  Schema.is(ModuleContractScaffoldError),
+  'module contract update failed',
+);
 
 const readModuleOwner = (
   fileSystem: FileSystem.FileSystem,

@@ -52,6 +52,8 @@ import {
   GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
   GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
   GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
+  ScaffoldFailure,
+  createScaffoldErrorTools,
   insertSortedSlot,
   readGeneratedSlotEntries,
 } from '../shared.mts';
@@ -78,6 +80,103 @@ type GeneratedPrincipalErrorTag = typeof GeneratedPrincipalErrorTagSchema.Type;
 const test = (name: string, handler: () => void | Promise<void>): void => {
   void nodeTest(name, handler);
 };
+
+class FirstScaffoldTestError extends Schema.TaggedError<FirstScaffoldTestError>()(
+  'FirstScaffoldTestError',
+  { cause: Schema.optionalKey(Schema.Unknown), message: Schema.String },
+) {}
+
+const firstScaffoldErrors = createScaffoldErrorTools(
+  FirstScaffoldTestError,
+  Schema.is(FirstScaffoldTestError),
+  'first update failed',
+);
+const secondScaffoldErrors = createScaffoldErrorTools(
+  ScaffoldFailure,
+  Schema.is(ScaffoldFailure),
+  'second update failed',
+);
+
+test('scaffold error tools preserve success and own failure identity', async () => {
+  const value = { unchanged: true };
+  assert.equal(await runEffectTestPromise(firstScaffoldErrors.trySync(() => value)), value);
+  const own = firstScaffoldErrors.scaffoldError('own failure');
+  const failure = await runEffectTestPromise(
+    firstScaffoldErrors
+      .trySync(() => {
+        throw own;
+      })
+      .pipe(Effect.flip),
+  );
+  assert.equal(failure, own);
+});
+
+test('scaffold error tools omit undefined causes and retain defined causes', () => {
+  assert.equal(Object.hasOwn(firstScaffoldErrors.scaffoldError('absent'), 'cause'), false);
+  const absentCause = firstScaffoldErrors.scaffoldError('absent').cause;
+  assert.equal(
+    Object.hasOwn(firstScaffoldErrors.scaffoldError('undefined', absentCause), 'cause'),
+    false,
+  );
+  for (const cause of [null, false, 0, '', { detail: 'retained' }]) {
+    const failure = firstScaffoldErrors.scaffoldError('defined', cause);
+    assert.equal(Object.hasOwn(failure, 'cause'), true);
+    assert.equal(failure.cause, cause);
+  }
+});
+
+test('scaffold error tools normalize foreign errors without accepting another owner', async () => {
+  const foreign = secondScaffoldErrors.scaffoldError('foreign owner');
+  assert.equal(Schema.is(FirstScaffoldTestError)(foreign), false);
+  assert.equal(Schema.is(ScaffoldFailure)(foreign), true);
+  const emptyMessageError = new Error('initial');
+  emptyMessageError.message = '';
+  await runEffectTestPromise(
+    Effect.gen(function* foreignScaffoldErrors() {
+      for (const cause of [new Error('foreign error'), emptyMessageError, foreign]) {
+        const failure = yield* firstScaffoldErrors
+          .trySync(() => {
+            throw cause;
+          })
+          .pipe(Effect.flip);
+        assert.notEqual(failure, cause);
+        assert.equal(Schema.is(FirstScaffoldTestError)(failure), true);
+        assert.equal(Schema.is(ScaffoldFailure)(failure), false);
+        assert.equal(failure.message, cause.message);
+        assert.equal(failure.cause, cause);
+      }
+    }),
+  );
+});
+
+for (const [index, cause] of [
+  undefined,
+  null,
+  'thrown string',
+  { message: 'not an Error' },
+].entries()) {
+  test(`scaffold error tools use owner fallback for non-error ${index}`, async () => {
+    const operation = () => {
+      const iterator = (function* thrownValue() {
+        yield cause;
+      })();
+      iterator.next();
+      return iterator.throw(cause);
+    };
+    const first = await runEffectTestPromise(
+      firstScaffoldErrors.trySync(operation).pipe(Effect.flip),
+    );
+    const second = await runEffectTestPromise(
+      secondScaffoldErrors.trySync(operation).pipe(Effect.flip),
+    );
+    assert.equal(first.message, 'first update failed');
+    assert.equal(second.message, 'second update failed');
+    for (const failure of [first, second]) {
+      assert.equal(failure.cause, cause);
+      assert.equal(Object.hasOwn(failure, 'cause'), cause !== undefined);
+    }
+  });
+}
 
 const isGeneratedPrincipalError = (tag: GeneratedPrincipalErrorTag) =>
   Schema.is(Schema.Struct({ _tag: Schema.Literal(tag) }));

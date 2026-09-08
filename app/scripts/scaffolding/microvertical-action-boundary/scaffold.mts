@@ -1,10 +1,11 @@
-import { Array as EffectArray, Effect, FileSystem, Option, Predicate, Schema } from 'effect';
+import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect';
 import {
   createMutationEffect,
   discoverOntosModuleEffect,
   ensureUniqueMutationPaths,
   resolveContainedPath,
   withExactDependencies,
+  createScaffoldErrorTools,
 } from '../shared.mts';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import type {
@@ -28,20 +29,11 @@ class ActionBoundaryScaffoldError extends Schema.TaggedError<ActionBoundaryScaff
   },
 ) {}
 
-const scaffoldError = (message: string, cause?: unknown): ActionBoundaryScaffoldError =>
-  new ActionBoundaryScaffoldError(cause === undefined ? { message } : { cause, message });
-
-const trySync = <Value,>(operation: () => Value) =>
-  Effect.try({
-    catch: (cause) =>
-      Schema.is(ActionBoundaryScaffoldError)(cause)
-        ? cause
-        : scaffoldError(
-            Predicate.isError(cause) ? cause.message : 'action boundary update failed',
-            cause,
-          ),
-    try: operation,
-  });
+const { scaffoldError, trySync } = createScaffoldErrorTools(
+  ActionBoundaryScaffoldError,
+  Schema.is(ActionBoundaryScaffoldError),
+  'action boundary update failed',
+);
 
 const createOrAcceptOwnedMutation = (
   filePath: string,
