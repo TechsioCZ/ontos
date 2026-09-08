@@ -17,7 +17,7 @@
     "db:bootstrap-runtime-role": "node ./scripts/postgres/bootstrap-runtime-role.mts",
     "db:bootstrap-spicedb": "node ./scripts/postgres/bootstrap-spicedb-database.mts",
     "db:check": "pnpm --filter @app/core-runtime db:check && pnpm --filter @app/shell-super-app db:check && pnpm --filter @app/party-registry db:check",
-    "db:migrate": "pnpm --filter @app/core-runtime db:migrate && pnpm --filter @app/shell-super-app db:migrate && pnpm db:bootstrap-runtime-role && pnpm --filter @app/party-registry db:migrate && pnpm db:bootstrap-runtime-role",
+    "db:migrate": "pnpm db:bootstrap-runtime-role && pnpm --filter @app/core-runtime db:migrate && pnpm --filter @app/shell-super-app db:migrate && pnpm --filter @app/party-registry db:migrate && pnpm db:bootstrap-runtime-role",
     "db:test": "pnpm --filter @app/core-runtime db:test && pnpm --filter @app/shell-super-app test:integration && pnpm --filter @app/party-registry db:test",
     "database-trust:audit": "node ./scripts/audit-database-trust-boundaries.mts",
     "db:verify": "node ./scripts/verify-application-db-schema.mts",

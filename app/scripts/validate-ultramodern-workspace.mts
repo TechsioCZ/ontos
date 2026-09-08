@@ -1230,7 +1230,7 @@ const workspaceValidationContractDefinition = {
     'db:generate':
       'pnpm --filter @app/core-runtime db:generate && pnpm --filter @app/shell-super-app db:generate && pnpm --filter @app/party-registry db:generate',
     'db:migrate':
-      'pnpm --filter @app/core-runtime db:migrate && pnpm --filter @app/shell-super-app db:migrate && pnpm db:bootstrap-runtime-role && pnpm --filter @app/party-registry db:migrate && pnpm db:bootstrap-runtime-role',
+      'pnpm db:bootstrap-runtime-role && pnpm --filter @app/core-runtime db:migrate && pnpm --filter @app/shell-super-app db:migrate && pnpm --filter @app/party-registry db:migrate && pnpm db:bootstrap-runtime-role',
     'db:test':
       'pnpm --filter @app/core-runtime db:test && pnpm --filter @app/shell-super-app test:integration && pnpm --filter @app/party-registry db:test',
     'db:verify': 'node ./scripts/verify-application-db-schema.mts',
@@ -5455,11 +5455,15 @@ for (const [jobId, jobName] of [
 }
 assert(
   workflowText.includes('docker compose up --detach --wait') &&
+    workflowText.includes(
+      'name: Remove the pre-seeded runtime role to prove deployment bootstrap ordering',
+    ) &&
+    workflowText.includes('DROP ROLE ontos_runtime;') &&
     workflowText.includes('mise exec -- pnpm db:migrate') &&
     workflowText.includes('mise exec -- pnpm db:verify') &&
     workflowText.includes('mise exec -- pnpm test:integration') &&
     workflowText.includes('docker compose down --volumes --remove-orphans'),
-  'CI service evidence must start fresh PostgreSQL and SpiceDB, apply and verify migrations, run complete integrations, and always remove volumes',
+  'CI service evidence must remove the pre-seeded runtime role, apply and verify migrations, run complete integrations, and always remove volumes',
 );
 assert(
   workflowText.includes('name: Apply and verify Core, Auth, and Contacts migrations') &&
@@ -6475,6 +6479,14 @@ if (hasDeliveryUnits) {
     !zeropsMigrator.includes("run('pnpm'") &&
       zeropsMigrator.includes("'node_modules', '.bin', 'drizzle-kit'"),
     'Zerops migrator must execute the relocated dependency tree without invoking pnpm runtime verification',
+  );
+  const runtimeRoleBootstrapCall =
+    "yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');";
+  assert(
+    zeropsMigrator.indexOf(runtimeRoleBootstrapCall) < zeropsMigrator.indexOf('yield* migrate(') &&
+      zeropsMigrator.lastIndexOf(runtimeRoleBootstrapCall) >
+        zeropsMigrator.lastIndexOf('yield* migrate('),
+    'Zerops migrator must provision the runtime role before RLS migrations and refresh grants afterward',
   );
   for (const vertical of fullStackVerticals) {
     assert(
