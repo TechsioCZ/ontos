@@ -1122,6 +1122,79 @@ test('generated read clients fetch mounted owner URLs and support separately dep
   });
 });
 
+const compactGovernedSource = (source: string): string =>
+  source.replaceAll(/\s+/gu, '').replaceAll(/,(?=[)}\]])/gu, '');
+const inventorySharedApiFile = 'verticals/inventory-stock/shared/api.ts';
+
+test('all live Party read and search transports match actual scaffold output', async () => {
+  await withFixture(async (fixture) => {
+    await addInventoryItemResourceType(fixture);
+    await run(fixture, scaffoldCommand.moduleApi, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--name',
+      fixtureName.resourceDetail,
+    ]);
+    await run(fixture, scaffoldCommand.searchProvider, [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--name',
+      fixtureName.inventoryItems,
+      scaffoldFlag.resource,
+      'item',
+    ]);
+    const owner = path.join(appRoot, 'verticals/party-registry');
+    const ownerFiles = await readdir(path.join(owner, 'api'));
+    const serverNames = ownerFiles.filter((name) => /-(?:read|search)-server\.ts$/u.test(name));
+    assert.equal(serverNames.length, 18);
+    await Promise.all(
+      serverNames.map(async (serverName) => {
+        const search = serverName.endsWith('-search-server.ts');
+        const suffix = search ? 'search' : 'read';
+        const name = serverName.slice(0, -`-${suffix}-server.ts`.length);
+        const camel = name.replaceAll(/-(?<letter>[a-z])/gu, (_, letter: string) =>
+          letter.toUpperCase(),
+        );
+        const pascal = `${camel.charAt(0).toUpperCase()}${camel.slice(1)}`;
+        const fixtureNameValue = search ? 'inventory-items' : 'resource-detail';
+        const fixtureCamel = search ? 'inventoryItems' : 'resourceDetail';
+        const fixturePascal = search ? 'InventoryItems' : 'ResourceDetail';
+        const clientName = `${name}${search ? '-search' : ''}-client.ts`;
+        const normalize = (source: string): string =>
+          compactGovernedSource(
+            source
+              .replaceAll(`/${name}`, `/${fixtureNameValue}`)
+              .replaceAll(pascal, fixturePascal)
+              .replaceAll(camel, fixtureCamel)
+              .replaceAll(`${fixturePascal}SearchClientOptions`, `${fixturePascal}ClientOptions`)
+              .replaceAll('partyRegistryApi', 'fixtureApi')
+              .replaceAll('/party-registry-api', '/inventory-stock-api'),
+          );
+        const expectedServer = await readFixtureFile(
+          fixture.root,
+          `verticals/inventory-stock/api/${fixtureNameValue}-${suffix}-server.ts`,
+        );
+        const expectedClient = await readFixtureFile(
+          fixture.root,
+          `verticals/inventory-stock/src/api/${fixtureNameValue}${search ? '-search' : ''}-client.ts`,
+        );
+        assert.equal(
+          normalize(await readFile(path.join(owner, 'api', serverName), 'utf-8')),
+          compactGovernedSource(expectedServer),
+          serverName,
+        );
+        assert.equal(
+          normalize(await readFile(path.join(owner, 'src/api', clientName), 'utf-8')),
+          compactGovernedSource(expectedClient),
+          clientName,
+        );
+      }),
+    );
+    const sharedApi = await readFixtureFile(fixture.root, inventorySharedApiFile);
+    assert.doesNotMatch(sharedApi, /governedHttpApi/u);
+  });
+});
+
 test('the migrated Party governed API slot accepts future generated additions', async () => {
   const source = await readFile(path.join(appRoot, partyGovernedContractPath), 'utf-8');
   const next = insertSortedSlot(
@@ -1167,13 +1240,13 @@ const assertRelocatedSlotRefused = async (
 const assertGovernedReadClients = (clients: readonly string[]): void => {
   for (const client of clients) {
     assert.match(client, /from '@app\/shared-contracts\/client-runtime'/u);
-    assert.match(client, /return makeEffectBffClient\(/u);
+    assert.match(client, /makeGovernedEffectBffClient\(/u);
     assert.match(client, /defaultApiPrefix: '\/inventory-stock-api'/u);
     assert.match(client, /operationGateway\.invoke\(\(credential\) =>/u);
     assert.match(client, /WithAuthorization/u);
     assert.match(
       client,
-      /authorization: Redacted\.value\(credential\),\s+'x-correlation-id': requestCorrelation/u,
+      /credential,\s+defaultApiPrefix: '\/inventory-stock-api',\s+requestCorrelation,/u,
     );
     assert.doesNotMatch(
       client,
@@ -1322,10 +1395,7 @@ test('governed contribution generators patch owner contracts and lazy adapters a
     const reportServer = await readFixtureFile(fixture.root, inventoryReportServerFile);
     const moduleApiServer = await readFixtureFile(fixture.root, inventoryModuleApiServerFile);
     const operationBoundary = await readFixtureFile(fixture.root, inventoryActionPrincipalFile);
-    const composedApi = await readFixtureFile(
-      fixture.root,
-      'verticals/inventory-stock/shared/api.ts',
-    );
+    const composedApi = await readFixtureFile(fixture.root, inventorySharedApiFile);
     const composedHandlers = await readFixtureFile(fixture.root, inventoryHandlerRootFile);
     assert.match(searchClient, /api: InventoryItemsSearchApi,/u);
     assert.match(reportClient, /api: StockLevelsReportApi,/u);
@@ -1428,7 +1498,7 @@ import { inventoryItemsReadApiLive } from './verticals/inventory-stock/api/inven
 import { inventorySuppliersReadApiLive } from './verticals/inventory-stock/api/inventory-suppliers-search-server.ts';
 import { stockLevelsReadApiLive } from './verticals/inventory-stock/api/stock-levels-report-server.ts';
 import generatedRuntime from './verticals/inventory-stock/api/index.ts';
-import { governedHttpApi } from './verticals/inventory-stock/shared/api.ts';
+import { fixtureApi } from './verticals/inventory-stock/shared/api.ts';
 
 const calls = [];
 const readRuntime = {
@@ -1441,7 +1511,7 @@ const readRuntime = {
     }),
 };
 const readLayer = Layer.succeed(ReadRuntime, readRuntime);
-const fixtureHandlersLive = HttpApiBuilder.group(governedHttpApi, 'fixture', (handlers) =>
+const fixtureHandlersLive = HttpApiBuilder.group(fixtureApi, 'fixture', (handlers) =>
   handlers.handle('readiness', () => Effect.succeed({ ok: true })),
 );
 const handlers = Layer.mergeAll(
@@ -1453,8 +1523,8 @@ const handlers = Layer.mergeAll(
   stockLevelsReadApiLive,
 ).pipe(Layer.provide(readLayer));
 const runtime = defineEffectBff({
-  api: governedHttpApi,
-  layer: HttpApiBuilder.layer(governedHttpApi).pipe(Layer.provide(handlers)),
+  api: fixtureApi,
+  layer: HttpApiBuilder.layer(fixtureApi).pipe(Layer.provide(handlers)),
 });
 const server = runtime.createHandler();
 const generatedServer = generatedRuntime.createHandler();
@@ -1714,7 +1784,7 @@ try {
       // eslint-disable-next-line no-await-in-loop
       await writeFile(serverPath, ownedServer, 'utf-8');
     }
-    const sharedApiPath = path.join(fixture.root, 'verticals/inventory-stock/shared/api.ts');
+    const sharedApiPath = path.join(fixture.root, inventorySharedApiFile);
     const validSharedApi = await readFile(sharedApiPath, 'utf-8');
     await writeFile(
       sharedApiPath,
@@ -5721,6 +5791,9 @@ test('all generated files typecheck against the real workspace contracts', async
             ],
             '@app/shared-contracts/problem-details': [
               path.join(appRoot, 'packages/shared-contracts/src/problem-details.ts'),
+            ],
+            '@app/shared-contracts/server/effect-bff-runtime': [
+              path.join(appRoot, 'packages/shared-contracts/src/effect-bff-runtime.ts'),
             ],
           },
           resolveJsonModule: true,

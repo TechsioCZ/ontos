@@ -57,7 +57,10 @@ import {
   updateMutation,
   withExactDependencies,
 } from '../shared.mts';
-import { hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
+import {
+  governedApiBinding,
+  hasValidGovernedHttpCompositionRoot,
+} from '../../generated-governed-http-boundary.mts';
 import { planActionBoundaryScaffold } from '../microvertical-action-boundary/scaffold.mts';
 import {
   hasGeneratedOperationGatewayContract,
@@ -366,19 +369,16 @@ const renderGovernedClientConstruction = (
   credential: Redacted.Redacted<string>,
   requestCorrelation: string,
   options: ${optionsType},
-) => {
-  const clientConfig = {
-    api: ${apiValue},
-    defaultApiPrefix: '/${vertical.appId}-api',
-    transportHeaders: {
-      authorization: Redacted.value(credential),
-      'x-correlation-id': requestCorrelation,
+) =>
+  makeGovernedEffectBffClient(
+    {
+      api: ${apiValue},
+      credential,
+      defaultApiPrefix: '/${vertical.appId}-api',
+      requestCorrelation,
     },
-  };
-  return makeEffectBffClient(
-    options.baseUrl === undefined ? clientConfig : { ...clientConfig, baseUrl: options.baseUrl },
-  );
-};`;
+    options,
+  );`;
 
 const renderApiClient = (vertical: OntosVerticalMetadata, name: string): string => {
   const type = toPascalCase(name);
@@ -388,7 +388,7 @@ const renderApiClient = (vertical: OntosVerticalMetadata, name: string): string 
   const authorizedInvocationType = `${type}AuthorizedInvocation`;
   const operationInvocationType = `${type}OperationInvocation`;
   return `${generatedHeader(MODULE_API_KIND)}
-import { makeEffectBffClient } from '@app/shared-contracts/client-runtime';
+import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted } from 'effect';
 import { ${value} } from '../../shared/apis/${name}.ts';
 import type { ${type}Request } from '../../shared/apis/${name}.ts';
@@ -505,7 +505,7 @@ const renderProviderClient = (
   const optionsType = `${type}ClientOptions`;
   const invocationTypePrefix = `${type}${kind === REPORT_KIND ? 'Report' : 'Search'}`;
   return `${generatedHeader(kind)}
-import { makeEffectBffClient } from '@app/shared-contracts/client-runtime';
+import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted } from 'effect';
 import { ${apiValue} } from '../../shared/apis/${name}-${kind === REPORT_KIND ? REPORT_KIND : 'search'}.ts';
 import type { ${type}ProviderRequest } from '../../shared/apis/${name}-${kind === REPORT_KIND ? REPORT_KIND : 'search'}.ts';
@@ -627,6 +627,7 @@ export const ${apiValue} = HttpApi.make('${apiValue}').add(
 };
 
 const renderGovernedServer = (
+  apiBinding: string,
   kind: Exclude<GovernedContributionKind, typeof PUBLIC_COMPONENT_KIND>,
   name: string,
 ): string => {
@@ -655,11 +656,11 @@ const renderGovernedServer = (
   const readValue = `${toCamelCase(name)}Read`;
   return `${generatedHeader(kind)}
 import {
-  governedReadHttpStatus,
   makeGovernedReadHttpHandler,
 } from '@app/core-runtime/http/governed-read';
+import { makeGovernedReadProblems } from '@app/shared-contracts/server/effect-bff-runtime';
 import { HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';
-import { governedHttpApi } from '../shared/api.ts';
+import { ${apiBinding} } from '../shared/api.ts';
 import {
   ${problemStem}AuthenticationProblemSchema,
   ${problemStem}ForbiddenProblemSchema,
@@ -673,68 +674,19 @@ import {
 import { ${readValue} } from '${readImport}';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 
-const problems = {
-  authentication: () =>
-    ${problemStem}AuthenticationProblemSchema.make({
-      detail: 'A valid audience-scoped Bearer assertion is required.',
-      status: governedReadHttpStatus.authentication,
-      title: 'Authentication required',
-      type: 'https://ontos.dev/problems/operation-authentication-required',
-    }),
-  forbidden: () =>
-    ${problemStem}ForbiddenProblemSchema.make({
-      detail: 'The principal is not permitted to perform this read.',
-      status: governedReadHttpStatus.forbidden,
-      title: 'Read forbidden',
-      type: 'https://ontos.dev/problems/read-forbidden',
-    }),
-  internal: () =>
-    ${problemStem}InternalProblemSchema.make({
-      detail: 'The governed read could not be completed.',
-      status: governedReadHttpStatus.internal,
-      title: 'Read failed',
-      type: 'https://ontos.dev/problems/read-failed',
-    }),
-  invalid: () =>
-    ${problemStem}InvalidProblemSchema.make({
-      detail: 'The governed read request is invalid.',
-      status: governedReadHttpStatus.invalid,
-      title: 'Invalid read request',
-      type: 'https://ontos.dev/problems/read-invalid',
-    }),
-  notFound: () =>
-    ${problemStem}NotFoundProblemSchema.make({
-      detail: 'The requested resource was not found.',
-      status: governedReadHttpStatus.notFound,
-      title: 'Resource not found',
-      type: 'https://ontos.dev/problems/read-not-found',
-    }),
-  policyConflict: () =>
-    ${problemStem}PolicyConflictProblemSchema.make({
-      detail: 'The read conflicts with the current business state.',
-      status: governedReadHttpStatus.policyConflict,
-      title: 'Read conflict',
-      type: 'https://ontos.dev/problems/read-policy-conflict',
-    }),
-  policyIneligible: () =>
-    ${problemStem}PolicyProblemSchema.make({
-      detail: 'The read is not eligible under the current business policy.',
-      status: governedReadHttpStatus.policyIneligible,
-      title: 'Read ineligible',
-      type: 'https://ontos.dev/problems/read-policy-denied',
-    }),
-  unavailable: () =>
-    ${problemStem}UnavailableProblemSchema.make({
-      detail: 'The governed read is temporarily unavailable.',
-      retryable: true,
-      status: governedReadHttpStatus.unavailable,
-      title: 'Read unavailable',
-      type: 'https://ontos.dev/problems/read-unavailable',
-    }),
-};
+const problems = makeGovernedReadProblems({
+  authentication: ${problemStem}AuthenticationProblemSchema,
+  forbidden: ${problemStem}ForbiddenProblemSchema,
+  internal: ${problemStem}InternalProblemSchema,
+  invalid: ${problemStem}InvalidProblemSchema,
+  notFound: ${problemStem}NotFoundProblemSchema,
+  policyConflict: ${problemStem}PolicyConflictProblemSchema,
+  policyIneligible: ${problemStem}PolicyProblemSchema,
+  unavailable: ${problemStem}UnavailableProblemSchema,
+});
 
 export const ${toCamelCase(name)}ReadApiLive = HttpApiBuilder.group(
-  governedHttpApi,
+  ${apiBinding},
   '${group}',
   (handlers) =>
     handlers.handle(
@@ -796,7 +748,15 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
     const nextSharedApi = yield* tryScaffold('failed to patch governed HTTP API root', () =>
       insertSortedSlotIdempotently(
         insertSortedSlotIdempotently(
-          sharedApi,
+          sharedApi
+            .replace(
+              '// </generated-governed-http-api-additions>;',
+              '// </generated-governed-http-api-additions>\n;',
+            )
+            .replace(
+              /(?:\/\*\* Canonical composition-root binding consumed by generated governed HTTP adapters\. \*\/\n)?export const governedHttpApi = [A-Za-z][A-Za-z0-9]*;\n?/u,
+              '',
+            ),
           GOVERNED_HTTP_API_IMPORT_SLOT_START,
           GOVERNED_HTTP_API_IMPORT_SLOT_END,
           `import { ${apiValue} } from './apis/${contract}.ts';`,
@@ -1348,9 +1308,24 @@ const planGovernedTransport = Effect.fn('GovernedContributionScaffold.transport'
           `${name}-${{ [MODULE_API_KIND]: 'read', [REPORT_KIND]: REPORT_KIND, [SEARCH_PROVIDER_KIND]: 'search' }[kind]}-server.ts`,
         ),
       );
+      const sharedApiPath = yield* tryScaffold('failed to resolve governed API binding', () =>
+        resolveContainedPath(vertical.directory, 'shared', 'api.ts'),
+      );
+      const fileSystem = yield* FileSystem.FileSystem;
+      const sharedApi = yield* fileSystem
+        .readFileString(sharedApiPath)
+        .pipe(
+          Effect.mapError((cause) => scaffoldFailure('failed to read governed API binding', cause)),
+        );
+      const apiBinding = governedApiBinding(sharedApi);
+      if (apiBinding === undefined) {
+        return raiseScaffoldFailure(
+          'governed HTTP composition slots are not bound to the exported runtime root',
+        );
+      }
       const serverMutation = yield* createOrAcceptGeneratedMutationEffect(
         serverPath,
-        renderGovernedServer(kind, name),
+        renderGovernedServer(apiBinding, kind, name),
       );
       mutations.push(
         ...EffectArray.getSomes([serverMutation]),

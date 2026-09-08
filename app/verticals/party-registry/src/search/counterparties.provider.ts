@@ -20,7 +20,7 @@ import { PartySearchProjectionGateway } from '../../shared/domain/search-project
 import type { PartySearchProjectionGatewayService as PartySearchProjectionGatewayPort } from '../../shared/domain/search-projection-gateway.ts';
 import type { PartySearchProjectionUnavailable } from '../../shared/domain/search-projection-error.ts';
 import { normalizeCounterpartySearchHits } from '../../shared/domain/search-semantics.ts';
-import { resolveSearchNormalization } from './search-normalization.ts';
+import { resolveSearchNormalization } from '../search-normalization.ts';
 
 const counterpartiesEntrypoint = defineTenantModuleEntrypoint({
   authorization: { kind: 'context_permission', permission: 'module.access' },

@@ -33,7 +33,7 @@ import { normalizePartySearchHits } from '../../shared/domain/search-semantics.t
 import { CurrentCounterpartyRoleSchema } from '../../shared/domain/search-result.ts';
 import { CounterpartyRefSchema } from '../../shared/resources/counterparty.ts';
 import { PartyRefSchema } from '../../shared/resources/party.ts';
-import { resolveSearchNormalization } from './search-normalization.ts';
+import { resolveSearchNormalization } from '../search-normalization.ts';
 
 const partiesEntrypoint = defineTenantModuleEntrypoint({
   authorization: { kind: 'context_permission', permission: 'module.access' },

@@ -390,7 +390,6 @@ interface GovernedClientExpectation {
 }
 
 const MODULE_API_INVOCATION_KIND = 'module-api';
-const CORRELATION_HEADER = 'x-correlation-id';
 
 export const hasUniqueExactNamedImport = (
   source: string,
@@ -516,7 +515,7 @@ const hasExactGeneratedImports = (
     [
       [SyntaxKind.ImportKeyword],
       [SyntaxKind.OpenBraceToken],
-      [SyntaxKind.Identifier, 'makeEffectBffClient'],
+      [SyntaxKind.Identifier, 'makeGovernedEffectBffClient'],
       [SyntaxKind.CloseBraceToken],
       [SyntaxKind.FromKeyword],
       [SyntaxKind.StringLiteral, '@app/shared-contracts/client-runtime'],
@@ -639,14 +638,15 @@ const clientHelperAt = (
   if (name === undefined || parametersClose === undefined) {
     return undefined;
   }
-  const bodyOpen = parametersClose + 2;
-  const bodyClose = findClosingBrace(tokens, bodyOpen);
+  const bodyStart = parametersClose + 2;
+  const bodyClose = findClosingParenthesis(tokens, bodyStart + 1, end);
   if (bodyClose === undefined || bodyClose + 1 >= end) {
     return undefined;
   }
   return matchesSequence(tokens, parametersClose + 1, [
     [SyntaxKind.EqualsGreaterThanToken],
-    [SyntaxKind.OpenBraceToken],
+    [SyntaxKind.Identifier, 'makeGovernedEffectBffClient'],
+    [SyntaxKind.OpenParenToken],
   ]) && tokenKind(tokens, bodyClose + 1) === SyntaxKind.SemicolonToken
     ? {
         declarationStart: index,
@@ -654,7 +654,7 @@ const clientHelperAt = (
         name,
         parametersEnd: parametersClose,
         parametersStart: index + 4,
-        start: bodyOpen + 1,
+        start: bodyStart,
       }
     : undefined;
 };
@@ -665,20 +665,7 @@ const findClientHelper = (
 ): GovernedClientHelper | undefined => {
   for (let index = 0; index < authorizedExportStart; index += 1) {
     const helper = clientHelperAt(tokens, index, authorizedExportStart);
-    if (
-      helper !== undefined &&
-      findTopLevelSequence(
-        tokens,
-        [
-          [SyntaxKind.ConstKeyword],
-          [SyntaxKind.Identifier, 'clientConfig'],
-          [SyntaxKind.EqualsToken],
-          [SyntaxKind.OpenBraceToken],
-        ],
-        helper.start,
-        helper.end,
-      ) !== undefined
-    ) {
+    if (helper !== undefined) {
       return helper;
     }
   }
@@ -764,181 +751,39 @@ const hasOnlyAllowedModuleStatements = (
   return acceptsFrom(0) && optionsInterfaceSeen;
 };
 
-const hasExactTransportHeaders = (
-  tokens: readonly GovernedClientToken[],
-  headersOpen: number,
-  configClose: number,
-): boolean => {
-  const headersClose = findClosingBrace(tokens, headersOpen);
-  if (
-    headersClose === undefined ||
-    headersClose > configClose ||
-    !hasExactProperties(
-      directObjectPropertyNames(tokens, headersOpen, headersClose),
-      new Set(['authorization', CORRELATION_HEADER]),
-    )
-  ) {
-    return false;
-  }
-  const authorizationValue = findObjectPropertyValue(
-    tokens,
-    headersOpen,
-    headersClose,
-    'authorization',
-  );
-  const correlationValue = findObjectPropertyValue(
-    tokens,
-    headersOpen,
-    headersClose,
-    CORRELATION_HEADER,
-  );
-  return (
-    hasExactObjectPropertyValue(tokens, authorizationValue, [
-      [SyntaxKind.Identifier, 'Redacted'],
-      [SyntaxKind.DotToken],
-      [SyntaxKind.Identifier, 'value'],
-      [SyntaxKind.OpenParenToken],
-      [SyntaxKind.Identifier, 'credential'],
-      [SyntaxKind.CloseParenToken],
-    ]) &&
-    hasExactObjectPropertyValue(tokens, correlationValue, [
-      [SyntaxKind.Identifier, 'requestCorrelation'],
-    ])
-  );
-};
-
-const hasClientConfigValues = (
-  tokens: readonly GovernedClientToken[],
-  configOpen: number,
-  configClose: number,
-  ownerApiValue: string,
-  defaultApiPrefix: string,
-): boolean => {
-  const apiValue = findObjectPropertyValue(tokens, configOpen, configClose, 'api');
-  const prefixValue = findObjectPropertyValue(tokens, configOpen, configClose, 'defaultApiPrefix');
-  const headersValue = findObjectPropertyValue(tokens, configOpen, configClose, 'transportHeaders');
-  if (
-    headersValue === undefined ||
-    !hasExactObjectPropertyValue(tokens, apiValue, [[SyntaxKind.Identifier, ownerApiValue]]) ||
-    !hasExactObjectPropertyValue(tokens, prefixValue, [
-      [SyntaxKind.StringLiteral, defaultApiPrefix],
-    ]) ||
-    tokenKind(tokens, headersValue) !== SyntaxKind.OpenBraceToken
-  ) {
-    return false;
-  }
-  const headersClose = findClosingBrace(tokens, headersValue);
-  return (
-    headersClose !== undefined &&
-    (tokenKind(tokens, headersClose + 1) === SyntaxKind.CommaToken ||
-      tokenKind(tokens, headersClose + 1) === SyntaxKind.CloseBraceToken) &&
-    hasExactTransportHeaders(tokens, headersValue, configClose)
-  );
-};
-
-const hasClientConfig = (
+// The imported shared transport owns credential extraction, correlation headers and URL options.
+// Validate its entire invocation, not merely a decoy property or helper name.
+const hasGovernedTransportInvocation = (
   tokens: readonly GovernedClientToken[],
   helper: GovernedClientHelper,
   ownerApiValue: string,
   defaultApiPrefix: string,
 ): boolean => {
-  const configDeclaration = findTopLevelSequence(
-    tokens,
-    [
-      [SyntaxKind.ConstKeyword],
-      [SyntaxKind.Identifier, 'clientConfig'],
-      [SyntaxKind.EqualsToken],
-      [SyntaxKind.OpenBraceToken],
-    ],
-    helper.start,
-    helper.end,
-  );
-  if (configDeclaration === undefined) {
-    return false;
-  }
-  const openBrace = configDeclaration + 3;
-  const closeBrace = findClosingBrace(tokens, openBrace);
-  if (
-    closeBrace === undefined ||
-    closeBrace >= helper.end ||
-    configDeclaration !== helper.start ||
-    tokenKind(tokens, closeBrace + 1) !== SyntaxKind.SemicolonToken ||
-    !hasExactProperties(
-      directObjectPropertyNames(tokens, openBrace, closeBrace),
-      new Set(['api', 'defaultApiPrefix', 'transportHeaders']),
-    )
-  ) {
-    return false;
-  }
-  return hasClientConfigValues(tokens, openBrace, closeBrace, ownerApiValue, defaultApiPrefix);
-};
-
-const factoryConsumesClientConfig = (
-  tokens: readonly GovernedClientToken[],
-  helper: GovernedClientHelper,
-): boolean => {
-  const factoryReturn = findTopLevelSequence(
-    tokens,
-    [
-      [SyntaxKind.ReturnKeyword],
-      [SyntaxKind.Identifier, 'makeEffectBffClient'],
-      [SyntaxKind.OpenParenToken],
-      [SyntaxKind.Identifier, 'options'],
-      [SyntaxKind.DotToken],
-      [SyntaxKind.Identifier, 'baseUrl'],
-      [SyntaxKind.EqualsEqualsEqualsToken],
-      [SyntaxKind.UndefinedKeyword],
-      [SyntaxKind.QuestionToken],
-      [SyntaxKind.Identifier, 'clientConfig'],
-      [SyntaxKind.ColonToken],
-      [SyntaxKind.OpenBraceToken],
-      [SyntaxKind.DotDotDotToken],
-      [SyntaxKind.Identifier, 'clientConfig'],
-      [SyntaxKind.CommaToken],
-      [SyntaxKind.Identifier, 'baseUrl'],
-      [SyntaxKind.ColonToken],
-      [SyntaxKind.Identifier, 'options'],
-      [SyntaxKind.DotToken],
-      [SyntaxKind.Identifier, 'baseUrl'],
-      [SyntaxKind.CloseBraceToken],
-      [SyntaxKind.CommaToken],
-      [SyntaxKind.CloseParenToken],
-      [SyntaxKind.SemicolonToken],
-      [SyntaxKind.CloseBraceToken],
-      [SyntaxKind.SemicolonToken],
-    ],
-    helper.start,
-    helper.end,
-  );
-  const helperTokens = tokens.slice(helper.start, helper.end);
-  const configDeclaration = findTopLevelSequence(
-    tokens,
-    [
-      [SyntaxKind.ConstKeyword],
-      [SyntaxKind.Identifier, 'clientConfig'],
-      [SyntaxKind.EqualsToken],
-      [SyntaxKind.OpenBraceToken],
-    ],
-    helper.start,
-    helper.end,
-  );
-  const configClose =
-    configDeclaration === undefined ? undefined : findClosingBrace(tokens, configDeclaration + 3);
-  const forbiddenControlFlow = new Set([
-    SyntaxKind.DoKeyword,
-    SyntaxKind.ForKeyword,
-    SyntaxKind.IfKeyword,
-    SyntaxKind.SwitchKeyword,
-    SyntaxKind.ThrowKeyword,
-    SyntaxKind.TryKeyword,
-    SyntaxKind.WhileKeyword,
-  ]);
+  const expected = [
+    [SyntaxKind.Identifier, 'makeGovernedEffectBffClient'],
+    [SyntaxKind.OpenParenToken],
+    [SyntaxKind.OpenBraceToken],
+    [SyntaxKind.Identifier, 'api'],
+    [SyntaxKind.ColonToken],
+    [SyntaxKind.Identifier, ownerApiValue],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.Identifier, 'credential'],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.Identifier, 'defaultApiPrefix'],
+    [SyntaxKind.ColonToken],
+    [SyntaxKind.StringLiteral, defaultApiPrefix],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.Identifier, 'requestCorrelation'],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.CloseBraceToken],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.Identifier, 'options'],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.CloseParenToken],
+    [SyntaxKind.SemicolonToken],
+  ] satisfies readonly ExpectedToken[];
   return (
-    factoryReturn !== undefined &&
-    configClose !== undefined &&
-    factoryReturn === configClose + 2 &&
-    helperTokens.filter(({ kind }) => kind === SyntaxKind.ReturnKeyword).length === 1 &&
-    !helperTokens.some(({ kind }) => forbiddenControlFlow.has(kind))
+    helper.end === helper.start + expected.length && matchesSequence(tokens, helper.start, expected)
   );
 };
 
@@ -1214,7 +1059,7 @@ const clientHelperShadowsImports = (
   const requiredHelperImports = new Set([
     'Effect',
     'Redacted',
-    'makeEffectBffClient',
+    'makeGovernedEffectBffClient',
     expectation.ownerApiValue,
   ]);
   return (
@@ -1582,6 +1427,144 @@ const topLevelCallObject = (
     : undefined;
 };
 
+// This is a source contract, not an executable import from a deployment. Accept only
+// the owner-local factory's complete declaration, including its imported constructors.
+const engagementLifecycleRegistrationContract = `
+import { defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import type { OrganizationEngagementLifecyclePayload, PersonEngagementLifecyclePayload } from '../../shared/domain/engagement-profile.ts';
+import { EngagementLifecycleErrorSchema } from './engagement-lifecycle-handler.ts';
+type EngagementLifecyclePayload = | OrganizationEngagementLifecyclePayload | PersonEngagementLifecyclePayload;
+type EngagementLifecycleActionKey = \`party.registry.\${'archive' | 'unarchive'}-\${'person' | 'organization'}-engagement\`;
+export const engagementLifecycleRegistration = <Payload extends EngagementLifecyclePayload>(actionKey: EngagementLifecycleActionKey) => ({
+  accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: \`\${actionKey}.access.v1\` },
+  actionKey,
+  auditProfile: 'standard',
+  domainErrorSchema: EngagementLifecycleErrorSchema,
+  domainEvents: {},
+  entrypoint: defineTenantModuleEntrypoint({
+    access: 'write',
+    authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+    entrypointKey: actionKey,
+    moduleKey: 'party.registry',
+    role: 'action',
+  }),
+  idempotency: 'required',
+  legalEntityScope: 'required',
+  owningModuleKey: 'party.registry',
+  policies: [],
+  resourcePermission: defineActionResourcePermission<Payload>((payload) => ({
+    permission: 'write',
+    resource: {
+      moduleId: payload.profileRef.moduleId,
+      resourceId: payload.profileRef.resourceId,
+      resourceType: payload.profileRef.resourceType,
+    },
+  })),
+  schemaVersion: '1',
+}) as const;
+`;
+
+const withoutTrailingCommas = (tokens: readonly GovernedClientToken[]) =>
+  tokens.filter(
+    (token, index) =>
+      token.kind !== SyntaxKind.CommaToken ||
+      tokenKind(tokens, index - 1) === SyntaxKind.OpenBracketToken ||
+      tokenKind(tokens, index - 1) === SyntaxKind.CommaToken ||
+      ![
+        SyntaxKind.CloseBraceToken,
+        SyntaxKind.CloseParenToken,
+        SyntaxKind.CloseBracketToken,
+      ].includes(tokens[index + 1]?.kind ?? SyntaxKind.Unknown),
+  );
+
+const SOURCE_VALUE_TOKEN_KINDS = new Set([
+  SyntaxKind.Identifier,
+  SyntaxKind.StringLiteral,
+  SyntaxKind.NumericLiteral,
+  SyntaxKind.BigIntLiteral,
+  SyntaxKind.NoSubstitutionTemplateLiteral,
+  SyntaxKind.TemplateHead,
+  SyntaxKind.TemplateMiddle,
+  SyntaxKind.TemplateTail,
+  SyntaxKind.RegularExpressionLiteral,
+]);
+
+const hasExactSourceTokens = (
+  tokens: readonly GovernedClientToken[],
+  expected: string,
+): boolean => {
+  const actualTokens = withoutTrailingCommas(tokens);
+  const expectedTokens = withoutTrailingCommas(tokenizeGovernedClient(expected));
+  return (
+    actualTokens.length === expectedTokens.length &&
+    expectedTokens.every(
+      (token, index) =>
+        actualTokens[index]?.kind === token.kind &&
+        (!SOURCE_VALUE_TOKEN_KINDS.has(token.kind) || actualTokens[index]?.value === token.value),
+    )
+  );
+};
+
+export const hasEngagementLifecycleRegistrationContract = (
+  source: string,
+  registrationSource: string,
+  action: string,
+): boolean => {
+  const identity =
+    /^(?<transition>archive|unarchive)-(?<subject>organization|person)-engagement$/u.exec(
+      action,
+    )?.groups;
+  if (
+    identity === undefined ||
+    !hasExactSourceTokens(
+      tokenizeGovernedClient(registrationSource),
+      engagementLifecycleRegistrationContract,
+    )
+  ) {
+    return false;
+  }
+  const subject = identity.subject === 'organization' ? 'Organization' : 'Person';
+  const exportedName = `${toCamelCase(action)}Action`;
+  const payload = `${subject}EngagementLifecyclePayload`;
+  const result = `${subject}EngagementProfile`;
+  const tokens = tokenizeGovernedClient(source);
+  const declaration = topLevelCallObject(tokens, exportedName, 'defineAction');
+  if (declaration === undefined) {
+    return false;
+  }
+  const [open, close, end] = declaration;
+  return (
+    end + 1 === tokens.length &&
+    hasExactSourceTokens(
+      tokens.slice(0, open),
+      `
+      import { defineAction, OperationContextUnavailable } from '@app/core-runtime';
+      import { Effect } from 'effect';
+      import { ${payload}Schema, ${result}Schema } from '../../shared/domain/engagement-profile.ts';
+      import type { ${payload}, ${result} } from '../../shared/domain/engagement-profile.ts';
+      import { transition${subject}EngagementProfile } from '../services/engagement-profile-persistence.service.ts';
+      import { handleEngagementLifecycle } from './engagement-lifecycle-handler.ts';
+      import { engagementLifecycleRegistration } from './engagement-lifecycle-registration.ts';
+      export const ${exportedName} = defineAction(
+    `,
+    ) &&
+    hasExactSourceTokens(
+      tokens.slice(open, close + 1),
+      `{
+      ...engagementLifecycleRegistration<${payload}>('party.registry.${action}'),
+      payloadSchema: ${payload}Schema,
+      resultSchema: ${result}Schema,
+    }`,
+    ) &&
+    [
+      'defineAction',
+      'engagementLifecycleRegistration',
+      `${payload}Schema`,
+      `${result}Schema`,
+    ].every((binding) => identifierOccurrences(tokens, binding) === 2)
+  );
+};
+
 const objectHasExactString = (
   tokens: readonly GovernedClientToken[],
   open: number,
@@ -1889,12 +1872,16 @@ export const hasGeneratedGovernedClientContract = (
   return (
     helper !== undefined &&
     hasExactGeneratedImports(tokens, expectation) &&
-    hasClientConfig(tokens, helper, expectation.ownerApiValue, expectation.defaultApiPrefix) &&
-    factoryConsumesClientConfig(tokens, helper) &&
+    hasGovernedTransportInvocation(
+      tokens,
+      helper,
+      expectation.ownerApiValue,
+      expectation.defaultApiPrefix,
+    ) &&
     exportedOperationsUseClientHelperAndGateway(tokens, helper, expectation) &&
     hasOnlyAllowedModuleStatements(tokens, helper, expectation) &&
     [
-      'makeEffectBffClient',
+      'makeGovernedEffectBffClient',
       'operationGateway',
       expectation.ownerApiValue,
       'Effect',

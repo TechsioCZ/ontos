@@ -14,6 +14,9 @@ import {
 } from './generated-module-api-boundary.mts';
 import { Schema } from 'effect';
 
+const GOVERNED_API_SLOT_END = '// </generated-governed-http-api-additions>';
+const GOVERNED_API_SLOT_START = '// <generated-governed-http-api-additions>';
+const GOVERNED_HTTP_RUNTIME_MODULE = '@app/shared-contracts/server/effect-bff-runtime';
 const GOVERNED_READ_HTTP_MODULE = '@app/core-runtime/http/governed-read';
 const MANIFEST_API_SLOT_START = '// <generated-module-manifest-apis>';
 const MANIFEST_API_SLOT_END = '// </generated-module-manifest-apis>';
@@ -24,7 +27,6 @@ const REPORT_KIND = 'report';
 const SEARCH_PROVIDER_KIND = 'search-provider';
 const GOVERNED_HANDLER_LAYER_SLOT_START = '// <generated-governed-http-handler-layers>';
 const GOVERNED_HANDLER_LAYER_SLOT_END = '// </generated-governed-http-handler-layers>';
-const HTTP_API_MAKE = 'HttpApi.make(';
 const HTTP_API_CONTRACT_MODULE = 'effect/unstable/httpapi';
 
 const GovernedReadKindSchema = Schema.Literals([
@@ -545,11 +547,7 @@ const slotIsMountedByAssembler = (
     definition.includes('...') ||
     objectPropertyValue(definition, 'api') !== expectedApi ||
     !hasExactlyOne(maskNonCode(source), /\bassembleEffectBffRuntime\(/gu) ||
-    !hasExactValueImport(
-      source,
-      'assembleEffectBffRuntime',
-      '@app/shared-contracts/server/effect-bff-runtime',
-    )
+    !hasExactValueImport(source, 'assembleEffectBffRuntime', GOVERNED_HTTP_RUNTIME_MODULE)
   ) {
     return false;
   }
@@ -658,74 +656,78 @@ const slotIsInsideMountedLayer = (
   return legacyRuntimeMount(source, code, runtimeSource, closing, layerName, expectedApi);
 };
 
-const effectiveApiRootRange = (
-  source: string,
-  governed: SourceRange,
-  apiRoot: SourceRange,
-): SourceRange => {
-  const governedDeclaration = maskNonCode(source, true).indexOf('export const governedHttpApi');
-  const aliasedStatementEnd =
-    governed.value.startsWith(HTTP_API_MAKE) || governedDeclaration === -1
-      ? -1
-      : source.lastIndexOf(';', governedDeclaration);
-  return aliasedStatementEnd > apiRoot.start
-    ? {
-        end: aliasedStatementEnd,
-        start: apiRoot.start,
-        value: source.slice(apiRoot.start, aliasedStatementEnd).trimEnd(),
-      }
-    : apiRoot;
+// A trailing slot comment may precede an ASI-terminated root. Stop at the next
+// top-level export rather than swallowing that declaration into the fluent expression.
+const apiStatementEnd = (source: string, start: number): number | undefined => {
+  const [semicolon] = topLevelSeparators(maskNonCode(source), ';', start);
+  const nextExport = [...maskComments(source).matchAll(/\bexport\s/gu)].find(
+    (match) => match.index > start && isTopLevelCodePosition(source, match.index),
+  )?.index;
+  if (semicolon === undefined) {
+    return nextExport;
+  }
+  return nextExport === undefined ? semicolon : Math.min(semicolon, nextExport);
 };
 
-const resolveGovernedApiRoot = (source: string, governed: SourceRange): SourceRange | undefined => {
-  let apiRoot: SourceRange | undefined;
-  if (governed.value.startsWith(HTTP_API_MAKE)) {
-    apiRoot = governed;
-  } else if (/^[A-Za-z][A-Za-z0-9]*$/u.test(governed.value)) {
-    apiRoot = assignedExpressionRange(
-      source,
-      new RegExp(`export const ${escapeRegExp(governed.value)}\\s*=\\s*`, 'u'),
-    );
+/** Resolve the actual exported root containing the generated slot, never an alias or decoy. */
+export const governedApiBinding = (source: string): string | undefined => {
+  const slot = generatedSlotRange(source, GOVERNED_API_SLOT_START, GOVERNED_API_SLOT_END);
+  if (slot === undefined) {
+    return undefined;
   }
-  return apiRoot;
+  const candidates = [
+    ...maskComments(source).matchAll(
+      /export const (?<name>[A-Za-z][A-Za-z0-9]*)\s*=\s*HttpApi\.make\(/gu,
+    ),
+  ]
+    .filter((match) => isTopLevelCodePosition(source, match.index))
+    .map((match) => match.groups?.name)
+    .filter((name) => {
+      if (name === undefined) {
+        return false;
+      }
+      const root = assignedExpressionRange(
+        source,
+        new RegExp(`export const ${escapeRegExp(name)}\\s*=\\s*`, 'u'),
+      );
+      const statementEnd = root === undefined ? undefined : apiStatementEnd(source, root.start);
+      return (
+        root !== undefined &&
+        statementEnd !== undefined &&
+        slot.markerStart > root.start &&
+        slot.markerEnd < statementEnd
+      );
+    });
+  return candidates.length === 1 ? candidates[0] : undefined;
 };
 
 const governedSharedApiRoot = (source: string): SourceRange | undefined => {
-  const governed = assignedExpressionRange(source, /export const governedHttpApi\s*=\s*/u);
-  if (governed === undefined) {
+  const binding = governedApiBinding(source);
+  const apiRoot =
+    binding === undefined
+      ? undefined
+      : assignedExpressionRange(
+          source,
+          new RegExp(`export const ${escapeRegExp(binding)}\\s*=\\s*`, 'u'),
+        );
+  const slot = generatedSlotRange(source, GOVERNED_API_SLOT_START, GOVERNED_API_SLOT_END);
+  if (apiRoot === undefined || slot === undefined) {
     return undefined;
   }
-  const apiRoot = resolveGovernedApiRoot(source, governed);
-  const slot = generatedSlotRange(
-    source,
-    '// <generated-governed-http-api-additions>',
-    '// </generated-governed-http-api-additions>',
-  );
-  if (
-    apiRoot === undefined ||
-    !apiRoot.value.startsWith(HTTP_API_MAKE) ||
-    slot === undefined ||
-    slot.markerStart <= apiRoot.start
-  ) {
-    return undefined;
-  }
-  const effectiveRoot = effectiveApiRootRange(source, governed, apiRoot);
-  if (slot.markerEnd >= effectiveRoot.end) {
+  const statementEnd = apiStatementEnd(source, apiRoot.start);
+  if (statementEnd === undefined) {
     return undefined;
   }
   const additions = maskNonCode(source.slice(slot.bodyStart, slot.bodyEnd), true).trim();
-  const trailing = source
-    .slice(slot.markerEnd + '// </generated-governed-http-api-additions>'.length, effectiveRoot.end)
-    .trim();
+  const trailing = maskComments(
+    source
+      .slice(slot.markerEnd + GOVERNED_API_SLOT_END.length, statementEnd)
+      .replace(/^;(?=\r?\n)/u, ''),
+  ).trim();
   return /^(?:\.addHttpApi\([A-Za-z][A-Za-z0-9]*\)\s*)*$/u.test(additions) &&
     (trailing === '' || trailing === '.pipe(identity)')
-    ? effectiveRoot
+    ? apiRoot
     : undefined;
-};
-
-const governedApiBinding = (source: string): string | undefined => {
-  const value = assignedExpression(source, /export const governedHttpApi\s*=\s*/u);
-  return value?.startsWith(HTTP_API_MAKE) === true ? 'governedHttpApi' : value;
 };
 
 const hasGovernedSharedApiRoot = (source: string): boolean =>
@@ -1082,12 +1084,13 @@ const hasClientContract = (
 
 const hasProblemSet = (source: string, schemaStem: string, contractImport: string): boolean => {
   const expression = assignedExpression(source, /const problems\s*=\s*/u);
+  const call = /^makeGovernedReadProblems\(/u;
+  const schemas = objectArgument(expression, call);
   if (
     expression === undefined ||
-    !expression.startsWith('{') ||
-    matchingDelimiterEnd(expression, 0, '{', '}') !== expression.length - 1 ||
-    expression.includes('...') ||
-    !hasExactValueImport(source, 'governedReadHttpStatus', GOVERNED_READ_HTTP_MODULE)
+    schemas === undefined ||
+    !isWholeCallExpression(expression, call) ||
+    !hasExactValueImport(source, 'makeGovernedReadProblems', GOVERNED_HTTP_RUNTIME_MODULE)
   ) {
     return false;
   }
@@ -1101,28 +1104,15 @@ const hasProblemSet = (source: string, schemaStem: string, contractImport: strin
     policyIneligible: 'PolicyProblemSchema',
     unavailable: 'UnavailableProblemSchema',
   } as const;
-  const entries = topLevelObjectEntries(expression);
+  const entries = topLevelObjectEntries(schemas);
   return (
     entries !== undefined &&
     entries.length === Object.keys(constructors).length &&
-    Object.entries(constructors).every(([key, suffix]) => {
-      const entry = entries.find((candidate) => new RegExp(`^${key}:`, 'u').test(candidate));
-      const prefix = new RegExp(
-        `^${key}:\\s*\\(\\)\\s*=>\\s*(?<factory>${schemaStem}${suffix}\\.make\\([\\s\\S]*)$`,
-        'u',
-      ).exec(entry ?? '');
-      const factory = prefix?.groups?.factory;
-      const problem = objectArgument(factory, new RegExp(`^${schemaStem}${suffix}\\.make\\(`, 'u'));
-      return (
-        factory !== undefined &&
-        problem !== undefined &&
-        isWholeCallExpression(factory, new RegExp(`^${schemaStem}${suffix}\\.make\\(`, 'u')) &&
-        !problem.includes('...') &&
-        hasExactValueImport(source, `${schemaStem}${suffix}`, contractImport) &&
-        objectProperty(problem, 'status') === `governedReadHttpStatus.${key}` &&
-        (key !== 'unavailable' || objectProperty(problem, 'retryable') === 'true')
-      );
-    })
+    Object.entries(constructors).every(
+      ([key, suffix]) =>
+        objectProperty(schemas, key) === `${schemaStem}${suffix}` &&
+        hasExactValueImport(source, `${schemaStem}${suffix}`, contractImport),
+    )
   );
 };
 
@@ -1183,10 +1173,11 @@ const optionsFromHandlerCallback = (callbackSource: string | undefined): string 
 const serverHandlerOptions = (
   layerExpression: string | undefined,
   expectedGroup: string,
+  apiBinding: string,
 ): string | undefined => {
   if (
     !wholeCall(layerExpression, /^HttpApiBuilder\.group\(/u) ||
-    callArgument(layerExpression, /^HttpApiBuilder\.group\(/u) !== 'governedHttpApi' ||
+    callArgument(layerExpression, /^HttpApiBuilder\.group\(/u) !== apiBinding ||
     callArgument(layerExpression, /^HttpApiBuilder\.group\(/u, 1) !== `'${expectedGroup}'`
   ) {
     return undefined;
@@ -1211,13 +1202,14 @@ const hasServerContract = (
   readImport: string,
   schemaStem: string,
   contractImport: string,
+  apiBinding: string,
 ): boolean => {
   const code = maskComments(source);
   const layerExpression = assignedExpression(
     code,
     new RegExp(`export const ${escapedCamel}ReadApiLive\\s*=\\s*`, 'u'),
   );
-  const options = serverHandlerOptions(layerExpression, escapedGroup);
+  const options = serverHandlerOptions(layerExpression, escapedGroup, apiBinding);
   return (
     options !== undefined &&
     hasServerOptions(options, `${escapedCamel}Read`) &&
@@ -1226,6 +1218,7 @@ const hasServerContract = (
       `${escapedCamel}ReadApiLive`,
       new Set([
         GOVERNED_READ_HTTP_MODULE,
+        GOVERNED_HTTP_RUNTIME_MODULE,
         '@modern-js/plugin-bff/effect-edge',
         './auth/action-principal.ts',
         '../shared/api.ts',
@@ -1235,8 +1228,8 @@ const hasServerContract = (
     ) &&
     hasContractImports(source, {
       [`${escapedCamel}Read`]: readImport,
+      [apiBinding]: '../shared/api.ts',
       authenticateOperationPrincipal: './auth/action-principal.ts',
-      governedHttpApi: '../shared/api.ts',
       HttpApiBuilder: '@modern-js/plugin-bff/effect-edge',
       makeGovernedReadHttpHandler: GOVERNED_READ_HTTP_MODULE,
     }) &&
@@ -1487,8 +1480,8 @@ const publishesSharedApiContribution = (
   ) &&
   slotHasExactlyOneCodeMatch(
     sharedApi,
-    '// <generated-governed-http-api-additions>',
-    '// </generated-governed-http-api-additions>',
+    GOVERNED_API_SLOT_START,
+    GOVERNED_API_SLOT_END,
     new RegExp(`\\.addHttpApi\\(${escapedApiValue}\\)`, 'gu'),
   );
 
@@ -1653,6 +1646,43 @@ const generatedReadContributions = (
 const governedOwnerModuleId = (manifest: string | undefined): string | undefined =>
   /^\/\/ @ontos-module-id (?<moduleId>[^\s]+)$/mu.exec(manifest ?? '')?.groups?.moduleId;
 
+const loadContributionSources = (
+  sources: ReadonlyMap<string, string>,
+  verticalPath: string,
+  contribution: GovernedReadContribution,
+  contractSource: string,
+):
+  | {
+      readonly clientSource: string;
+      readonly readImport: string;
+      readonly readSource: string;
+      readonly serverSource: string;
+    }
+  | undefined => {
+  const readDirectory = contributionReadDirectory(contribution.kind);
+  const { readSuffix } = contributionProfiles[contribution.kind];
+  const readPath = `src/${readDirectory}/${contribution.name}${readSuffix}.ts`;
+  const readSource = sources.get(`${verticalPath}/${readPath}`);
+  const clientSource = sources.get(
+    `${verticalPath}/src/api/${contribution.contractStem}-client.ts`,
+  );
+  const serverSource = sources.get(
+    `${verticalPath}/api/${contributionServerStem(contribution)}-server.ts`,
+  );
+  const header = generatedHeader(contribution.kind);
+  if (
+    readSource === undefined ||
+    clientSource === undefined ||
+    serverSource === undefined ||
+    ![contractSource, readSource, clientSource, serverSource].every((source) =>
+      source.startsWith(header),
+    )
+  ) {
+    return undefined;
+  }
+  return { clientSource, readImport: `../${readPath}`, readSource, serverSource };
+};
+
 export const hasCompleteGeneratedModuleApiSeam = (
   sources: ReadonlyMap<string, string>,
   sharedApiFile: string,
@@ -1698,27 +1728,11 @@ export const hasCompleteGeneratedModuleApiSeam = (
     const camel = toCamelCase(contribution.name);
     const group = contributionGroup(contribution.kind, contribution.name);
     const apiValue = contributionApiValue(contribution.kind, contribution.name);
-    const readDirectory = contributionReadDirectory(contribution.kind);
-    const { readSuffix } = contributionProfiles[contribution.kind];
-    const serverStem = contributionServerStem(contribution);
-    const readSource = sources.get(
-      `${verticalPath}/src/${readDirectory}/${contribution.name}${readSuffix}.ts`,
-    );
-    const clientSource = sources.get(
-      `${verticalPath}/src/api/${contribution.contractStem}-client.ts`,
-    );
-    const serverSource = sources.get(`${verticalPath}/api/${serverStem}-server.ts`);
-    const header = generatedHeader(contribution.kind);
-    if (
-      readSource === undefined ||
-      clientSource === undefined ||
-      serverSource === undefined ||
-      ![contractSource, readSource, clientSource, serverSource].every((source) =>
-        source.startsWith(header),
-      )
-    ) {
+    const loaded = loadContributionSources(sources, verticalPath, contribution, contractSource);
+    if (loaded === undefined) {
       return false;
     }
+    const { clientSource, readImport, readSource, serverSource } = loaded;
 
     const escapedCamel = escapeRegExp(camel);
     const escapedGroup = escapeRegExp(group);
@@ -1746,9 +1760,10 @@ export const hasCompleteGeneratedModuleApiSeam = (
         serverSource,
         escapedCamel,
         escapedGroup,
-        `../src/${readDirectory}/${contribution.name}${readSuffix}.ts`,
+        readImport,
         schemaStem,
         `../shared/apis/${contribution.contractStem}.ts`,
+        governedApiBinding(sharedApi) ?? '',
       ),
     };
     return Object.values(checks).every(Boolean);
@@ -1764,13 +1779,14 @@ const readDirectoryKinds = new Map<string, GovernedReadKind>([
 export const hasGeneratedGovernedServerContract = (
   source: string,
   exportedName: string,
+  sharedApi: string,
 ): boolean => {
   const camel = exportedName.replace(/ReadApiLive$/u, '');
   const readImport =
     /from '(?<path>\.\.\/src\/(?<directory>api|search|reports)\/(?<name>[a-z0-9-]+)\.(?:read|provider)\.ts)'/u.exec(
       source,
     );
-  const { directory, name, path: readPath } = readImport?.groups ?? {};
+  const [, readPath, directory, name] = readImport ?? [];
   if (
     readPath === undefined ||
     name === undefined ||
@@ -1794,6 +1810,7 @@ export const hasGeneratedGovernedServerContract = (
       readPath,
       schemaStem,
       `../shared/apis/${stem}.ts`,
+      governedApiBinding(sharedApi) ?? '',
     )
   );
 };

@@ -122,8 +122,6 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(PersonEngagementProfileApi)
   // </generated-governed-http-api-additions>
   .pipe(identity);
-/** Canonical composition-root binding consumed by generated governed HTTP adapters. */
-export const governedHttpApi = partyRegistryApi;
 
 export const partyRegistryOperationContexts = {
   aresLookup: createMicroVerticalOperationContext({
