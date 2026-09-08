@@ -33,6 +33,7 @@ import type { PartyTransaction } from '../../src/db/types.ts';
 const tenantA = 'a1000000-0000-4000-8000-000000000001';
 const tenantB = 'a1000000-0000-4000-8000-000000000002';
 const legalEntityA = 'a2000000-0000-4000-8000-000000000001';
+const legalEntityB = 'a2000000-0000-4000-8000-000000000002';
 const partyOrganizationA = 'a3000000-0000-4000-8000-000000000001';
 const partyOrganizationA2 = 'a3000000-0000-4000-8000-000000000002';
 const partyPersonA = 'a3000000-0000-4000-8000-000000000003';
@@ -46,7 +47,9 @@ const emailA = 'a6000000-0000-4000-8000-000000000001';
 const emailA2 = 'a6000000-0000-4000-8000-000000000002';
 const addressA = 'a6000000-0000-4000-8000-000000000003';
 const addressA2 = 'a6000000-0000-4000-8000-000000000004';
+const addressB = 'a6000000-0000-4000-8000-000000000005';
 const counterpartyA = 'a7000000-0000-4000-8000-000000000001';
+const counterpartyB = 'a7000000-0000-4000-8000-000000000002';
 const relationshipA = 'a8000000-0000-4000-8000-000000000001';
 const caseA = 'a9000000-0000-4000-8000-000000000001';
 const actionA = 'aa000000-0000-4000-8000-000000000001';
@@ -344,6 +347,17 @@ it.live('enforces Party owner invariants, tenant isolation, and independent fact
         postalCode: '12000',
         tenantId: tenantA,
       },
+      {
+        ...contactEvidence,
+        addressLine1: 'Independent 3',
+        city: 'Prague',
+        contactPointId: addressB,
+        contactPointType: 'ADDRESS',
+        countryCode: 'CZ',
+        partyId: partyOrganizationB,
+        postalCode: '13000',
+        tenantId: tenantB,
+      },
     ]);
     const purposeEvidence = {
       acceptedByActionInvocationId: actionA,
@@ -371,6 +385,16 @@ it.live('enforces Party owner invariants, tenant isolation, and independent fact
         ),
       ),
     ).toBe(true);
+    const otherTenantPurposes = yield* admin
+      .insert(partyContactPointPurposes)
+      .values({
+        ...purposeEvidence,
+        contactPointId: addressB,
+        partyId: partyOrganizationB,
+        purposeKey: 'DELIVERY',
+        tenantId: tenantB,
+      })
+      .returning();
     const contactEndRecordedAt = yield* DateTime.nowAsDate;
     const futureContactEnd = DateTime.toDateUtc(DateTime.makeUnsafe('2099-01-01T00:00:00.000Z'));
     yield* admin
@@ -399,7 +423,19 @@ it.live('enforces Party owner invariants, tenant isolation, and independent fact
         endedRecordedAt: contactEndRecordedAt,
         validTo: futureContactEnd,
       })
-      .where(eq(partyContactPointPurposes.purposeKey, 'DELIVERY'));
+      .where(
+        and(
+          eq(partyContactPointPurposes.tenantId, tenantA),
+          eq(partyContactPointPurposes.contactPointId, addressA),
+          eq(partyContactPointPurposes.purposeKey, 'DELIVERY'),
+        ),
+      );
+    expect(
+      yield* admin
+        .select()
+        .from(partyContactPointPurposes)
+        .where(eq(partyContactPointPurposes.contactPointId, addressB)),
+    ).toEqual(otherTenantPurposes);
     const [scheduledContactEnd] = yield* admin
       .select()
       .from(partyContactPoints)
@@ -412,7 +448,13 @@ it.live('enforces Party owner invariants, tenant isolation, and independent fact
     const [scheduledPurposeEnd] = yield* admin
       .select()
       .from(partyContactPointPurposes)
-      .where(eq(partyContactPointPurposes.purposeKey, 'DELIVERY'));
+      .where(
+        and(
+          eq(partyContactPointPurposes.tenantId, tenantA),
+          eq(partyContactPointPurposes.contactPointId, addressA),
+          eq(partyContactPointPurposes.purposeKey, 'DELIVERY'),
+        ),
+      );
     expect(scheduledPurposeEnd?.isCurrent).toBe(true);
     expect(scheduledPurposeEnd?.endProvenanceSource).toBe('EXTERNAL_EVIDENCE');
     expect(scheduledPurposeEnd?.endEvidenceRefs).toEqual(['evidence:delivery-purpose-end:1']);
@@ -422,7 +464,13 @@ it.live('enforces Party owner invariants, tenant isolation, and independent fact
           admin
             .update(partyContactPointPurposes)
             .set({ validTo: futureContactEnd })
-            .where(eq(partyContactPointPurposes.purposeKey, 'BILLING')),
+            .where(
+              and(
+                eq(partyContactPointPurposes.tenantId, tenantA),
+                eq(partyContactPointPurposes.contactPointId, addressA),
+                eq(partyContactPointPurposes.purposeKey, 'BILLING'),
+              ),
+            ),
         ),
       ),
     ).toBe(true);
@@ -569,6 +617,37 @@ it.live('enforces Party owner invariants, tenant isolation, and independent fact
         ),
       ),
     ).toBe(true);
+    yield* admin.insert(counterparties).values({
+      acceptedByActionInvocationId: actionA,
+      acceptedByPrincipalId: principalA,
+      counterpartyId: counterpartyB,
+      creationReason: 'Independent tenant agreement',
+      evidenceRefs: ['evidence:other-tenant:1'],
+      legalEntityId: legalEntityB,
+      partyId: partyOrganizationB,
+      policyVersion: 'party.counterparty.v1',
+      provenanceMethod: 'CONTRACT',
+      provenanceSource: 'COMMERCE',
+      sourceRecordRefs: ['commerce:other-tenant:1'],
+      tenantId: tenantB,
+    });
+    const otherTenantRoles = yield* admin
+      .insert(counterpartyRolePeriods)
+      .values({
+        acceptedByActionInvocationId: actionA,
+        acceptedByPrincipalId: principalA,
+        addEvidenceRefs: ['evidence:other-tenant-customer:1'],
+        addReason: 'Independent customer agreement began',
+        counterpartyId: counterpartyB,
+        legalEntityId: legalEntityB,
+        policyVersion: 'party.counterparty-role.v1',
+        provenanceMethod: 'CONTRACT',
+        provenanceSource: 'COMMERCE',
+        roleType: 'CUSTOMER',
+        tenantId: tenantB,
+        validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
+      })
+      .returning();
     yield* admin.insert(counterpartyRolePeriods).values([
       {
         acceptedByActionInvocationId: actionA,
@@ -613,7 +692,19 @@ it.live('enforces Party owner invariants, tenant isolation, and independent fact
         state: 'ENDED',
         validTo: DateTime.toDateUtc(DateTime.makeUnsafe('2026-06-30T00:00:00.000Z')),
       })
-      .where(eq(counterpartyRolePeriods.roleType, 'CUSTOMER'));
+      .where(
+        and(
+          eq(counterpartyRolePeriods.tenantId, tenantA),
+          eq(counterpartyRolePeriods.counterpartyId, counterpartyA),
+          eq(counterpartyRolePeriods.roleType, 'CUSTOMER'),
+        ),
+      );
+    expect(
+      yield* admin
+        .select()
+        .from(counterpartyRolePeriods)
+        .where(eq(counterpartyRolePeriods.counterpartyId, counterpartyB)),
+    ).toEqual(otherTenantRoles);
     const futureRoleEvidence = {
       acceptedByActionInvocationId: actionA,
       acceptedByPrincipalId: principalA,
