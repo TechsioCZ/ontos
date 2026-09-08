@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 
 import { runOxlint, testsDirectory } from './oxlint.mts';
@@ -27,7 +27,11 @@ export const makeOutboxProcessor = (dependencies: OutboxProcessorDependencies) =
 
 for (const { rule, source } of cases) {
   test(`${rule} excludes nested scripts by default and honors includeScripts`, () => {
-    withTemporaryWorkspace((directory) => {
+    withTemporaryWorkspace((root) => {
+      const directory = join(root, 'workspace');
+      const alias = join(root, 'workspace-link');
+      mkdirSync(directory);
+      symlinkSync(directory, alias, 'dir');
       const workspaces = ['apps/shell-super-app', 'verticals/contacts', 'packages/core-runtime'];
       const sources = workspaces.map((workspace) => `${workspace}/src/operation.ts`);
       const scripts = workspaces.map((workspace) => `${workspace}/scripts/operation.mts`);
@@ -53,10 +57,12 @@ for (const { rule, source } of cases) {
             },
           }),
         );
-        for (const absolute of [false, true]) {
+        for (const pathMode of ['relative', 'absolute', 'symlink'] as const) {
           const run = runOxlint(
             config,
-            absolute ? paths.map((path) => join(directory, path)) : paths,
+            pathMode === 'relative'
+              ? paths
+              : paths.map((path) => join(pathMode === 'symlink' ? alias : directory, path)),
             directory,
             rule,
           );
@@ -70,13 +76,18 @@ for (const { rule, source } of cases) {
             assert.equal(diagnostic.code, `effect-native(${rule})`);
           const reported = [
             ...new Set(
-              run.diagnostics.map((diagnostic) => diagnostic.filename.replaceAll('\\', '/')),
+              // Oxlint may retain absolute spellings when input paths cross a symlink.
+              run.diagnostics.map((diagnostic) =>
+                realpathSync(resolve(directory, diagnostic.filename)),
+              ),
             ),
           ];
           assert.deepEqual(
             reported.sort(),
-            (includeScripts ? paths : sources).toSorted(),
-            `${rule}: includeScripts=${includeScripts}, absolute=${absolute}`,
+            (includeScripts ? paths : sources)
+              .map((path) => realpathSync(join(directory, path)))
+              .toSorted(),
+            `${rule}: includeScripts=${includeScripts}, pathMode=${pathMode}`,
           );
         }
       }

@@ -1,7 +1,19 @@
-import { Array as EffectArray, Effect, FileSystem, Option, Schema, Predicate } from 'effect';
+import { Array as EffectArray, Effect, FileSystem, Option, Predicate, Schema } from 'effect';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   MODULE_CONTRACT_GENERATOR_HEADER,
+  GOVERNED_HTTP_API_ADDITION_SLOT_END,
+  GOVERNED_HTTP_API_ADDITION_SLOT_START,
+  GOVERNED_HTTP_API_IMPORT_SLOT_END,
+  GOVERNED_HTTP_API_IMPORT_SLOT_START,
+  GOVERNED_HTTP_HANDLER_IMPORT_SLOT_END,
+  GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START,
+  GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
+  GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
+  GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
+  GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+  GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
+  GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
   MODULE_MANIFEST_ACTION_SLOT_END,
   MODULE_MANIFEST_ACTION_SLOT_START,
   MODULE_MANIFEST_API_SLOT_END,
@@ -53,7 +65,9 @@ import {
   createMutationEffect,
   discoverVerticalEffect,
   ensureUniqueMutationPaths,
+  maskNonCode,
   patchJsonObjectProperty,
+  raiseScaffoldFailure,
   readJsonEffect,
   requireOntosModuleId,
   requiredString,
@@ -74,6 +88,178 @@ import type {
 
 const moduleMarkerPattern = /^\/\/ @ontos-module-id (?<moduleId>[^\s]+)$/mu;
 const MANIFEST_FILE_NAME = 'vertical.manifest.ts';
+
+const renderGovernedHttpApiRoot = (
+  vertical: VerticalMetadata,
+): string => `${MODULE_CONTRACT_GENERATOR_HEADER}
+// @ontos-deployment-app-id ${vertical.appId}
+import { HttpApi } from '@modern-js/plugin-bff/effect-client';
+import { identity } from 'effect';
+
+${GOVERNED_HTTP_API_IMPORT_SLOT_START}
+${GOVERNED_HTTP_API_IMPORT_SLOT_END}
+
+export const governedHttpApi = HttpApi.make('${toCamelCase(vertical.slug)}GovernedApi')
+  ${GOVERNED_HTTP_API_ADDITION_SLOT_START}
+  ${GOVERNED_HTTP_API_ADDITION_SLOT_END}
+  .pipe(identity);
+`;
+
+const topLevelStatementEnd = (structure: string, start: number): number => {
+  let roundDepth = 0;
+  let squareDepth = 0;
+  let curlyDepth = 0;
+  for (let index = start; index < structure.length; index += 1) {
+    const character = structure[index];
+    if (character === '(') {
+      roundDepth += 1;
+    } else if (character === ')') {
+      roundDepth -= 1;
+    } else if (character === '[') {
+      squareDepth += 1;
+    } else if (character === ']') {
+      squareDepth -= 1;
+    } else if (character === '{') {
+      curlyDepth += 1;
+    } else if (character === '}') {
+      curlyDepth -= 1;
+    } else if (character === ';' && roundDepth === 0 && squareDepth === 0 && curlyDepth === 0) {
+      return index;
+    }
+  }
+  return -1;
+};
+
+const initializeGovernedHttpApiRoot = (source: string, vertical: VerticalMetadata): string => {
+  if (
+    source.includes(GOVERNED_HTTP_API_IMPORT_SLOT_START) ||
+    source.includes(GOVERNED_HTTP_API_ADDITION_SLOT_START) ||
+    source.includes('governedHttpApi')
+  ) {
+    return raiseScaffoldFailure(
+      `vertical ${vertical.slug} shared API already uses reserved governed-read composition`,
+    );
+  }
+  const structure = maskNonCode(source);
+  const declarations = [
+    ...structure.matchAll(/export const (?<api>[A-Za-z][A-Za-z0-9]*)\s*=\s*HttpApi\.make\(/gu),
+  ];
+  if (declarations.length !== 1) {
+    return raiseScaffoldFailure(
+      `vertical ${vertical.slug} shared API must contain exactly one generated HttpApi root`,
+    );
+  }
+  const [declaration] = declarations;
+  const apiValue = declaration?.groups?.['api'];
+  const declarationStart = declaration?.index;
+  if (apiValue === undefined || declarationStart === undefined) {
+    return raiseScaffoldFailure(`vertical ${vertical.slug} shared API root is malformed`);
+  }
+  const statementEnd = topLevelStatementEnd(structure, declarationStart);
+  if (statementEnd === -1) {
+    return raiseScaffoldFailure(`vertical ${vertical.slug} shared API root has no terminator`);
+  }
+  return `${source.slice(0, declarationStart)}${GOVERNED_HTTP_API_IMPORT_SLOT_START}
+${GOVERNED_HTTP_API_IMPORT_SLOT_END}
+
+${source.slice(declarationStart, statementEnd)}
+  ${GOVERNED_HTTP_API_ADDITION_SLOT_START}
+  ${GOVERNED_HTTP_API_ADDITION_SLOT_END}${source.slice(statementEnd, statementEnd + 1)}
+
+/** Canonical composition-root binding consumed by generated governed HTTP adapters. */
+export const governedHttpApi = ${apiValue};${source.slice(statementEnd + 1)}`;
+};
+
+const initializeGovernedHttpHandlerRoot = (source: string, vertical: VerticalMetadata): string => {
+  for (const reserved of [
+    'GovernedReadRuntime',
+    'GovernedReadLayer',
+    'governedReadRuntimeLive',
+    'governedReadApiHandlersLive',
+    GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START,
+    GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
+    GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+    GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
+  ]) {
+    if (source.includes(reserved)) {
+      return raiseScaffoldFailure(
+        `vertical ${vertical.slug} API root already uses reserved governed-read composition ${reserved}`,
+      );
+    }
+  }
+  const runtimeLayerNeedle = ') satisfies EffectRuntimeLayer;';
+  const runtimeLayerEnd = source.lastIndexOf(runtimeLayerNeedle);
+  if (runtimeLayerEnd === -1) {
+    return raiseScaffoldFailure(
+      `vertical ${vertical.slug} API root must expose the pinned Effect runtime layer`,
+    );
+  }
+  const runtimeLayerStart = source.lastIndexOf(
+    'const layer = HttpApiBuilder.layer(',
+    runtimeLayerEnd,
+  );
+  if (runtimeLayerStart === -1) {
+    return raiseScaffoldFailure(
+      `vertical ${vertical.slug} API root must contain the pinned HttpApiBuilder layer`,
+    );
+  }
+  const generatedRoot = `import {
+  ContextAccessLive as GovernedContextAccessLive,
+  CorePersistenceLive as GovernedCorePersistenceLive,
+  DatabaseConfigLive as GovernedDatabaseConfigLive,
+  ReadRuntimeLive as GovernedReadRuntimeLive,
+  TenantModuleStateServiceLive as GovernedTenantModuleStateServiceLive,
+} from '@app/core-runtime';
+import {
+  ModuleEntrypointGatewayLive as GovernedModuleEntrypointGatewayLive,
+  ModuleStateGateLive as GovernedModuleStateGateLive,
+  OperationalScopeResolverLive as GovernedOperationalScopeResolverLive,
+} from '@app/core-runtime/actions/runtime-wiring';
+import { Layer as GovernedReadLayer } from 'effect';
+${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START}
+${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END}
+
+${GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START}
+${GOVERNED_HTTP_HANDLER_IMPORT_SLOT_END}
+
+const governedTenantModuleStateServiceLive = GovernedTenantModuleStateServiceLive.pipe(
+  GovernedReadLayer.provide(GovernedCorePersistenceLive),
+);
+const governedModuleStateGateLive = GovernedModuleStateGateLive.pipe(
+  GovernedReadLayer.provide(governedTenantModuleStateServiceLive),
+);
+const governedReadRuntimeDependenciesLive = GovernedReadLayer.mergeAll(
+  GovernedCorePersistenceLive,
+  GovernedContextAccessLive,
+  GovernedModuleEntrypointGatewayLive.pipe(GovernedReadLayer.provide(governedModuleStateGateLive)),
+  GovernedOperationalScopeResolverLive.pipe(
+    GovernedReadLayer.provide(
+      GovernedReadLayer.mergeAll(GovernedCorePersistenceLive, GovernedContextAccessLive),
+    ),
+  ),
+);
+const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(
+  GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
+);
+
+export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
+  GovernedReadLayer.empty,
+  ${GOVERNED_HTTP_HANDLER_LAYER_SLOT_START}
+  ${GOVERNED_HTTP_HANDLER_LAYER_SLOT_END}
+).pipe(
+  ${GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START}
+  ${GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END}
+  GovernedReadLayer.provide(GovernedReadLayer.empty),
+);
+`;
+  return `${generatedRoot}\n${source.slice(0, runtimeLayerStart)}${source.slice(
+    runtimeLayerStart,
+    runtimeLayerEnd,
+  )}  GovernedReadLayer.provide(governedReadApiHandlersLive),
+  GovernedReadLayer.provide(GovernedDatabaseConfigLive),
+  GovernedReadLayer.orDie,
+${source.slice(runtimeLayerEnd)}`;
+};
 
 class ModuleContractScaffoldError extends Schema.TaggedError<ModuleContractScaffoldError>()(
   'ModuleContractScaffoldError',
@@ -447,6 +633,12 @@ const planModuleContractScaffold = (
     const registrationPath = yield* trySync(() =>
       resolveContainedPath(vertical.directory, 'vertical.registration.ts'),
     );
+    const sharedApiPath = yield* trySync(() =>
+      resolveContainedPath(vertical.directory, 'shared', 'api.ts'),
+    );
+    const apiRootPath = yield* trySync(() =>
+      resolveContainedPath(vertical.directory, 'api', 'index.ts'),
+    );
     const manifestMutation = yield* createMutationEffect(
       manifestPath,
       renderManifest(vertical, moduleId),
@@ -454,6 +646,44 @@ const planModuleContractScaffold = (
     const registrationMutation = yield* createMutationEffect(
       registrationPath,
       renderRegistration(vertical, moduleId),
+    );
+    const fileSystem = yield* FileSystem.FileSystem;
+    const sharedApiExists = yield* fileSystem
+      .exists(sharedApiPath)
+      .pipe(
+        Effect.mapError((cause) =>
+          scaffoldError(`failed to inspect vertical ${vertical.slug} shared API root`, cause),
+        ),
+      );
+    const sharedApiMutation = sharedApiExists
+      ? yield* fileSystem.readFileString(sharedApiPath).pipe(
+          Effect.mapError((cause) =>
+            scaffoldError(`failed to read vertical ${vertical.slug} shared API root`, cause),
+          ),
+          Effect.flatMap((content) =>
+            trySync(() =>
+              updateMutation(
+                sharedApiPath,
+                content,
+                initializeGovernedHttpApiRoot(content, vertical),
+              ),
+            ),
+          ),
+        )
+      : yield* createMutationEffect(sharedApiPath, renderGovernedHttpApiRoot(vertical));
+    const apiRootContent = yield* fileSystem
+      .readFileString(apiRootPath)
+      .pipe(
+        Effect.mapError((cause) =>
+          scaffoldError(`failed to read vertical ${vertical.slug} API root`, cause),
+        ),
+      );
+    const apiRootMutation = yield* trySync(() =>
+      updateMutation(
+        apiRootPath,
+        apiRootContent,
+        initializeGovernedHttpHandlerRoot(apiRootContent, vertical),
+      ),
     );
     const packageContent = yield* patchPackage(vertical, moduleId);
     const packageMutation = yield* trySync(() =>
@@ -465,6 +695,8 @@ const planModuleContractScaffold = (
     const mutations = EffectArray.getSomes([
       Option.some(manifestMutation),
       Option.some(registrationMutation),
+      Option.fromNullishOr(sharedApiMutation),
+      Option.fromNullishOr(apiRootMutation),
       packageMutation,
       tsconfigMutation,
     ]);

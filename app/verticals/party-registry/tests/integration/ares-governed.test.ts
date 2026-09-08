@@ -19,6 +19,7 @@ import {
   Scope as NativeScope,
   Option,
   Redacted,
+  Result,
   Schema,
 } from 'effect';
 import { FetchHttpClient, HttpClient, HttpClientResponse } from 'effect/unstable/http';
@@ -57,7 +58,7 @@ import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
 import { updatePartyAction } from '../../src/actions/update-party.action.ts';
 import type { AresApplyRequest } from '../../src/api/action-gateway.ts';
-import { makeActionGateway } from '../../src/api/action-gateway.ts';
+import { makeOperationGateway } from '../../src/api/action-gateway.ts';
 import { executeAresLookupWithAuthorization } from '../../src/api/ares-lookup-client.ts';
 import {
   correctPartyFactWithAuthorization,
@@ -162,7 +163,7 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
           promiseEffect(sign.bind(undefined, fixture.manager)).pipe(
             Effect.map((signedToken) => `Bearer ${signedToken}`),
           );
-        const gateway = makeActionGateway(() =>
+        const gateway = makeOperationGateway(() =>
           promiseEffect(sign.bind(undefined, fixture.manager)).pipe(
             Effect.map((signedToken) => ({ expiresAt: 0, token: signedToken })),
           ),
@@ -315,6 +316,24 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
           ),
         );
         const partyRef = yield* create();
+        const replayAuthorization = yield* authorization();
+        const replayLookup = () =>
+          runHttpEffect(
+            executeAresLookupWithAuthorization(
+              { ico: lookupIco },
+              replayAuthorization,
+              randomUUID(),
+              { baseUrl },
+            ),
+          );
+        yield* replayLookup();
+        const providerRequestsBeforeReplay = providerRequests;
+        const replayRejected = yield* replayLookup().pipe(
+          Effect.as(false),
+          Effect.catchTag('AresLookupAuthenticationProblem', () => Effect.succeed(true)),
+        );
+        assert.equal(replayRejected, true);
+        assert.equal(providerRequests, providerRequestsBeforeReplay);
         const observation = yield* lookup();
         const encodedObservation =
           yield* Schema.encodeEffect(AresSubjectEvidenceSchema)(observation);
@@ -391,9 +410,9 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
             Effect.result,
           ),
         );
-        assert.equal(
-          'failure' in unconfirmed && unconfirmed.failure._tag,
-          'AresApplySelectionInvalid',
+        assert.ok(Result.isFailure(unconfirmed));
+        assert.ok(
+          Schema.is(Schema.TaggedStruct('AresApplySelectionInvalid', {}))(unconfirmed.failure),
         );
         const afterUnconfirmed = yield* state();
         assert.equal(
@@ -404,7 +423,10 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
         const appliedMessage = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
           applied,
         );
-        assert.equal(applied._tag, 'AresApplyCompleted', appliedMessage);
+        assert.ok(
+          Schema.is(Schema.TaggedStruct('AresApplyCompleted', {}))(applied),
+          appliedMessage,
+        );
         assert.equal(applied.completed.length, 3);
         const persisted = yield* state();
         assert.equal(persisted.claims.length, 1);
@@ -430,12 +452,12 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
         assert.equal(persisted.core.outbox.length, 4);
         assert.ok(persisted.core.invocations.every((item) => item.status === 'succeeded'));
         const replay = yield* runHttpEffect(applyAresObservation(request, { gateway, baseUrl }));
-        assert.equal(replay._tag, 'AresApplyCompleted');
+        assert.ok(Schema.is(Schema.TaggedStruct('AresApplyCompleted', {}))(replay));
         assert.equal(replay.completed.length, 0);
         assert.equal(replay.skipped.length, 3);
         const afterReplay = yield* state();
         assert.equal(afterReplay.core.events.length, persisted.core.events.length);
-        const deniedGateway = makeActionGateway(() =>
+        const deniedGateway = makeOperationGateway(() =>
           promiseEffect(sign.bind(undefined, fixture.denied)).pipe(
             Effect.map((signedToken) => ({ expiresAt: 0, token: signedToken })),
           ),
@@ -443,7 +465,8 @@ test('exported ARES coordinator uses real authorized HTTP commands, canonical pe
         const denied = yield* runHttpEffect(
           applyAresObservation(request, { gateway: deniedGateway, baseUrl }).pipe(Effect.result),
         );
-        assert.equal('failure' in denied && denied.failure._tag, 'AresLookupForbiddenProblem');
+        assert.ok(Result.isFailure(denied));
+        assert.ok(Schema.is(Schema.TaggedStruct('AresLookupForbiddenProblem', {}))(denied.failure));
         const afterDenied = yield* state();
         assert.equal(afterDenied.core.invocations.length, persisted.core.invocations.length);
 
