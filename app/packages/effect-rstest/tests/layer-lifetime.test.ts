@@ -1,6 +1,6 @@
 import { NodeServices } from '@effect/platform-node';
 import { expect, it } from '@app/effect-rstest';
-import { Effect, Schema, Stream } from 'effect';
+import { Effect, FileSystem, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/unstable/process';
 
 const runnerReport = Schema.fromJsonString(
@@ -25,6 +25,15 @@ it.layer(NodeServices.layer, { excludeTestServices: true })((suiteIt) => {
     'layer setup fibers stop on hook timeout and release resources on early failure',
     () =>
       Effect.gen(function* runLayerLifetimeFixture() {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'effect-rstest-layer-' });
+        const reportPath = `${directory}/report.json`;
+        const configPath = `${directory}/rstest.config.mjs`;
+        const config = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+          reporters: [['json', { outputPath: reportPath }]],
+          root: new URL('..', import.meta.url).pathname,
+        });
+        yield* fs.writeFileString(configPath, `export default ${config};`);
         const child = yield* ChildProcess.make(
           process.execPath,
           [
@@ -32,8 +41,8 @@ it.layer(NodeServices.layer, { excludeTestServices: true })((suiteIt) => {
             'run',
             '--include',
             'tests/fixtures/layer-lifetime.fixture.ts',
-            '--reporter',
-            'json',
+            '--config',
+            configPath,
             '--hookTimeout',
             '100',
             '--pool.maxWorkers',
@@ -41,6 +50,8 @@ it.layer(NodeServices.layer, { excludeTestServices: true })((suiteIt) => {
           ],
           {
             cwd: new URL('..', import.meta.url).pathname,
+            // Exercise normal CLI mode: its banner makes stdout unsuitable for JSON.
+            env: { RSTEST_NO_AGENT: '1' },
             forceKillAfter: '1 second',
             stderr: 'pipe',
             stdin: 'ignore',
@@ -59,8 +70,10 @@ it.layer(NodeServices.layer, { excludeTestServices: true })((suiteIt) => {
           Effect.timeout('20 seconds'),
         );
         // Failing hooks must still fail the runner, not become swallowed failures.
-        expect(Number(status), stderr).toBe(1);
-        const report = yield* Schema.decodeEffect(runnerReport)(stdout);
+        expect(Number(status), `${stdout}\n${stderr}`).toBe(1);
+        const report = yield* Schema.decodeEffect(runnerReport)(
+          yield* fs.readFileString(reportPath),
+        );
         expect(report.summary).toEqual({
           failedTests: 0,
           passedTests: 6,
