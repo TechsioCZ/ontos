@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { maskNonCode } from './scaffolding/shared.mts';
+import { topLevelSeparators } from './boundary-source-structure.mts';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
 import {
@@ -1133,25 +1135,40 @@ const validateGatewayRuntime = (shellApiContract: string, shellApiRuntime: strin
     }
   });
 
+const gatewayDeclaration = (source: string, name: string): string => {
+  const structure = maskNonCode(source);
+  const declaration = new RegExp(`export\\s+const\\s+${name}\\s*=`, 'u').exec(structure);
+  if (declaration === null) {
+    return '';
+  }
+  const start = declaration.index + declaration[0].length;
+  const end = topLevelSeparators(structure, ';', start)[0] ?? source.length;
+  return maskNonCode(source.slice(start, end), true).trim();
+};
+
 const hasMountedIssuerPath = (
   source: string,
+  gatewaySource: string,
   issuer: (typeof gatewayContextAuthorizationEntrypoints)[number],
 ): boolean => {
-  if (source.includes(`'${issuer.path}'`)) {
-    return true;
-  }
   const name =
     issuer.authorization.credential === 'session'
       ? 'issueGatewayContext'
       : 'issueApiKeyGatewayContext';
+  const endpointPath = issuer.path.slice(shellGatewayContextContract.apiPrefix.length);
+  const group = gatewayDeclaration(gatewaySource, 'GatewayContextApiGroup');
+  const shellApi = gatewayDeclaration(source, 'ShellAuthenticationApi');
   return (
-    source.includes("import { GatewayContextApiGroup } from '@app/shared-contracts'") &&
-    source.includes('.add(GatewayContextApiGroup)') &&
-    source.includes(`\`/shell-super-app-api\${endpoint.path}\``) &&
+    maskNonCode(source, true).includes(
+      "import { GatewayContextApiGroup } from '@app/shared-contracts'",
+    ) &&
+    shellApi.startsWith('HttpApi.make(') &&
+    /\.add\(\s*GatewayContextApiGroup\s*\)/u.test(shellApi) &&
+    group.startsWith("HttpApiGroup.make('gatewayContext')") &&
     new RegExp(
-      `${name}Path:\\s*authenticationEndpointPath\\(\\s*ShellAuthenticationApi\\.groups\\.gatewayContext\\.endpoints\\.${name}\\s*,?\\s*\\)`,
+      `\\.add\\(\\s*HttpApiEndpoint\\.post\\(\\s*'${name}'\\s*,\\s*'${endpointPath}'\\s*,`,
       'u',
-    ).test(source)
+    ).test(group)
   );
 };
 
@@ -1167,7 +1184,7 @@ const validateGatewayContract = (state: BoundaryCheckState) =>
     for (const issuer of gatewayContextAuthorizationEntrypoints) {
       if (
         !gatewayContract.includes(`'${issuer.path}'`) ||
-        !hasMountedIssuerPath(shellApiContract, issuer)
+        !hasMountedIssuerPath(shellApiContract, gatewayContract, issuer)
       ) {
         yield* fail(
           'apps/shell-super-app/shared/api.ts',

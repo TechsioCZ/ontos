@@ -24,7 +24,7 @@ export const openBoundaryDatabases = <Database>(
   readonly runtimePool: Pool;
 }> =>
   runEffectTestPromise(
-    Effect.gen(function* () {
+    Effect.gen(function* openDatabases() {
       const connections = yield* loadDatabaseConnectionPair();
       const adminPool = new Pool({ connectionString: connections.admin.connectionString });
       const runtimePool = new Pool({

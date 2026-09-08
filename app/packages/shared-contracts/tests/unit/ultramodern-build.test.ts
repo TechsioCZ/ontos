@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { withUltramodernBuildIdentity } from '../../src/ultramodern-build.ts';
+import { withUltramodernBuildIdentity } from '@app/shared-contracts/ultramodern-build';
 
 test('injected build identity updates all surfaces without mutating generated metadata', () => {
   const deliveryUnit = {

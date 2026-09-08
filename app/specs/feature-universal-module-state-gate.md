@@ -171,7 +171,8 @@ Use these files to implement the feature:
 - `apps/shell-super-app/api/index.ts` — Shell strict Effect BFF composition where a trusted request-scoped batch/snapshot layer may be provided without making the browser authoritative.
 - `apps/shell-super-app/api/verticals/installed-verticals.ts` — authoritative topology-derived installed business-module inventory used by Shell gateway decisions.
 - `apps/shell-super-app/src/routes/[lang]/page.data.ts` — existing Shell request-loader boundary and reference point for request-scoped state acquisition rather than per-component calls.
-- `apps/shell-super-app/src/routes/shell-frame.tsx` — Shell composition surface where future remote loads must be lazy and gateway-owned in both the browser and Worker SSR renders.
+- `apps/shell-super-app/src/routes/vertical-components.tsx` — generated Shell browser composition surface where future remote loads must be lazy and gateway-owned.
+- `apps/shell-super-app/src/routes/vertical-components.worker.tsx` — Worker SSR composition surface that must not bypass the same structured load contract.
 - `scripts/scaffolding/action/scaffold.mts` — must emit tenant `write` entrypoints and explicit Core system entrypoints.
 - `scripts/scaffolding/microvertical-page/scaffold.mts` — must emit governed `read` route metadata rather than an owner id alone.
 - `scripts/scaffolding/outbox-worker/scaffold.mts` — must emit structured `background` descriptors and consistent generated catalogs/registries.

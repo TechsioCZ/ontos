@@ -1,4 +1,4 @@
-import { withUltramodernBuildIdentity } from '../../../packages/shared-contracts/src/ultramodern-build.ts';
+import { withUltramodernBuildIdentity } from '@app/shared-contracts/ultramodern-build';
 
 declare const ULTRAMODERN_BUILD_MARKER: string;
 declare const ULTRAMODERN_SOURCE_REVISION: string;

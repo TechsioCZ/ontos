@@ -4,7 +4,14 @@ export const expectedAuthTableCatalog = AUTH_TABLE_INVENTORY.map(
   (tableName) => `${AUTH_SCHEMA_NAME}.${tableName}`,
 );
 
-export const compareAuthCatalog = (qualifiedTableNames: readonly string[]) => {
+interface AuthCatalogDifference {
+  readonly missing: string[];
+  readonly unexpected: string[];
+}
+
+export const compareAuthCatalog = (
+  qualifiedTableNames: readonly string[],
+): AuthCatalogDifference => {
   const actual = new Set(qualifiedTableNames);
   const expected = new Set(expectedAuthTableCatalog);
 
