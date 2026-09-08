@@ -93,6 +93,7 @@ const DEFAULT_EFFECT_MODULE_SOURCES: readonly string[] = [
   'effect',
   'effect/**',
   '@modern-js/plugin-bff/effect-edge',
+  '@modern-js/plugin-bff/effect-client',
 ];
 
 interface RuleOptions {

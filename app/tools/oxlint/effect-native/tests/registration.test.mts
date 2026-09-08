@@ -1,12 +1,13 @@
 import { expect, it } from '@app/effect-rstest';
 import { Schema } from 'effect';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import nodePath from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import plugin from '../index.ts';
 import { listRuleNames } from '../shared/discover-rules.ts';
-import { appRoot, listFixtureRules, pluginDirectory } from './oxlint.mts';
+import { appRoot, listFixtureRules, pluginDirectory, runOxlint } from './oxlint.mts';
+import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
 const RuleSetting = Schema.Union([Schema.String, Schema.Array(Schema.Unknown)]);
 // The production config is typed against oxlint's own definitions; only the fields this suite
@@ -19,6 +20,13 @@ const ProductionConfigModule = Schema.Struct({
         denyWarnings: Schema.optional(Schema.Boolean),
         typeAware: Schema.optional(Schema.Boolean),
         typeCheck: Schema.optional(Schema.Boolean),
+      }),
+    ),
+    overrides: Schema.Array(
+      Schema.Struct({
+        excludeFiles: Schema.optional(Schema.Array(Schema.String)),
+        files: Schema.Array(Schema.String),
+        rules: Schema.Record(Schema.String, RuleSetting),
       }),
     ),
     rules: Schema.optional(Schema.Record(Schema.String, RuleSetting)),
@@ -97,4 +105,27 @@ it('fixture configs enable only their owned rule without file-ignore shortcuts',
       `${rule} must exercise fixtures, not ignore them`,
     ).toBe(true);
   }
+});
+
+it('production import policy rejects node:test in application tests but not e2e adapters', () => {
+  withTemporaryWorkspace((directory) => {
+    const overrides = config.overrides.filter(
+      (override) => 'eslint/no-restricted-imports' in override.rules,
+    );
+    expect(overrides.length).toBe(1);
+    const configPath = nodePath.join(directory, '.oxlintrc.json');
+    writeFileSync(configPath, JSON.stringify({ categories: { correctness: 'off' }, overrides }));
+    const paths = ['apps/x/tests/y.test.ts', 'apps/x/tests/e2e/y.test.ts'];
+    for (const file of paths) {
+      const fullPath = nodePath.join(directory, file);
+      mkdirSync(nodePath.dirname(fullPath), { recursive: true });
+      writeFileSync(fullPath, "import { test } from 'node:test';\ntest('example', () => {});\n");
+    }
+    const run = runOxlint(configPath, paths, directory);
+    expect(run.numberOfFiles).toBe(2);
+    expect(run.exitCode).toBe(1);
+    expect(run.diagnostics.map(({ code, filename }) => ({ code, filename }))).toEqual([
+      { code: 'eslint(no-restricted-imports)', filename: paths[0] },
+    ]);
+  });
 });

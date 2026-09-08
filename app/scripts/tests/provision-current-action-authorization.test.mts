@@ -117,7 +117,7 @@ const rejectionOf = <Value, Failure, Requirements>(
     }),
   );
 
-it.live(
+it.effect(
   'selects only exact source-controlled development and stage targets',
   Effect.fn(function* testEffect2() {
     const development =
@@ -172,7 +172,7 @@ it.live(
   }),
 );
 
-it.live(
+it.effect(
   'reports expected provisioning failures and sanitizes unexpected Promise rejections',
   Effect.fn(function* testEffect4() {
     const expected = new ActionAuthorizationProvisioningError({
@@ -202,7 +202,7 @@ it.live(
   }),
 );
 
-it.live(
+it.effect(
   'workspace validation rejects both provisioning spellings in every automatic startup path',
   Effect.fn(function* testEffect5() {
     const source = yield* Effect.tryPromise({
@@ -220,10 +220,13 @@ it.live(
         'node ./scripts/provision-current-action-authorization.mts',
       'local:initialize': 'node ./scripts/initialize-local-development.mts',
     };
-    const validationRoot = yield* Effect.tryPromise({
-      catch: (error) => error,
-      try: () => mkdtemp(path.join(os.tmpdir(), 'ontos-workspace-validation-')),
-    });
+    const validationRoot = yield* Effect.acquireRelease(
+      Effect.tryPromise({
+        catch: (error) => error,
+        try: () => mkdtemp(path.join(os.tmpdir(), 'ontos-workspace-validation-')),
+      }),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
     let validationIndex = 0;
     const validate = (
       sources: Readonly<Record<string, string>>,
@@ -258,49 +261,20 @@ it.live(
         });
       });
 
-    try {
-      yield* validate({});
-      const validationPromises: Effect.Effect<void, unknown>[] = [];
-      for (const command of [
-        'node ./scripts/provision-current-action-authorization.mts',
-        'pnpm authorization:provision-current-actions',
+    yield* validate({});
+    const validationPromises: Effect.Effect<void, unknown>[] = [];
+    for (const command of [
+      'node ./scripts/provision-current-action-authorization.mts',
+      'pnpm authorization:provision-current-actions',
+    ]) {
+      for (const file of [
+        'scripts/initialize-local-development.mts',
+        'scripts/locki-feature.sh',
+        'docker-compose.yml',
+        'scripts/run-zerops-spicedb.sh',
       ]) {
-        for (const file of [
-          'scripts/initialize-local-development.mts',
-          'scripts/locki-feature.sh',
-          'docker-compose.yml',
-          'scripts/run-zerops-spicedb.sh',
-        ]) {
-          validationPromises.push(
-            validate({ [file]: command }).pipe(
-              Effect.flip,
-              Effect.map((error) =>
-                expect(() => {
-                  throw error;
-                }).toThrow(/must not provision Action authorization/u),
-              ),
-            ),
-          );
-        }
-        for (const automaticScript of ['dev', 'build', 'cloudflare:build', 'cloudflare:deploy']) {
-          validationPromises.push(
-            validate({}, { [automaticScript]: command }).pipe(
-              Effect.flip,
-              Effect.map((error) =>
-                expect(() => {
-                  throw error;
-                }).toThrow(/must not invoke Action authorization provisioning/u),
-              ),
-            ),
-          );
-        }
         validationPromises.push(
-          validate(
-            {},
-            {
-              'local:initialize': `${scripts['local:initialize']} && ${command}`,
-            },
-          ).pipe(
+          validate({ [file]: command }).pipe(
             Effect.flip,
             Effect.map((error) =>
               expect(() => {
@@ -310,17 +284,39 @@ it.live(
           ),
         );
       }
-      yield* Effect.all(validationPromises, { concurrency: 'unbounded' });
-    } finally {
-      yield* Effect.tryPromise({
-        catch: (error) => error,
-        try: () => rm(validationRoot, { recursive: true }),
-      });
+      for (const automaticScript of ['dev', 'build', 'cloudflare:build', 'cloudflare:deploy']) {
+        validationPromises.push(
+          validate({}, { [automaticScript]: command }).pipe(
+            Effect.flip,
+            Effect.map((error) =>
+              expect(() => {
+                throw error;
+              }).toThrow(/must not invoke Action authorization provisioning/u),
+            ),
+          ),
+        );
+      }
+      validationPromises.push(
+        validate(
+          {},
+          {
+            'local:initialize': `${scripts['local:initialize']} && ${command}`,
+          },
+        ).pipe(
+          Effect.flip,
+          Effect.map((error) =>
+            expect(() => {
+              throw error;
+            }).toThrow(/must not provision Action authorization/u),
+          ),
+        ),
+      );
     }
+    yield* Effect.all(validationPromises, { concurrency: 'unbounded' });
   }),
 );
 
-it.live(
+it.effect(
   'discovers exactly the current generated Core and Party Registry Action baseline',
   Effect.fn(function* testEffect7() {
     const workspaceRoot = path.resolve(import.meta.dirname, '../..');
@@ -344,7 +340,7 @@ it.live(
   }),
 );
 
-it.live(
+it.effect(
   'builds lossless, deterministic Tenant-membership grants for development and stage',
   Effect.fn(function* testEffect8() {
     const development =
@@ -461,7 +457,7 @@ const makeProvisioningClient = (
   };
 };
 
-it.live(
+it.effect(
   'provisions with TOUCH, verifies both outcomes, and is safe to rerun',
   Effect.fn(function* testEffect9() {
     const target = yield* selectActionAuthorizationProvisioningTarget(developmentConfiguration);
@@ -486,7 +482,7 @@ it.live(
   }),
 );
 
-it.live(
+it.effect(
   'never grants explicit Actions through Tenant membership and verifies recorded policy outcomes',
   Effect.fn(function* testEffect10() {
     const target = yield* selectActionAuthorizationProvisioningTarget(developmentConfiguration);
@@ -528,7 +524,7 @@ it.live(
   }),
 );
 
-it.live(
+it.effect(
   'rejects missing or mismatched explicit Action verification assertions',
   Effect.fn(function* testEffect11() {
     const target = yield* selectActionAuthorizationProvisioningTarget(developmentConfiguration);
@@ -576,7 +572,7 @@ it.live(
   }),
 );
 
-it.live(
+it.effect(
   'fails promotion when an explicit Action policy contradicts a recorded assertion',
   Effect.fn(function* testEffect13() {
     const target = yield* selectActionAuthorizationProvisioningTarget(developmentConfiguration);
@@ -611,7 +607,7 @@ it.live(
   }),
 );
 
-it.live(
+it.effect(
   'rejects invalid input and missing membership before writing grants',
   Effect.fn(function* testEffect15() {
     const target = yield* selectActionAuthorizationProvisioningTarget(developmentConfiguration);
@@ -646,7 +642,7 @@ it.live(
   }),
 );
 
-it.live(
+it.effect(
   'fails closed when authorization returns no permission response',
   Effect.fn(function* testEffect16() {
     const target = yield* selectActionAuthorizationProvisioningTarget(developmentConfiguration);
@@ -665,7 +661,7 @@ it.live(
   }),
 );
 
-it.live(
+it.effect(
   'sanitizes authorization service failures',
   Effect.fn(function* testEffect17() {
     const secret = 'super-secret-credential';
@@ -719,7 +715,7 @@ const writeInventory = (
     );
   });
 
-it.live(
+it.effect(
   'rejects incomplete and duplicate public Action discovery',
   Effect.fn(function* testEffect19() {
     const workspaceRoot = path.resolve(import.meta.dirname, '../..');
@@ -758,80 +754,74 @@ it.live(
     }).pipe(Effect.provide(NodeServices.layer));
     const [currentPublicAction] = currentContract.manifest.publicSurface.actions;
     expect(currentPublicAction !== undefined).toBe(true);
-    const root = yield* Effect.tryPromise({
-      catch: (error) => error,
-      try: () => mkdtemp(path.join(os.tmpdir(), 'ontos-action-discovery-')),
-    });
-    try {
-      const vertical = { id: 'example', package: '@app/example', path: 'verticals/example' };
-      yield* writeInventory(root, [vertical]);
-      const incomplete: typeof deriveOntosModuleDeploymentContract = () =>
-        Effect.succeed({
-          ...currentContract,
-          deployment: { ...currentContract.deployment, appId: 'example' },
-          manifest: {
-            ...currentContract.manifest,
-            publicSurface: { ...currentContract.manifest.publicSurface, actions: [] },
-          },
-        });
-      const incompleteError = yield* rejectionOf(
-        Effect.tryPromise({
-          catch: (error) => error,
-          try: () => discoverCurrentActionKeys(root, incomplete),
-        }),
-      );
-      expect(Schema.is(NativeProvisioningError)(incompleteError)).toBe(true);
-      expect(Schema.decodeUnknownSync(NativeProvisioningError)(incompleteError).code).toBe(
-        'action_authorization_discovery_failed',
-      );
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise({
+        catch: (error) => error,
+        try: () => mkdtemp(path.join(os.tmpdir(), 'ontos-action-discovery-')),
+      }),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    const vertical = { id: 'example', package: '@app/example', path: 'verticals/example' };
+    yield* writeInventory(root, [vertical]);
+    const incomplete: typeof deriveOntosModuleDeploymentContract = () =>
+      Effect.succeed({
+        ...currentContract,
+        deployment: { ...currentContract.deployment, appId: 'example' },
+        manifest: {
+          ...currentContract.manifest,
+          publicSurface: { ...currentContract.manifest.publicSurface, actions: [] },
+        },
+      });
+    const incompleteError = yield* rejectionOf(
+      Effect.tryPromise({
+        catch: (error) => error,
+        try: () => discoverCurrentActionKeys(root, incomplete),
+      }),
+    );
+    expect(Schema.is(NativeProvisioningError)(incompleteError)).toBe(true);
+    expect(Schema.decodeUnknownSync(NativeProvisioningError)(incompleteError).code).toBe(
+      'action_authorization_discovery_failed',
+    );
 
-      const duplicate: typeof deriveOntosModuleDeploymentContract = () =>
-        Effect.succeed({
-          ...currentContract,
-          deployment: { ...currentContract.deployment, appId: 'example' },
-          manifest: {
-            ...currentContract.manifest,
-            publicSurface: {
-              ...currentContract.manifest.publicSurface,
-              actions: [
-                { ...currentPublicAction, actionKey: 'core.identity.bind-managed-api-key' },
-              ],
-            },
+    const duplicate: typeof deriveOntosModuleDeploymentContract = () =>
+      Effect.succeed({
+        ...currentContract,
+        deployment: { ...currentContract.deployment, appId: 'example' },
+        manifest: {
+          ...currentContract.manifest,
+          publicSurface: {
+            ...currentContract.manifest.publicSurface,
+            actions: [{ ...currentPublicAction, actionKey: 'core.identity.bind-managed-api-key' }],
           },
-        });
-      const duplicateError = yield* rejectionOf(
-        Effect.tryPromise({
-          catch: (error) => error,
-          try: () => discoverCurrentActionKeys(root, duplicate),
-        }),
-      );
-      expect(Schema.is(NativeProvisioningError)(duplicateError)).toBe(true);
-      expect(Schema.decodeUnknownSync(NativeProvisioningError)(duplicateError).code).toBe(
-        'action_authorization_discovery_failed',
-      );
-
-      yield* writeInventory(root, [vertical, vertical]);
-      yield* Effect.tryPromise({
+        },
+      });
+    const duplicateError = yield* rejectionOf(
+      Effect.tryPromise({
         catch: (error) => error,
         try: () => discoverCurrentActionKeys(root, duplicate),
-      }).pipe(
-        Effect.flip,
-        Effect.map((error) =>
-          expect(() => {
-            throw error;
-          }).toThrow(NativeProvisioningError),
-        ),
-      );
-    } finally {
-      yield* Effect.tryPromise({
-        catch: (error) => error,
-        try: () => rm(root, { recursive: true }),
-      });
-    }
+      }),
+    );
+    expect(Schema.is(NativeProvisioningError)(duplicateError)).toBe(true);
+    expect(Schema.decodeUnknownSync(NativeProvisioningError)(duplicateError).code).toBe(
+      'action_authorization_discovery_failed',
+    );
+
+    yield* writeInventory(root, [vertical, vertical]);
+    yield* Effect.tryPromise({
+      catch: (error) => error,
+      try: () => discoverCurrentActionKeys(root, duplicate),
+    }).pipe(
+      Effect.flip,
+      Effect.map((error) =>
+        expect(() => {
+          throw error;
+        }).toThrow(NativeProvisioningError),
+      ),
+    );
   }),
 );
 
-it.live(
+it.effect(
   'the operator entrypoint rejects every command-line argument before loading configuration',
   Effect.fn(function* testEffect20() {
     const error = yield* failureOf(

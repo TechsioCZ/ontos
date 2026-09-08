@@ -26,12 +26,9 @@ const authenticationDefaults: AuthenticationServiceContract = {
 };
 
 const providerDefaults: SupportAuthProvider['api'] = {
-  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements Better Auth's foreign Promise API.
-  getSession: async () => await unconfiguredPromise('getSession'),
-  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements Better Auth's foreign Promise API.
-  impersonateUser: async () => await unconfiguredPromise('impersonateUser'),
-  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- This fixture implements Better Auth's foreign Promise API.
-  stopImpersonating: async () => await unconfiguredPromise('stopImpersonating'),
+  getSession: unconfiguredPromise.bind(undefined, 'getSession'),
+  impersonateUser: unconfiguredPromise.bind(undefined, 'impersonateUser'),
+  stopImpersonating: unconfiguredPromise.bind(undefined, 'stopImpersonating'),
 };
 
 const storeDefaults: SupportImpersonationStore = {

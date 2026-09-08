@@ -101,8 +101,8 @@ it('shows the required login controls through the UI kit', () => {
   );
 });
 
-it.live('shows both field errors and one Toast when both values are missing', () =>
-  Effect.gen(function* showsBothFieldErrorsAndOne() {
+it.effect('shows both field errors and one Toast when both values are missing', () =>
+  Effect.gen(function* showsBothFieldErrorsAndOneToast() {
     const user = userEvent.setup();
     renderLogin();
 
@@ -120,8 +120,8 @@ it.live('shows both field errors and one Toast when both values are missing', ()
   }),
 );
 
-it.live('creates one Toast per repeated invalid submission', () =>
-  Effect.gen(function* createsOneToastPerRepeatedInvalid() {
+it.effect('creates one Toast per repeated invalid submission', () =>
+  Effect.gen(function* createsOneToastPerRepeatedInvalidSubmission() {
     const user = userEvent.setup();
     renderLogin();
 
@@ -132,8 +132,8 @@ it.live('creates one Toast per repeated invalid submission', () =>
   }),
 );
 
-it.live('shows only the Login error when the password is present', () =>
-  Effect.gen(function* showsOnlyTheLoginErrorWhen() {
+it.effect('shows only the Login error when the password is present', () =>
+  Effect.gen(function* showsOnlyTheLoginErrorWhenPasswordPresent() {
     const user = userEvent.setup();
     renderLogin();
 
@@ -148,8 +148,8 @@ it.live('shows only the Login error when the password is present', () =>
   }),
 );
 
-it.live('shows only the Password error when the login is present', () =>
-  Effect.gen(function* showsOnlyThePasswordErrorWhen() {
+it.effect('shows only the Password error when the login is present', () =>
+  Effect.gen(function* showsOnlyThePasswordErrorWhenLoginPresent() {
     const user = userEvent.setup();
     renderLogin();
 
@@ -164,8 +164,8 @@ it.live('shows only the Password error when the login is present', () =>
   }),
 );
 
-it.live('treats a whitespace-only Login as missing', () =>
-  Effect.gen(function* treatsAWhitespaceOnlyLoginAs() {
+it.effect('treats a whitespace-only Login as missing', () =>
+  Effect.gen(function* treatsAWhitespaceOnlyLoginAsMissing() {
     const user = userEvent.setup();
     renderLogin();
 
@@ -178,7 +178,7 @@ it.live('treats a whitespace-only Login as missing', () =>
   }),
 );
 
-it.live('accepts a non-empty whitespace Password', () =>
+it.effect('accepts a non-empty whitespace Password', () =>
   Effect.gen(function* acceptsANonEmptyWhitespacePassword() {
     const user = userEvent.setup();
     renderLogin();
@@ -192,8 +192,8 @@ it.live('accepts a non-empty whitespace Password', () =>
   }),
 );
 
-it.live('clears stale errors after both fields are corrected', () =>
-  Effect.gen(function* clearsStaleErrorsAfterBothFields() {
+it.effect('clears stale errors after both fields are corrected', () =>
+  Effect.gen(function* clearsStaleErrorsAfterBothFieldsCorrected() {
     const user = userEvent.setup();
     renderLogin();
 
@@ -208,8 +208,8 @@ it.live('clears stale errors after both fields are corrected', () =>
   }),
 );
 
-it.live('runs the same validation when submitted with Enter', () =>
-  Effect.gen(function* runsTheSameValidationWhenSubmitted() {
+it.effect('runs the same validation when submitted with Enter', () =>
+  Effect.gen(function* runsTheSameValidationWhenSubmittedWithEnter() {
     const user = userEvent.setup();
     renderLogin();
 
@@ -222,8 +222,8 @@ it.live('runs the same validation when submitted with Enter', () =>
   }),
 );
 
-it.live('submits valid values through the Shell authentication client and navigates home', () =>
-  Effect.gen(function* submitsValidValuesThroughTheShell() {
+it.effect('submits valid values through the Shell authentication client and navigates home', () =>
+  Effect.gen(function* submitsValidValuesThroughShellAuthClient() {
     const user = userEvent.setup();
     renderLogin();
 

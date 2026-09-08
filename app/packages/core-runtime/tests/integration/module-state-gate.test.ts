@@ -43,7 +43,7 @@ it.live(
         `${moduleKey}.${state.replaceAll('_', '-')}`;
       const configuration = yield* loadDatabaseConfig();
       const database = yield* makeCoreDatabase(configuration);
-      yield* Effect.acquireRelease(Effect.void, () =>
+      yield* Effect.addFinalizer(() =>
         Effect.gen(function* moduleStateGate2() {
           yield* database.executor
             .delete(tenantModuleStates)

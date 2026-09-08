@@ -1,6 +1,7 @@
 import { expect, it, rstest } from '@app/effect-rstest';
 import { v1 } from '@authzed/authzed-node';
-import { Cause, Effect, Predicate, Schema } from 'effect';
+import { Cause, Effect, Fiber, Predicate, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import {
   SpiceDbPermissionClientError,
   createSpiceDbPermissionClient,
@@ -86,7 +87,7 @@ it.effect('SDK rejections become typed permission failures without leaking diagn
   }),
 );
 
-it.live('an SDK call that never replies is bounded by the permission deadline', () =>
+it.effect('an SDK call that never replies is bounded by the permission deadline', () =>
   Effect.gen(function* checksPermissionDeadline() {
     yield* Effect.addFinalizer(() => Effect.sync(() => rstest.restoreAllMocks()));
     rstest
@@ -98,9 +99,11 @@ it.live('an SDK call that never replies is bounded by the permission deadline', 
       Effect.sync(() => createSpiceDbPermissionClient(configuration, SPICEDB_CHECK_TIMEOUT_MS)),
       (acquiredClient) => Effect.sync(() => acquiredClient.close()),
     );
-    const failure = yield* Effect.flip(
+    const fiber = yield* Effect.flip(
       client.checkPermission(v1.CheckPermissionRequest.create({})),
-    );
+    ).pipe(Effect.forkChild);
+    yield* TestClock.adjust(SPICEDB_CHECK_TIMEOUT_MS);
+    const failure = yield* Fiber.join(fiber);
     expect(Schema.is(SpiceDbPermissionClientError)(failure)).toBe(true);
     expect(Cause.isTimeoutError(Object.getOwnPropertyDescriptor(failure, 'cause')?.value)).toBe(
       true,

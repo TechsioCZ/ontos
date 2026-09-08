@@ -128,7 +128,7 @@ const endpointNames = [
 ] as const;
 
 const makeAssertion = (audience = 'party-registry') =>
-  Effect.gen(function* testProgram1() {
+  Effect.gen(function* signPrincipalAssertions() {
     const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
     const publicJwk = {
       ...(yield* Effect.promise(() => exportJWK(publicKey))),
@@ -211,6 +211,16 @@ const mounted = (
   );
 };
 
+const mountApp = (
+  harness: Effect.Success<ReturnType<typeof makeActionTestHarness>>,
+  environment: Readonly<Record<string, string>>,
+  readRuntime?: ReadRuntimeService,
+) =>
+  Effect.acquireRelease(
+    Effect.sync(() => mounted(harness, environment, readRuntime)),
+    (app) => Effect.promise(() => app.dispose()).pipe(Effect.orDie),
+  );
+
 // The mounted layers provide every runtime service; the handler's conservative unknown requirement
 // still requires an explicitly empty per-request context.
 const emptyRequestContext = Context.makeUnsafe<unknown>(new Map());
@@ -276,13 +286,10 @@ const commandRequest = (
 it.live(
   'every registered command is mounted and rejects missing structural input or authentication before the lifecycle',
   () =>
-    Effect.gen(function* testProgram2() {
+    Effect.gen(function* rejectInvalidMountedCommands() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness();
-      const app = yield* Effect.acquireRelease(
-        Effect.sync(() => mounted(harness, assertion.environment)),
-        (mountedApp) => Effect.promise(() => mountedApp.dispose()).pipe(Effect.orDie),
-      );
+      const app = yield* mountApp(harness, assertion.environment);
 
       expect(Object.keys(partyRegistryApi.groups.partyCommands.endpoints).length).toBe(24);
       expect(Object.keys(partyRegistryApi.groups.partyCommands.endpoints).toSorted()).toEqual(
@@ -296,7 +303,7 @@ it.live(
       yield* forEachSequential(
         Object.values(partyRegistryApi.groups.partyCommands.endpoints),
         (endpoint) =>
-          Effect.gen(function* testProgram3() {
+          Effect.gen(function* rejectInvalidEndpointRequest() {
             const response = yield* handle(
               app,
               new Request(`https://party.ontos.test${endpoint.path}`, {
@@ -350,17 +357,14 @@ it.live(
   'missing, malformed, and wrong-audience assertions are challenged without creating invocations',
   () =>
     forEachSequential(['party-registry', 'contacts'], (audience) =>
-      Effect.gen(function* testProgram5() {
+      Effect.gen(function* challengeInvalidAudienceAssertions() {
         const assertion = yield* makeAssertion(audience);
         const harness = yield* makeActionTestHarness();
-        const app = yield* Effect.acquireRelease(
-          Effect.sync(() => mounted(harness, assertion.environment)),
-          (mountedApp) => Effect.promise(() => mountedApp.dispose()).pipe(Effect.orDie),
-        );
+        const app = yield* mountApp(harness, assertion.environment);
 
         const tokens = audience === 'contacts' ? [assertion.token] : [undefined, 'not-a-jwt'];
         yield* forEachSequential(tokens, (token) =>
-          Effect.gen(function* testProgram6() {
+          Effect.gen(function* challengeInvalidToken() {
             const response = yield* handle(
               app,
               commandRequest('request-search-rebuild', {}, token, {
@@ -390,13 +394,10 @@ it.live(
 it.live(
   'verification configuration unavailability is retryable and never reaches the lifecycle',
   () =>
-    Effect.gen(function* testProgram7() {
+    Effect.gen(function* reportUnavailableVerificationConfiguration() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness();
-      const app = yield* Effect.acquireRelease(
-        Effect.sync(() => mounted(harness, {})),
-        (mountedApp) => Effect.promise(() => mountedApp.dispose()).pipe(Effect.orDie),
-      );
+      const app = yield* mountApp(harness, {});
 
       const response = yield* handle(
         app,
@@ -414,13 +415,10 @@ it.live(
 );
 
 it.live('correlation and idempotency are mandatory before the Core Action lifecycle', () =>
-  Effect.gen(function* testProgram8() {
+  Effect.gen(function* requireCorrelationAndIdempotency() {
     const assertion = yield* makeAssertion();
     const harness = yield* makeActionTestHarness();
-    const app = yield* Effect.acquireRelease(
-      Effect.sync(() => mounted(harness, assertion.environment)),
-      (mountedApp) => Effect.promise(() => mountedApp.dispose()).pipe(Effect.orDie),
-    );
+    const app = yield* mountApp(harness, assertion.environment);
 
     const missingKey = yield* handle(
       app,
@@ -448,16 +446,13 @@ it.live('correlation and idempotency are mandatory before the Core Action lifecy
 );
 
 it.live('real Core permission denial is a durable 403 and does not execute the command', () =>
-  Effect.gen(function* testProgram9() {
+  Effect.gen(function* persistPermissionDenial() {
     const assertion = yield* makeAssertion();
     const harness = yield* makeActionTestHarness({
       actionPermission: 'denied',
       tenantPermission: 'allowed',
     });
-    const app = yield* Effect.acquireRelease(
-      Effect.sync(() => mounted(harness, assertion.environment)),
-      (mountedApp) => Effect.promise(() => mountedApp.dispose()).pipe(Effect.orDie),
-    );
+    const app = yield* mountApp(harness, assertion.environment);
 
     const response = yield* handle(
       app,
@@ -476,7 +471,7 @@ it.live('real Core permission denial is a durable 403 and does not execute the c
 it.live(
   'the real handler translates domain conflicts and rolls back without successful evidence',
   () =>
-    Effect.gen(function* testProgram10() {
+    Effect.gen(function* rollBackDomainConflict() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
@@ -487,10 +482,7 @@ it.live(
           }),
         ],
       });
-      const app = yield* Effect.acquireRelease(
-        Effect.sync(() => mounted(harness, assertion.environment)),
-        (mountedApp) => Effect.promise(() => mountedApp.dispose()).pipe(Effect.orDie),
-      );
+      const app = yield* mountApp(harness, assertion.environment);
 
       const response = yield* handle(
         app,
@@ -508,7 +500,7 @@ it.live(
 );
 
 it.live('alias conflicts preserve only safe canonical recovery metadata', () =>
-  Effect.gen(function* testProgram11() {
+  Effect.gen(function* preserveSafeAliasRecoveryMetadata() {
     const assertion = yield* makeAssertion();
     const canonicalPartyRef = { ...partyRef, resourceId: 'a4000000-0000-4000-8000-000000000002' };
     const harness = yield* makeActionTestHarness({
@@ -528,10 +520,7 @@ it.live('alias conflicts preserve only safe canonical recovery metadata', () =>
         }),
       ],
     });
-    const app = yield* Effect.acquireRelease(
-      Effect.sync(() => mounted(harness, assertion.environment)),
-      (mountedApp) => Effect.promise(() => mountedApp.dispose()).pipe(Effect.orDie),
-    );
+    const app = yield* mountApp(harness, assertion.environment);
 
     const response = yield* handle(
       app,
@@ -554,16 +543,13 @@ it.live('alias conflicts preserve only safe canonical recovery metadata', () =>
 );
 
 it.live('committed request replay stays a terminal 409 and does not execute or emit twice', () =>
-  Effect.gen(function* testProgram12() {
+  Effect.gen(function* rejectCommittedCommandReplay() {
     const assertion = yield* makeAssertion();
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
       tenantPermission: 'allowed',
     });
-    const app = yield* Effect.acquireRelease(
-      Effect.sync(() => mounted(harness, assertion.environment)),
-      (mountedApp) => Effect.promise(() => mountedApp.dispose()).pipe(Effect.orDie),
-    );
+    const app = yield* mountApp(harness, assertion.environment);
 
     const first = yield* handle(
       app,
@@ -597,7 +583,7 @@ it.live('committed request replay stays a terminal 409 and does not execute or e
 it.live(
   'declared not-found, capability-unavailable and unexpected defects retain safe distinct HTTP statuses',
   () =>
-    Effect.gen(function* testProgram13() {
+    Effect.gen(function* preserveDistinctFailureStatuses() {
       const assertion = yield* makeAssertion();
       const cases = [
         {
@@ -629,16 +615,13 @@ it.live(
         },
       ];
       yield* forEachSequential(cases, (item) =>
-        Effect.gen(function* testProgram14() {
+        Effect.gen(function* verifySafeFailureResponse() {
           const harness = yield* makeActionTestHarness({
             actionPermission: 'allowed',
             tenantPermission: 'allowed',
             services: [item.service],
           });
-          const app = yield* Effect.acquireRelease(
-            Effect.sync(() => mounted(harness, assertion.environment)),
-            (mountedApp) => Effect.promise(() => mountedApp.dispose()).pipe(Effect.orDie),
-          );
+          const app = yield* mountApp(harness, assertion.environment);
 
           const response = yield* handle(
             app,
@@ -666,7 +649,7 @@ it.live(
 );
 
 it.live('semantically insufficient Party evidence is a declared 422, not a server defect', () =>
-  Effect.gen(function* testProgram15() {
+  Effect.gen(function* rejectInsufficientPartyEvidence() {
     const assertion = yield* makeAssertion();
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
@@ -683,10 +666,7 @@ it.live('semantically insufficient Party evidence is a declared 422, not a serve
         }),
       ],
     });
-    const app = yield* Effect.acquireRelease(
-      Effect.sync(() => mounted(harness, assertion.environment)),
-      (mountedApp) => Effect.promise(() => mountedApp.dispose()).pipe(Effect.orDie),
-    );
+    const app = yield* mountApp(harness, assertion.environment);
 
     const response = yield* handle(
       app,
@@ -710,7 +690,7 @@ it.live('semantically insufficient Party evidence is a declared 422, not a serve
 it.live(
   'the Core request hash rejects reuse of an idempotency key for a different command payload',
   () =>
-    Effect.gen(function* testProgram16() {
+    Effect.gen(function* rejectIdempotencyPayloadMismatch() {
       const assertion = yield* makeAssertion();
       let executions = 0;
       const harness = yield* makeActionTestHarness({
@@ -733,10 +713,7 @@ it.live(
           }),
         ],
       });
-      const app = yield* Effect.acquireRelease(
-        Effect.sync(() => mounted(harness, assertion.environment)),
-        (mountedApp) => Effect.promise(() => mountedApp.dispose()).pipe(Effect.orDie),
-      );
+      const app = yield* mountApp(harness, assertion.environment);
 
       const first = yield* handle(
         app,
@@ -765,13 +742,10 @@ it.live(
 it.live(
   'commit resolution requires authentication and a valid invocation without creating an Action',
   () =>
-    Effect.gen(function* testProgram17() {
+    Effect.gen(function* validateCommitResolutionRequest() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness();
-      const app = yield* Effect.acquireRelease(
-        Effect.sync(() => mounted(harness, assertion.environment)),
-        (mountedApp) => Effect.promise(() => mountedApp.dispose()).pipe(Effect.orDie),
-      );
+      const app = yield* mountApp(harness, assertion.environment);
 
       const missingAuth = yield* handle(app, recoveryRequest(randomUUID()));
       expect(missingAuth.status).toBe(401);
@@ -787,7 +761,7 @@ it.live(
 );
 
 it.live('an open invocation resolves explicitly without authorizing automatic command retry', () =>
-  Effect.gen(function* testProgram18() {
+  Effect.gen(function* resolveOpenInvocationWithoutRetry() {
     const assertion = yield* makeAssertion();
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
@@ -798,10 +772,7 @@ it.live('an open invocation resolves explicitly without authorizing automatic co
       ],
       tenantPermission: 'allowed',
     });
-    const app = yield* Effect.acquireRelease(
-      Effect.sync(() => mounted(harness, assertion.environment)),
-      (mountedApp) => Effect.promise(() => mountedApp.dispose()).pipe(Effect.orDie),
-    );
+    const app = yield* mountApp(harness, assertion.environment);
 
     const failed = yield* handle(
       app,
@@ -831,7 +802,7 @@ it.live('an open invocation resolves explicitly without authorizing automatic co
 it.live(
   'actual Core commit acknowledgement loss resolves and the mounted governed Read returns the original decision without rerunning the Action',
   () =>
-    Effect.gen(function* testProgram19() {
+    Effect.gen(function* recoverOriginalDecisionAfterLostCommitAcknowledgement() {
       const assertion = yield* makeAssertion();
       const decisions = new Map<string, typeof PartyMatchDecisionRecordSchema.Type>();
       let executions = 0;
@@ -930,10 +901,7 @@ it.live(
             );
           }),
       };
-      const app = yield* Effect.acquireRelease(
-        Effect.sync(() => mounted(harness, assertion.environment, reads)),
-        (mountedApp) => Effect.promise(() => mountedApp.dispose()).pipe(Effect.orDie),
-      );
+      const app = yield* mountApp(harness, assertion.environment, reads);
 
       const uncertain = yield* handle(
         app,

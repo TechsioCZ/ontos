@@ -8,8 +8,9 @@
  * route entrypoints, the Modern.js adapter, and private helpers used only by such boundaries.
  * Known SDK/fetch/import provenance can identify a local structural mirror. Nested function-
  * returned records (e.g. Drizzle fluent continuations) are not classified as first-party ports.
- * Limitations: no cross-file SDK/type inference; inferred non-async Promise returns, dynamic
- * member names and arbitrary higher-order value flow are not resolved. Name/path options are
+ * Owned test callbacks also recognize known Promise constructors, factories, and local returns.
+ * Limitations: no cross-file SDK/type inference; other inferred returns, dynamic member names
+ * and arbitrary higher-order value flow are not resolved. Name/path options are
  * explicit policy controls, not proof of ownership. No fixer or suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
@@ -22,7 +23,13 @@ import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
 /** Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`. */
 const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
-const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
+const DEFAULT_INCLUDE = [
+  'apps/**',
+  'verticals/**',
+  'packages/**',
+  'scripts/**',
+  'tools/**/tests/**',
+];
 const DEFAULT_IGNORE = [
   '**/dist/**',
   '**/build/**',
@@ -332,6 +339,24 @@ export const rule = defineRule({
           if (source === 'effect/Effect') return `effect:Effect${name ? `.${name}` : ''}`;
           return `${source}:${name ?? '*'}`;
         }
+        if (def.type === 'Parameter' && def.node.params?.[0] === def.name) {
+          let callback = def.node;
+          while (callback.parent && wrappers.has(callback.parent.type)) callback = callback.parent;
+          const registration = callback.parent;
+          if (
+            registration?.type === 'CallExpression' &&
+            registration.arguments.includes(callback)
+          ) {
+            let factory = unwrap(registration.callee);
+            while (factory?.type === 'CallExpression') factory = unwrap(factory.callee);
+            if (
+              /^@app\/effect-rstest:(?:\*\.)?(?:(?:it|test)\.)?layer$/u.test(
+                imported(factory, seen) ?? '',
+              )
+            )
+              return '@app/effect-rstest:it';
+          }
+        }
         if (
           def.type === 'Variable' &&
           def.parent?.kind === 'const' &&
@@ -456,6 +481,21 @@ export const rule = defineRule({
         current = parent;
       }
       return false;
+    };
+
+    /** Unit-test callbacks are owned programs, unlike SDK mocks and Playwright adapters. */
+    const atOwnedTestCallback = (node: any): boolean => {
+      if (!isTestFile(path)) return false;
+      let current = node;
+      while (current.parent && wrappers.has(current.parent.type)) current = current.parent;
+      const call = current.parent;
+      if (call?.type !== 'CallExpression' || !call.arguments.includes(current)) return false;
+      let callee = call.callee;
+      // Parameterized registrations, e.g. test.each(rows)(name, callback).
+      while (callee.type === 'CallExpression') callee = callee.callee;
+      return /^(?:@app\/effect-rstest|@rstest\/core|vitest|node:test):(?:\*\.)?(?:test|it)(?:\.|$)/u.test(
+        imported(callee) ?? '',
+      );
     };
 
     /** A callback supplied directly to the imported test runner is a framework entrypoint. */
@@ -657,6 +697,79 @@ export const rule = defineRule({
         return functionAliasOnly && !insideFunction ? null : `${name}<…>`;
       };
       return resolve(annotation);
+    };
+
+    /** Bounded same-file Promise provenance for owned test registrations, not general type inference. */
+    const returnsKnownPromise = (raw: any, seen = new Set<any>()): boolean => {
+      const node = unwrap(raw);
+      if (!node || seen.has(node)) return false;
+      seen.add(node);
+      if (FUNCTION_TYPES.has(node.type))
+        return (
+          node.async === true ||
+          promiseReference(node.returnType) !== null ||
+          returnsKnownPromise(node.body, seen)
+        );
+      if (node.type === 'Identifier') {
+        const variable = variableFor(node, node.name);
+        return (variable?.defs ?? []).some(
+          (def: any) =>
+            def.type === 'Variable' &&
+            def.parent?.kind === 'const' &&
+            !FUNCTION_TYPES.has(unwrap(def.node.init)?.type) &&
+            !variable.references.some((ref: any) => ref.isWrite() && !ref.init) &&
+            returnsKnownPromise(def.node.init, seen),
+        );
+      }
+      if (node.type === 'BlockStatement') {
+        const visit = (statement: any): boolean => {
+          if (!statement || typeof statement !== 'object') return false;
+          if (Array.isArray(statement)) return statement.some(visit);
+          if (FUNCTION_TYPES.has(statement.type)) return false;
+          if (statement.type === 'ReturnStatement')
+            return returnsKnownPromise(statement.argument, new Set(seen));
+          return Object.entries(statement).some(([key, value]) => key !== 'parent' && visit(value));
+        };
+        return visit(node);
+      }
+      if (node.type === 'ConditionalExpression')
+        return (
+          returnsKnownPromise(node.consequent, new Set(seen)) ||
+          returnsKnownPromise(node.alternate, new Set(seen))
+        );
+      if (node.type === 'CallExpression' || node.type === 'NewExpression') {
+        const segments = memberSegments(unwrap(node.callee));
+        const globalSegments = segments?.[0] === 'globalThis' ? segments.slice(1) : segments;
+        if (
+          segments &&
+          !variableFor(node.callee, segments[0]!)?.defs.length &&
+          globalSegments?.[0] === 'Promise'
+        ) {
+          if (node.type === 'NewExpression' && globalSegments.length === 1) return true;
+          if (
+            node.type === 'CallExpression' &&
+            globalSegments.length === 2 &&
+            ['resolve', 'reject', 'all', 'allSettled', 'any', 'race'].includes(globalSegments[1]!)
+          )
+            return true;
+        }
+        if (node.type === 'CallExpression') {
+          if (/^effect:(?:root\.)?Effect\.runPromise(?:Exit)?$/u.test(imported(node.callee) ?? ''))
+            return true;
+          if (node.callee.type === 'Identifier') {
+            const variable = variableFor(node.callee, node.callee.name);
+            return (variable?.defs ?? []).some((def: any) => {
+              const fn = unwrap(def.type === 'FunctionName' ? def.node : def.node.init);
+              return (
+                FUNCTION_TYPES.has(fn?.type) &&
+                !variable.references.some((ref: any) => ref.isWrite() && !ref.init) &&
+                returnsKnownPromise(fn, seen)
+              );
+            });
+          }
+        }
+      }
+      return false;
     };
 
     /** Human-readable name for the reported member, used in the message. */
@@ -901,7 +1014,16 @@ export const rule = defineRule({
       };
       const wrapper = promiseReference(fn.returnType);
       const isAsync = fn.async === true;
-      if (!isAsync && wrapper === null) return;
+      const ownedTest = atOwnedTestCallback(node);
+      if (!isAsync && wrapper === null && !(ownedTest && returnsKnownPromise(node))) return;
+      if (ownedTest) {
+        reportedFunctions.add(node.start);
+        report(node as ESTree.Node, isAsync ? 'asyncPort' : 'promiseReturningImplementation', {
+          member: 'test callback',
+          wrapper: wrapper ?? 'Promise',
+        });
+        return;
+      }
       if (node.type === 'FunctionDeclaration') {
         if (!options.includeFunctionDeclarations) return;
         if (!isModuleScopeFunction(node)) return;

@@ -98,95 +98,93 @@ it.live(
 it.live(
   'Drizzle consumer surface compiles in both ESM and CommonJS projects',
   Effect.fn(function* testEffect3() {
-    const fixture = mkdtempSync(path.join(os.tmpdir(), 'ontos-drizzle-declarations-'));
-    try {
-      symlinkSync(
-        path.join(workspaceRoot, 'node_modules'),
-        path.join(fixture, 'node_modules'),
-        'dir',
-      );
-      writeFileSync(path.join(fixture, packageJsonFile), '{"private":true,"type":"module"}\n');
+    const fixture = yield* Effect.acquireRelease(
+      Effect.sync(() => mkdtempSync(path.join(os.tmpdir(), 'ontos-drizzle-declarations-'))),
+      (directory) => Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
+    );
+    symlinkSync(
+      path.join(workspaceRoot, 'node_modules'),
+      path.join(fixture, 'node_modules'),
+      'dir',
+    );
+    writeFileSync(path.join(fixture, packageJsonFile), '{"private":true,"type":"module"}\n');
+    writeFileSync(
+      path.join(fixture, tsconfigFile),
+      JSON.stringify({
+        compilerOptions: {
+          exactOptionalPropertyTypes: true,
+          module: 'NodeNext',
+          moduleResolution: 'NodeNext',
+          noEmit: true,
+          skipLibCheck: true,
+          strict: true,
+          target: 'ESNext',
+          types: ['node'],
+        },
+        files: ['./consumer.mts', './consumer.cts'],
+      }),
+    );
+    for (const extension of ['mts', 'cts']) {
       writeFileSync(
-        path.join(fixture, tsconfigFile),
-        JSON.stringify({
-          compilerOptions: {
-            exactOptionalPropertyTypes: true,
-            module: 'NodeNext',
-            moduleResolution: 'NodeNext',
-            noEmit: true,
-            skipLibCheck: true,
-            strict: true,
-            target: 'ESNext',
-            types: ['node'],
-          },
-          files: ['./consumer.mts', './consumer.cts'],
-        }),
+        path.join(fixture, `consumer.${extension}`),
+        'import { pgTable, uuid } from "drizzle-orm/pg-core";\n' +
+          'export const fixtureTable = pgTable("declaration_fixture", { id: uuid("id") });\n',
       );
-      for (const extension of ['mts', 'cts']) {
-        writeFileSync(
-          path.join(fixture, `consumer.${extension}`),
-          'import { pgTable, uuid } from "drizzle-orm/pg-core";\n' +
-            'export const fixtureTable = pgTable("declaration_fixture", { id: uuid("id") });\n',
-        );
-      }
-      const result = yield* runTypecheck(fixture, ['--project', tsconfigFile]);
-      expect(result.status, result.stdout + result.stderr).toBe(0);
-    } finally {
-      rmSync(fixture, { force: true, recursive: true });
     }
+    const result = yield* runTypecheck(fixture, ['--project', tsconfigFile]);
+    expect(result.status, result.stdout + result.stderr).toBe(0);
   }),
 );
 
 it.live(
   'root typecheck checks referenced projects and rejects a newly introduced type error',
   Effect.fn(function* testEffect4() {
-    const fixture = mkdtempSync(path.join(os.tmpdir(), 'ontos-typecheck-references-'));
-    try {
-      mkdirSync(path.join(fixture, 'referenced'));
-      symlinkSync(
-        path.join(workspaceRoot, 'node_modules'),
-        path.join(fixture, 'node_modules'),
-        'dir',
-      );
-      writeFileSync(path.join(fixture, packageJsonFile), '{"private":true,"type":"module"}\n');
-      writeFileSync(
-        path.join(fixture, tsconfigFile),
-        JSON.stringify({ files: [], references: [{ path: './referenced' }] }),
-      );
-      writeFileSync(
-        path.join(fixture, 'referenced/tsconfig.json'),
-        JSON.stringify({
-          compilerOptions: {
-            composite: true,
-            declaration: true,
-            emitDeclarationOnly: true,
-            outDir: './output',
-            strict: true,
-            types: [],
-          },
-          files: ['./index.ts'],
-        }),
-      );
-      const sourceFile = path.join(fixture, 'referenced/index.ts');
-      writeFileSync(sourceFile, 'export const referenceGateFixture: number = 1;\n');
-      const [runtime, wrapper, ...args] = packageJson.scripts.typecheck.split(' ');
-      expect(runtime).toBe('node');
-      expect(wrapper).toBe('./scripts/ultramodern-typecheck.mts');
-      expect(path.join(workspaceRoot, wrapper)).toBe(typecheckWrapper);
-      const initial = yield* runTypecheck(fixture, args);
-      expect(initial.status, initial.stdout + initial.stderr).toBe(0);
-      expect(
-        readFileSync(path.join(fixture, 'referenced/output/index.d.ts'), 'utf-8').includes(
-          'referenceGateFixture',
-        ),
-        'the referenced project must actually be built; a root files:[] project check is a no-op',
-      ).toBe(true);
-      writeFileSync(sourceFile, 'export const referenceGateFixture: number = "invalid";\n');
-      const invalid = yield* runTypecheck(fixture, args);
-      expect(invalid.status, 'a referenced source type error must fail the root gate').not.toBe(0);
-      expect(invalid.stdout + invalid.stderr).toMatch(/referenced[/\\]index\.ts.*TS2322/u);
-    } finally {
-      rmSync(fixture, { force: true, recursive: true });
-    }
+    const fixture = yield* Effect.acquireRelease(
+      Effect.sync(() => mkdtempSync(path.join(os.tmpdir(), 'ontos-typecheck-references-'))),
+      (directory) => Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
+    );
+    mkdirSync(path.join(fixture, 'referenced'));
+    symlinkSync(
+      path.join(workspaceRoot, 'node_modules'),
+      path.join(fixture, 'node_modules'),
+      'dir',
+    );
+    writeFileSync(path.join(fixture, packageJsonFile), '{"private":true,"type":"module"}\n');
+    writeFileSync(
+      path.join(fixture, tsconfigFile),
+      JSON.stringify({ files: [], references: [{ path: './referenced' }] }),
+    );
+    writeFileSync(
+      path.join(fixture, 'referenced/tsconfig.json'),
+      JSON.stringify({
+        compilerOptions: {
+          composite: true,
+          declaration: true,
+          emitDeclarationOnly: true,
+          outDir: './output',
+          strict: true,
+          types: [],
+        },
+        files: ['./index.ts'],
+      }),
+    );
+    const sourceFile = path.join(fixture, 'referenced/index.ts');
+    writeFileSync(sourceFile, 'export const referenceGateFixture: number = 1;\n');
+    const [runtime, wrapper, ...args] = packageJson.scripts.typecheck.split(' ');
+    expect(runtime).toBe('node');
+    expect(wrapper).toBe('./scripts/ultramodern-typecheck.mts');
+    expect(path.join(workspaceRoot, wrapper)).toBe(typecheckWrapper);
+    const initial = yield* runTypecheck(fixture, args);
+    expect(initial.status, initial.stdout + initial.stderr).toBe(0);
+    expect(
+      readFileSync(path.join(fixture, 'referenced/output/index.d.ts'), 'utf-8').includes(
+        'referenceGateFixture',
+      ),
+      'the referenced project must actually be built; a root files:[] project check is a no-op',
+    ).toBe(true);
+    writeFileSync(sourceFile, 'export const referenceGateFixture: number = "invalid";\n');
+    const invalid = yield* runTypecheck(fixture, args);
+    expect(invalid.status, 'a referenced source type error must fail the root gate').not.toBe(0);
+    expect(invalid.stdout + invalid.stderr).toMatch(/referenced[/\\]index\.ts.*TS2322/u);
   }),
 );

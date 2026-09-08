@@ -70,7 +70,7 @@ it.live('commits live allowed evidence before releasing a governed read result',
       () => ({ kind: 'module', moduleId: 'core.shell' }),
     );
 
-    yield* Effect.acquireRelease(Effect.void, () =>
+    yield* Effect.addFinalizer(() =>
       Effect.gen(function* readRuntime2() {
         yield* Effect.promise(() =>
           admin.query('delete from core.data_access_events where tenant_id = $1', [tenantId]),

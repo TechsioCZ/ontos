@@ -153,7 +153,7 @@ Effect re-entry is diagnosed by `no-nested-effect-run`. Additional rule options 
 `effectModules`, and `effectModuleSources`; there is no fixer or suggestion.
 
 The workspace import policy rejects `node:test`, `node:assert`, `node:assert/strict`,
-`@rstest/core`, and the retired `@app/core-runtime/testing/effect-runtime` in application,
+and `@rstest/core` in application,
 package, vertical, script, and tooling tests, with `tests/e2e/**` exempt for Playwright.
 Test files disable Sonar's hard-coded runner detector and the async-Promise-function rule because
 Effect-native test APIs and `Effect.promise`/`Effect.tryPromise` thunks are intentional.

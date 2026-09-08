@@ -119,7 +119,7 @@ it.live(
         ]);
       }).pipe(Effect.orDie);
 
-      yield* Effect.acquireRelease(Effect.void, () => cleanup);
+      yield* Effect.addFinalizer(() => cleanup);
       yield* queryEffect(
         admin,
         `insert into core.tenants (tenant_id, slug, name, status, default_locale) values ($1, $2, 'Search tenant', 'active', 'en'), ($3, $4, 'Other tenant', 'active', 'en')`,

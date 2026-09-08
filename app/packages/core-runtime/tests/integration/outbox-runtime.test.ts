@@ -497,11 +497,7 @@ it.live(
       ).toEqual([]);
     }),
 );
-it.live('keeps test descriptor arrays compatible with the erased startup registry surface', () =>
-  Effect.sync(() => {
-    const registry: readonly AnyOutboxWorkerRegistration[] = [
-      makeWorker('consumer.registry-proof'),
-    ];
-    expect(registry[0]?.descriptor.workerKey).toBe('consumer.registry-proof');
-  }),
-);
+it('keeps test descriptor arrays compatible with the erased startup registry surface', () => {
+  const registry: readonly AnyOutboxWorkerRegistration[] = [makeWorker('consumer.registry-proof')];
+  expect(registry[0]?.descriptor.workerKey).toBe('consumer.registry-proof');
+});

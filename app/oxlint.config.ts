@@ -1,3 +1,4 @@
+import { testRestrictedImports } from './tools/oxlint/effect-native/shared/test-restricted-imports.ts';
 import { defineConfig } from 'oxlint';
 import core from 'ultracite/oxlint/core';
 import { jsPluginSettings, selectJsPlugins } from 'ultracite/oxlint/js-plugins';
@@ -204,21 +205,7 @@ export default defineConfig({
         'eslint/no-restricted-imports': [
           'error',
           {
-            paths: [
-              { message: 'Import test APIs from @app/effect-rstest instead.', name: 'node:test' },
-              {
-                message: 'Import assertions from @app/effect-rstest instead.',
-                name: 'node:assert',
-              },
-              {
-                message: 'Import assertions from @app/effect-rstest instead.',
-                name: 'node:assert/strict',
-              },
-              {
-                message: 'Import test APIs from @app/effect-rstest instead.',
-                name: '@rstest/core',
-              },
-            ],
+            paths: testRestrictedImports,
           },
         ],
       },

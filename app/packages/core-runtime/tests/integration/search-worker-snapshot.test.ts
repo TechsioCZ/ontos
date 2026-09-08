@@ -152,7 +152,7 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
     );
   }).pipe(Effect.orDie);
 
-  yield* Effect.acquireRelease(Effect.void, () => cleanup);
+  yield* Effect.addFinalizer(() => cleanup);
   const exercise = Effect.gen(function* exerciseWorkerSnapshots() {
     yield* Effect.tryPromise({
       catch: (cause) => new Cause.UnknownError(cause),

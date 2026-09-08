@@ -1,3 +1,4 @@
+import { testRestrictedImports } from './shared/test-restricted-imports.ts';
 import { defineConfig } from 'oxlint';
 
 /** Repository policies also cover tooling tests and root configuration files. */
@@ -23,21 +24,7 @@ export default defineConfig({
         'eslint/no-restricted-imports': [
           'error',
           {
-            paths: [
-              { message: 'Import test APIs from @app/effect-rstest instead.', name: 'node:test' },
-              {
-                message: 'Import assertions from @app/effect-rstest instead.',
-                name: 'node:assert',
-              },
-              {
-                message: 'Import assertions from @app/effect-rstest instead.',
-                name: 'node:assert/strict',
-              },
-              {
-                message: 'Import test APIs from @app/effect-rstest instead.',
-                name: '@rstest/core',
-              },
-            ],
+            paths: testRestrictedImports,
           },
         ],
       },

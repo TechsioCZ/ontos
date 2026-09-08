@@ -82,102 +82,94 @@ it.effect('defines an exact immutable registration while keeping the handler opa
     });
   }),
 );
-it.effect('preserves schema inference for a typed handler payload', () =>
-  Effect.sync(() => {
-    defineOutboxWorker(
-      {
-        consumerModuleKey: 'consumer',
-        entrypoint: defineTenantModuleEntrypoint({
-          access: 'background',
-          authorization: { kind: 'owner_local_background' },
-          entrypointKey: 'consumer.inference-proof',
-          moduleKey: 'consumer',
-          role: 'worker',
-        }),
-        leaseDurationMs: 1000,
-        payloadSchema,
-        producerModuleKey: 'producer',
-        retryPolicy: {
-          initialBackoffMs: 0,
-          maxAttempts: 1,
-          maxBackoffMs: 0,
-          multiplier: 1,
-        },
-        topic: 'producer.message-created',
-        workerKey: 'consumer.inference-proof',
-      },
-      (payload) => {
-        const key: string = payload.messageKey;
-        return Effect.sync(() => expect(key).toBe(payload.messageKey));
-      },
-    );
-  }),
-);
-it.effect('rejects invalid identities, retry policies, and lease policies', () =>
-  Effect.sync(() => {
-    const valid = makeWorker().descriptor;
-    const invalidDescriptors = [
-      { ...valid, workerKey: 'producer.foreign-worker' },
-      {
-        ...valid,
-        entrypoint: defineTenantModuleEntrypoint({
-          access: 'background',
-          authorization: { kind: 'owner_local_background' },
-          entrypointKey: valid.workerKey,
-          moduleKey: 'foreign',
-          role: 'worker',
-        }),
-      },
-      { ...valid, topic: 'Invalid' },
-      { ...valid, leaseDurationMs: 999 },
-      { ...valid, retryPolicy: { ...valid.retryPolicy, maxAttempts: 0 } },
-      {
-        ...valid,
-        retryPolicy: { ...valid.retryPolicy, initialBackoffMs: 11_000 },
-      },
-      { ...valid, retryPolicy: { ...valid.retryPolicy, multiplier: 0 } },
-    ];
-    for (const descriptor of invalidDescriptors) {
-      expect(() => defineOutboxWorker(descriptor, () => Effect.void)).toThrow(
-        OutboxWorkerDescriptorError,
-      );
-    }
-  }),
-);
-it.effect('rejects duplicate worker keys and calculates bounded exponential backoff', () =>
-  Effect.sync(() => {
-    const worker = makeWorker();
-    expect(() => validateOutboxWorkerRegistrations([worker, worker])).toThrow(
-      expect.objectContaining({
-        name: 'OutboxWorkerDescriptorError',
-        reason: expect.stringMatching(/duplicate Outbox Worker key/u),
+it('preserves schema inference for a typed handler payload', () => {
+  defineOutboxWorker(
+    {
+      consumerModuleKey: 'consumer',
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'background',
+        authorization: { kind: 'owner_local_background' },
+        entrypointKey: 'consumer.inference-proof',
+        moduleKey: 'consumer',
+        role: 'worker',
       }),
-    );
-    expect(validateOutboxWorkerRegistrations([worker])).toEqual([worker]);
-    expect(retryBackoffMs(worker.descriptor.retryPolicy, 1)).toBe(1000);
-    expect(retryBackoffMs(worker.descriptor.retryPolicy, 3)).toBe(4000);
-    expect(retryBackoffMs(worker.descriptor.retryPolicy, 10)).toBe(10_000);
-  }),
-);
-it.effect('validates and freezes the schema-free installed subscription catalog', () =>
-  Effect.sync(() => {
-    const worker = makeWorker();
-    const subscription = {
-      consumerModuleKey: worker.descriptor.consumerModuleKey,
-      entrypoint: worker.descriptor.entrypoint,
-      producerModuleKey: worker.descriptor.producerModuleKey,
-      topic: worker.descriptor.topic,
-      workerKey: worker.descriptor.workerKey,
-    };
-    const validated = validateOutboxWorkerSubscriptions([subscription]);
-    expect(validated).toEqual([subscription]);
-    expect(Object.isFrozen(validated)).toBe(true);
-    expect(Object.isFrozen(validated[0])).toBe(true);
-    expect(() => validateOutboxWorkerSubscriptions([subscription, subscription])).toThrow(
-      expect.objectContaining({
-        name: 'OutboxWorkerDescriptorError',
-        reason: expect.stringMatching(/duplicate Outbox Worker key/u),
+      leaseDurationMs: 1000,
+      payloadSchema,
+      producerModuleKey: 'producer',
+      retryPolicy: {
+        initialBackoffMs: 0,
+        maxAttempts: 1,
+        maxBackoffMs: 0,
+        multiplier: 1,
+      },
+      topic: 'producer.message-created',
+      workerKey: 'consumer.inference-proof',
+    },
+    (payload) => {
+      const key: string = payload.messageKey;
+      return Effect.sync(() => expect(key).toBe(payload.messageKey));
+    },
+  );
+});
+it('rejects invalid identities, retry policies, and lease policies', () => {
+  const valid = makeWorker().descriptor;
+  const invalidDescriptors = [
+    { ...valid, workerKey: 'producer.foreign-worker' },
+    {
+      ...valid,
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'background',
+        authorization: { kind: 'owner_local_background' },
+        entrypointKey: valid.workerKey,
+        moduleKey: 'foreign',
+        role: 'worker',
       }),
+    },
+    { ...valid, topic: 'Invalid' },
+    { ...valid, leaseDurationMs: 999 },
+    { ...valid, retryPolicy: { ...valid.retryPolicy, maxAttempts: 0 } },
+    {
+      ...valid,
+      retryPolicy: { ...valid.retryPolicy, initialBackoffMs: 11_000 },
+    },
+    { ...valid, retryPolicy: { ...valid.retryPolicy, multiplier: 0 } },
+  ];
+  for (const descriptor of invalidDescriptors) {
+    expect(() => defineOutboxWorker(descriptor, () => Effect.void)).toThrow(
+      OutboxWorkerDescriptorError,
     );
-  }),
-);
+  }
+});
+it('rejects duplicate worker keys and calculates bounded exponential backoff', () => {
+  const worker = makeWorker();
+  expect(() => validateOutboxWorkerRegistrations([worker, worker])).toThrow(
+    expect.objectContaining({
+      name: 'OutboxWorkerDescriptorError',
+      reason: expect.stringMatching(/duplicate Outbox Worker key/u),
+    }),
+  );
+  expect(validateOutboxWorkerRegistrations([worker])).toEqual([worker]);
+  expect(retryBackoffMs(worker.descriptor.retryPolicy, 1)).toBe(1000);
+  expect(retryBackoffMs(worker.descriptor.retryPolicy, 3)).toBe(4000);
+  expect(retryBackoffMs(worker.descriptor.retryPolicy, 10)).toBe(10_000);
+});
+it('validates and freezes the schema-free installed subscription catalog', () => {
+  const worker = makeWorker();
+  const subscription = {
+    consumerModuleKey: worker.descriptor.consumerModuleKey,
+    entrypoint: worker.descriptor.entrypoint,
+    producerModuleKey: worker.descriptor.producerModuleKey,
+    topic: worker.descriptor.topic,
+    workerKey: worker.descriptor.workerKey,
+  };
+  const validated = validateOutboxWorkerSubscriptions([subscription]);
+  expect(validated).toEqual([subscription]);
+  expect(Object.isFrozen(validated)).toBe(true);
+  expect(Object.isFrozen(validated[0])).toBe(true);
+  expect(() => validateOutboxWorkerSubscriptions([subscription, subscription])).toThrow(
+    expect.objectContaining({
+      name: 'OutboxWorkerDescriptorError',
+      reason: expect.stringMatching(/duplicate Outbox Worker key/u),
+    }),
+  );
+});

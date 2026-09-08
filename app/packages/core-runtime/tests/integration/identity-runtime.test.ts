@@ -655,7 +655,7 @@ it.live(
           }),
         ),
       );
-      yield* Effect.acquireRelease(Effect.void, () => release.pipe(Effect.orDie));
+      yield* Effect.addFinalizer(() => release.pipe(Effect.orDie));
       yield* exercise;
     }),
 );

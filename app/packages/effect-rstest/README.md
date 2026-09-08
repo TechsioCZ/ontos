@@ -28,6 +28,24 @@ it.effect('reads an Effect value', () =>
 );
 ```
 
+### Shared layers
+
+Use `it.layer` to share a layer across a suite; its resources are released when the suite ends. Set `excludeTestServices: true` when the suite needs live services instead of the test clock/console (the default is `false`). Replace `Layer.empty` below with your fixture layer:
+
+```ts
+import { expect, it } from '@app/effect-rstest';
+import { Effect, Layer } from 'effect';
+
+it.layer(Layer.empty, { excludeTestServices: true })('live fixture suite', (it) => {
+  it.effect('reads an Effect value', () =>
+    Effect.gen(function* readsValue() {
+      const value = yield* Effect.succeed(42);
+      expect(value).toBe(42);
+    }),
+  );
+});
+```
+
 ### Scoped cleanup
 
 Both `it.effect` and `it.live` automatically own and close a per-test scope. Register cleanup with `Effect.acquireRelease` (or `Effect.addFinalizer` for an already-acquired resource); no extra `Effect.scoped` or Promise bridge is needed. Finalizers run on success, failure, and interruption.
