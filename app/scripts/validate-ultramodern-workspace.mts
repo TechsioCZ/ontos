@@ -6405,6 +6405,11 @@ if (hasDeliveryUnits) {
     zeropsYaml.includes('deployFiles:'),
     'Zerops manifest must deploy package-pruned runtime directories',
   );
+  const migratorSetup = yamlListItemBlock(zeropsYaml, 'setup', 'migrator');
+  assert(
+    migratorSetup.includes("- 'app/tsconfig.base.json'"),
+    'Zerops migrator must deploy the root TypeScript config extended by migration packages',
+  );
   const localVirtualStoreInstall =
     'PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm';
   assert(
