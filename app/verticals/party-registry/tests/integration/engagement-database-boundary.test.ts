@@ -42,9 +42,11 @@ test('enforces tenant isolation and canonical-reference uniqueness without cross
     await openBoundaryDatabases(openContactsDatabase);
   // Ordered child-before-parent so every delete respects the owned foreign keys.
   const cleanup = async (): Promise<void> => {
-    await purgeFixtureRows(
-      [personEngagementProfiles, organizationEngagementProfiles].map((table) =>
-        admin.delete(table).where(inArray(table.tenantId, fixtureTenants)),
+    await runEffectTestPromise(
+      purgeFixtureRows(
+        [personEngagementProfiles, organizationEngagementProfiles].map((table) =>
+          admin.delete(table).where(inArray(table.tenantId, fixtureTenants)),
+        ),
       ),
     );
   };

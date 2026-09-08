@@ -173,26 +173,30 @@ void test('verifies provider keys and completes live support impersonation with 
       const ids = [originalUserId, targetUserId, secondAdministratorUserId].filter(
         (id) => id.length > 0,
       );
-      await purgeFixtureRows([
-        authDatabase
-          .delete(supportImpersonationRecovery)
-          .where(eq(supportImpersonationRecovery.tenantId, tenantId)),
-        authDatabase.delete(apikey).where(inArray(apikey.referenceId, ids)),
-        authDatabase.delete(session).where(inArray(session.userId, ids)),
-        authDatabase.delete(account).where(inArray(account.userId, ids)),
-        authDatabase.delete(user).where(inArray(user.id, ids)),
-      ]);
+      await runEffectTestPromise(
+        purgeFixtureRows([
+          authDatabase
+            .delete(supportImpersonationRecovery)
+            .where(eq(supportImpersonationRecovery.tenantId, tenantId)),
+          authDatabase.delete(apikey).where(inArray(apikey.referenceId, ids)),
+          authDatabase.delete(session).where(inArray(session.userId, ids)),
+          authDatabase.delete(account).where(inArray(account.userId, ids)),
+          authDatabase.delete(user).where(inArray(user.id, ids)),
+        ]),
+      );
     }
-    await purgeFixtureRows([
-      coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
-      coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
-      coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
-      coreDatabase
-        .delete(principalAuthBindings)
-        .where(eq(principalAuthBindings.tenantId, tenantId)),
-      coreDatabase.delete(principals).where(eq(principals.tenantId, tenantId)),
-      coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
-    ]);
+    await runEffectTestPromise(
+      purgeFixtureRows([
+        coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
+        coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
+        coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
+        coreDatabase
+          .delete(principalAuthBindings)
+          .where(eq(principalAuthBindings.tenantId, tenantId)),
+        coreDatabase.delete(principals).where(eq(principals.tenantId, tenantId)),
+        coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
+      ]),
+    );
   };
 
   try {
@@ -454,7 +458,7 @@ void test('verifies provider keys and completes live support impersonation with 
     );
     await runEffectTestPromise(keys.setEnabled(verified.providerKeyId, false));
     const invalidKey = await runEffectTestPromise(Effect.flip(keys.verify(issued.secret)));
-    assert.equal(invalidKey._tag, 'ApiKeyCredentialInvalidError');
+    assert.ok(Predicate.isTagged(invalidKey, 'ApiKeyCredentialInvalidError'));
 
     const managedPrincipal = await runEffectTestPromise(
       providePrincipalManagementRepository(
@@ -571,7 +575,7 @@ void test('verifies provider keys and completes live support impersonation with 
     const incompleteImpersonation = await runEffectTestPromise(
       Effect.flip(provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders))),
     );
-    assert.equal(incompleteImpersonation._tag, 'OntosIdentityForbiddenError');
+    assert.ok(Predicate.isTagged(incompleteImpersonation, 'OntosIdentityForbiddenError'));
     await runEffectTestPromise(
       authDatabase
         .update(session)
@@ -587,7 +591,7 @@ void test('verifies provider keys and completes live support impersonation with 
     const mismatchedImpersonationReason = await runEffectTestPromise(
       Effect.flip(provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders))),
     );
-    assert.equal(mismatchedImpersonationReason._tag, 'OntosIdentityForbiddenError');
+    assert.ok(Predicate.isTagged(mismatchedImpersonationReason, 'OntosIdentityForbiddenError'));
     await runEffectTestPromise(
       authDatabase
         .update(session)
@@ -617,7 +621,7 @@ void test('verifies provider keys and completes live support impersonation with 
     const revokedImpersonation = await runEffectTestPromise(
       Effect.flip(provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders))),
     );
-    assert.equal(revokedImpersonation._tag, 'OntosIdentityForbiddenError');
+    assert.ok(Predicate.isTagged(revokedImpersonation, 'OntosIdentityForbiddenError'));
     const stopped = await runEffectTestPromise(
       provideContextAccess(
         providePrincipalManagementRepository(

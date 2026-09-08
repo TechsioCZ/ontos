@@ -54,16 +54,18 @@ test('real PostgreSQL identity locks serialize concurrent exact creates and repe
   );
   // Ordered child-before-parent so every delete respects the owned foreign keys.
   const cleanup = async (): Promise<void> => {
-    await purgeFixtureRows(
-      [
-        partyMatchDecisions,
-        duplicateCandidateCaseParties,
-        duplicateCandidateCases,
-        partyIdentifierClaims,
-        partyOfficialIdentifiers,
-        partyFactAssertions,
-        parties,
-      ].map((table) => admin.delete(table).where(eq(table.tenantId, tenantId))),
+    await runEffectTestPromise(
+      purgeFixtureRows(
+        [
+          partyMatchDecisions,
+          duplicateCandidateCaseParties,
+          duplicateCandidateCases,
+          partyIdentifierClaims,
+          partyOfficialIdentifiers,
+          partyFactAssertions,
+          parties,
+        ].map((table) => admin.delete(table).where(eq(table.tenantId, tenantId))),
+      ),
     );
   };
   const scoped = <Value, Failure>(

@@ -76,26 +76,28 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
 
   // Ordered child-before-parent so every delete respects the owned foreign keys.
   const cleanup = async (): Promise<void> => {
-    await purgeFixtureRows(
-      [
-        partyCorrections,
-        partyAliases,
-        partyMerges,
-        partyMatchDecisions,
-        duplicateCandidateCaseParties,
-        duplicateCandidateCases,
-        counterpartyRoleAdminReadModels,
-        counterpartyAdminReadModels,
-        counterpartyRolePeriods,
-        counterparties,
-        partyRelationships,
-        partyContactPointPurposes,
-        partyContactPoints,
-        partyIdentifierClaims,
-        partyOfficialIdentifiers,
-        partyFactAssertions,
-        parties,
-      ].map((table) => admin.delete(table).where(inArray(table.tenantId, fixtureTenants))),
+    await runEffectTestPromise(
+      purgeFixtureRows(
+        [
+          partyCorrections,
+          partyAliases,
+          partyMerges,
+          partyMatchDecisions,
+          duplicateCandidateCaseParties,
+          duplicateCandidateCases,
+          counterpartyRoleAdminReadModels,
+          counterpartyAdminReadModels,
+          counterpartyRolePeriods,
+          counterparties,
+          partyRelationships,
+          partyContactPointPurposes,
+          partyContactPoints,
+          partyIdentifierClaims,
+          partyOfficialIdentifiers,
+          partyFactAssertions,
+          parties,
+        ].map((table) => admin.delete(table).where(inArray(table.tenantId, fixtureTenants))),
+      ),
     );
   };
 

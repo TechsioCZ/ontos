@@ -5,7 +5,7 @@ import {
 
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { eq } from 'drizzle-orm';
-import { Effect, Exit as NativeExit, Scope as NativeScope } from 'effect';
+import { Effect, Exit as NativeExit, Predicate, Scope as NativeScope } from 'effect';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test, { after as afterNativeDatabase } from 'node:test';
@@ -37,13 +37,15 @@ void test('persists managed key lifecycle without credential material and enforc
     makeTestDatabaseFromPool(pool, coreRelations).pipe(NativeScope.provide(nativeDatabaseScope)),
   );
   const cleanup = async () => {
-    await purgeFixtureRows([
-      database
-        .delete(principalAuthBindings)
-        .where(eq(principalAuthBindings.providerSubjectId, providerKeyId)),
-      database.delete(principals).where(eq(principals.tenantId, tenantId)),
-      database.delete(tenants).where(eq(tenants.tenantId, tenantId)),
-    ]);
+    await runEffectTestPromise(
+      purgeFixtureRows([
+        database
+          .delete(principalAuthBindings)
+          .where(eq(principalAuthBindings.providerSubjectId, providerKeyId)),
+        database.delete(principals).where(eq(principals.tenantId, tenantId)),
+        database.delete(tenants).where(eq(tenants.tenantId, tenantId)),
+      ]),
+    );
   };
 
   try {
@@ -117,7 +119,7 @@ void test('persists managed key lifecycle without credential material and enforc
         ),
       ),
     );
-    assert.equal(duplicate._tag, 'IdentityLifecycleConflictError');
+    assert.ok(Predicate.isTagged(duplicate, 'IdentityLifecycleConflictError'));
 
     const missingReason = await runEffectTestPromise(
       database.transaction((transaction) =>
@@ -138,7 +140,7 @@ void test('persists managed key lifecycle without credential material and enforc
         ),
       ),
     );
-    assert.equal(missingReason._tag, 'IdentityTargetInvalidError');
+    assert.ok(Predicate.isTagged(missingReason, 'IdentityTargetInvalidError'));
 
     await runEffectTestPromise(
       database.transaction((transaction) =>

@@ -189,12 +189,14 @@ const cleanupTenant = async (database: CoreDatabaseExecutor, tenantId: string): 
       database.delete(outboxDeliveries).where(eq(outboxDeliveries.outboxMessageId, messageId)),
     );
   });
-  await purgeFixtureRows([
-    database.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
-    database.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId)),
-    database.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
-    database.delete(tenants).where(eq(tenants.tenantId, tenantId)),
-  ]);
+  await runEffectTestPromise(
+    purgeFixtureRows([
+      database.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
+      database.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId)),
+      database.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
+      database.delete(tenants).where(eq(tenants.tenantId, tenantId)),
+    ]),
+  );
 };
 
 /**

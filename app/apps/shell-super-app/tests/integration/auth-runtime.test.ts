@@ -288,43 +288,49 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
   const generatedFixtureRoot = await mkdtemp(path.join(tmpdir(), 'ontos-auth-runtime-'));
 
   const cleanup = async () => {
-    await purgeFixtureRows([
-      coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
-      coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
-      coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
-    ]);
+    await runEffectTestPromise(
+      purgeFixtureRows([
+        coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
+        coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
+        coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
+      ]),
+    );
     const existingUsers = await runEffectTestPromise(
       authDatabase.select({ id: user.id }).from(user).where(eq(user.email, email)),
     );
 
     await Promise.all(
       existingUsers.map(async (existingUser) => {
-        await purgeFixtureRows([
-          coreDatabase
-            .delete(principalAuthBindings)
-            .where(eq(principalAuthBindings.providerSubjectId, existingUser.id)),
-          authDatabase.delete(session).where(eq(session.userId, existingUser.id)),
-          authDatabase.delete(account).where(eq(account.userId, existingUser.id)),
-          authDatabase.delete(user).where(eq(user.id, existingUser.id)),
-        ]);
+        await runEffectTestPromise(
+          purgeFixtureRows([
+            coreDatabase
+              .delete(principalAuthBindings)
+              .where(eq(principalAuthBindings.providerSubjectId, existingUser.id)),
+            authDatabase.delete(session).where(eq(session.userId, existingUser.id)),
+            authDatabase.delete(account).where(eq(account.userId, existingUser.id)),
+            authDatabase.delete(user).where(eq(user.id, existingUser.id)),
+          ]),
+        );
       }),
     );
 
-    await purgeFixtureRows([
-      coreDatabase
-        .delete(principalAuthBindings)
-        .where(eq(principalAuthBindings.principalId, principalId)),
-      coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
-      coreDatabase
-        .delete(tenantModuleStates)
-        .where(eq(tenantModuleStates.tenantId, foreignTenantId)),
-      coreDatabase.delete(principals).where(eq(principals.principalId, principalId)),
-      coreDatabase
-        .delete(legalEntities)
-        .where(eq(legalEntities.legalEntityId, fixtureLegalEntityId)),
-      coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
-      coreDatabase.delete(tenants).where(eq(tenants.tenantId, foreignTenantId)),
-    ]);
+    await runEffectTestPromise(
+      purgeFixtureRows([
+        coreDatabase
+          .delete(principalAuthBindings)
+          .where(eq(principalAuthBindings.principalId, principalId)),
+        coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
+        coreDatabase
+          .delete(tenantModuleStates)
+          .where(eq(tenantModuleStates.tenantId, foreignTenantId)),
+        coreDatabase.delete(principals).where(eq(principals.principalId, principalId)),
+        coreDatabase
+          .delete(legalEntities)
+          .where(eq(legalEntities.legalEntityId, fixtureLegalEntityId)),
+        coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
+        coreDatabase.delete(tenants).where(eq(tenants.tenantId, foreignTenantId)),
+      ]),
+    );
   };
 
   try {
@@ -1168,37 +1174,43 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
   const fixtureTenants = [firstTenantId, secondTenantId];
   // Ordered child-before-parent so every delete respects the owned foreign keys.
   const cleanup = async (): Promise<void> => {
-    await purgeFixtureRows([
-      coreDatabase
-        .delete(dataAccessEvents)
-        .where(inArray(dataAccessEvents.tenantId, fixtureTenants)),
-    ]);
+    await runEffectTestPromise(
+      purgeFixtureRows([
+        coreDatabase
+          .delete(dataAccessEvents)
+          .where(inArray(dataAccessEvents.tenantId, fixtureTenants)),
+      ]),
+    );
     const existingUsers = await runEffectTestPromise(
       authDatabase.select({ id: user.id }).from(user).where(eq(user.email, multiEmail)),
     );
     const existingUserIds = existingUsers.map(({ id }) => id);
     if (existingUserIds.length > 0) {
-      await purgeFixtureRows([
-        coreDatabase
-          .delete(principalAuthBindings)
-          .where(inArray(principalAuthBindings.providerSubjectId, existingUserIds)),
-        authDatabase.delete(session).where(inArray(session.userId, existingUserIds)),
-        authDatabase.delete(account).where(inArray(account.userId, existingUserIds)),
-        authDatabase.delete(user).where(inArray(user.id, existingUserIds)),
-      ]);
+      await runEffectTestPromise(
+        purgeFixtureRows([
+          coreDatabase
+            .delete(principalAuthBindings)
+            .where(inArray(principalAuthBindings.providerSubjectId, existingUserIds)),
+          authDatabase.delete(session).where(inArray(session.userId, existingUserIds)),
+          authDatabase.delete(account).where(inArray(account.userId, existingUserIds)),
+          authDatabase.delete(user).where(inArray(user.id, existingUserIds)),
+        ]),
+      );
     }
-    await purgeFixtureRows([
-      coreDatabase
-        .delete(tenantModuleStates)
-        .where(inArray(tenantModuleStates.tenantId, fixtureTenants)),
-      coreDatabase
-        .delete(principals)
-        .where(inArray(principals.principalId, [firstPrincipalId, secondPrincipalId])),
-      coreDatabase
-        .delete(legalEntities)
-        .where(inArray(legalEntities.legalEntityId, [firstLegalEntityId, secondLegalEntityId])),
-      coreDatabase.delete(tenants).where(inArray(tenants.tenantId, fixtureTenants)),
-    ]);
+    await runEffectTestPromise(
+      purgeFixtureRows([
+        coreDatabase
+          .delete(tenantModuleStates)
+          .where(inArray(tenantModuleStates.tenantId, fixtureTenants)),
+        coreDatabase
+          .delete(principals)
+          .where(inArray(principals.principalId, [firstPrincipalId, secondPrincipalId])),
+        coreDatabase
+          .delete(legalEntities)
+          .where(inArray(legalEntities.legalEntityId, [firstLegalEntityId, secondLegalEntityId])),
+        coreDatabase.delete(tenants).where(inArray(tenants.tenantId, fixtureTenants)),
+      ]),
+    );
   };
 
   try {
