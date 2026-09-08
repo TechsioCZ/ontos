@@ -13,6 +13,8 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const codeToolsPackage = '@modern-js/code-tools';
 const malformedPluginCase = 'malformed plugin';
+const cleanOutput =
+  /^(?:Found 0 warnings and 0 errors\.\r?\nFinished in \d+(?:\.\d+)?(?:ms|s) on [1-9]\d* files? with \d+ rules using [1-9]\d* threads?\.\r?\n)?$/u;
 const packageRoot = fileURLToPath(new URL('../..', import.meta.resolve(codeToolsPackage)));
 const packageRequire = createRequire(import.meta.resolve(codeToolsPackage));
 
@@ -106,7 +108,7 @@ printOxlintOutput(result); process.exitCode = result.exitCode;`;
       const output = result.stdout + result.stderr;
       if (fixture.diagnostic === null) {
         assert.equal(result.status, 0, output);
-        assert.equal(output, '');
+        assert.match(output, cleanOutput);
       } else {
         assert.equal(result.status, 1, output);
         assert.match(output, fixture.diagnostic);
@@ -130,3 +132,19 @@ printOxlintOutput(result); process.exitCode = result.exitCode;`;
     );
   }
 }
+
+void test('clean i18n output accepts only silence or a zero-diagnostic summary', () => {
+  const summary =
+    'Found 0 warnings and 0 errors.\nFinished in 423ms on 2 files with 98 rules using 4 threads.\n';
+  assert.match('', cleanOutput);
+  assert.match(summary, cleanOutput);
+  for (const output of [
+    summary.replace('0 errors', '1 error'),
+    summary.replace('0 warnings', '1 warning'),
+    summary.replace('2 files', '0 files'),
+    `${summary}Error running JS plugin\n`,
+    `fixture.tsx:1:1: unexpected diagnostic\n${summary}`,
+  ]) {
+    assert.doesNotMatch(output, cleanOutput);
+  }
+});
