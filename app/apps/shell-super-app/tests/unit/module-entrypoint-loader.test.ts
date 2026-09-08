@@ -168,7 +168,7 @@ it.effect('checks the complete composition before authorizing or invoking any lo
         })),
       ),
     );
-    expect(error).toMatchObject({ _tag: 'ModuleStateDeniedError' });
+    expect(Schema.is(ModuleStateDeniedError)(error)).toBe(true);
     expect(authorizations).toBe(0);
     expect(loads).toBe(0);
   }),

@@ -293,6 +293,42 @@ function constInitialiser(context: Context, node: ESTree.Node): ESTree.Node | nu
   return declarator.init ?? null;
 }
 
+/** Trace a simple immutable destructured method without losing the source binding's scope. */
+function destructuredMethod(
+  context: Context,
+  node: ESTree.Node,
+): { source: ESTree.Node; method: string } | null {
+  if (node.type !== 'Identifier') return null;
+  const variable = resolveVariable(context, node.name, node);
+  if (variable === null || variable.defs.length !== 1) return null;
+  if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
+  const def = variable.defs[0];
+  if (def === undefined || def.type !== 'Variable') return null;
+  const declarator = def.node as ESTree.Node;
+  if (
+    declarator.type !== 'VariableDeclarator' ||
+    declarator.id.type !== 'ObjectPattern' ||
+    declarator.init === null ||
+    declarator.parent.type !== 'VariableDeclaration' ||
+    declarator.parent.kind !== 'const'
+  )
+    return null;
+  for (const property of declarator.id.properties) {
+    if (
+      property.type !== 'Property' ||
+      property.value.type !== 'Identifier' ||
+      property.value.name !== node.name
+    )
+      continue;
+    const method =
+      !property.computed && property.key.type === 'Identifier'
+        ? property.key.name
+        : staticString(context, property.key);
+    return method === null ? null : { source: declarator.init, method };
+  }
+  return null;
+}
+
 /** Resolve assertion imports through lexical bindings, aliases, and matcher modifiers. */
 function assertionCall(
   context: Context,
@@ -304,6 +340,12 @@ function assertionCall(
   let subject: ESTree.CallExpression | null = null;
   for (let depth = 0; depth < MAX_DEPTH && !seen.has(expression); depth += 1) {
     seen.add(expression);
+    const destructured = destructuredMethod(context, expression);
+    if (destructured !== null) {
+      members.unshift(destructured.method);
+      expression = unwrap(destructured.source);
+      continue;
+    }
     const initialiser = constInitialiser(context, expression);
     if (initialiser !== null) {
       expression = unwrap(initialiser);
@@ -1015,6 +1057,7 @@ export const rule = defineRule({
           'toContain',
           'toContainEqual',
           'toMatch',
+          'toMatchObject',
           'match',
           'doesNotMatch',
         ]);
@@ -1022,6 +1065,47 @@ export const rule = defineRule({
           let compared = node.arguments.slice(0, 2);
           if (assertion.subject !== null)
             compared = [...assertion.subject.arguments.slice(0, 1), ...node.arguments.slice(0, 1)];
+          // Partial-object matchers discriminate by the expected shape, not a tag read.
+          // Only inspect the expected top-level discriminant; unrelated fields/fixtures are not probes.
+          if (assertion.subject !== null && assertion.method === 'toMatchObject') {
+            const expected = node.arguments[0];
+            if (expected !== undefined && expected.type !== 'SpreadElement') {
+              let shape = unwrap(expected);
+              const seenShapes = new Set<ESTree.Node>();
+              for (let depth = 0; depth < MAX_DEPTH && !seenShapes.has(shape); depth += 1) {
+                seenShapes.add(shape);
+                const initialiser = constInitialiser(context, shape);
+                if (initialiser === null) break;
+                shape = unwrap(initialiser);
+              }
+              if (shape.type === 'ObjectExpression') {
+                const tag = shape.properties.find(
+                  (property) =>
+                    property.type === 'Property' &&
+                    (!property.computed && property.key.type === 'Identifier'
+                      ? property.key.name
+                      : staticString(context, property.key)) === TAG_PROPERTY,
+                );
+                if (tag?.type === 'Property') {
+                  const literal = staticString(context, tag.value);
+                  if ((literal === null || !exempt.has(literal)) && !suppressed(node)) {
+                    context.report({
+                      node,
+                      messageId: 'tagEqualityCall',
+                      data: {
+                        callee: describe(context, node.callee),
+                        text: describe(
+                          context,
+                          assertion.subject.arguments[0] ?? assertion.subject,
+                        ),
+                      },
+                    });
+                    return;
+                  }
+                }
+              }
+            }
+          }
           for (const [index, argument] of compared.entries()) {
             if (argument.type === 'SpreadElement') continue;
             const reference = comparedTag(argument);
