@@ -54,7 +54,7 @@ export default defineConfig({
         ULTRAMODERN_SOURCE_REVISION: e2eSourceRevision,
       },
       reuseExistingServer: !continuousIntegration,
-      url: 'http://127.0.0.1:4102/en',
+      url: 'http://127.0.0.1:4102/party-registry-api/party-registry/readiness',
     },
     {
       command: 'pnpm dev',

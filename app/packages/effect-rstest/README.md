@@ -85,3 +85,11 @@ it.effect('cleans up its fixture', () =>
 For an existing resource, register its Effect cleanup before using it: `yield* Effect.addFinalizer(() => release(resource))`. Use `acquireRelease` when acquisition and registration must be interruption-safe together.
 
 **Do not use JavaScript `try/finally` for Effect cleanup.** A failed yielded Effect short-circuits the generator; JavaScript `finally` does not finalize failed yielded Effects. Register an Effect finalizer instead, so cleanup also runs when a yield fails or the test is interrupted.
+
+On a runner timeout, the adapter interrupts the Effect and waits for its finalizers before the next
+sequential test and enclosing layer teardown. Cleanup is not cut short by the runner's hook timeout,
+so a finalizer that never settles can hold completion indefinitely.
+
+Rstest runs native `afterEach` hooks before its test-finished callbacks. Those hooks can therefore
+run while timed-out Effect cleanup is still pending. Keep resource release in Effect finalizers,
+not native hooks. This ordering guarantee does not serialize concurrent tests.

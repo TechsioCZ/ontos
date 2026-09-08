@@ -117,10 +117,9 @@ it.live('preserves caller-owned Layer startup defects', () =>
       Effect.sync(() => failingStartupRuntime.createHandler()),
       (runtimeServer) => Effect.promise(() => runtimeServer.dispose()),
     );
-    const error = yield* Effect.tryPromise({
-      catch: (cause) => cause,
-      try: () => server.handler(new Request('http://localhost/greet')),
-    }).pipe(Effect.flip);
-    expect(String(error)).toMatch(/fixture layer startup defect/u);
+    const error = yield* Effect.tryPromise(() =>
+      server.handler(new Request('http://localhost/greet')),
+    ).pipe(Effect.flip);
+    expect(String(error.cause)).toMatch(/fixture layer startup defect/u);
   }),
 );

@@ -42,8 +42,21 @@ const runPromise: <E, A>(
 /** @internal */
 const runTest =
   (ctx?: Rs.TestContext) =>
-  <E, A>(effect: Effect.Effect<A, E>) =>
-    runPromise(effect, ctx);
+  <E, A>(effect: Effect.Effect<A, E>) => {
+    let settlement: Promise<void> | undefined;
+    // Rstest aborts on timeout without awaiting the callback. Keep its outcome,
+    // but await Effect finalizers before the next test or suite teardown. Native
+    // afterEach hooks run earlier than onTestFinished and are not covered.
+    // Do not race cleanup against another hook timeout and reintroduce the leak.
+    ctx?.onTestFinished(() => settlement, 0);
+    const result = runPromise(effect, ctx);
+    // Cleanup must not rethrow a failure that Rstest already handled (e.g. fails).
+    settlement = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  };
 
 /** @internal */
 export type TestContext = TestConsole.TestConsole | TestClock.TestClock;
