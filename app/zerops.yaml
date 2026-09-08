@@ -1,5 +1,6 @@
 # Stage deployment topology. Secrets are configured in the corresponding
 # Zerops services and are never stored in this file.
+# Stage topology provisioned for partyregistry and partyregistryworker.
 
 zerops:
   - setup: 'migrator'
