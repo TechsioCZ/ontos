@@ -246,6 +246,13 @@ export default defineConfig({
       },
     },
     {
+      // Zerops runs this bootstrap before workspace dependencies exist.
+      files: ['scripts/reset-workspace-dependencies.mjs'],
+      rules: {
+        'effect-native/no-direct-node-io-in-scripts': 'off',
+      },
+    },
+    {
       // These tests inspect complete public/module surfaces; namespace imports are the assertion.
       files: [
         'apps/shell-super-app/tests/unit/routes/home/loader.test.ts',
