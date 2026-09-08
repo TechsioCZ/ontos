@@ -1,4 +1,4 @@
-import { runBrowserEffect } from '../../../../src/runtime/browser-effect-runtime.ts' with {
+import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
   rstest: 'importActual',
 };
 import { afterEach, beforeEach, expect, rstest, it } from '@app/effect-rstest';
@@ -8,15 +8,15 @@ import userEvent from '@testing-library/user-event';
 import { toaster } from '@techsio/ui-kit/molecules/toast';
 import LoginPage from '../../../../src/routes/[lang]/login/page';
 
-const { navigateMock, runBrowserEffectMock, signInMock } = rstest.hoisted(() => ({
+const { browserRunPromiseMock, navigateMock, signInMock } = rstest.hoisted(() => ({
+  browserRunPromiseMock: rstest.fn(),
   navigateMock: rstest.fn(),
-  runBrowserEffectMock: rstest.fn(),
   signInMock: rstest.fn(),
 }));
 
 beforeEach(() => {
   navigateMock.mockImplementation(() => Promise.resolve());
-  runBrowserEffectMock.mockImplementation(runBrowserEffect);
+  browserRunPromiseMock.mockImplementation(browserRuntime.runPromise);
   signInMock.mockReturnValue(
     Effect.succeed({
       identity: {
@@ -66,7 +66,7 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
 }));
 
 rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
-  runBrowserEffect: runBrowserEffectMock,
+  browserRuntime: { runPromise: browserRunPromiseMock },
 }));
 
 const getLogin = () => screen.getByRole('textbox', { name: 'Login *' });
@@ -240,7 +240,7 @@ it.effect('submits valid values through the Shell authentication client and navi
           },
           { locale: 'en' },
         );
-        expect(runBrowserEffectMock).toHaveBeenCalledTimes(1);
+        expect(browserRunPromiseMock).toHaveBeenCalledTimes(1);
         expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
         expect(getSubmit().hasAttribute('disabled')).toBe(false);
         expect(screen.queryByText('shell.login.error.internal')).toBeNull();

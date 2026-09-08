@@ -1,4 +1,4 @@
-import { runBrowserEffect } from '../../../../src/runtime/browser-effect-runtime.ts' with {
+import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
   rstest: 'importActual',
 };
 import { afterEach, beforeEach, expect, rstest, it } from '@app/effect-rstest';
@@ -17,14 +17,19 @@ import {
 import { HomeView } from '../../../../src/routes/[lang]/page.tsx';
 import type { HomePageModel } from '../../../../src/routes/[lang]/page.data.ts';
 
-const { navigateMock, runBrowserEffectMock, signOutMock, switchLegalEntityMock, switchTenantMock } =
-  rstest.hoisted(() => ({
-    navigateMock: rstest.fn(),
-    runBrowserEffectMock: rstest.fn(),
-    signOutMock: rstest.fn(),
-    switchLegalEntityMock: rstest.fn(),
-    switchTenantMock: rstest.fn(),
-  }));
+const {
+  browserRunPromiseMock,
+  navigateMock,
+  signOutMock,
+  switchLegalEntityMock,
+  switchTenantMock,
+} = rstest.hoisted(() => ({
+  browserRunPromiseMock: rstest.fn(),
+  navigateMock: rstest.fn(),
+  signOutMock: rstest.fn(),
+  switchLegalEntityMock: rstest.fn(),
+  switchTenantMock: rstest.fn(),
+}));
 
 const translations = new Map(
   Object.entries({
@@ -86,7 +91,7 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
 }));
 
 rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
-  runBrowserEffect: runBrowserEffectMock,
+  browserRuntime: { runPromise: browserRunPromiseMock },
 }));
 
 const principalId = Schema.decodeUnknownSync(PrincipalIdSchema)(
@@ -150,7 +155,7 @@ const authenticatedModel = (): HomePageModel => ({
 
 beforeEach(() => {
   navigateMock.mockResolvedValue(undefined);
-  runBrowserEffectMock.mockImplementation(runBrowserEffect);
+  browserRunPromiseMock.mockImplementation(browserRuntime.runPromise);
   signOutMock.mockReturnValue(Effect.succeed({ signedOut: true }));
   switchTenantMock.mockReturnValue(Effect.succeed({ selectedTenantId: tenantId2 }));
   switchLegalEntityMock.mockReturnValue(Effect.succeed({ selectedLegalEntityId: legalEntityId2 }));

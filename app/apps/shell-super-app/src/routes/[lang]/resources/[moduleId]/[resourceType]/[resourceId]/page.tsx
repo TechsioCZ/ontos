@@ -6,7 +6,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { DateTime, Effect } from 'effect';
 import { useState } from 'react';
 import { attachResourceMedia } from '../../../../../../api/auth-client.ts';
-import { runBrowserEffect } from '../../../../../../runtime/browser-effect-runtime.ts';
+import { browserRuntime } from '../../../../../../runtime/browser-effect-runtime.ts';
 import { AuthenticatedDashboardLayout } from '../../../../../shell-frame.tsx';
 import { useShellControls } from '../../../../../use-shell-controls.ts';
 
@@ -24,7 +24,7 @@ const ResourcePage = () => {
       return Promise.resolve();
     }
     setMediaState('pending');
-    return runBrowserEffect(
+    return browserRuntime.runPromise(
       attachResourceMedia(model.resource.ref).pipe(
         Effect.matchEffect({
           onFailure: (error) =>

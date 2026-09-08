@@ -1,10 +1,11 @@
 import { beforeEach, expect, rstest, it } from '@app/effect-rstest';
-import { Effect } from 'effect';
+import { Cause, ConfigProvider, Deferred, Effect, Fiber } from 'effect';
+import { TestClock } from 'effect/testing';
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
   rstest: 'importActual',
 };
 import {
-  loader,
+  loadModulePageModel,
   selectRouteParams,
 } from '../../../../src/routes/[lang]/modules/[moduleId]/page.data.ts';
 
@@ -47,8 +48,14 @@ const request = () => {
   return value;
 };
 
+/** The module program reads its origin from config; pin an empty provider so every case is identical. */
+const moduleModel = (input: Parameters<typeof loadModulePageModel>[0]) =>
+  loadModulePageModel(input).pipe(
+    Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
+  );
+
 beforeEach(() => {
-  loadHomePageModelMock.mockResolvedValue(authenticatedShell);
+  loadHomePageModelMock.mockReturnValue(Effect.succeed(authenticatedShell));
   resolveModuleTargetMock.mockReturnValue(
     Effect.succeed({
       appId: 'party-registry',
@@ -74,11 +81,12 @@ it('selects only declared safe route parameters and omits overlong values', () =
   ).toEqual({ id: 'party-1' });
 });
 
-it.live('retains only declared bounded route parameters outside the resolved target identity', () =>
-  Effect.gen(function* retainsOnlyDeclaredBoundedRouteParameters() {
-    expect(
-      yield* Effect.promise(() =>
-        loader({
+it.effect(
+  'retains only declared bounded route parameters outside the resolved target identity',
+  () =>
+    Effect.gen(function* retainsOnlyDeclaredBoundedRouteParameters() {
+      expect(
+        yield* moduleModel({
           params: {
             entrypointKey: 'party.registry.page.contacts',
             moduleId: 'party.registry',
@@ -86,30 +94,27 @@ it.live('retains only declared bounded route parameters outside the resolved tar
           request: request(),
           routeParams: { id: 'party-1' },
         }),
-      ),
-    ).toMatchObject({
-      routeParams: { id: 'party-1' },
-      state: 'resolved',
-      target: {
-        appId: 'party-registry',
-        componentKey: 'party.registry.page-contacts',
-        entrypointKey: 'party.registry.page.contacts',
-        moduleId: 'party.registry',
-      },
-    });
-    expect(resolveModuleTargetMock).toHaveBeenCalledWith(
-      { entrypointKey: 'party.registry.page.contacts', moduleId: 'party.registry' },
-      expect.any(Object),
-    );
-  }),
+      ).toMatchObject({
+        routeParams: { id: 'party-1' },
+        state: 'resolved',
+        target: {
+          appId: 'party-registry',
+          componentKey: 'party.registry.page-contacts',
+          entrypointKey: 'party.registry.page.contacts',
+          moduleId: 'party.registry',
+        },
+      });
+      expect(resolveModuleTargetMock).toHaveBeenCalledWith(
+        { entrypointKey: 'party.registry.page.contacts', moduleId: 'party.registry' },
+        expect.any(Object),
+      );
+    }),
 );
 
-it.live('retains module landing behavior when no exact page entrypoint is supplied', () =>
+it.effect('retains module landing behavior when no exact page entrypoint is supplied', () =>
   Effect.gen(function* retainsModuleLandingBehaviorWhenNo() {
     expect(
-      yield* Effect.promise(() =>
-        loader({ params: { moduleId: 'party.registry' }, request: request() }),
-      ),
+      yield* moduleModel({ params: { moduleId: 'party.registry' }, request: request() }),
     ).toMatchObject({ routeParams: {} });
     expect(resolveModuleTargetMock).toHaveBeenCalledWith(
       { moduleId: 'party.registry' },
@@ -118,25 +123,23 @@ it.live('retains module landing behavior when no exact page entrypoint is suppli
   }),
 );
 
-it.live('does not request or load a private target before authentication', () =>
+it.effect('does not request or load a private target before authentication', () =>
   Effect.gen(function* doesNotRequestOrLoadA() {
-    loadHomePageModelMock.mockResolvedValueOnce({ state: 'anonymous' });
+    loadHomePageModelMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' }));
     expect(
-      yield* Effect.promise(() =>
-        loader({
-          params: {
-            entrypointKey: 'party.registry.page.contacts',
-            moduleId: 'party.registry',
-          },
-          request: request(),
-        }),
-      ),
+      yield* moduleModel({
+        params: {
+          entrypointKey: 'party.registry.page.contacts',
+          moduleId: 'party.registry',
+        },
+        request: request(),
+      }),
     ).toMatchObject({ state: 'selection_required' });
     expect(resolveModuleTargetMock).not.toHaveBeenCalled();
   }),
 );
 
-it.live.each([
+it.effect.each([
   ['ShellSelectionRequiredProblem', 'selection_required'],
   ['ShellTargetForbiddenProblem', 'forbidden'],
   ['ShellTargetNotFoundProblem', 'not_found'],
@@ -145,15 +148,31 @@ it.live.each([
   Effect.gen(function* ShellSelectionRequiredProblem() {
     resolveModuleTargetMock.mockReturnValueOnce(Effect.fail({ _tag }));
     expect(
-      yield* Effect.promise(() =>
-        loader({
-          params: {
-            entrypointKey: 'party.registry.page.contacts',
-            moduleId: 'party.registry',
-          },
-          request: request(),
-        }),
-      ),
+      yield* moduleModel({
+        params: {
+          entrypointKey: 'party.registry.page.contacts',
+          moduleId: 'party.registry',
+        },
+        request: request(),
+      }),
     ).toMatchObject({ state });
+  }),
+);
+
+it.effect('fails with the typed timeout instead of hanging on an unresponsive shell read', () =>
+  Effect.gen(function* failsWithTheTypedTimeout() {
+    const entered = yield* Deferred.make<'entered'>();
+    loadHomePageModelMock.mockReturnValueOnce(
+      Effect.andThen(Deferred.succeed(entered, 'entered'), Effect.never),
+    );
+    const fiber = yield* Effect.forkChild(
+      moduleModel({ params: { moduleId: 'party.registry' }, request: request() }),
+    );
+    yield* Deferred.await(entered);
+
+    yield* TestClock.adjust('30 seconds');
+
+    expect(yield* Effect.flip(Fiber.join(fiber))).toBeInstanceOf(Cause.TimeoutError);
+    expect(resolveModuleTargetMock).not.toHaveBeenCalled();
   }),
 );

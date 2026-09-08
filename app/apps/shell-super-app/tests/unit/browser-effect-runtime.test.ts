@@ -1,38 +1,55 @@
 import { expect, it } from '@app/effect-rstest';
-import { Effect } from 'effect';
-import { runBrowserEffect } from '../../src/runtime/browser-effect-runtime.ts';
+import { Deferred, Effect, Exit, Fiber, Schema } from 'effect';
+import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 
-it.effect('preserves Effect success and failure behavior at the browser boundary', () =>
-  Effect.gen(function* browserBoundaryResults() {
-    const failure = { _tag: 'ExpectedFailure' } as const;
+class ExpectedFailure extends Schema.TaggedError<ExpectedFailure>()('ExpectedFailure', {}) {}
 
-    yield* Effect.promise(() =>
-      expect(runBrowserEffect(Effect.succeed('ready'))).resolves.toBe('ready'),
-    );
-    yield* Effect.promise(() =>
-      expect(runBrowserEffect(Effect.fail(failure))).rejects.toBe(failure),
-    );
+/** Forks on the real browser runtime, interrupting on scope close so a failed assertion leaks no fiber. */
+const forkOnBrowserRuntime = <Value, Failure>(
+  program: Effect.Effect<Value, Failure>,
+  options?: Effect.RunOptions,
+) =>
+  Effect.acquireRelease(
+    Effect.sync(() => browserRuntime.runFork(program, options)),
+    (fiber) => Fiber.interrupt(fiber),
+  );
+
+it.effect('carries success values out of the browser runtime', () =>
+  Effect.gen(function* browserRuntimeSuccess() {
+    const fiber = yield* forkOnBrowserRuntime(Effect.succeed('ready'));
+
+    expect(yield* Fiber.join(fiber)).toBe('ready');
+  }),
+);
+
+it.effect('keeps the typed failure identity of a browser runtime program', () =>
+  Effect.gen(function* browserRuntimeTypedFailure() {
+    const failure = new ExpectedFailure();
+
+    const fiber = yield* forkOnBrowserRuntime(Effect.fail(failure));
+
+    expect(yield* Effect.flip(Fiber.join(fiber))).toBe(failure);
   }),
 );
 
 it.effect('interrupts the running Effect when its AbortSignal is aborted', () =>
-  Effect.gen(function* browserBoundaryInterruption() {
+  Effect.gen(function* browserRuntimeInterruption() {
     const controller = new AbortController();
-    let finalized = false;
-    const request = runBrowserEffect(
-      Effect.never.pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            finalized = true;
-          }),
-        ),
+    const finalized: string[] = [];
+    const finalizersInstalled = yield* Deferred.make<'installed'>();
+    const fiber = yield* forkOnBrowserRuntime(
+      Effect.andThen(Deferred.succeed(finalizersInstalled, 'installed'), Effect.never).pipe(
+        Effect.ensuring(Effect.sync(() => finalized.push('inner'))),
+        Effect.ensuring(Effect.sync(() => finalized.push('outer'))),
       ),
       { signal: controller.signal },
     );
+    yield* Deferred.await(finalizersInstalled);
 
     controller.abort();
+    const exit = yield* Fiber.await(fiber);
 
-    yield* Effect.promise(() => expect(request).rejects.toBeTruthy());
-    expect(finalized).toBe(true);
+    expect(Exit.hasInterrupts(exit)).toBe(true);
+    expect(finalized).toEqual(['inner', 'outer']);
   }),
 );

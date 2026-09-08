@@ -3,20 +3,18 @@ import { ConfigProvider, Effect } from 'effect';
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
   rstest: 'importActual',
 };
-import { loader } from '../../../../src/routes/[lang]/page.data.ts';
+import { loadHomePageModel } from '../../../../src/routes/[lang]/page.data.ts';
 
 const {
   availableLegalEntitiesMock,
   availableTenantsMock,
   browserConfigValuesMock,
-  browserEffectMock,
   currentSessionMock,
   shellCompositionMock,
 } = rstest.hoisted(() => ({
   availableLegalEntitiesMock: rstest.fn(),
   availableTenantsMock: rstest.fn(),
   browserConfigValuesMock: rstest.fn<() => { readonly BETTER_AUTH_URL?: string }>(),
-  browserEffectMock: rstest.fn(),
   currentSessionMock: rstest.fn(),
   shellCompositionMock: rstest.fn(),
 }));
@@ -27,10 +25,6 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
   availableTenants: availableTenantsMock,
   currentSession: currentSessionMock,
   shellComposition: shellCompositionMock,
-}));
-
-rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
-  runBrowserEffect: browserEffectMock,
 }));
 
 const identity = {
@@ -60,26 +54,15 @@ const request = () =>
     headers: { cookie: 'session=test-session' },
   });
 
-const loadModel = (input: Parameters<typeof loader>[0]) =>
-  Effect.gen(function* loadRouteModel() {
-    const boundary = Promise.withResolvers<Awaited<ReturnType<typeof loader>>>();
-    let captured: Effect.Effect<Awaited<ReturnType<typeof loader>>, unknown> | undefined;
-    browserEffectMock.mockImplementationOnce(
-      (effect: Effect.Effect<Awaited<ReturnType<typeof loader>>, unknown>) => {
-        captured = effect.pipe(
-          Effect.provideService(
-            ConfigProvider.ConfigProvider,
-            ConfigProvider.fromUnknown(browserConfigValuesMock()),
-          ),
-        );
-        return boundary.promise;
-      },
-    );
-    const result = loader(input);
-    const model = yield* captured ?? Effect.die('Route did not invoke the browser Effect boundary');
-    boundary.resolve(model);
-    return yield* Effect.promise(() => result);
-  });
+const loadModel = ({ request: input }: { readonly request: Request }) =>
+  Effect.suspend(() =>
+    loadHomePageModel(input).pipe(
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromUnknown(browserConfigValuesMock()),
+      ),
+    ),
+  );
 const withBetterAuthUrl = <Value, Failure>(
   baseUrl: string,
   operation: () => Effect.Effect<Value, Failure>,
