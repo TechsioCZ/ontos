@@ -149,6 +149,7 @@ const main = Effect.scoped(
     yield* migrate('apps/shell-super-app', 'drizzle.auth.config.ts');
     yield* runAppScript('verticals/party-registry/scripts/prepare-contacts-migration.mts');
     yield* migrate('verticals/party-registry', 'drizzle.contacts.config.ts');
+    yield* migrate('verticals/party-registry', 'drizzle.config.ts');
     yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
     yield* runAppScript('scripts/verify-application-db-schema.mts');
     yield* serveReadiness(yield* migratorPort);

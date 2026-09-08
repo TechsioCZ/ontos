@@ -6488,6 +6488,32 @@ if (hasDeliveryUnits) {
         zeropsMigrator.lastIndexOf('yield* migrate('),
     'Zerops migrator must provision the runtime role before RLS migrations and refresh grants afterward',
   );
+  for (const migrationPackagePath of [
+    'packages/core-runtime',
+    SHARED_VALIDATOR_STRING_047,
+    ...fullStackVerticals.map((vertical) => vertical.path),
+  ]) {
+    const migrationPackage = readJson(PackageJsonSchema, `${migrationPackagePath}/package.json`);
+    const migrationScript = migrationPackage.scripts?.['db:migrate'] ?? '';
+    const migrationConfigs = Array.from(
+      migrationScript.matchAll(/drizzle-kit migrate --config (?<migrationConfig>[^\s&]+)/gu),
+      (match) => match.groups?.migrationConfig,
+    ).filter((config): config is string => config !== undefined);
+    assert(
+      migrationConfigs.length > 0,
+      `${migrationPackagePath} must declare at least one Drizzle migration config`,
+    );
+    let previousMigrationIndex = -1;
+    for (const migrationConfig of migrationConfigs) {
+      const migrationCall = `yield* migrate(${quoteYamlString(migrationPackagePath)}, ${quoteYamlString(migrationConfig)});`;
+      const migrationIndex = zeropsMigrator.indexOf(migrationCall);
+      assert(
+        migrationIndex > previousMigrationIndex,
+        `Zerops migrator must execute ${migrationPackagePath}/${migrationConfig} in package-declared order`,
+      );
+      previousMigrationIndex = migrationIndex;
+    }
+  }
   for (const vertical of fullStackVerticals) {
     assert(
       zeropsYaml.includes(`setup: ${quoteYamlString(vertical.id)}`),
