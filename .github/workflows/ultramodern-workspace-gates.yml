@@ -298,7 +298,7 @@ jobs:
         env:
           BEFORE_SHA: ${{ github.event.before }}
         run: >-
-          mise exec -- pnpm deployment-impact:plan --
+          mise exec -- pnpm deployment-impact:plan
           --authorization-environment stage
           --base "$BEFORE_SHA"
           --head "$GITHUB_SHA"
