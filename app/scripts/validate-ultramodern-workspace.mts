@@ -6521,7 +6521,7 @@ if (hasDeliveryUnits) {
     );
     assert(
       zeropsYaml.includes(
-        `PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize -- --app ${quoteShellValue(vertical.id)} --package ${quoteShellValue(vertical.packageName)} --package-dir ${quoteShellValue(vertical.path)}`,
+        `PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app ${quoteShellValue(vertical.id)} --package ${quoteShellValue(vertical.packageName)} --package-dir ${quoteShellValue(vertical.path)}`,
       ),
       `${vertical.id} Zerops service must materialize its runtime package`,
     );

@@ -106,7 +106,7 @@ const makeFixture = () =>
 it.live('generates a separate supervised worker setup without changing owner configuration', () =>
   Effect.gen(function* testEffect2() {
     const root = yield* makeFixture();
-    const owner = `zerops:\n  - setup: 'ledger'\n    build:\n      buildCommands:\n        - cd app && pnpm --filter '@app/ledger' run build\n        - cd app && pnpm run zerops:materialize -- --app 'ledger' --package '@app/ledger' --package-dir 'verticals/ledger'\n        - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/ledger/topology.json'\n      deployFiles:\n        - 'app/.zerops/runtime/ledger'\n    run:\n      envVariables:\n        PORT: '4110'\n        VERTICAL_LEDGER_PORT: '4110'\n        ONTOS_KEEP_ME: 'true'\n        ULTRAMODERN_ZEROPS_SERVICE: ledger\n      healthCheck:\n        httpGet:\n          path: '/ledger-api/ledger/readiness'\n      start: sh -c 'cd app/.zerops/runtime/ledger && exec npm run serve'\n`;
+    const owner = `zerops:\n  - setup: 'ledger'\n    build:\n      buildCommands:\n        - cd app && pnpm --filter '@app/ledger' run build\n        - cd app && pnpm run zerops:materialize --app 'ledger' --package '@app/ledger' --package-dir 'verticals/ledger'\n        - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/ledger/topology.json'\n      deployFiles:\n        - 'app/.zerops/runtime/ledger'\n    run:\n      envVariables:\n        PORT: '4110'\n        VERTICAL_LEDGER_PORT: '4110'\n        ONTOS_KEEP_ME: 'true'\n        ULTRAMODERN_ZEROPS_SERVICE: ledger\n      healthCheck:\n        httpGet:\n          path: '/ledger-api/ledger/readiness'\n      start: sh -c 'cd app/.zerops/runtime/ledger && exec npm run serve'\n`;
     const generated = yield* Effect.tryPromise(() => generateOutboxWorkerDeployment(root, owner));
     expect(generated).toMatch(/setup: 'ledger-worker'/u);
     expect(generated).toMatch(/zerops:materialize .* --worker/u);
@@ -124,14 +124,17 @@ it.live('generates a separate supervised worker setup without changing owner con
 it.live('materializes and starts a relocatable production worker artifact', () =>
   Effect.gen(function* testEffect3() {
     const root = yield* makeFixture();
-    const command = path.resolve('scripts/materialize-zerops-runtime.mjs');
     const child = yield* scopedChild(() =>
       spawn(
         '/usr/bin/env',
         [
           `ULTRAMODERN_WORKSPACE_ROOT=${root}`,
-          process.execPath,
-          command,
+          'mise',
+          'exec',
+          '--',
+          'pnpm',
+          'run',
+          'zerops:materialize',
           '--app',
           'ledger',
           '--package',
@@ -141,7 +144,7 @@ it.live('materializes and starts a relocatable production worker artifact', () =
           '--worker',
         ],
         {
-          cwd: root,
+          cwd: process.cwd(),
           stdio: ['ignore', 'pipe', 'pipe'],
         },
       ),
@@ -184,6 +187,7 @@ it.live(
       const source = yield* Effect.tryPromise(() =>
         readFile(path.join(root, 'zerops.yaml'), 'utf-8'),
       );
+      expect(source).not.toContain('run zerops:materialize -- --app');
       expect(yield* Effect.tryPromise(() => generateOutboxWorkerDeployment(root, source))).toBe(
         source,
       );
