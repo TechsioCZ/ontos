@@ -427,6 +427,28 @@ function staticString(context: Context, node: ESTree.Node): string | null {
   return initialiser === null ? null : asStringLiteral(initialiser);
 }
 
+/** Resolve only the asserted property: dotted strings and literal array-path segments. */
+function tagPropertyPath(context: Context, node: ESTree.Node): boolean {
+  const path = staticString(context, node);
+  if (path !== null) {
+    const segments = path.split('.');
+    return segments.length <= MAX_DEPTH && segments.at(-1) === TAG_PROPERTY;
+  }
+  const expression = unwrap(node);
+  if (expression.type !== 'ArrayExpression' || expression.elements.length > MAX_DEPTH) return false;
+  let hasTag = false;
+  for (const element of expression.elements) {
+    if (element === null || element.type === 'SpreadElement') return false;
+    const key = staticString(context, element);
+    if (key === null) {
+      const value = unwrap(element);
+      if (value.type !== 'Literal' || typeof value.value !== 'number') return false;
+    }
+    hasTag = key === TAG_PROPERTY;
+  }
+  return hasTag;
+}
+
 /** The `_tag` member access itself (`x._tag`, `x?._tag`, `x!._tag`, `x["_tag"]`, `x[KEY]`), or null. */
 function asTagMember(context: Context, node: ESTree.Node): ESTree.MemberExpression | null {
   const expression = unwrap(node);
@@ -1040,6 +1062,31 @@ export const rule = defineRule({
           callee.type === 'MemberExpression' ? memberPropertyName(callee) : assertion?.method;
         const receiver = callee.type === 'MemberExpression' ? callee.object : null;
         if (method === null || method === undefined) return;
+
+        // Property assertions are shape/equality probes only on a proven `expect(subject)` chain.
+        if (assertion?.method === 'toHaveProperty' && assertion.subject !== null) {
+          const path = node.arguments[0];
+          const subject = assertion.subject.arguments[0];
+          if (
+            path === undefined ||
+            path.type === 'SpreadElement' ||
+            subject === undefined ||
+            subject.type === 'SpreadElement' ||
+            !tagPropertyPath(context, path) ||
+            suppressed(node)
+          )
+            return;
+          const expected = node.arguments[1];
+          if (expected?.type === 'SpreadElement') return;
+          const literal = expected === undefined ? null : staticString(context, expected);
+          if (literal !== null && exempt.has(literal)) return;
+          context.report({
+            node,
+            messageId: expected === undefined ? 'tagPresenceCheck' : 'tagEqualityCall',
+            data: { callee: describe(context, node.callee), text: describe(context, subject) },
+          });
+          return;
+        }
 
         // Assertions are comparisons too, including tag projections in arrays and aliased values.
         const assertionMethods = new Set([
