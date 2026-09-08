@@ -30,6 +30,8 @@ const repositoryRoot = path.resolve(process.cwd(), '../../..');
 const e2eSourceRevision = '0000000000000000000000000000000000000001';
 
 export default defineConfig({
+  // Preserve one native Core module instance and let Node strip its type-only class fields.
+  build: { external: ['**/packages/core-runtime/**'] },
   forbidOnly: continuousIntegration,
   projects: [
     {
