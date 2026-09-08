@@ -25,10 +25,10 @@ const principal = {
 const verificationFailure = (
   _tag: (typeof OperationPrincipalVerificationErrorSchema.Type)['_tag'],
 ) =>
-  Schema.decodeUnknownSync(OperationPrincipalVerificationErrorSchema)({
+  Schema.decodeUnknownEffect(OperationPrincipalVerificationErrorSchema)({
     _tag,
     reason: 'Private verifier diagnostic',
-  });
+  }).pipe(Effect.orDie);
 
 const authenticationProblem = () => ({
   _tag: 'FixtureAuthenticationProblem' as const,
@@ -81,7 +81,7 @@ it.live(
       const failure = failureByCredential.get(raw);
       return failure === undefined
         ? Effect.succeed(principal)
-        : Effect.fail(verificationFailure(failure));
+        : verificationFailure(failure).pipe(Effect.flatMap(Effect.fail));
     });
 
     return Effect.gen(function* mountedAuthenticationHandler() {

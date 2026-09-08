@@ -9,6 +9,7 @@ import {
   partyRegistryApiContract,
   partyRegistryReadinessSchema,
 } from '../../shared/api.ts';
+import type { OperationContext, partyRegistryOperationContexts } from '../../shared/api.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 const apiNames = [
@@ -36,6 +37,36 @@ const apiNames = [
   'personEngagementMutations',
   'personEngagementProfile',
 ] as const;
+
+type Equal<Left, Right> =
+  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
+    ? true
+    : false;
+type Expect<Value extends true> = Value;
+type ReadinessPathRemainsLiteral = Expect<
+  Equal<
+    typeof partyRegistryApiContract.readinessPath,
+    '/party-registry-api/party-registry/readiness'
+  >
+>;
+type ReadinessOperationRouteRemainsLiteral = Expect<
+  Equal<
+    (typeof partyRegistryOperationContexts)['readiness']['routePath'],
+    '/party-registry/readiness'
+  >
+>;
+
+const operationContextRejectsIdentityMetadata: OperationContext = {
+  method: 'GET',
+  operationId: 'PartyRegistryApi:/party-registry/readiness',
+  routePath: '/party-registry/readiness',
+  source: 'generated-client',
+  // @ts-expect-error generic operation metadata must not admit trusted identity fields
+  tenantId: 'must-not-enter-generic-operation-metadata',
+};
+void operationContextRejectsIdentityMetadata;
+const literalTypeProof: ReadinessPathRemainsLiteral & ReadinessOperationRouteRemainsLiteral = true;
+void literalTypeProof;
 
 it('aggregates every governed read and search API beside readiness', () => {
   expect(Object.keys(partyRegistryApi.groups).toSorted()).toEqual(apiNames);

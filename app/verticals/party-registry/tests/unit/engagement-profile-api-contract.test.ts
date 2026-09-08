@@ -1,7 +1,7 @@
 import { expect, it } from '@app/effect-rstest';
 // @effect-diagnostics nodeBuiltinImport:off -- Source-contract test reads actual module files; expires: 2026-12-31.
 import { readFile } from 'node:fs/promises';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 import {
   AttachOrganizationEngagementPayloadSchema,
@@ -62,12 +62,12 @@ it.effect('attach contracts accept only public Party Registry refs', () =>
       expect(
         yield* Schema.decodeUnknownEffect(schema, { onExcessProperty: 'error' })({ partyRef }),
       ).toEqual({ partyRef });
-      expect(() =>
-        Schema.decodeUnknownSync(schema, { onExcessProperty: 'error' })({
+      expect(
+        yield* Schema.decodeUnknownEffect(schema, { onExcessProperty: 'error' })({
           ...payload,
           customerId: 'd4000000-0000-4000-8000-000000000001',
-        }),
-      ).toThrow();
+        }).pipe(Effect.isFailure),
+      ).toBe(true);
     }
   }),
 );
@@ -116,7 +116,14 @@ it.effect('public engagement mutations preserve owner request context at the HTT
     ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
 
     const mutationRequest = requests.find(({ url }) => url.includes('/contacts/engagement/'));
+    const gatewayRequest = requests.find(({ url }) => url.endsWith('/auth/gateway-context'));
+    expect(gatewayRequest).toBeDefined();
     expect(mutationRequest).toBeDefined();
+    const gatewayPayload = yield* Effect.promise(() =>
+      Option.getOrThrow(Option.fromNullishOr(gatewayRequest)).json(),
+    );
+    expect(gatewayPayload).toEqual({ audience: 'party-registry' });
+    expect(mutationRequest?.headers.get('authorization')).toBe('Bearer test-gateway-token');
     expect(mutationRequest?.headers.get('accept-language')).toBe('cs');
     expect(mutationRequest?.headers.get('x-trace-id')).toBe('engagement-trace');
     expect(mutationRequest?.headers.get('traceparent')).toBe(traceparent);

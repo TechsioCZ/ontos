@@ -1,37 +1,89 @@
-import { expect, it } from '@app/effect-rstest';
+import { assert, expect, it } from '@app/effect-rstest';
 import { randomUUID } from 'node:crypto';
-import { ConfigProvider, Context, Effect, Layer, Schema, Predicate } from 'effect';
+
+import { ConfigProvider, Context, Effect, Layer, Logger, Schema, Predicate } from 'effect';
+
 import {
+  ActionHandlerExecutionError,
+  ActionIdempotencyKeyRequired,
+  ActionInvocationNotFound,
+  ActionInvocationPersistenceError,
+  ActionPayloadValidationError,
+  ActionPermissionCheckError,
+  ActionPermissionDenied,
+  ActionPolicyDenied,
+  ActionPolicyEvaluationError,
+  ActionRequestHashConflict,
+  ActionRuntime,
   GatewayAssertionRedemptionService,
   GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
-  ReadRuntime,
+  ModuleStateCheckUnavailableError,
+  ModuleStateDeniedError,
+  OperationAuthenticationRequired,
+  OperationContextDenied,
+  OperationContextInvalid,
+  OperationContextUnavailable,
+  ReadEvidencePersistenceError,
+  ReadEvidenceValidationError,
+  ReadHandlerExecutionError,
   ReadHandlerNotFound,
+  ReadHandlerUnavailable,
+  ReadInputValidationError,
   ReadPermissionDenied,
+  ReadPermissionUnavailable,
+  ReadPolicyDenied,
+  ReadPolicyEvaluationError,
   ReadResultValidationError,
+  ReadRuntime,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
-import type { GatewayAssertionRedemption, ReadRuntimeService } from '@app/core-runtime';
+
+import type {
+  ActionCoreError,
+  ActionRuntimeService,
+  GatewayAssertionRedemption,
+  ReadCoreError,
+  ReadRuntimeService,
+} from '@app/core-runtime';
+
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/plugin-bff/effect-edge';
+
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
+
 import { partyRegistryApi } from '../../shared/api.ts';
+
+import { PartyCommandInvalidRequestProblemSchema } from '../../shared/command-api.ts';
+
 import {
   partyRegistryCommandRecoveryLive,
   partyRegistryCommandsLive,
 } from '../../api/party-command-server.ts';
+
+import { organizationEngagementMutationsLive } from '../../api/engagement-profile-server.ts';
+
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
+
 import { archivePartyAction } from '../../src/actions/archive-party.action.ts';
+
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
+
 import {
   PartyEvidenceInsufficient,
   PartyPersistenceUnavailable,
   PartySchema,
 } from '../../shared/domain/identity-contracts.ts';
+
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
+
 import { partyMatchDecisionReadApiLive } from '../../api/party-match-decision-read-server.ts';
+
 import { PartyMatchDecisionRequestSchema } from '../../shared/apis/party-match-decision.ts';
+
 import { RuleKeySchema } from '../../shared/domain/matching-contracts.ts';
+
 import type { PartyMatchDecisionRecordSchema } from '../../shared/domain/matching-contracts.ts';
 
 const principal = {
@@ -41,13 +93,21 @@ const principal = {
   principalId: 'a2000000-0000-4000-8000-000000000001',
   tenantId: 'a3000000-0000-4000-8000-000000000001',
 } as const;
+
 const partyRef = {
   moduleId: 'party.registry',
   resourceId: 'a4000000-0000-4000-8000-000000000001',
   resourceType: 'party.registry.party',
   tenantId: principal.tenantId,
 } as const;
+
+const otherPartyRef = {
+  ...partyRef,
+  resourceId: 'a4000000-0000-4000-8000-000000000002',
+} as const;
+
 const archivePayload = { expectedRevision: 1, partyRef, reason: 'No longer active' };
+
 const archivedParty = Schema.decodeUnknownSync(PartySchema)({
   archivedAt: '2026-09-01T00:00:00.000Z',
   createdAt: '2026-09-01T00:00:00.000Z',
@@ -57,6 +117,7 @@ const archivedParty = Schema.decodeUnknownSync(PartySchema)({
   revision: 1,
   updatedAt: '2026-09-01T00:00:00.000Z',
 });
+
 const createPayload = {
   candidate: {
     displayName: 'Example organization',
@@ -67,16 +128,40 @@ const createPayload = {
     validFrom: '2026-09-01T00:00:00.000Z',
   },
 } as const;
+
+const relationshipPayload = {
+  fromPartyRef: partyRef,
+  provenance: { method: 'DOCUMENT', source: 'operator' },
+  relationshipType: 'CONTACT_PERSON_OF',
+  toPartyRef: otherPartyRef,
+  validFrom: '2026-09-01T00:00:00.000Z',
+  validTo: null,
+} as const;
+
 type CommandTestPayload =
   | Readonly<Record<string, never>>
   | typeof archivePayload
   | typeof createPayload
+  | typeof relationshipPayload
   | Readonly<{
       candidate: Omit<(typeof createPayload)['candidate'], 'displayName'> & {
         readonly displayName: string;
       };
     }>;
+
+type EngagementTestPayload =
+  | Readonly<{ partyRef: typeof partyRef }>
+  | Readonly<{
+      profileRef: {
+        readonly moduleId: 'party.registry';
+        readonly resourceId: string;
+        readonly resourceType: 'party.registry.organization-engagement-profile';
+        readonly tenantId: string;
+      };
+    }>;
+
 const issuer = 'https://shell.ontos.test';
+
 const actionSlugs = [
   'add-contact-point',
   'add-party-official-identifier',
@@ -103,6 +188,7 @@ const actionSlugs = [
   'update-party-official-identifier',
   'update-party-relationship',
 ] as const;
+
 const endpointNames = [
   'addContactPoint',
   'addPartyOfficialIdentifier',
@@ -181,11 +267,15 @@ const makeAssertion = (
 
 const nonPersistingRedemption: GatewayAssertionRedemption = { consume: () => Effect.void };
 
+const ProblemTagSchema = Schema.Struct({ _tag: Schema.String });
+
 const mounted = (
   harness: Effect.Success<ReturnType<typeof makeActionTestHarness>>,
   environment: Readonly<Record<string, string>>,
   readRuntime?: ReadRuntimeService,
   redemption: GatewayAssertionRedemption = nonPersistingRedemption,
+  actionRuntime: ActionRuntimeService = harness.runtime,
+  observedLogs?: string[],
 ) => {
   const resolvedReadRuntime = readRuntime ?? {
     runRead: () =>
@@ -200,22 +290,58 @@ const mounted = (
     .add(partyRegistryApi.groups.partyMatchDecision);
   const readLayer = Layer.succeed(ReadRuntime, resolvedReadRuntime);
   const redemptionLayer = Layer.succeed(GatewayAssertionRedemptionService, redemption);
+  const actionLayer = Layer.succeed(ActionRuntime, actionRuntime);
+  const loggerLayer =
+    observedLogs === undefined
+      ? Layer.empty
+      : Logger.layer([
+          Logger.make((options) => {
+            observedLogs.push(JSON.stringify(Logger.formatStructured.log(options)));
+          }),
+        ]);
   const handlers = Layer.mergeAll(
     partyRegistryCommandsLive,
     partyRegistryCommandRecoveryLive,
     partyMatchDecisionReadApiLive,
   ).pipe(
     Layer.provide(ActionPrincipalVerifierLive),
-    Layer.provide(harness.layer),
+    Layer.provide(actionLayer),
     Layer.provide(readLayer),
+    Layer.provide(redemptionLayer),
+    Layer.provide(loggerLayer),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
+  );
+  return HttpRouter.toWebHandler(
+    HttpApiBuilder.layer(api).pipe(
+      Layer.provide(handlers),
+      Layer.provideMerge(actionLayer),
+      Layer.provideMerge(readLayer),
+      Layer.provideMerge(redemptionLayer),
+      Layer.provide(HttpServer.layerServices),
+    ),
+    { disableLogger: true },
+  );
+};
+
+const mountedOrganizationEngagement = (
+  environment: Readonly<Record<string, string>>,
+  actionRuntime: ActionRuntimeService,
+) => {
+  const api = HttpApi.make('PartyRegistryApi').add(
+    partyRegistryApi.groups.organizationEngagementMutations,
+  );
+  const actionLayer = Layer.succeed(ActionRuntime, actionRuntime);
+  const redemptionLayer = Layer.succeed(GatewayAssertionRedemptionService, nonPersistingRedemption);
+  const handlers = organizationEngagementMutationsLive.pipe(
+    Layer.provide(ActionPrincipalVerifierLive),
+    Layer.provide(actionLayer),
     Layer.provide(redemptionLayer),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
   );
   return HttpRouter.toWebHandler(
     HttpApiBuilder.layer(api).pipe(
       Layer.provide(handlers),
-      Layer.provideMerge(harness.layer),
-      Layer.provideMerge(readLayer),
+      Layer.provideMerge(actionLayer),
       Layer.provideMerge(redemptionLayer),
       Layer.provide(HttpServer.layerServices),
     ),
@@ -228,9 +354,13 @@ const mountApp = (
   environment: Readonly<Record<string, string>>,
   readRuntime?: ReadRuntimeService,
   redemption: GatewayAssertionRedemption = nonPersistingRedemption,
+  actionRuntime: ActionRuntimeService = harness.runtime,
+  observedLogs?: string[],
 ) =>
   Effect.acquireRelease(
-    Effect.sync(() => mounted(harness, environment, readRuntime, redemption)),
+    Effect.sync(() =>
+      mounted(harness, environment, readRuntime, redemption, actionRuntime, observedLogs),
+    ),
     (app) => Effect.promise(() => app.dispose()).pipe(Effect.orDie),
   );
 
@@ -253,9 +383,8 @@ const makeSingleUseRedemption = (): GatewayAssertionRedemption => {
   };
 };
 
-// The mounted layers provide every runtime service; the handler's conservative unknown requirement
-// still requires an explicitly empty per-request context.
 const emptyRequestContext = Context.makeUnsafe<unknown>(new Map());
+
 const handle = (app: ReturnType<typeof mounted>, request: Request) =>
   Effect.promise(() => app.handler(request, emptyRequestContext));
 
@@ -279,10 +408,15 @@ const recoveryRequest = (invocationId: string, token?: string) => {
   });
 };
 
-const decisionRequest = (actionInvocationId: string, token?: string) => {
+const decisionRequest = (
+  actionInvocationId: string,
+  token?: string,
+  extraHeaders: Readonly<Record<string, string>> = {},
+) => {
   const headers = new Headers({
     'content-type': 'application/json',
     'x-correlation-id': 'decision-recovery-test',
+    ...extraHeaders,
   });
   if (token !== undefined) {
     headers.set('authorization', `Bearer ${token}`);
@@ -314,6 +448,18 @@ const commandRequest = (
     method: 'POST',
   });
 };
+
+const engagementRequest = (path: string, payload: EngagementTestPayload, token: string) =>
+  new Request(`https://party.ontos.test${path}`, {
+    body: JSON.stringify(payload),
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+      'idempotency-key': `engagement-${randomUUID()}`,
+      'x-correlation-id': `engagement-${randomUUID()}`,
+    },
+    method: 'POST',
+  });
 
 it.live(
   'every registered command is mounted and rejects missing structural input or authentication before the lifecycle',
@@ -435,6 +581,7 @@ it.live(
       );
     }),
 );
+
 it.live(
   'missing and malformed verification configuration are retryable and never reach the lifecycle',
   () =>
@@ -469,6 +616,7 @@ it.live(
       );
     }),
 );
+
 it.live(
   'redemption storage outages return safe retryable problems before Action and Read lifecycles',
   () =>
@@ -536,6 +684,7 @@ it.live(
       );
     }),
 );
+
 it.live(
   'generated governed reads authenticate through the shared adapter before starting ReadRuntime',
   () =>
@@ -562,22 +711,217 @@ it.live(
       };
       const app = yield* mountApp(harness, assertion.environment, readRuntime);
       yield* forEachSequential([undefined, 'not-a-jwt'], (token) =>
-        Effect.gen(function* rejectUnsignedRead() {
+        Effect.gen(function* rejectMissingGovernedCredentials() {
           const response = yield* handle(app, decisionRequest(randomUUID(), token));
           expect(response.status).toBe(401);
           expect(response.headers.get('www-authenticate')).toBe('Bearer');
           expect(response.headers.get('content-type') ?? '').toMatch(/application\/problem\+json/u);
           const body = yield* Effect.promise(() => response.json());
-          expect(Predicate.isTagged(body, 'PartyMatchDecisionAuthenticationProblem')).toBe(true);
+          expect(
+            Schema.is(Schema.TaggedStruct('PartyMatchDecisionAuthenticationProblem', {}))(body),
+          ).toBe(true);
           expect(reads).toBe(0);
         }),
       );
+      const missingCorrelation = yield* handle(
+        app,
+        decisionRequest(randomUUID(), assertion.token, { 'x-correlation-id': '' }),
+      );
+      expect(missingCorrelation.status).toBe(400);
+      expect(reads).toBe(0);
       const valid = yield* handle(app, decisionRequest(randomUUID(), assertion.token));
       expect(valid.status).toBe(404);
       expect(reads).toBe(1);
       expect(receivedPrincipals).toEqual([principal]);
+
+      const unavailableApp = yield* mountApp(harness, {}, readRuntime);
+      const unavailable = yield* handle(
+        unavailableApp,
+        decisionRequest(randomUUID(), assertion.otherToken),
+      );
+      expect(unavailable.status).toBe(503);
+      expect(unavailable.headers.get('www-authenticate')).toBe(null);
+      const body = yield* Effect.promise(() => unavailable.json());
+      expect(Schema.is(Schema.TaggedStruct('PartyMatchDecisionUnavailableProblem', {}))(body)).toBe(
+        true,
+      );
+      expect(body.retryable).toBe(true);
+      expect(reads).toBe(1);
     }),
 );
+
+it.live(
+  'the complete generated governed Read seam maps every Core failure to its declared HTTP problem',
+  () =>
+    Effect.gen(function* mapEveryGovernedReadFailure() {
+      const assertion = yield* makeAssertion();
+      const reason = 'private governed Read diagnostic';
+      const initialFailure = new ModuleStateCheckUnavailableError({
+        code: 'module_state_check_unavailable',
+        reason,
+      });
+      const cases: readonly [ReadCoreError, number, string][] = [
+        [initialFailure, 503, 'PartyMatchDecisionUnavailableProblem'],
+        [
+          new ModuleStateDeniedError({ code: 'module_state_denied', reason }),
+          403,
+          'PartyMatchDecisionForbiddenProblem',
+        ],
+        [
+          new OperationAuthenticationRequired({
+            code: 'operation_authentication_required',
+            reason,
+          }),
+          401,
+          'PartyMatchDecisionAuthenticationProblem',
+        ],
+        [
+          new OperationContextDenied({ code: 'operation_context_denied', reason }),
+          403,
+          'PartyMatchDecisionForbiddenProblem',
+        ],
+        [
+          new OperationContextInvalid({ code: 'operation_context_invalid', reason }),
+          403,
+          'PartyMatchDecisionForbiddenProblem',
+        ],
+        [
+          new OperationContextUnavailable({ code: 'operation_context_unavailable', reason }),
+          503,
+          'PartyMatchDecisionUnavailableProblem',
+        ],
+        [
+          new ReadEvidencePersistenceError({ code: 'read_evidence_persistence_failed', reason }),
+          503,
+          'PartyMatchDecisionUnavailableProblem',
+        ],
+        [
+          new ReadEvidenceValidationError({ code: 'read_evidence_invalid', reason }),
+          500,
+          'PartyMatchDecisionInternalProblem',
+        ],
+        [
+          new ReadHandlerExecutionError({ code: 'read_handler_execution_failed', reason }),
+          500,
+          'PartyMatchDecisionInternalProblem',
+        ],
+        [
+          new ReadHandlerNotFound({ code: 'read_handler_not_found', reason }),
+          404,
+          'PartyMatchDecisionNotFoundProblem',
+        ],
+        [
+          new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason }),
+          503,
+          'PartyMatchDecisionUnavailableProblem',
+        ],
+        [
+          new ReadInputValidationError({ code: 'read_input_invalid', reason }),
+          400,
+          'PartyMatchDecisionInvalidProblem',
+        ],
+        [
+          new ReadPermissionDenied({ code: 'read_permission_denied', reason }),
+          403,
+          'PartyMatchDecisionForbiddenProblem',
+        ],
+        [
+          new ReadPermissionUnavailable({ code: 'read_permission_unavailable', reason }),
+          503,
+          'PartyMatchDecisionUnavailableProblem',
+        ],
+        [
+          new ReadPolicyDenied({
+            code: 'read_policy_denied',
+            httpStatus: 409,
+            policyReasonCode: 'policy_conflict',
+            reason,
+          }),
+          409,
+          'PartyMatchDecisionPolicyConflictProblem',
+        ],
+        [
+          new ReadPolicyDenied({
+            code: 'read_policy_denied',
+            httpStatus: 422,
+            policyReasonCode: 'policy_ineligible',
+            reason,
+          }),
+          422,
+          'PartyMatchDecisionPolicyProblem',
+        ],
+        [
+          new ReadPolicyEvaluationError({ code: 'read_policy_evaluation_failed', reason }),
+          503,
+          'PartyMatchDecisionUnavailableProblem',
+        ],
+        [
+          new ReadResultValidationError({ code: 'read_result_invalid', reason }),
+          500,
+          'PartyMatchDecisionInternalProblem',
+        ],
+      ];
+      let failure: ReadCoreError = initialFailure;
+      let reads = 0;
+      const readRuntime: ReadRuntimeService = {
+        runRead: () => {
+          reads += 1;
+          return Effect.fail(failure);
+        },
+      };
+      const harness = yield* makeActionTestHarness();
+      const app = yield* mountApp(harness, assertion.environment, readRuntime);
+      yield* forEachSequential(cases, ([nextFailure, expectedStatus, expectedTag]) =>
+        Effect.gen(function* verifyGovernedReadFailure() {
+          failure = nextFailure;
+          const response = yield* handle(app, decisionRequest(randomUUID(), assertion.token));
+          expect(response.status, nextFailure.code).toBe(expectedStatus);
+          expect(response.headers.get('content-type') ?? '').toMatch(/application\/problem\+json/u);
+          expect(response.headers.get('www-authenticate')).toBe(
+            expectedStatus === 401 ? 'Bearer' : null,
+          );
+          const body = yield* Effect.promise(() => response.json());
+          expect(Schema.is(Schema.TaggedStruct(expectedTag, {}))(body), nextFailure.code).toBe(
+            true,
+          );
+          expect(body.status, nextFailure.code).toBe(expectedStatus);
+          expect(
+            (yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(body)).includes(
+              reason,
+            ),
+            nextFailure.code,
+          ).toBe(false);
+          if (expectedStatus === 503) {
+            expect(body.retryable, nextFailure.code).toBe(true);
+          }
+        }),
+      );
+      expect(reads).toBe(cases.length);
+    }),
+);
+
+it.live('the generated governed Read seam sanitizes unexpected runtime defects', () =>
+  Effect.gen(function* sanitizeGovernedReadDefect() {
+    const assertion = yield* makeAssertion();
+    const readRuntime: ReadRuntimeService = {
+      runRead: () => Effect.die('private governed Read defect'),
+    };
+    const harness = yield* makeActionTestHarness();
+    const app = yield* mountApp(harness, assertion.environment, readRuntime);
+    const response = yield* handle(app, decisionRequest(randomUUID(), assertion.token));
+    expect(response.status).toBe(500);
+    expect(response.headers.get('content-type') ?? '').toMatch(/application\/problem\+json/u);
+    const body = yield* Effect.promise(() => response.json());
+    expect(Schema.is(Schema.TaggedStruct('PartyMatchDecisionInternalProblem', {}))(body)).toBe(
+      true,
+    );
+    expect(body.status).toBe(500);
+    expect(
+      (yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(body)).includes('private'),
+    ).toBe(false);
+  }),
+);
+
 it.live(
   'replayed assertions are challenged before a second Action or generated Read lifecycle',
   () =>
@@ -645,20 +989,34 @@ it.live(
 );
 
 it.live('correlation and idempotency are mandatory before the Core Action lifecycle', () =>
-  Effect.gen(function* requireCorrelationAndIdempotency() {
+  Effect.gen(function* validateActionTransport() {
     const assertion = yield* makeAssertion();
     const harness = yield* makeActionTestHarness();
-    const app = yield* mountApp(harness, assertion.environment);
-
+    let runtimeCalls = 0;
+    const observingRuntime: ActionRuntimeService = {
+      resolveActionCommit: harness.runtime.resolveActionCommit,
+      runAction: (input) => {
+        runtimeCalls += 1;
+        return harness.runtime.runAction(input);
+      },
+    };
+    const app = yield* mountApp(
+      harness,
+      assertion.environment,
+      undefined,
+      nonPersistingRedemption,
+      observingRuntime,
+    );
     const missingKey = yield* handle(
       app,
       commandRequest('request-search-rebuild', {}, assertion.token),
     );
     expect(missingKey.status).toBe(428);
     const missingKeyBody = yield* Effect.promise(() => missingKey.json());
-    expect(Predicate.isTagged(missingKeyBody, 'PartyCommandPreconditionRequiredProblem')).toBe(
-      true,
-    );
+    expect(
+      Schema.is(Schema.TaggedStruct('PartyCommandPreconditionRequiredProblem', {}))(missingKeyBody),
+    ).toBe(true);
+    expect(runtimeCalls).toBe(1);
     const missingCorrelation = yield* handle(
       app,
       commandRequest('request-search-rebuild', {}, assertion.token, {
@@ -668,10 +1026,317 @@ it.live('correlation and idempotency are mandatory before the Core Action lifecy
     );
     expect(missingCorrelation.status).toBe(400);
     const missingCorrelationBody = yield* Effect.promise(() => missingCorrelation.json());
-    expect(Predicate.isTagged(missingCorrelationBody, 'PartyCommandInvalidRequestProblem')).toBe(
-      true,
+    expect(
+      Schema.is(Schema.TaggedStruct('PartyCommandInvalidRequestProblem', {}))(
+        missingCorrelationBody,
+      ),
+    ).toBe(true);
+    expect(runtimeCalls).toBe(1);
+    const oversizedCorrelation = yield* handle(
+      app,
+      commandRequest('request-search-rebuild', {}, assertion.token, {
+        'idempotency-key': 'oversized-correlation-test',
+        'x-correlation-id': 'x'.repeat(201),
+      }),
     );
+    expect(oversizedCorrelation.status).toBe(400);
+    yield* Schema.decodeUnknownEffect(PartyCommandInvalidRequestProblemSchema)(
+      yield* Effect.promise(() => oversizedCorrelation.json()),
+    );
+    expect(runtimeCalls).toBe(1);
     expect(harness.snapshot().invocations.length).toBe(0);
+  }),
+);
+
+it.live(
+  'the governed runner passes safe transport metadata through one complete Action execution',
+  () =>
+    Effect.gen(function* preserveSafeActionTransport() {
+      const assertion = yield* makeAssertion();
+      const correlationId = 'x'.repeat(200);
+      const harness = yield* makeActionTestHarness({
+        actionPermission: 'allowed',
+        tenantPermission: 'allowed',
+      });
+      const app = yield* mountApp(harness, assertion.environment);
+      const response = yield* handle(
+        app,
+        commandRequest('request-search-rebuild', {}, assertion.token, {
+          'idempotency-key': 'transport-test',
+          'x-correlation-id': correlationId,
+          'x-trace-id': 'trace-transport-test',
+        }),
+      );
+      expect(response.status).toBe(200);
+      const snapshot = harness.snapshot();
+      expect(snapshot.invocations.length).toBe(1);
+      expect(snapshot.committed.length).toBe(1);
+      expect(snapshot.transactionCount).toBe(1);
+      expect(snapshot.committed[0]?.transport).toEqual({
+        correlationId,
+        idempotencyKey: 'transport-test',
+        traceId: 'trace-transport-test',
+      });
+      expect(snapshot.committed[0]?.principal).toEqual(principal);
+      expect(snapshot.committed[0]?.actionKey).toBe('party.registry.request-search-rebuild');
+    }),
+);
+
+it.live('a decoded relationship timestamp reaches the Action runtime exactly once', () =>
+  Effect.gen(function* decodeRelationshipTimestampOnce() {
+    const assertion = yield* makeAssertion();
+    const harness = yield* makeActionTestHarness();
+    const failure = new ActionPayloadValidationError({
+      code: 'action_payload_invalid',
+      reason: 'runtime observation fixture',
+    });
+    let runtimeCalls = 0;
+    const actionRuntime: ActionRuntimeService = {
+      resolveActionCommit: harness.runtime.resolveActionCommit,
+      runAction: () => {
+        runtimeCalls += 1;
+        return Effect.fail(failure);
+      },
+    };
+    const app = yield* mountApp(
+      harness,
+      assertion.environment,
+      undefined,
+      nonPersistingRedemption,
+      actionRuntime,
+    );
+    const response = yield* handle(
+      app,
+      commandRequest('create-party-relationship', relationshipPayload, assertion.token, {
+        'idempotency-key': 'relationship-timestamp-test',
+      }),
+    );
+    expect(response.status).toBe(400);
+    const body = yield* Effect.promise(() => response.json());
+    expect(Predicate.isTagged(body, 'PartyCommandInvalidRequestProblem')).toBe(true);
+    expect(runtimeCalls).toBe(1);
+  }),
+);
+
+it.live('an unexpected runtime defect is sanitized by the governed outer HTTP seam', () =>
+  Effect.gen(function* sanitizeActionRuntimeDefect() {
+    const assertion = yield* makeAssertion();
+    const harness = yield* makeActionTestHarness();
+    const defectiveRuntime: ActionRuntimeService = {
+      resolveActionCommit: () => Effect.die('private resolution defect'),
+      runAction: () => Effect.die('private governed runner defect'),
+    };
+    const observedLogs: string[] = [];
+    const app = yield* mountApp(
+      harness,
+      assertion.environment,
+      undefined,
+      nonPersistingRedemption,
+      defectiveRuntime,
+      observedLogs,
+    );
+    const response = yield* handle(
+      app,
+      commandRequest('request-search-rebuild', {}, assertion.token, {
+        'idempotency-key': 'runner-defect-test',
+      }),
+    );
+    expect(response.status).toBe(500);
+    const body = yield* Effect.promise(() => response.json());
+    expect(Predicate.isTagged(body, 'PartyCommandInternalProblem')).toBe(true);
+    expect(body.status).toBe(500);
+    expect(
+      (yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(body)).includes(
+        'private governed runner defect',
+      ),
+    ).toBe(false);
+    expect(harness.snapshot().invocations.length).toBe(0);
+    expect(observedLogs.length).toBe(1);
+    const [entry] = observedLogs;
+    assert.isOk(entry);
+    expect(entry).toMatch(/Unexpected governed Action HTTP defect/u);
+    expect(entry).toMatch(/private governed runner defect/u);
+    expect(entry).toMatch(/party\.registry\.request-search-rebuild/u);
+    expect(entry).toMatch(/party-command-test/u);
+    expect(entry).not.toMatch(new RegExp(assertion.token, 'u'));
+    expect(entry).not.toMatch(/runner-defect-test/u);
+  }),
+);
+
+it.live('the endpoint-owned mapper preserves representative Core failure semantics', () =>
+  Effect.gen(function* mapRepresentativeActionFailures() {
+    const assertion = yield* makeAssertion();
+    const cases: readonly [failure: ActionCoreError, status: number, tag: string][] = [
+      [
+        new ActionPayloadValidationError({
+          code: 'action_payload_invalid',
+          reason: 'invalid payload fixture',
+        }),
+        400,
+        'PartyCommandInvalidRequestProblem',
+      ],
+      [
+        new ActionPermissionDenied({
+          code: 'action_permission_denied',
+          reason: 'permission denied fixture',
+        }),
+        403,
+        'PartyCommandForbiddenProblem',
+      ],
+      [
+        new ActionPermissionCheckError({
+          code: 'action_permission_check_failed',
+          reason: 'permission unavailable fixture',
+        }),
+        503,
+        'PartyCommandUnavailableProblem',
+      ],
+      [
+        new ModuleStateDeniedError({
+          code: 'module_state_denied',
+          reason: 'module denied fixture',
+        }),
+        403,
+        'PartyCommandForbiddenProblem',
+      ],
+      [
+        new ModuleStateCheckUnavailableError({
+          code: 'module_state_check_unavailable',
+          reason: 'module unavailable fixture',
+        }),
+        503,
+        'PartyCommandUnavailableProblem',
+      ],
+      [
+        new ActionIdempotencyKeyRequired({
+          code: 'action_idempotency_key_required',
+          reason: 'idempotency fixture',
+        }),
+        428,
+        'PartyCommandPreconditionRequiredProblem',
+      ],
+      [
+        new ActionRequestHashConflict({
+          code: 'action_request_hash_conflict',
+          reason: 'conflict fixture',
+        }),
+        409,
+        'PartyCommandConflictProblem',
+      ],
+      [
+        new ActionInvocationNotFound({
+          code: 'action_invocation_not_found',
+          reason: 'not-found fixture',
+        }),
+        404,
+        'PartyCommandNotFoundProblem',
+      ],
+      [
+        new ActionInvocationPersistenceError({
+          code: 'action_invocation_persistence_failed',
+          reason: 'persistence fixture',
+        }),
+        503,
+        'PartyCommandUnavailableProblem',
+      ],
+      [
+        new ActionPolicyDenied({
+          code: 'action_policy_denied',
+          policyReasonCode: 'fixture_ineligible',
+          reason: 'policy denial fixture',
+        }),
+        422,
+        'PartyCommandUnprocessableProblem',
+      ],
+      [
+        new ActionPolicyEvaluationError({
+          code: 'action_policy_evaluation_failed',
+          reason: 'policy evaluation fixture',
+        }),
+        503,
+        'PartyCommandUnavailableProblem',
+      ],
+      [
+        new ActionHandlerExecutionError({
+          code: 'action_handler_execution_failed',
+          reason: 'handler failure fixture',
+        }),
+        500,
+        'PartyCommandInternalProblem',
+      ],
+    ];
+
+    yield* forEachSequential(cases, ([failure, expectedStatus, expectedTag]) =>
+      Effect.gen(function* verifyActionFailureMapping() {
+        const harness = yield* makeActionTestHarness();
+        const failingRuntime: ActionRuntimeService = {
+          resolveActionCommit: harness.runtime.resolveActionCommit,
+          runAction: () => Effect.fail(failure),
+        };
+        const app = yield* mountApp(
+          harness,
+          assertion.environment,
+          undefined,
+          nonPersistingRedemption,
+          failingRuntime,
+        );
+        const response = yield* handle(
+          app,
+          commandRequest('request-search-rebuild', {}, assertion.token, {
+            'idempotency-key': `mapping-${failure.code}`,
+          }),
+        );
+        expect(response.status, failure.code).toBe(expectedStatus);
+        const body = yield* Effect.promise(() => response.json());
+        expect(Predicate.isTagged(body, expectedTag), failure.code).toBe(true);
+      }),
+    );
+  }),
+);
+
+it.live('endpoint-local mappings keep declared not-found capability distinct over HTTP', () =>
+  Effect.gen(function* preserveEndpointNotFoundCapabilities() {
+    const assertion = yield* makeAssertion();
+    const failure = new ActionInvocationNotFound({
+      code: 'action_invocation_not_found',
+      reason: 'endpoint capability fixture',
+    });
+    const actionRuntime: ActionRuntimeService = {
+      resolveActionCommit: () => Effect.die('commit recovery is outside the fixture'),
+      runAction: () => Effect.fail(failure),
+    };
+    const app = yield* Effect.acquireRelease(
+      Effect.sync(() => mountedOrganizationEngagement(assertion.environment, actionRuntime)),
+      (resource) => Effect.promise(() => resource.dispose()).pipe(Effect.orDie),
+    );
+    const profileRef = {
+      moduleId: 'party.registry',
+      resourceId: randomUUID(),
+      resourceType: 'party.registry.organization-engagement-profile',
+      tenantId: principal.tenantId,
+    } as const;
+    const attachResponse = yield* handle(
+      app,
+      engagementRequest('/contacts/engagement/organizations/attach', { partyRef }, assertion.token),
+    );
+    expect(attachResponse.status).toBe(500);
+    const attachBody = yield* Schema.decodeUnknownEffect(ProblemTagSchema)(
+      yield* Effect.promise(() => attachResponse.json()),
+    );
+    expect(Predicate.isTagged(attachBody, 'ContactsInternalProblem')).toBe(true);
+    const archiveResponse = yield* handle(
+      app,
+      engagementRequest(
+        '/contacts/engagement/organizations/archive',
+        { profileRef },
+        assertion.otherToken,
+      ),
+    );
+    expect(archiveResponse.status).toBe(404);
+    const archiveBody = yield* Schema.decodeUnknownEffect(ProblemTagSchema)(
+      yield* Effect.promise(() => archiveResponse.json()),
+    );
+    expect(Predicate.isTagged(archiveBody, 'ContactsNotFoundProblem')).toBe(true);
   }),
 );
 

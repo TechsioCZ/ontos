@@ -77,6 +77,26 @@ const createWorkspace = Effect.fn('createWorkspace')(function* createWorkspaceEf
   );
   yield* writeFixtureFile(
     root,
+    `verticals/${GENERATED_OWNER.slug}/shared/api.ts`,
+    `import { HttpApi } from '@modern-js/plugin-bff/effect-client';
+export const isolationOwnerApi = HttpApi.make('IsolationOwnerApi');
+`,
+  );
+  yield* writeFixtureFile(
+    root,
+    `verticals/${GENERATED_OWNER.slug}/api/index.ts`,
+    `import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
+import type { EffectRuntimeLayer } from '@modern-js/plugin-bff/effect-edge';
+import { isolationOwnerApi } from '../shared/api.ts';
+
+const layer = HttpApiBuilder.layer(isolationOwnerApi).pipe(
+  Layer.provide(Layer.empty),
+) satisfies EffectRuntimeLayer;
+export default defineEffectBff({ api: isolationOwnerApi, layer });
+`,
+  );
+  yield* writeFixtureFile(
+    root,
     `verticals/${GENERATED_OWNER.slug}/src/routes/ultramodern-route-head.tsx`,
     'export const UltramodernRouteHead = () => null;\n',
   );

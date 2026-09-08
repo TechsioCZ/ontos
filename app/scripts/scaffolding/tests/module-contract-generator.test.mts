@@ -72,11 +72,11 @@ const ModuleContractDocumentSchema = Schema.Struct({
   schemaVersion: Schema.String,
 });
 const decodeModulePackage = (source: string) =>
-  Schema.decodeUnknownSync(ModulePackageSchema, { onExcessProperty: 'preserve' })(
+  Schema.decodeUnknownEffect(ModulePackageSchema, { onExcessProperty: 'preserve' })(
     JSON.parse(source),
   );
 const decodeModuleContract = (source: string) =>
-  Schema.decodeUnknownSync(ModuleContractDocumentSchema, { onExcessProperty: 'preserve' })(
+  Schema.decodeUnknownEffect(ModuleContractDocumentSchema, { onExcessProperty: 'preserve' })(
     JSON.parse(source),
   );
 
@@ -90,8 +90,27 @@ const write = (root: string, relative: string, content: string): Effect.Effect<v
     yield* Effect.promise(() => writeFile(target, content, 'utf-8'));
   });
 
+const writePinnedEffectApi = (root: string, slug: string): Effect.Effect<void, unknown> =>
+  Effect.gen(function* mergedScenario1() {
+    yield* write(
+      root,
+      `verticals/${slug}/shared/api.ts`,
+      `export const fixtureApi = HttpApi.make('FixtureApi').add(HttpApiGroup.make('fixture'));\n`,
+    );
+    yield* write(
+      root,
+      `verticals/${slug}/api/index.ts`,
+      `const fixtureLayer = HttpApiBuilder.group(fixtureApi, 'fixture', handlers => handlers);
+const layer = HttpApiBuilder.layer(fixtureApi).pipe(
+  Layer.provide(fixtureLayer),
+) satisfies EffectRuntimeLayer;
+export default defineEffectBff({ api: fixtureApi, layer });
+`,
+    );
+  });
+
 const createFixture = (): Effect.Effect<string, unknown> =>
-  Effect.gen(function* scenario2() {
+  Effect.gen(function* mergedScenario2() {
     const root = yield* Effect.promise(() =>
       mkdtemp(path.join(tmpdir(), 'ontos-module-contract-')),
     );
@@ -160,6 +179,10 @@ const createFixture = (): Effect.Effect<string, unknown> =>
       root,
       'verticals/documents-center/module-federation.config.ts',
       'export default {};\n',
+    );
+    yield* Effect.all(
+      [writePinnedEffectApi(root, APP_ID), writePinnedEffectApi(root, DOCUMENTS_APP_ID)],
+      { concurrency: 'unbounded' },
     );
     yield* write(
       root,
@@ -397,7 +420,7 @@ it.live(
         expect(registration).toMatch(/defineVerticalRuntimeRegistration/u);
         expect(registration).toMatch(/generated-module-registration-workers/u);
         expect(registration).not.toMatch(/handler|migration|route/u);
-        const packageJson = decodeModulePackage(
+        const packageJson = yield* decodeModulePackage(
           yield* Effect.promise(() => readFile(path.join(root, PROPERTY_PACKAGE_PATH), 'utf-8')),
         );
         expect(packageJson.dependencies).toEqual({
@@ -419,7 +442,7 @@ it.live(
           registration: './vertical.registration.ts',
           schemaVersion: 2,
         });
-        const tsconfig = Schema.decodeUnknownSync(ModuleTsconfigSchema)(
+        const tsconfig = yield* Schema.decodeUnknownEffect(ModuleTsconfigSchema)(
           JSON.parse(
             yield* Effect.promise(() =>
               readFile(path.join(root, 'verticals/property-registry/tsconfig.json'), 'utf-8'),
@@ -471,7 +494,7 @@ it.live(
         const firstContent = yield* Effect.promise(() => readFile(first.path, 'utf-8'));
         const packagePath = path.join(root, PROPERTY_PACKAGE_PATH);
         const packageContent = yield* Effect.promise(() => readFile(packagePath, 'utf-8'));
-        const decodedPackage = decodeModulePackage(packageContent);
+        const decodedPackage = yield* decodeModulePackage(packageContent);
         const incompatiblePackage = {
           ...decodedPackage,
           modernjs: {
@@ -497,7 +520,7 @@ it.live(
         }).pipe(Effect.provide(NodeServices.layer));
         expect(yield* Effect.promise(() => readFile(second.path, 'utf-8'))).toBe(firstContent);
         expect(second.etag).toBe(first.etag);
-        const document = decodeModuleContract(firstContent);
+        const document = yield* decodeModuleContract(firstContent);
         expect(document.deployment.appId).toBe(APP_ID);
         expect(document.manifest.module.id).toBe(MODULE_ID);
         expect(document.schemaVersion).toBe('2');
@@ -517,7 +540,7 @@ it.live(
           vertical: DOCUMENTS_APP_ID,
           workspaceRoot: root,
         }).pipe(Effect.provide(NodeServices.layer));
-        const secondDocument = decodeModuleContract(
+        const secondDocument = yield* decodeModuleContract(
           yield* Effect.promise(() => readFile(secondDeployment.path, 'utf-8')),
         );
         expect(secondDocument.deployment.appId).toBe(DOCUMENTS_APP_ID);
@@ -597,6 +620,60 @@ it('permits owner-local registration imports but rejects cross-deployment owner 
     ) ?? '',
   ).toMatch(/may not import/u);
 });
+
+it.live(
+  'module-contract ignores non-code roots and nested semicolons when inserting API slots',
+  Effect.fn(function* mergedScenario5() {
+    yield* withFixture(
+      Effect.fn(function* mergedScenario4(root) {
+        const source = `// export const commentApi = HttpApi.make('Comment');
+const example = "export const stringApi = HttpApi.make('String');";
+export const fixtureApi = HttpApi.make('Fixture;Api')
+  /* semicolon ; before the end of the expression */
+  .pipe((api) => { const label = ';'; return api; });
+export const untouched = true;
+`;
+        yield* write(root, 'verticals/property-registry/shared/api.ts', source);
+        yield* scaffold(root);
+        const generated = yield* Effect.promise(() =>
+          readFile(path.join(root, 'verticals/property-registry/shared/api.ts'), 'utf-8'),
+        );
+        expect(generated).toMatch(/HttpApi\.make\('Fixture;Api'\)/u);
+        expect(generated).toMatch(
+          /return api; \}\)\s*\/\/ <generated-governed-http-api-additions>/u,
+        );
+        expect(generated).toMatch(/export const governedHttpApi = fixtureApi;/u);
+        expect(generated).toMatch(/export const untouched = true;/u);
+      }),
+    );
+  }),
+);
+
+it.live(
+  'module-contract injects only its own Layer binding into pinned handler roots',
+  Effect.fn(function* mergedScenario8() {
+    yield* withFixture(
+      Effect.fn(function* mergedScenario7(root) {
+        yield* write(
+          root,
+          'verticals/property-registry/api/index.ts',
+          `const layer = HttpApiBuilder.layer(fixtureApi).pipe(
+  identity,
+) satisfies EffectRuntimeLayer;
+export default defineEffectBff({ api: fixtureApi, layer });
+`,
+        );
+        yield* scaffold(root);
+        const generated = yield* Effect.promise(() =>
+          readFile(path.join(root, 'verticals/property-registry/api/index.ts'), 'utf-8'),
+        );
+        expect(generated).toMatch(/GovernedReadLayer\.provide\(governedReadApiHandlersLive\)/u);
+        expect(generated).toMatch(/GovernedReadLayer\.orDie/u);
+        expect(generated).not.toMatch(/\bLayer\./u);
+      }),
+    );
+  }),
+);
 
 it('requires concrete HttpApi contract schemas through Problem Details helpers', () => {
   expect(

@@ -2,8 +2,7 @@ import { ActionRuntime } from '@app/core-runtime';
 import type { ActionRegistration, DomainEventContractMap } from '@app/core-runtime';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
 import type { HttpServerRequest } from 'effect/unstable/http';
-import { Redacted } from 'effect';
-import type { Schema } from 'effect';
+import { Redacted, Schema } from 'effect';
 
 import { partyRegistryApi } from '../shared/api.ts';
 import type {
@@ -11,6 +10,7 @@ import type {
   ResolvePartyCommandCommitResult,
 } from '../shared/command-api.ts';
 import { ActionInvocationIdSchema } from '../shared/domain/correction-contracts.ts';
+import { bindActionHttpRunner } from './action-http-runner.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 import { partyCommandRegistrations } from './party-command-registrations.ts';
 import {
@@ -28,11 +28,16 @@ const verifyPrincipal = (authorization: Redacted.Redacted<string | undefined>) =
     unavailable: partyCommandProblem.unavailable,
   });
 
+const runActionHttp = bindActionHttpRunner({
+  authentication: partyCommandProblem.authentication,
+  unavailable: partyCommandProblem.unavailable,
+});
+
 const runPartyCommand = Effect.fn('PartyCommandServer.runPartyCommand')(
   function* runPartyCommandEffect<
-    PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
-    ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
-    DomainErrorSchema extends Schema.ConstraintDecoder<PartyActionError, never>,
+    PayloadSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,
+    ResultSchema extends Schema.ConstraintDecoder<unknown>,
+    DomainErrorSchema extends Schema.ConstraintDecoder<PartyActionError>,
     DomainEvents extends DomainEventContractMap,
     Owner extends string,
     Services,
@@ -47,34 +52,79 @@ const runPartyCommand = Effect.fn('PartyCommandServer.runPartyCommand')(
       Services,
       Requirements
     >,
-    payload: Schema.Schema.Type<PayloadSchema> | Schema.Codec.Encoded<PayloadSchema>,
+    payload: PayloadSchema['Type'],
     idempotencyKey: string | undefined,
     request: HttpServerRequest.HttpServerRequest,
   ) {
     const correlationId = request.headers['x-correlation-id'];
-    if (
-      correlationId === undefined ||
-      correlationId.trim().length === 0 ||
-      correlationId.length > 200
-    ) {
-      return yield* failPartyCommandProblem(partyCommandProblem.invalid());
-    }
-    const principal = yield* verifyPrincipal(Redacted.make(request.headers['authorization']));
-    if (idempotencyKey === undefined || idempotencyKey.trim().length === 0) {
-      return yield* failPartyCommandProblem(partyCommandProblem.precondition());
+    if (correlationId !== undefined && correlationId.length > 200) {
+      return yield* Effect.fail(partyCommandProblem.invalid());
     }
     const traceId = request.headers['x-trace-id'];
-    const transport =
-      traceId === undefined
-        ? { correlationId, idempotencyKey }
-        : { correlationId, idempotencyKey, traceId };
-    const runtime = yield* ActionRuntime;
-    return yield* runtime
-      .runAction({ payload, principal, registration, transport })
-      .pipe(
-        Effect.mapError(mapPartyActionProblem),
-        Effect.catchIf(isPartyCommandAuthenticationProblem, failPartyCommandProblem),
-      );
+    return yield* runActionHttp<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Owner,
+      Services,
+      Requirements,
+      ReturnType<typeof mapPartyActionProblem>,
+      ReturnType<typeof partyCommandProblem.invalid>,
+      ReturnType<typeof partyCommandProblem.internal>
+    >({
+      endpointHeaders: {
+        idempotencyKey,
+        traceId,
+      },
+      internalProblem: partyCommandProblem.internal,
+      invalidCorrelationProblem: partyCommandProblem.invalid,
+      mapError: mapPartyActionProblem,
+      payload,
+      registration,
+      requestHeaders: {
+        authorization: Redacted.make(request.headers['authorization']),
+        'x-correlation-id': request.headers['x-correlation-id'],
+      },
+    }).pipe(Effect.catchIf(isPartyCommandAuthenticationProblem, failPartyCommandProblem));
+  },
+);
+
+const runWirePayloadPartyCommand = Effect.fn('PartyCommandServer.runWirePayloadPartyCommand')(
+  function* runWirePayloadPartyCommandEffect<
+    PayloadSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,
+    ResultSchema extends Schema.ConstraintDecoder<unknown>,
+    DomainErrorSchema extends Schema.ConstraintDecoder<PartyActionError>,
+    DomainEvents extends DomainEventContractMap,
+    Owner extends string,
+    Services,
+    Requirements,
+  >(
+    registration: ActionRegistration<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Owner,
+      Services,
+      Requirements
+    >,
+    payload: PayloadSchema['Encoded'],
+    idempotencyKey: string | undefined,
+    request: HttpServerRequest.HttpServerRequest,
+  ) {
+    const decodedPayload = yield* Schema.decodeUnknownEffect(registration.descriptor.payloadSchema)(
+      payload,
+    ).pipe(Effect.mapError(partyCommandProblem.invalid));
+    return yield* runPartyCommand<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Owner,
+      Services,
+      Requirements
+    >(registration, decodedPayload, idempotencyKey, request);
   },
 );
 
@@ -84,7 +134,7 @@ export const partyRegistryCommandsLive = HttpApiBuilder.group(
   (handlers) =>
     handlers
       .handle('addContactPoint', ({ payload, headers, request }) =>
-        runPartyCommand(
+        runWirePayloadPartyCommand(
           partyCommandRegistrations.addContactPoint,
           payload,
           headers['idempotency-key'],
@@ -92,7 +142,7 @@ export const partyRegistryCommandsLive = HttpApiBuilder.group(
         ),
       )
       .handle('addPartyOfficialIdentifier', ({ payload, headers, request }) =>
-        runPartyCommand(
+        runWirePayloadPartyCommand(
           partyCommandRegistrations.addPartyOfficialIdentifier,
           payload,
           headers['idempotency-key'],
@@ -148,7 +198,7 @@ export const partyRegistryCommandsLive = HttpApiBuilder.group(
         ),
       )
       .handle('createParty', ({ payload, headers, request }) =>
-        runPartyCommand(
+        runWirePayloadPartyCommand(
           partyCommandRegistrations.createParty,
           payload,
           headers['idempotency-key'],
@@ -252,7 +302,7 @@ export const partyRegistryCommandsLive = HttpApiBuilder.group(
         ),
       )
       .handle('updateParty', ({ payload, headers, request }) =>
-        runPartyCommand(
+        runWirePayloadPartyCommand(
           partyCommandRegistrations.updateParty,
           payload,
           headers['idempotency-key'],

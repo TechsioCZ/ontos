@@ -51,7 +51,7 @@ import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
 import { updatePartyAction } from '../../src/actions/update-party.action.ts';
 import type { AresApplyRequest } from '../../src/api/action-gateway.ts';
-import { makeActionGateway } from '../../src/api/action-gateway.ts';
+import { makeOperationGateway } from '../../src/api/action-gateway.ts';
 import { executeAresLookupWithAuthorization } from '../../src/api/ares-lookup-client.ts';
 import {
   correctPartyFactWithAuthorization,
@@ -146,7 +146,7 @@ it.live(
         );
       const authorization = () =>
         sign(fixture.manager).pipe(Effect.map((token) => `Bearer ${token}`));
-      const gateway = makeActionGateway(() =>
+      const gateway = makeOperationGateway(() =>
         sign(fixture.manager).pipe(
           Effect.map((signedToken) => ({ expiresAt: 0, token: signedToken })),
         ),
@@ -300,6 +300,24 @@ it.live(
         ),
       );
       const partyRef = yield* create();
+      const replayAuthorization = yield* authorization();
+      const replayLookup = () =>
+        runHttpEffect(
+          executeAresLookupWithAuthorization(
+            { ico: lookupIco },
+            replayAuthorization,
+            randomUUID(),
+            { baseUrl },
+          ),
+        );
+      yield* replayLookup();
+      const providerRequestsBeforeReplay = providerRequests;
+      const replayRejected = yield* replayLookup().pipe(
+        Effect.as(false),
+        Effect.catchTag('AresLookupAuthenticationProblem', () => Effect.succeed(true)),
+      );
+      expect(replayRejected).toBe(true);
+      expect(providerRequests).toBe(providerRequestsBeforeReplay);
       const observation = yield* lookup();
       const encodedObservation = yield* Schema.encodeEffect(AresSubjectEvidenceSchema)(observation);
       const requestFor = (target: PartyRef): AresApplyRequest => ({
@@ -419,7 +437,7 @@ it.live(
       expect(replay.skipped.length).toBe(3);
       const afterReplay = yield* state();
       expect(afterReplay.core.events.length).toBe(persisted.core.events.length);
-      const deniedGateway = makeActionGateway(() =>
+      const deniedGateway = makeOperationGateway(() =>
         sign(fixture.denied).pipe(
           Effect.map((signedToken) => ({ expiresAt: 0, token: signedToken })),
         ),

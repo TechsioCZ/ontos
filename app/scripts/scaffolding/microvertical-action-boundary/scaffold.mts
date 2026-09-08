@@ -1,4 +1,4 @@
-import { Array as EffectArray, Effect, FileSystem, Option, Schema, Predicate } from 'effect';
+import { Array as EffectArray, Effect, FileSystem, Option, Predicate, Schema } from 'effect';
 import {
   createMutationEffect,
   discoverOntosModuleEffect,
@@ -166,41 +166,49 @@ export const GatewayAssertionRedemptionLive = Layer.succeed(
 );
 `;
 
+export const renderActionHttpRunner = (
+  vertical: Pick<VerticalMetadata, 'appId'>,
+): string => `${ACTION_BOUNDARY_GENERATOR_HEADER}
+// @ontos-action-boundary-owner ${vertical.appId}
+import { bindGovernedActionHttp } from '@app/core-runtime/http/action-runner';
+import type { PrincipalAuthenticationProblems } from '@app/core-runtime/http/principal-authentication';
+import { authenticateOperationPrincipal } from './auth/action-principal.ts';
+
+/**
+ * Owner-bound governed Action transport. Endpoint contracts, registrations, and exhaustive
+ * public Problem Details mappings remain explicit at each local HttpApi handler.
+ */
+export const bindActionHttpRunner = <AuthenticationProblem, UnavailableProblem>(
+  problems: PrincipalAuthenticationProblems<AuthenticationProblem, UnavailableProblem>,
+) =>
+  bindGovernedActionHttp({
+    authenticate: (authorization) => authenticateOperationPrincipal(authorization, problems),
+  });
+`;
+
 const renderClient = (vertical: VerticalMetadata): string => `${ACTION_BOUNDARY_GENERATOR_HEADER}
 // @ontos-action-boundary-owner ${vertical.appId}
 // @ontos-action-boundary-audience ${vertical.appId}
-import { issueGatewayContext } from '@app/shared-contracts';
-import type {
-  GatewayContextClientEffect,
-  GatewayContextClientOptions,
-  GatewayContextResponse,
+import {
+  issueGatewayContext,
+  makeOperationGateway as makeSharedOperationGateway,
 } from '@app/shared-contracts';
-import { Effect } from 'effect';
+import type {
+  GatewayContextClientError,
+  OperationGatewayIssuer as SharedOperationGatewayIssuer,
+} from '@app/shared-contracts';
 
 export const ACTION_GATEWAY_AUDIENCE = '${vertical.appId}' as const;
 
-export type ActionGatewayIssuer = (
-  payload: { readonly audience: typeof ACTION_GATEWAY_AUDIENCE },
-  options?: GatewayContextClientOptions,
-) => GatewayContextClientEffect<GatewayContextResponse>;
+export type OperationGatewayIssuer = SharedOperationGatewayIssuer<
+  typeof ACTION_GATEWAY_AUDIENCE,
+  GatewayContextClientError
+>;
 
-export type ActionGatewayAttempt<Success, Failure> = (
-  authorization: string,
-) => Effect.Effect<Success, Failure>;
+export const makeOperationGateway = (acquire: OperationGatewayIssuer = issueGatewayContext) =>
+  makeSharedOperationGateway(ACTION_GATEWAY_AUDIENCE, acquire);
 
-export const makeActionGateway = (acquire: ActionGatewayIssuer = issueGatewayContext) => ({
-  invoke: <Success, Failure>(
-    attempt: ActionGatewayAttempt<Success, Failure>,
-    options: GatewayContextClientOptions = {},
-  ) =>
-    acquire({ audience: ACTION_GATEWAY_AUDIENCE }, options).pipe(
-      Effect.flatMap(({ token }) => attempt(\`Bearer \${token}\`)),
-    ),
-});
-
-export const actionGateway = makeActionGateway();
-export const makeOperationGateway = makeActionGateway;
-export const operationGateway = actionGateway;
+export const operationGateway = makeOperationGateway();
 `;
 
 export const planActionBoundaryScaffold = (
@@ -243,6 +251,15 @@ export const planActionBoundaryScaffold = (
         'gateway-assertion-redemption.ts',
       ),
     );
+    const runnerPath = yield* trySync(() =>
+      resolveContainedPath(
+        workspaceRoot,
+        'verticals',
+        vertical.slug,
+        'api',
+        'action-http-runner.ts',
+      ),
+    );
     const serverMutation = yield* createOrAcceptOwnedMutation(
       serverPath,
       renderActionPrincipalServer(vertical),
@@ -258,12 +275,17 @@ export const planActionBoundaryScaffold = (
     );
     const clientMutation = yield* createOrAcceptOwnedMutation(clientPath, renderClient(vertical), [
       `ACTION_GATEWAY_AUDIENCE = '${vertical.appId}'`,
-      'makeActionGateway',
+      'makeOperationGateway',
     ]);
     const redemptionMutation = yield* createOrAcceptOwnedMutation(
       redemptionPath,
       renderGatewayAssertionRedemptionAdapter(vertical),
       ['GatewayAssertionRedemption', `@ontos-action-boundary-owner ${vertical.appId}`],
+    );
+    const runnerMutation = yield* createOrAcceptOwnedMutation(
+      runnerPath,
+      renderActionHttpRunner(vertical),
+      ['bindActionHttpRunner', `@ontos-action-boundary-owner ${vertical.appId}`],
     );
     const dependencyMutation = yield* trySync(() =>
       Option.fromNullishOr(
@@ -279,12 +301,13 @@ export const planActionBoundaryScaffold = (
       serverMutation,
       clientMutation,
       redemptionMutation,
+      runnerMutation,
       dependencyMutation,
     ]);
     yield* trySync(() => ensureUniqueMutationPaths(mutations));
     return {
       mutations,
-      result: { appId: vertical.appId, clientPath, redemptionPath, serverPath },
+      result: { appId: vertical.appId, clientPath, redemptionPath, runnerPath, serverPath },
     };
   });
 

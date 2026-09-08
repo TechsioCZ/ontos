@@ -16,7 +16,7 @@ import { PartyIdSchema } from '../../shared/domain/identity-contracts.ts';
 import {
   AresApplySelectionInvalid,
   applyAresObservationWithActions as applyAresObservation,
-  makeActionGateway,
+  makeOperationGateway,
 } from '../../src/api/action-gateway.ts';
 import type {
   AresApplyRequest,
@@ -165,7 +165,7 @@ const makeInvoker = (
       }),
   };
 };
-const gateway = makeActionGateway(() =>
+const gateway = makeOperationGateway(() =>
   Effect.succeed({ expiresAt: 1_788_430_000, token: 'signed-gateway-token' }),
 );
 const makeReads = (displayName: string | null = null): AresApplyReads => ({
@@ -553,6 +553,9 @@ it.layer(Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)))('ARES applica
         const calls: string[] = [];
         const selection = Option.getOrThrow(Option.fromNullishOr(request.selections[1]));
         expect(selection).toBeDefined();
+        const encodedEvidence = yield* Schema.encodeEffect(AresAppliedEvidenceSchema)(
+          historicalEvidence('ICO'),
+        );
         const outcome = yield* applyAresObservation(
           { ...request, selections: [selection] },
           makeInvoker(calls),
@@ -564,9 +567,7 @@ it.layer(Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)))('ARES applica
                 Effect.succeed({
                   items: [
                     {
-                      externalEvidence: Schema.encodeSync(AresAppliedEvidenceSchema)(
-                        historicalEvidence('ICO'),
-                      ),
+                      externalEvidence: encodedEvidence,
                       identifierType: 'ICO' as const,
                       namespace: 'CZ:ICO',
                       normalizedValue: '87654321',
@@ -604,7 +605,7 @@ it.layer(Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)))('ARES applica
         const tokens: string[] = [];
         const calls: string[] = [];
         const delegate = makeReads();
-        const issued = makeActionGateway(() => {
+        const issued = makeOperationGateway(() => {
           const token = `token-${tokens.length + 1}`;
           tokens.push(token);
           return Effect.succeed({ expiresAt: 1_788_430_000, token });

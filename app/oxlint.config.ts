@@ -86,6 +86,7 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
       seamPaths: [
         '**/http-error-seam.ts',
         '**/http-error-seam.tsx',
+        'packages/core-runtime/src/http/governed-read.ts',
         'packages/core-runtime/src/actions/repository.ts',
         'packages/core-runtime/src/reads/runtime.ts',
         'packages/core-runtime/src/outbox/repository.ts',
@@ -98,7 +99,19 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
   'effect-native/no-manual-config-in-scaffold-templates': 'error',
   'effect-native/no-manual-cookie-serialization': 'error',
   'effect-native/no-manual-error-handling-in-scaffold-templates': 'error',
-  'effect-native/no-manual-identity-annotations': 'error',
+  'effect-native/no-manual-identity-annotations': [
+    'error',
+    {
+      // This transport seam validates the correlation header and owns the one sanitized defect log.
+      seamFiles: [
+        '**/request-identity-seam.ts',
+        '**/request-identity-seam.tsx',
+        '**/http-instrumentation-seam.ts',
+        '**/http-instrumentation-seam.tsx',
+        'packages/core-runtime/src/http/governed-read.ts',
+      ],
+    },
+  ],
   'effect-native/no-manual-route-param-parsing': 'error',
   'effect-native/no-manual-tag-comparison': 'error',
   'effect-native/no-native-error-construction': 'error',

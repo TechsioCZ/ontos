@@ -85,7 +85,7 @@ const snapshotTree = Effect.fn(function* scenario2(root: string) {
 });
 
 const createFixture = (): Effect.Effect<string, unknown> =>
-  Effect.gen(function* scenario5() {
+  Effect.gen(function* mergedScenario9() {
     const root = yield* Effect.promise(() =>
       mkdtemp(path.join(tmpdir(), 'ontos-resource-scaffold-')),
     );
@@ -127,6 +127,28 @@ const createFixture = (): Effect.Effect<string, unknown> =>
       root,
       'verticals/property-registry/module-federation.config.ts',
       'export default { exposes: {} };\n',
+    );
+    yield* write(
+      root,
+      'verticals/property-registry/shared/api.ts',
+      `import { HttpApi } from 'effect/unstable/httpapi';
+
+export const propertyRegistryApi = HttpApi.make('PropertyRegistryApi');
+`,
+    );
+    yield* write(
+      root,
+      'verticals/property-registry/api/index.ts',
+      `import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
+import type { EffectRuntimeLayer } from '@modern-js/plugin-bff/effect-edge';
+import { propertyRegistryApi } from '../shared/api.ts';
+
+const layer = HttpApiBuilder.layer(propertyRegistryApi).pipe(
+  Layer.provide(Layer.empty),
+) satisfies EffectRuntimeLayer;
+
+export default defineEffectBff({ api: propertyRegistryApi, layer });
+`,
     );
     yield* write(
       root,
@@ -279,14 +301,14 @@ it.live(
           /import \{ rentalUnitResourceDescriptor \} from '\.\/shared\/resources\/rental-unit\.ts';/u,
         );
         expect(manifest).toMatch(/resourceTypes: \[[\s\S]*rentalUnitResourceDescriptor,/u);
-        const modulePackage = Schema.decodeUnknownSync(packageJsonSchema, {
+        const modulePackage = yield* Schema.decodeUnknownEffect(packageJsonSchema, {
           onExcessProperty: 'preserve',
         })(JSON.parse(packageSource));
         expect(modulePackage.exports['./resources/rental-unit']).toBe(
           './shared/resources/rental-unit.ts',
         );
 
-        const generatedModule = Schema.decodeUnknownSync(generatedResourceModuleSchema)(
+        const generatedModule = yield* Schema.decodeUnknownEffect(generatedResourceModuleSchema)(
           yield* Effect.promise(
             () => import(`${pathToFileURL(resourcePath).href}?test=${randomUUID()}`),
           ),
@@ -294,7 +316,7 @@ it.live(
         const rentalUnitRefSchema = Schema.make<Schema.Codec<unknown, unknown>>(
           generatedModule.RentalUnitRefSchema.ast,
         );
-        const reference = Schema.decodeUnknownSync(rentalUnitRefSchema)({
+        const reference = yield* Schema.decodeUnknownEffect(rentalUnitRefSchema)({
           moduleId,
           resourceId: 'unit-42',
           resourceType,
@@ -306,14 +328,13 @@ it.live(
           resourceType,
           tenantId,
         });
-        expect(() =>
-          Schema.decodeUnknownSync(rentalUnitRefSchema)({
-            moduleId,
-            resourceId: '',
-            resourceType,
-            tenantId,
-          }),
-        ).toThrow(/length of at least 1/u);
+        const invalidReference = yield* Schema.decodeUnknownEffect(rentalUnitRefSchema)({
+          moduleId,
+          resourceId: '',
+          resourceType,
+          tenantId,
+        }).pipe(Effect.flip);
+        expect(String(invalidReference)).toMatch(/length of at least 1/u);
 
         const fixtureTsconfig = path.join(root, 'tsconfig.generated.json');
         yield* write(
@@ -396,7 +417,7 @@ it.live(
     yield* withFixture(
       Effect.fn(function* scenario15(root) {
         const packagePath = path.join(root, verticalPackagePath);
-        const packageValue = Schema.decodeUnknownSync(packageJsonSchema, {
+        const packageValue = yield* Schema.decodeUnknownEffect(packageJsonSchema, {
           onExcessProperty: 'preserve',
         })(JSON.parse(yield* Effect.promise(() => readFile(packagePath, 'utf-8'))));
         const packageWithExportCollision = {
@@ -421,10 +442,10 @@ it.live(
 );
 
 it.live(
-  'resource scaffold upgrades the previous generated empty resourceTypes field safely',
-  Effect.fn(function* scenario16() {
+  'resource scaffold rejects a manifest without the governed resource slot',
+  Effect.fn(function* mergedScenario12() {
     yield* withFixture(
-      Effect.fn(function* scenario17(root) {
+      Effect.fn(function* mergedScenario11(root) {
         const manifestPath = path.join(root, verticalManifestPath);
         const manifest = yield* Effect.promise(() => readFile(manifestPath, 'utf-8'));
         yield* Effect.promise(() =>
@@ -441,10 +462,10 @@ it.live(
           ),
         );
 
-        yield* scaffoldResource(root);
-        const upgraded = yield* Effect.promise(() => readFile(manifestPath, 'utf-8'));
-        expect(upgraded).toMatch(/\/\/ <generated-module-manifest-resources>/u);
-        expect(upgraded).toMatch(/rentalUnitResourceDescriptor,/u);
+        const before = yield* snapshotTree(root);
+        const failure = yield* scaffoldResource(root).pipe(Effect.flip);
+        expect(String(failure)).toMatch(/slot/u);
+        expect(yield* snapshotTree(root)).toEqual(before);
       }),
     );
   }),
