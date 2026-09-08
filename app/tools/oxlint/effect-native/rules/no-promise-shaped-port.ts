@@ -640,7 +640,12 @@ export const rule = defineRule({
 
     /** The `Promise` / `PromiseLike` reference of a return/value annotation, if any. */
     const promiseReference = (
-      annotation: ESTree.TSTypeAnnotation | ESTree.TSTypeReference | null | undefined,
+      annotation:
+        | ESTree.TSTypeAnnotation
+        | ESTree.TSTypeReference
+        | ESTree.TSInterfaceHeritage
+        | null
+        | undefined,
       functionAliasOnly = false,
     ): string | null => {
       if (annotation === null || annotation === undefined) return null;
@@ -676,10 +681,10 @@ export const rule = defineRule({
           }
           return null;
         }
-        // Object members have their own visitors too; only an applied generic alias
-        // (`type Service<T> = { run: () => T }` used as `Service<Promise<void>>`) needs this.
+        // Object members have their own visitors too; applied generic aliases/heritage
+        // need substitutions here. Function-returned records remain non-port continuations.
         if (raw.type === 'TSTypeLiteral' || raw.type === 'TSInterfaceBody') {
-          if (substitutions.size === 0) return null;
+          if (substitutions.size === 0 || insideFunction) return null;
           for (const member of raw.members ?? raw.body) {
             const isValue =
               member.type === 'TSPropertySignature' || member.type === 'TSIndexSignature';
@@ -693,8 +698,9 @@ export const rule = defineRule({
           }
           return null;
         }
-        if (raw.type !== 'TSTypeReference') return null;
-        const names = typeNameSegments(raw.typeName);
+        if (raw.type !== 'TSTypeReference' && raw.type !== 'TSInterfaceHeritage') return null;
+        const typeName = raw.typeName ?? raw.expression;
+        const names = typeNameSegments(typeName);
         if (!names) return null;
         const name = names.at(-1)!;
         if (
@@ -705,7 +711,7 @@ export const rule = defineRule({
         )
           return functionAliasOnly && !insideFunction ? null : `${name}<…>`;
         if (names.length !== 1) return null;
-        const variable = variableFor(raw.typeName, name);
+        const variable = variableFor(typeName, name);
         const bound = substitutions.get(variable);
         if (bound) return resolve(bound.node, seen, bound.substitutions, insideFunction);
         const alias = variable?.defs.find((d: any) =>
@@ -724,7 +730,20 @@ export const rule = defineRule({
                 substitutions: argument ? substitutions : applied,
               });
           }
-          return resolve(alias.typeAnnotation ?? alias.body, seen, applied, insideFunction);
+          if (seen.has(alias)) return null;
+          seen.add(alias);
+          const own = resolve(
+            alias.typeAnnotation ?? alias.body,
+            new Set(seen),
+            applied,
+            insideFunction,
+          );
+          if (own) return own;
+          for (const heritage of alias.extends ?? []) {
+            const inherited = resolve(heritage, new Set(seen), applied, insideFunction);
+            if (inherited) return inherited;
+          }
+          return null;
         }
         const parameter = variable?.defs.find((d: any) => d.node.type === 'TSTypeParameter')?.node;
         if (parameter) return resolve(parameter, seen, substitutions, insideFunction);
@@ -1083,11 +1102,22 @@ export const rule = defineRule({
 
     return {
       CallExpression: checkTestPromiseAdapter,
+      TSInterfaceHeritage: (node: ESTree.TSInterfaceHeritage) => {
+        const wrapper = promiseReference(node);
+        if (wrapper === null) return;
+        report(node, 'promisePort', {
+          member:
+            node.parent.type === 'TSInterfaceDeclaration' ? node.parent.id.name : 'this interface',
+          wrapper,
+        });
+      },
       TSTypeReference: (node: ESTree.TSTypeReference) => {
         const annotation = parentOf(node as unknown as AnyNode);
-        if (annotation?.type !== 'TSTypeAnnotation') return;
-        const owner = parentOf(annotation);
-        if (owner?.type !== 'Identifier' && owner?.type !== 'RestElement') return;
+        if (annotation?.type !== 'TSTypeAliasDeclaration') {
+          if (annotation?.type !== 'TSTypeAnnotation') return;
+          const owner = parentOf(annotation);
+          if (owner?.type !== 'Identifier' && owner?.type !== 'RestElement') return;
+        }
         if (!isPortFunctionTypePosition(node as unknown as AnyNode)) return;
         const wrapper = promiseReference(node, true);
         if (wrapper === null) return;
