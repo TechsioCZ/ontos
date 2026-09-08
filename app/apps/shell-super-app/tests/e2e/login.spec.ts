@@ -1,10 +1,33 @@
-import { Effect, Exit, Predicate, Scope } from 'effect';
-import { expect, test } from '@playwright/test';
+import { Effect, Predicate } from 'effect';
+import { expect, test as base } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { shellAuthenticationApiContract } from '../../shared/api.ts';
-import { createAuthenticationFixture, e2eCredentials, e2eTenants } from './auth-fixture.ts';
+import { createAuthenticationFixture } from './auth-fixture.ts';
+import type { AuthenticationFixture } from './auth-fixture.ts';
 
 const hydratedLoginForm = (page: Page) => page.locator('form[data-e2e-hydrated-login="true"]');
+
+// SSR already exposes a visible trigger. Zag's menu becomes interactive after hydration
+// installs React props and moves its matching content portal to document.body.
+const waitForInteractiveAccountMenu = async (page: Page) => {
+  await page.waitForFunction(() => {
+    const trigger = document.querySelector<HTMLButtonElement>(
+      'button[data-scope="menu"][data-part="trigger"]',
+    );
+    if (trigger === null) {
+      return false;
+    }
+    if (!Object.keys(trigger).some((key) => key.startsWith('__reactProps$'))) {
+      return false;
+    }
+    const positioner = document.querySelector('[data-scope="menu"][data-part="positioner"]');
+    const content = positioner?.querySelector('[data-scope="menu"][data-part="content"]');
+    return (
+      positioner?.parentElement === document.body &&
+      content?.getAttribute('id') === trigger.getAttribute('aria-controls')
+    );
+  });
+};
 
 const gotoHydratedLogin = async (page: Page, language: 'cs' | 'en') => {
   await page.goto(`/${language}/login`);
@@ -37,14 +60,30 @@ const gotoHydratedLogin = async (page: Page, language: 'cs' | 'en') => {
   });
 };
 
-// Playwright hooks are the Promise boundary for this scoped Effect fixture.
-const fixtureScope = Effect.runSync(Scope.make());
+// Only this real Playwright worker fixture runs Effect. Each worker owns its
+// identities; Playwright still gives every test an independent browser context.
+//
+// Playwright's setup timeout abandons the callback before `use` and skips its teardown.
+// Let Effect own the acquisition deadline and finish scoped cleanup instead; test-body
+// timeouts stay enabled. Foreign operations retain their real server deadlines.
+const workerFixtureAcquisitionTimeout = '25 seconds';
 
-test.beforeAll(
-  async () =>
-    await Effect.runPromise(createAuthenticationFixture().pipe(Scope.provide(fixtureScope))),
-);
-test.afterAll(async () => await Effect.runPromise(Scope.close(fixtureScope, Exit.void)));
+const test = base.extend<Record<never, never>, { authentication: AuthenticationFixture }>({
+  authentication: [
+    async ({ browserName: _browserName }, use) => {
+      await Effect.runPromise(
+        Effect.gen(function* useAuthenticationFixture() {
+          const fixture = yield* Effect.timeout(
+            createAuthenticationFixture(),
+            workerFixtureAcquisitionTimeout,
+          );
+          yield* Effect.tryPromise(async () => await use(fixture));
+        }).pipe(Effect.scoped),
+      );
+    },
+    { scope: 'worker', timeout: 0 },
+  ],
+});
 
 test('renders the exact anonymous English and Czech home states', async ({ page }) =>
   await page
@@ -91,13 +130,13 @@ test('keeps English and Czech login pages free of authenticated dashboard chrome
   await expectDashboardAbsent();
 });
 
-test('shows one generic error for invalid English credentials', async ({ page }) =>
+test('shows one generic error for invalid English credentials', async ({ authentication, page }) =>
   await gotoHydratedLogin(page, 'en')
     .then(
       async () =>
         await hydratedLoginForm(page)
           .getByRole('textbox', { name: /^Login\s*\*$/u })
-          .fill(e2eCredentials.email),
+          .fill(authentication.credentials.email),
     )
     .then(
       async () =>
@@ -114,7 +153,10 @@ test('shows one generic error for invalid English credentials', async ({ page })
         ]),
     ));
 
-test('logs a user in without any server-error response', async ({ page }, testInfo) => {
+test('logs a user in without any server-error response', async ({
+  authentication,
+  page,
+}, testInfo) => {
   const { baseURL } = testInfo.project.use;
   if (!Predicate.isString(baseURL)) {
     throw new TypeError('The login E2E test requires a configured base URL');
@@ -138,8 +180,8 @@ test('logs a user in without any server-error response', async ({ page }, testIn
 
   await gotoHydratedLogin(page, 'en');
   const form = hydratedLoginForm(page);
-  await form.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(e2eCredentials.email);
-  await form.getByLabel(/^Password/u).fill(e2eCredentials.password);
+  await form.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(authentication.credentials.email);
+  await form.getByLabel(/^Password/u).fill(authentication.credentials.password);
 
   const signInResponsePromise = page.waitForResponse(
     (response) =>
@@ -152,13 +194,16 @@ test('logs a user in without any server-error response', async ({ page }, testIn
   expect(signInResponse.status(), 'The sign-in endpoint should accept valid credentials').toBe(200);
   await expect(page).toHaveURL(/\/en\/?$/u);
   await expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible();
-  await expect(page.getByText(e2eCredentials.email)).toBeVisible();
+  await expect(page.getByText(authentication.credentials.email)).toBeVisible();
   await expect(page.getByRole('complementary', { name: 'Dashboard sidebar' })).toBeVisible();
   await expect(page.locator('header[aria-label="Dashboard header"]')).toBeVisible();
   expect(serverErrors, 'Login and the authenticated page must not return HTTP 5xx').toEqual([]);
 });
 
-test('loads localized English and Czech Contacts pages only after login', async ({ page }) => {
+test('loads localized English and Czech Contacts pages only after login', async ({
+  authentication,
+  page,
+}) => {
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
 
@@ -171,8 +216,8 @@ test('loads localized English and Czech Contacts pages only after login', async 
   const form = hydratedLoginForm(page);
   await form
     .getByRole('textbox', { name: /^Přihlašovací jméno\s*\*$/u })
-    .fill(e2eCredentials.email);
-  await form.getByLabel(/^Heslo/u).fill(e2eCredentials.password);
+    .fill(authentication.credentials.email);
+  await form.getByLabel(/^Heslo/u).fill(authentication.credentials.password);
   await form.getByRole('button', { name: 'Přihlásit se' }).click();
   await expect(page).toHaveURL(/\/cs\/?$/u);
   await expect(page.getByText('Nasazení modulu je dočasně nedostupné.')).toHaveCount(0);
@@ -221,12 +266,13 @@ test('loads localized English and Czech Contacts pages only after login', async 
 });
 
 test('keeps authenticated Shell chrome on search and guarded direct-target routes', async ({
+  authentication,
   page,
 }) => {
   await gotoHydratedLogin(page, 'en');
   const form = hydratedLoginForm(page);
-  await form.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(e2eCredentials.email);
-  await form.getByLabel(/^Password/u).fill(e2eCredentials.password);
+  await form.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(authentication.credentials.email);
+  await form.getByLabel(/^Password/u).fill(authentication.credentials.password);
   await form.getByRole('button', { name: 'Login' }).click();
   await expect(page).toHaveURL(/\/en\/?$/u);
 
@@ -248,6 +294,7 @@ test('keeps authenticated Shell chrome on search and guarded direct-target route
 });
 
 test('persists an English session, logs out, clears the cookie, and stays anonymous', async ({
+  authentication,
   page,
 }) =>
   await gotoHydratedLogin(page, 'en')
@@ -255,13 +302,13 @@ test('persists an English session, logs out, clears the cookie, and stays anonym
       async () =>
         await hydratedLoginForm(page)
           .getByRole('textbox', { name: /^Login\s*\*$/u })
-          .fill(e2eCredentials.email),
+          .fill(authentication.credentials.email),
     )
     .then(
       async () =>
         await hydratedLoginForm(page)
           .getByLabel(/^Password/u)
-          .fill(e2eCredentials.password),
+          .fill(authentication.credentials.password),
     )
     .then(async () => await hydratedLoginForm(page).getByRole('button', { name: 'Login' }).click())
     .then(async () => await expect(page).toHaveURL(/\/en\/?$/u))
@@ -269,11 +316,12 @@ test('persists an English session, logs out, clears the cookie, and stays anonym
       async () =>
         await Promise.all([
           expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible(),
-          expect(page.getByText(e2eCredentials.email)).toBeVisible(),
+          expect(page.getByText(authentication.credentials.email)).toBeVisible(),
           expect(page.getByRole('link', { name: 'Home' })).toHaveCount(1),
         ]),
     )
     .then(async () => await page.reload())
+    .then(async () => await waitForInteractiveAccountMenu(page))
     .then(async () => await expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible())
     .then(async () => await page.getByRole('button', { name: 'E2E user' }).click())
     .then(async () => await page.getByRole('menuitem', { name: 'Logout' }).click())
@@ -291,18 +339,19 @@ test('persists an English session, logs out, clears the cookie, and stays anonym
     .then(async () => await expect(page.getByRole('heading', { name: 'Login' })).toBeVisible()));
 
 test('switches tenant by pointer, fully reloads, and persists the selected context', async ({
+  authentication,
   page,
 }) => {
   await gotoHydratedLogin(page, 'en');
   const form = hydratedLoginForm(page);
-  await form.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(e2eCredentials.email);
-  await form.getByLabel(/^Password/u).fill(e2eCredentials.password);
+  await form.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(authentication.credentials.email);
+  await form.getByLabel(/^Password/u).fill(authentication.credentials.password);
   await form.getByRole('button', { name: 'Login' }).click();
   await expect(page).toHaveURL(/\/en\/?$/u);
 
   const tenant = page.getByRole('combobox', { name: 'Current tenant' });
-  await expect(tenant).toContainText(e2eTenants.first.name);
-  await expect(page.getByText(e2eTenants.first.tenantId)).toBeVisible();
+  await expect(tenant).toContainText(authentication.tenants.first.name);
+  await expect(page.getByText(authentication.tenants.first.tenantId)).toBeVisible();
   await tenant.click();
   const switchResponsePromise = page.waitForResponse(
     (response) =>
@@ -311,25 +360,26 @@ test('switches tenant by pointer, fully reloads, and persists the selected conte
   );
   await Promise.all([
     page.waitForEvent('framenavigated', { predicate: (frame) => frame === page.mainFrame() }),
-    page.getByRole('option', { name: e2eTenants.second.name }).click(),
+    page.getByRole('option', { name: authentication.tenants.second.name }).click(),
   ]);
   const switchResponse = await switchResponsePromise;
   expect(switchResponse.status()).toBe(200);
   await expect(page.getByRole('combobox', { name: 'Current tenant' })).toContainText(
-    e2eTenants.second.name,
+    authentication.tenants.second.name,
   );
   await expect(page.getByRole('button', { name: 'E2E user second tenant' })).toBeVisible();
-  await expect(page.getByText(e2eTenants.second.principalId)).toBeVisible();
-  await expect(page.getByText(e2eTenants.second.tenantId)).toBeVisible();
+  await expect(page.getByText(authentication.tenants.second.principalId)).toBeVisible();
+  await expect(page.getByText(authentication.tenants.second.tenantId)).toBeVisible();
 
   await page.reload();
   await expect(page.getByRole('combobox', { name: 'Current tenant' })).toContainText(
-    e2eTenants.second.name,
+    authentication.tenants.second.name,
   );
   await expect(page.getByRole('button', { name: 'E2E user second tenant' })).toBeVisible();
 });
 
 test('retains Czech tenant context after one failed switch and supports keyboard retry', async ({
+  authentication,
   page,
 }) => {
   let failSwitch = true;
@@ -337,8 +387,8 @@ test('retains Czech tenant context after one failed switch and supports keyboard
   const form = hydratedLoginForm(page);
   await form
     .getByRole('textbox', { name: /^Přihlašovací jméno\s*\*$/u })
-    .fill(e2eCredentials.email);
-  await form.getByLabel(/^Heslo/u).fill(e2eCredentials.password);
+    .fill(authentication.credentials.email);
+  await form.getByLabel(/^Heslo/u).fill(authentication.credentials.password);
   await form.getByRole('button', { name: 'Přihlásit se' }).click();
   await expect(page).toHaveURL(/\/cs\/?$/u);
   await page.route(`**${shellAuthenticationApiContract.switchTenantPath}`, async (route) => {
@@ -351,16 +401,16 @@ test('retains Czech tenant context after one failed switch and supports keyboard
   });
 
   const tenant = page.getByRole('combobox', { name: 'Aktuální tenant' });
-  await expect(tenant).toContainText(e2eTenants.first.name);
+  await expect(tenant).toContainText(authentication.tenants.first.name);
   await tenant.click();
-  await page.getByRole('option', { name: e2eTenants.second.name }).click();
+  await page.getByRole('option', { name: authentication.tenants.second.name }).click();
   await expect(page.getByText('Přepnutí tenantu selhalo. Zkuste to znovu.')).toBeVisible();
-  await expect(tenant).toContainText(e2eTenants.first.name);
-  await expect(page.getByText(e2eTenants.first.tenantId)).toBeVisible();
+  await expect(tenant).toContainText(authentication.tenants.first.name);
+  await expect(page.getByText(authentication.tenants.first.tenantId)).toBeVisible();
 
   await tenant.focus();
   await page.keyboard.press('Enter');
-  const secondTenantOption = page.getByRole('option', { name: e2eTenants.second.name });
+  const secondTenantOption = page.getByRole('option', { name: authentication.tenants.second.name });
   await expect(secondTenantOption).toBeVisible();
   const tenantListbox = page.getByRole('listbox');
   await tenantListbox.press('End');
@@ -372,11 +422,12 @@ test('retains Czech tenant context after one failed switch and supports keyboard
     tenantListbox.press('Enter'),
   ]);
   await expect(page.getByRole('combobox', { name: 'Aktuální tenant' })).toContainText(
-    e2eTenants.second.name,
+    authentication.tenants.second.name,
   );
 });
 
 test('keeps keyboard logout operable after a Czech failure and succeeds on retry', async ({
+  authentication,
   page,
 }) => {
   let failLogout = true;
@@ -384,13 +435,15 @@ test('keeps keyboard logout operable after a Czech failure and succeeds on retry
   await gotoHydratedLogin(page, 'cs')
     .then(
       async () =>
-        await hydratedLoginForm(page).locator('input[name="login"]').fill(e2eCredentials.email),
+        await hydratedLoginForm(page)
+          .locator('input[name="login"]')
+          .fill(authentication.credentials.email),
     )
     .then(
       async () =>
         await hydratedLoginForm(page)
           .locator('input[name="password"]')
-          .fill(e2eCredentials.password),
+          .fill(authentication.credentials.password),
     )
     .then(
       async () =>
@@ -459,13 +512,14 @@ test('keeps the login form keyboard- and mobile-usable', async ({ page }) => {
 });
 
 test('keeps the authenticated dashboard reachable without horizontal overflow at 375px', async ({
+  authentication,
   page,
 }) => {
   await page.setViewportSize({ height: 667, width: 375 });
   await gotoHydratedLogin(page, 'en');
   const form = hydratedLoginForm(page);
-  await form.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(e2eCredentials.email);
-  await form.getByLabel(/^Password/u).fill(e2eCredentials.password);
+  await form.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(authentication.credentials.email);
+  await form.getByLabel(/^Password/u).fill(authentication.credentials.password);
   await form.getByRole('button', { name: 'Login' }).click();
   await expect(page).toHaveURL(/\/en\/?$/u);
   await page.route(
@@ -481,11 +535,11 @@ test('keeps the authenticated dashboard reachable without horizontal overflow at
   const tenant = page.getByRole('combobox', { name: 'Current tenant' });
   await expect(tenant).toBeInViewport();
   await tenant.click();
-  const secondTenant = page.getByRole('option', { name: e2eTenants.second.name });
+  const secondTenant = page.getByRole('option', { name: authentication.tenants.second.name });
   await expect(secondTenant).toBeInViewport();
   await secondTenant.click();
   await expect(page.getByText('Tenant switching failed. Try again.')).toBeInViewport();
-  await expect(tenant).toContainText(e2eTenants.first.name);
+  await expect(tenant).toContainText(authentication.tenants.first.name);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
