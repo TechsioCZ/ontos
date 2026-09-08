@@ -2727,12 +2727,40 @@ it.live(
               },
             ],
           });
+          yield* writeText(
+            checkoutWorkspace,
+            'verticals/shopping/dist-cloudflare/api/index.js',
+            'export const handler = () => new Response();',
+          );
+          yield* writeText(
+            checkoutWorkspace,
+            'verticals/retired/node_modules/cache.js',
+            'export const cached = true;',
+          );
           expect(
             runNode([path.join(formatRoot, checker.relativePath)], {
               env: { ULTRAMODERN_WORKSPACE_ROOT: checkoutWorkspace },
             }),
-            `${moduleFormat} checkout workspace`,
+            `${moduleFormat} ignores generated output and retired package caches`,
           ).toMatch(/UltraModern API boundary check passed/u);
+          yield* writeText(
+            checkoutWorkspace,
+            'verticals/shopping/api/unsafe.ts',
+            'export const response = new Response();',
+          );
+          expect(() =>
+            runNode([path.join(formatRoot, checker.relativePath)], {
+              env: { ULTRAMODERN_WORKSPACE_ROOT: checkoutWorkspace },
+            }),
+          ).toThrow(/API modules must not hand-build Response objects/u);
+          yield* writeJson(checkoutWorkspace, 'verticals/retired/package.json', {
+            name: '@generated-proof/retired',
+          });
+          expect(() =>
+            runNode([path.join(formatRoot, checker.relativePath)], {
+              env: { ULTRAMODERN_WORKSPACE_ROOT: checkoutWorkspace },
+            }),
+          ).toThrow(/verticals\/retired\/api\/index\.ts is required/u);
         }),
       ),
       { concurrency: 'unbounded' },

@@ -2845,7 +2845,7 @@ index 198beb018e1d6985953748cea5000448f381abe5..7d2acb37a8058c1c7b94c1df033d34e7
    | 'always'
    | 'hourly'
 diff --git a/templates/workspace-scripts/check-ultramodern-api-boundaries.mts b/templates/workspace-scripts/check-ultramodern-api-boundaries.mts
-index d606a2265cb438d32a612cfdd6ebb9561529d4f5..b31f281e7ab5bbea289fc2aae117fe39202023cf 100644
+index d606a2265cb438d32a612cfdd6ebb9561529d4f5..98dd4f8402d24c775c36eb639829fb07e0d03131 100644
 --- a/templates/workspace-scripts/check-ultramodern-api-boundaries.mts
 +++ b/templates/workspace-scripts/check-ultramodern-api-boundaries.mts
 @@ -1,6 +1,10 @@
@@ -2859,10 +2859,22 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..b31f281e7ab5bbea289fc2aae117fe39
  
  const workspaceRoot = process.env.ULTRAMODERN_WORKSPACE_ROOT ?? process.cwd();
  const failures = [];
-@@ -182,11 +186,1184 @@ for (const file of textFiles) {
+@@ -11,6 +15,7 @@ const ignoredDirectories = new Set([
+   '.output',
+   'coverage',
+   'dist',
++  'dist-cloudflare',
+   'node_modules',
+   'repos',
+ ]);
+@@ -181,12 +186,1187 @@ for (const file of textFiles) {
+   );
  }
  
- const verticalDirectories = listDirectories('verticals');
+-const verticalDirectories = listDirectories('verticals');
++const verticalDirectories = listDirectories('verticals').filter(verticalPath =>
++  exists(`${verticalPath}/package.json`),
++);
 +const topology = exists('topology/reference-topology.json')
 +  ? JSON.parse(readText('topology/reference-topology.json'))
 +  : { verticals: [] };
@@ -4044,7 +4056,7 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..b31f281e7ab5bbea289fc2aae117fe39
  function assertApiSurface(appPath) {
    const apiEntry = `${appPath}/api/index.ts`;
    const backendEffectExpose = `${appPath}/api/effect-api.ts`;
-@@ -211,30 +1388,28 @@ function assertApiSurface(appPath) {
+@@ -211,30 +1391,28 @@ function assertApiSurface(appPath) {
  
    if (exists(apiEntry)) {
      const entry = readText(apiEntry);
@@ -4089,7 +4101,7 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..b31f281e7ab5bbea289fc2aae117fe39
    }
   if (exists(backendEffectExpose)) {
   const backendExpose = readText(backendEffectExpose);
-@@ -300,6 +1475,62 @@ function assertApiSurface(appPath) {
+@@ -300,6 +1478,62 @@ function assertApiSurface(appPath) {
        /\bSchema\./u,
        'must use Schema for request, response and error shapes.',
      );
@@ -4152,7 +4164,7 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..b31f281e7ab5bbea289fc2aae117fe39
    }
  
    if (exists(modernConfig)) {
-@@ -373,7 +1604,6 @@ if (exists('package.json')) {
+@@ -373,7 +1607,6 @@ if (exists('package.json')) {
  }
  
  if (exists('topology/reference-topology.json')) {

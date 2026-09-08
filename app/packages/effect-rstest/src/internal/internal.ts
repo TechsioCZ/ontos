@@ -7,6 +7,7 @@ import * as Cause from 'effect/Cause';
 import * as Duration from 'effect/Duration';
 import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
+import * as Fiber from 'effect/Fiber';
 import { flow, pipe } from 'effect/Function';
 import * as Layer from 'effect/Layer';
 import { isObject } from 'effect/Predicate';
@@ -244,13 +245,29 @@ export const layer =
       Effect.cached,
       Effect.runSync,
     );
+    let setupFiber: Fiber.Fiber<unknown, unknown> | undefined;
+    const buildContext = () =>
+      runPromise(
+        Effect.withFiber((fiber) => {
+          setupFiber = fiber;
+          return Effect.asVoid(contextEffect);
+        }),
+      );
     let closed = false;
     const closeScope = (ctx?: Rs.TestContext) => {
       if (closed) {
         return Promise.resolve();
       }
       closed = true;
-      return runPromise(Scope.close(scope, Exit.void), ctx);
+      // SuiteContext has no AbortSignal: a timed-out beforeAll keeps running.
+      // Stop and await setup before releasing resources it may still be using.
+      return runPromise(
+        Effect.andThen(
+          setupFiber !== undefined ? Fiber.interrupt(setupFiber) : Effect.void,
+          Scope.close(scope, Exit.void),
+        ),
+        ctx,
+      );
     };
 
     const makeIt = (it: Rs.TestAPIs): EffectRstest.Vitest.MethodsNonLive<R> =>
@@ -285,14 +302,14 @@ export const layer =
       // names from test paths, while its beforeAll/afterAll hooks ensure the
       // scope closes before later tests in the enclosing suite run.
       return Rs.describe('', () => {
-        Rs.beforeAll(() => runPromise(Effect.asVoid(contextEffect)), hookTimeout(options?.timeout));
+        Rs.beforeAll(buildContext, hookTimeout(options?.timeout));
         Rs.afterAll(() => closeScope(), hookTimeout(options?.timeout));
         return args[0](makeIt(Rs.it));
       });
     }
 
     return Rs.describe(args[0], () => {
-      Rs.beforeAll(() => runPromise(Effect.asVoid(contextEffect)), hookTimeout(options?.timeout));
+      Rs.beforeAll(buildContext, hookTimeout(options?.timeout));
       Rs.afterAll(() => closeScope(), hookTimeout(options?.timeout));
       return args[1](makeIt(Rs.it));
     });
