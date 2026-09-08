@@ -1,14 +1,22 @@
 /* oxlint-disable typescript/consistent-return, typescript/no-unsafe-argument -- Existing compatibility boundary; expires: 2026-12-31. */
 const { existsSync } = process.getBuiltinModule('node:fs');
 const path = process.getBuiltinModule('node:path');
-const ambientEnvironmentDescriptor = Object.getOwnPropertyDescriptor(process, 'env');
+const ambientEnvironmentDescriptor = Object.getOwnPropertyDescriptor(
+  process,
+  'env'
+);
 
 const environmentValue = (name) => {
   const variableDescriptor =
     ambientEnvironmentDescriptor === undefined
       ? undefined
-      : Object.getOwnPropertyDescriptor(ambientEnvironmentDescriptor.value, name);
-  return variableDescriptor === undefined ? undefined : String(variableDescriptor.value);
+      : Object.getOwnPropertyDescriptor(
+          ambientEnvironmentDescriptor.value,
+          name
+        );
+  return variableDescriptor === undefined
+    ? undefined
+    : String(variableDescriptor.value);
 };
 
 const isAppWorkspace = (candidate) =>
@@ -39,7 +47,7 @@ const resolveAppWorkspaceRootSync = (startDirectory) => {
  */
 const resolveWorkspaceEnvironmentSync = (candidates) => {
   const usableCandidates = candidates.filter(
-    (candidate) => candidate !== undefined && candidate.length > 0,
+    (candidate) => candidate !== undefined && candidate.length > 0
   );
   const APP_WORKSPACE_ROOT =
     usableCandidates

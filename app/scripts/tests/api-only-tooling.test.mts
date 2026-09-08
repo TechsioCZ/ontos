@@ -2,8 +2,8 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type { ExecFileSyncOptionsWithStringEncoding } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import os from 'node:os';
@@ -12,22 +12,30 @@ import test from 'node:test';
 import type { TestContext } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+
 import { Predicate, Schema } from 'effect';
 import type { Effect as EffectType } from 'effect/Effect';
 import { build as bundleSource, transform } from 'esbuild';
 import { format } from 'oxfmt';
+
 import { MicroVerticalReadinessSchema } from '../../packages/shared-contracts/src/microvertical-api-baseline.ts';
 import {
   configuredMicroVerticalApiStem,
   microVerticalApiBaselineViolation as microVerticalApiBaselineViolationForFile,
 } from '../microvertical-api-baseline-boundary.mts';
 import type { MicroVerticalApiBaselineExpectation } from '../microvertical-api-baseline-boundary.mts';
-
 import { strictEffectRuntimeTopologyViolation } from '../ultramodern-api-boundary-rules.mts';
+import { moduleFederationBridgeViolation } from '../module-federation-bridge-boundary.mts';
+import { hasValidGovernedHttpCompositionRoot } from '../generated-governed-http-boundary.mts';
+import {
+  hasGeneratedOperationGatewayContract,
+  hasGeneratedOperationPrincipalContract,
+} from '../generated-module-api-boundary.mts';
 
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 const partyId = 'party-registry';
 const partyDirectory = 'verticals/party-registry';
+const partySharedApiPath = `${partyDirectory}/shared/api.ts`;
 const generatedFixtureId = 'inventory-stock';
 const generatedApiPrefix = '/inventory-stock-api';
 const generatedServiceModuleName = 'api/service';
@@ -67,7 +75,6 @@ const ssrBundlePath = 'bundles/index.js';
 const apiBundlePath = 'api/index.js';
 const routesManifestFile = 'routes-manifest.json';
 const mfManifestFile = 'mf-manifest.json';
-const generatedProofScope = 'generated-proof';
 const generatedClientContractImport = '../../shared/api.ts';
 const generatedSharedApiModule = 'api/shared';
 const generatedSharedContractsPackage = '@generated-proof/shared-contracts';
@@ -111,7 +118,9 @@ const unexpectedTopologyImport = (specifier: string): never => {
   throw new Error(`Unexpected strict-topology import: ${specifier}`);
 };
 
-const generatorRoot = await realpath(path.join(workspaceRoot, 'node_modules/@modern-js/create'));
+const generatorRoot = await realpath(
+  path.join(workspaceRoot, 'node_modules/@modern-js/ultramodern-create'),
+);
 const require = createRequire(import.meta.url);
 
 const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
@@ -132,8 +141,14 @@ const BuildArtifactSchema = Schema.Struct({
   kind: Schema.String,
   schemaVersion: Schema.Number,
   surfaces: Schema.Struct({
-    api: Schema.Struct({ ...IdentitySchema.fields, surface: Schema.Literal('api') }),
-    ui: Schema.Struct({ ...IdentitySchema.fields, surface: Schema.Literal('ui') }),
+    api: Schema.Struct({
+      ...IdentitySchema.fields,
+      surface: Schema.Literal('api'),
+    }),
+    ui: Schema.Struct({
+      ...IdentitySchema.fields,
+      surface: Schema.Literal('ui'),
+    }),
   }),
 });
 interface ReleaseEnvelope {
@@ -212,13 +227,9 @@ interface ApiGeneratorFixture {
   readonly exposes?: Readonly<Record<string, string>>;
   readonly id: string;
 }
-type CreateSharedApi = (scope: string, app: ApiGeneratorFixture) => string;
+type CreateSharedApi = (app: ApiGeneratorFixture) => string;
 type CreateApiClient = (app: WorkspaceAppFixture, contractImportPath: string) => string;
-type CreateApiServiceEntry = (
-  scope: string,
-  app: ApiGeneratorFixture,
-  contractImportPath: string,
-) => string;
+type CreateApiServiceEntry = (app: ApiGeneratorFixture, contractImportPath: string) => string;
 interface GeneratedWorkspaceScriptArtifact {
   readonly content: string;
   readonly relativePath: string;
@@ -340,7 +351,9 @@ const SharedApiGeneratorModuleSchema = Schema.Struct({
 const StrictEffectApiBoundaryRuleModuleSchema = Schema.Struct({
   createStrictEffectApiBoundariesRule: callable<StrictEffectApiBoundaryRuleFactory>(),
 });
-const ComponentModuleSchema = Schema.Struct({ createLayout: callable<CreateLayout>() });
+const ComponentModuleSchema = Schema.Struct({
+  createLayout: callable<CreateLayout>(),
+});
 const FederationConfigModuleSchema = Schema.Struct({
   createAppModernConfig: callable<CreateAppModernConfig>(),
   createBackendModuleFederationConfig: callable<CreateBackendModuleFederationConfig>(),
@@ -348,8 +361,12 @@ const FederationConfigModuleSchema = Schema.Struct({
 const BuildModuleGeneratorSchema = Schema.Struct({
   createUltramodernBuildModule: callable<CreateUltramodernBuildModule>(),
 });
-const SharedApiGeneratorSchema = Schema.Struct({ createSharedApi: callable<CreateSharedApi>() });
-const ApiClientGeneratorSchema = Schema.Struct({ createApiClient: callable<CreateApiClient>() });
+const SharedApiGeneratorSchema = Schema.Struct({
+  createSharedApi: callable<CreateSharedApi>(),
+});
+const ApiClientGeneratorSchema = Schema.Struct({
+  createApiClient: callable<CreateApiClient>(),
+});
 const ApiServiceGeneratorSchema = Schema.Struct({
   createApiServiceEntry: callable<CreateApiServiceEntry>(),
 });
@@ -357,7 +374,9 @@ const WorkspaceScriptsGeneratorSchema = Schema.Struct({
   migratedWorkspaceScriptArtifacts: callable<MigratedWorkspaceScriptArtifacts>(),
 });
 const GeneratedApiRuntimeModuleSchema = Schema.Struct({
-  default: Schema.Struct({ createHandler: callable<CreateGeneratedHttpHandler>() }),
+  default: Schema.Struct({
+    createHandler: callable<CreateGeneratedHttpHandler>(),
+  }),
 });
 const CloudflareEvidenceSchema = Schema.Struct({
   assertions: Schema.Array(Schema.Struct({ status: Schema.String, type: Schema.String })),
@@ -368,7 +387,9 @@ const CloudflareProofModuleSchema = Schema.Struct({
 const ModuleFederationValidationModuleSchema = Schema.Struct({
   validateModuleFederationTypes: callable<ValidateModuleFederationTypes>(),
 });
-const ModuleFederationValidationResultSchema = Schema.Struct({ hostOnlyAppCount: Schema.Number });
+const ModuleFederationValidationResultSchema = Schema.Struct({
+  hostOnlyAppCount: Schema.Number,
+});
 const ModuleFederationInspectionModuleSchema = Schema.Struct({
   inspectModuleFederationConfigSource: callable<InspectModuleFederationConfigSource>(),
 });
@@ -384,7 +405,9 @@ const CompilerStatsFixtureSchema = Schema.Struct({
   hasErrors: callable<CompilerStatsFixture['hasErrors']>(),
   toString: callable<CompilerStatsFixture['toString']>(),
 });
-const CompiledReaderSchema = Schema.Struct({ allowedOrigins: Schema.Array(Schema.String) });
+const CompiledReaderSchema = Schema.Struct({
+  allowedOrigins: Schema.Array(Schema.String),
+});
 const PackageJsonSchema = Schema.Struct({
   scripts: Schema.Record(Schema.String, Schema.String),
 });
@@ -472,7 +495,10 @@ const writeText = async (root: string, logicalPath: string, value: string): Prom
 
 const runNode = (
   argumentsList: readonly string[],
-  options: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>> } = {},
+  options: {
+    readonly cwd?: string;
+    readonly env?: Readonly<Record<string, string>>;
+  } = {},
 ): string =>
   execFileSync(process.execPath, argumentsList, {
     cwd: options.cwd,
@@ -480,12 +506,22 @@ const runNode = (
     env: options.env,
   } satisfies ExecFileSyncOptionsWithStringEncoding);
 
-const releaseFrameworkRoot = path.join(
-  workspaceRoot,
-  'verticals/party-registry/node_modules/@modern-js/app-tools/dist',
+const appToolsRequire = createRequire(
+  await realpath(
+    path.join(
+      workspaceRoot,
+      'verticals/party-registry/node_modules/@modern-js/app-tools/package.json',
+    ),
+  ),
+);
+const releaseFrameworkRoot = path.resolve(
+  path.dirname(
+    appToolsRequire.resolve('@modern-js/app-tools-extensions/release-envelope/framework-output'),
+  ),
+  '../..',
 );
 const releaseFramework = await loadReleaseFramework(
-  path.join(releaseFrameworkRoot, 'esm-node/ultramodern-release-envelope/framework-output.mjs'),
+  path.join(releaseFrameworkRoot, 'esm-node/release-envelope/framework-output.mjs'),
 );
 
 void test('MicroVertical templates use the shared strict Effect BFF assembly primitive', async () => {
@@ -501,9 +537,12 @@ void test('MicroVertical templates use the shared strict Effect BFF assembly pri
   );
   const packageGenerator = Schema.decodeUnknownSync(PackageGeneratorModuleSchema)(packageModule);
   const source = apiServiceGenerator.createApiServiceEntry(
-    'fixture',
     {
-      api: { consumedBy: [], prefix: generatedApiPrefix, stem: generatedFixtureId },
+      api: {
+        consumedBy: [],
+        prefix: generatedApiPrefix,
+        stem: generatedFixtureId,
+      },
       id: generatedFixtureId,
     },
     generatedSharedApiImport,
@@ -1367,7 +1406,7 @@ const strictBoundaryReports = (
 };
 const reportsAssemblyViolation = (messages: readonly string[]): boolean =>
   messages.some((message) =>
-    /server-only shared Effect BFF assembly helper|explicitly composed handler Layer/u.test(
+    /server-only shared Effect BFF assembly helper|explicitly composed handler Layer|Generated API entries must export defineEffectBff|Generated API entries must implement handlers through HttpApiBuilder/u.test(
       message,
     ),
   );
@@ -1388,15 +1427,17 @@ void test('published lint validators reject comment, string, and local strict-ro
     apiServiceSource,
   );
   const generatedSource = apiServiceGenerator.createApiServiceEntry(
-    'app',
     {
-      api: { consumedBy: [], prefix: generatedApiPrefix, stem: generatedFixtureId },
+      api: {
+        consumedBy: [],
+        prefix: generatedApiPrefix,
+        stem: generatedFixtureId,
+      },
       id: generatedFixtureId,
     },
     generatedSharedApiImport,
   );
   const generatedRpcSource = apiServiceGenerator.createApiServiceEntry(
-    'app',
     {
       api: {
         consumedBy: [],
@@ -1721,7 +1762,11 @@ void test('a minimal generated MicroVertical typechecks and serves its runtime',
     sharedApiSource,
   );
   const descriptor = {
-    api: { consumedBy: [], prefix: generatedApiPrefix, stem: generatedFixtureId },
+    api: {
+      consumedBy: [],
+      prefix: generatedApiPrefix,
+      stem: generatedFixtureId,
+    },
     id: generatedFixtureId,
   } as const;
   const fixture = await mkdtemp(
@@ -1731,9 +1776,9 @@ void test('a minimal generated MicroVertical typechecks and serves its runtime',
     await writeText(
       fixture,
       apiIndexFile,
-      apiServiceGenerator.createApiServiceEntry('app', descriptor, generatedSharedApiImport),
+      apiServiceGenerator.createApiServiceEntry(descriptor, generatedSharedApiImport),
     );
-    await writeText(fixture, sharedApiFile, sharedApiGenerator.createSharedApi('app', descriptor));
+    await writeText(fixture, sharedApiFile, sharedApiGenerator.createSharedApi(descriptor));
     await writeText(
       fixture,
       buildMarkerFile,
@@ -1820,7 +1865,11 @@ const releaseFixture = async (context: TestContext) => {
   });
   await putJson(mfManifestFile, manifest);
   await putJson(routesManifestFile, {
-    routeAssets: { index: { assets: [`https://assets.example.test/app/${compiledUiAssetPath}`] } },
+    routeAssets: {
+      index: {
+        assets: [`https://assets.example.test/app/${compiledUiAssetPath}`],
+      },
+    },
   });
   await putJson('route.json', { routes: [{ bundle: ssrBundlePath }] });
   await putJson('package.json', { type: 'module' });
@@ -1847,7 +1896,7 @@ void test('empty MF producers retain complete build and Node staged release evid
         path.join(
           releaseFrameworkRoot,
           moduleFormat,
-          `ultramodern-release-envelope/framework-output.${extension}`,
+          `release-envelope/framework-output.${extension}`,
         ),
       );
       const envelope = await framework.emitFrameworkMicroVerticalReleaseEnvelope({
@@ -1864,7 +1913,9 @@ void test('empty MF producers retain complete build and Node staged release evid
         outputDirectory: fixture.root,
       });
       assert.ok(staged.surfaces.uiClient.includes(compiledUiAssetPath));
-      await framework.verifyNodeReleaseEnvelopeStaging({ outputDirectory: fixture.root });
+      await framework.verifyNodeReleaseEnvelopeStaging({
+        outputDirectory: fixture.root,
+      });
     }),
   );
   const fixture = await releaseFixture(context);
@@ -1890,7 +1941,7 @@ void test('empty MF producers bind root-relative route assets when publicPath is
         path.join(
           releaseFrameworkRoot,
           moduleFormat,
-          `ultramodern-release-envelope/framework-output.${extension}`,
+          `release-envelope/framework-output.${extension}`,
         ),
       );
       const envelope = await framework.emitFrameworkMicroVerticalReleaseEnvelope({
@@ -1932,11 +1983,20 @@ void test('empty-producer fallback rejects undeclared, foreign, traversing, miss
   const invalidManifests = [
     { ...baseline.manifest, exposes: [{ name: './Page' }] },
     { ...baseline.manifest, remotes: [{ name: 'shell' }] },
-    { metaData: baseline.manifest.metaData, remotes: baseline.manifest.remotes },
-    { exposes: baseline.manifest.exposes, metaData: baseline.manifest.metaData },
+    {
+      metaData: baseline.manifest.metaData,
+      remotes: baseline.manifest.remotes,
+    },
+    {
+      exposes: baseline.manifest.exposes,
+      metaData: baseline.manifest.metaData,
+    },
     {
       ...baseline.manifest,
-      metaData: { ...baseline.manifest.metaData, remoteEntry: { name: '', path: '' } },
+      metaData: {
+        ...baseline.manifest.metaData,
+        remoteEntry: { name: '', path: '' },
+      },
     },
   ];
   await Promise.all(
@@ -1968,13 +2028,19 @@ void test('empty MF producers cannot bypass backend, SSR, revision, or identity 
   const fixture = await releaseFixture(context);
   await fixture.putJson('backend-mf-manifest.json', {
     backendFederation: {
-      deliveryUnit: { ...fixture.artifact.deliveryUnit, sourceRevision: 'b'.repeat(40) },
+      deliveryUnit: {
+        ...fixture.artifact.deliveryUnit,
+        sourceRevision: 'b'.repeat(40),
+      },
     },
   });
   await assert.rejects(fixture.emit, /must match/u);
   const workspaceArtifact = {
     ...fixture.artifact,
-    deliveryUnit: { ...fixture.artifact.deliveryUnit, sourceRevision: 'workspace' },
+    deliveryUnit: {
+      ...fixture.artifact.deliveryUnit,
+      sourceRevision: 'workspace',
+    },
     surfaces: {
       api: { ...fixture.artifact.surfaces.api, sourceRevision: 'workspace' },
       ui: { ...fixture.artifact.surfaces.ui, sourceRevision: 'workspace' },
@@ -1984,7 +2050,9 @@ void test('empty MF producers cannot bypass backend, SSR, revision, or identity 
   await assert.rejects(fixture.emit, /workspace/u);
 });
 
-const GlobalVarsSchema = Schema.Struct({ ULTRAMODERN_SHELL_ORIGIN: Schema.String });
+const GlobalVarsSchema = Schema.Struct({
+  ULTRAMODERN_SHELL_ORIGIN: Schema.String,
+});
 
 const evaluatePartyBuildGlobalVars = async (shellOrigin: string) => {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'ontos-party-config-'));
@@ -1997,12 +2065,22 @@ const evaluatePartyBuildGlobalVars = async (shellOrigin: string) => {
     const effectModuleUrl = pathToFileURL(
       require.resolve('effect', { paths: [workspaceRoot] }),
     ).href;
-    const { code } = await transform(configSource, { format: 'cjs', loader: 'ts' });
+    const { code } = await transform(configSource, {
+      define: {
+        'import.meta.url': JSON.stringify(
+          pathToFileURL(path.join(workspaceRoot, 'verticals/party-registry/modern.config.ts')).href,
+        ),
+      },
+      format: 'cjs',
+      loader: 'ts',
+    });
     await writeFile(
       harnessPath,
       `import * as effect from ${JSON.stringify(effectModuleUrl)};
 import * as sharedBuild from ${JSON.stringify(pathToFileURL(path.join(workspaceRoot, 'packages/shared-contracts/tooling/modern-config.ts')).href)};
 import { runInNewContext } from 'node:vm';
+import * as nodeUrl from 'node:url';
+import * as nodePath from 'node:path';
 const framework = {
   ...sharedBuild,
   appTools: () => ({}),
@@ -2021,7 +2099,8 @@ const module = { exports: {} };
 runInNewContext(${JSON.stringify(code)}, {
   exports: module.exports,
   module,
-  require: specifier => specifier === 'effect' ? effect : framework,
+  URL,
+  require: specifier => specifier === 'effect' ? effect : specifier === 'node:url' ? nodeUrl : specifier === 'node:path' ? nodePath : framework,
 });
 process.stdout.write(JSON.stringify(module.exports.default.source.globalVars));
 `,
@@ -2081,7 +2160,11 @@ void test('compiled Party CORS reader uses the nonlocal DefinePlugin origin with
           },
         ],
       },
-      output: { filename: 'reader.cjs', library: { type: 'commonjs2' }, path: temporaryRoot },
+      output: {
+        filename: 'reader.cjs',
+        library: { type: 'commonjs2' },
+        path: temporaryRoot,
+      },
       plugins: [definePlugin],
       target: 'node',
     });
@@ -2099,7 +2182,10 @@ void test('compiled Party CORS reader uses the nonlocal DefinePlugin origin with
         toString: statsSource.toString,
       });
       const hasErrors = stats.hasErrors.bind(statsSource)();
-      const errorText = stats.toString.bind(statsSource)({ all: false, errors: true });
+      const errorText = stats.toString.bind(statsSource)({
+        all: false,
+        errors: true,
+      });
       assert.equal(hasErrors, false, errorText);
     } finally {
       await closeCompiler();
@@ -2117,11 +2203,79 @@ const normalizedGeneratedSource = async (fileName: string, source: string) => {
   assert.deepEqual(result.errors, []);
   return result.code.replaceAll(/^\s*\n/gmu, '');
 };
+const ScaffoldSemanticKindSchema = Schema.Literals(['backend', 'layout']);
+type ScaffoldSemanticKind = typeof ScaffoldSemanticKindSchema.Type;
+const scaffoldSemanticKinds = new Map<string, ScaffoldSemanticKind>([
+  ['backend-federation.config.ts', 'backend'],
+  ['src/routes/layout.tsx', 'layout'],
+]);
+
+// Evaluate only controlled scaffolds with inert dependency adapters in a separate Node process.
+// No application server, deployment, real plugin or environment file is loaded by this harness.
+const evaluateScaffoldSemantics = async (
+  source: string,
+  kind: ScaffoldSemanticKind,
+): Promise<string> => {
+  const scratchRoot = path.join(workspaceRoot, '.scratch');
+  await mkdir(scratchRoot, { recursive: true });
+  const fixture = await mkdtemp(path.join(scratchRoot, 'scaffold-semantics-'));
+  try {
+    const effectUrl = pathToFileURL(require.resolve('effect')).href;
+    const { code } = await transform(source, {
+      define: { 'import.meta.url': JSON.stringify('file:///fixture/config.ts') },
+      format: 'cjs',
+      jsxFactory: 'element',
+      loader: kind === 'layout' ? 'tsx' : 'ts',
+    });
+    const harnessPath = path.join(fixture, 'evaluate.mjs');
+    await writeFile(
+      harnessPath,
+      `
+import * as effect from ${JSON.stringify(effectUrl)};
+import { runInNewContext } from 'node:vm';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+const kind = ${JSON.stringify(kind)};
+const pluginNames = ['appTools', 'bffPlugin', 'i18nPlugin', 'tanstackRouterPlugin', 'moduleFederationPlugin', 'pluginTailwindcss', 'ultramodernReleaseEnvelopePlugin'];
+const framework = {
+  ...Object.fromEntries(pluginNames.map(name => [name, () => ({ name })])),
+  builtinModules: [], createRequire: () => name => ({ version: name === 'effect/package.json' ? '4.0.0-rc.112' : '3.9.0-ultramodern.2' }),
+  defineConfig: config => config, presetUltramodern: config => config,
+  createModuleFederationConfig: config => config,
+  getBuildConfigEnvironment: () => undefined, ultramodernLocalisedUrls: {},
+};
+const module = { exports: {} };
+runInNewContext(${JSON.stringify(code)}, {
+  module, exports: module.exports, URL,
+  element: (type, props, ...children) => ({ type, props, children }),
+  require: specifier => {
+    if (specifier === 'effect') return effect;
+    if (specifier === 'effect/Schema') return effect.Schema;
+    if (specifier === 'node:url') return { fileURLToPath };
+    if (specifier === 'node:path') return path;
+    if (specifier === './package.json') return { dependencies: { '@module-federation/runtime': '2.9.0' } };
+    if (specifier === '@modern-js/plugin-tanstack/runtime') return { Outlet: 'Outlet' };
+    if (specifier === './index.css') return {};
+    return framework;
+  },
+});
+let evidence = module.exports;
+if (kind === 'layout') evidence = evidence.default();
+if (kind === 'backend') evidence = evidence.default;
+process.stdout.write(JSON.stringify(evidence));
+`,
+    );
+    return runNode([harnessPath]);
+  } finally {
+    await rm(fixture, { force: true, recursive: true });
+  }
+};
 
 const evaluatedInfrastructureSource = async (
   fileName: string,
   source: string,
   cloudflare: boolean,
+  injection: Readonly<Record<string, string>>,
 ): Promise<string> => {
   const partyRoot = path.join(workspaceRoot, partyDirectory);
   const result = await bundleSource({
@@ -2179,7 +2333,7 @@ const moduleShim = { ...nodeModule, createRequire: () => Object.assign(() => ({}
 const module = { exports: {} };
 runInNewContext(${JSON.stringify(code)}, {
   exports: module.exports, module, URL,
-  ULTRAMODERN_BUILD_MARKER: 'injected-build', ULTRAMODERN_SOURCE_REVISION: 'injected-revision',
+  ...${JSON.stringify(injection)},
   __resolve: name => 'file:///dependencies/' + name,
   require: name => ({ effect, '@app/shared-contracts/ultramodern-build': buildIdentity, 'node:module': moduleShim, 'node:path': nodePath, 'node:url': nodeUrl }[name] ?? framework),
 });
@@ -2282,27 +2436,38 @@ void test('all published scaffold formats retain Party infrastructure behavior a
             path.join(workspaceRoot, partyDirectory, fileName),
             'utf-8',
           );
-          if (fileName === 'modern.config.ts' || fileName === 'shared/ultramodern-build.ts') {
+          if (fileName === 'modern.config.ts' || fileName === buildMarkerFile) {
+            const injections: Readonly<Record<string, string>>[] = [
+              {},
+              {
+                ULTRAMODERN_BUILD_MARKER: 'executed-build',
+                ULTRAMODERN_SOURCE_REVISION: 'a'.repeat(40),
+              },
+            ];
             await Promise.all(
-              [false, true].map(async (cloudflare) => {
-                const [expected, evaluated] = await Promise.all([
-                  evaluatedInfrastructureSource(fileName, source, cloudflare),
-                  evaluatedInfrastructureSource(fileName, actual, cloudflare),
-                ]);
-                const decode = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json));
-                assert.deepEqual(
-                  decode(expected),
-                  decode(evaluated),
-                  `${moduleFormat}: ${fileName} must preserve evaluated configuration, build identity and plugin behavior`,
-                );
-              }),
+              [false, true].flatMap((cloudflare) =>
+                injections.map(async (injection) => {
+                  const [expected, evaluated] = await Promise.all([
+                    evaluatedInfrastructureSource(fileName, source, cloudflare, injection),
+                    evaluatedInfrastructureSource(fileName, actual, cloudflare, injection),
+                  ]);
+                  const decode = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json));
+                  assert.deepEqual(
+                    decode(expected),
+                    decode(evaluated),
+                    `${moduleFormat}: ${fileName} must preserve evaluated configuration, build identity and plugin behavior`,
+                  );
+                }),
+              ),
             );
             return;
           }
+          const kind = scaffoldSemanticKinds.get(fileName);
+          assert.ok(kind, `Unknown scaffold ${fileName}`);
           assert.equal(
-            await normalizedGeneratedSource(fileName, source),
-            await normalizedGeneratedSource(fileName, actual),
-            `${moduleFormat}: ${fileName} must match the controlled scaffold`,
+            await evaluateScaffoldSemantics(source, kind),
+            await evaluateScaffoldSemantics(actual, kind),
+            `${moduleFormat}: ${fileName} must preserve typed runtime, ownership and release gates`,
           );
         }),
       );
@@ -2341,13 +2506,9 @@ void test('all published scaffold formats generate the shared MicroVertical API 
       const descriptor: unknown = descriptorModule.createVerticalDescriptor(inventoryStockId, 4103);
       Schema.asserts(WorkspaceAppFixtureSchema, descriptor);
       const app = { ...descriptor, exposes: {} };
-      const contract = sharedApiModule.createSharedApi(generatedProofScope, app);
+      const contract = sharedApiModule.createSharedApi(app);
       const client = clientModule.createApiClient(app, generatedClientContractImport);
-      const service = serviceModule.createApiServiceEntry(
-        generatedProofScope,
-        app,
-        generatedSharedApiImport,
-      );
+      const service = serviceModule.createApiServiceEntry(app, generatedSharedApiImport);
 
       assert.match(contract, /MicroVerticalBuildMarkerSchema/u, moduleFormat);
       assert.match(contract, /MicroVerticalReadinessSchema/u, moduleFormat);
@@ -2375,12 +2536,13 @@ void test('all published scaffold formats generate the shared MicroVertical API 
 
       const customStemApp = {
         ...app,
-        api: { ...app.api, prefix: warehouseApiPrefix, stem: warehouseItemsApiStem },
+        api: {
+          ...app.api,
+          prefix: warehouseApiPrefix,
+          stem: warehouseItemsApiStem,
+        },
       };
-      const customStemContract = sharedApiModule.createSharedApi(
-        generatedProofScope,
-        customStemApp,
-      );
+      const customStemContract = sharedApiModule.createSharedApi(customStemApp);
       assert.equal(
         microVerticalApiBaselineViolation(warehouseItemsApiStem, customStemContract, {
           ...generatedBaselineExpectation,
@@ -2396,7 +2558,7 @@ void test('all published scaffold formats generate the shared MicroVertical API 
         4105,
       );
       Schema.asserts(WorkspaceAppFixtureSchema, checkoutDescriptor);
-      const checkoutContract = sharedApiModule.createSharedApi(generatedProofScope, {
+      const checkoutContract = sharedApiModule.createSharedApi({
         ...checkoutDescriptor,
         exposes: {},
       });
@@ -2512,16 +2674,12 @@ void test('all published scaffold formats emit the executable AST baseline valid
       await writeText(
         checkoutWorkspace,
         'verticals/shopping/shared/api.ts',
-        sharedApiModule.createSharedApi(generatedProofScope, checkoutStemDescriptor),
+        sharedApiModule.createSharedApi(checkoutStemDescriptor),
       );
       await writeText(
         checkoutWorkspace,
         'verticals/shopping/api/index.ts',
-        serviceModule.createApiServiceEntry(
-          generatedProofScope,
-          checkoutStemDescriptor,
-          generatedSharedApiImport,
-        ),
+        serviceModule.createApiServiceEntry(checkoutStemDescriptor, generatedSharedApiImport),
       );
       await writeText(
         checkoutWorkspace,
@@ -2679,7 +2837,7 @@ void test('two generated MicroVertical root contracts execute invariant readines
         api: { ...descriptor.api, prefix: fixture.prefix, stem: fixture.stem },
         exposes: {},
       };
-      const contract = sharedApiModule.createSharedApi('app', generatedDescriptor);
+      const contract = sharedApiModule.createSharedApi(generatedDescriptor);
       const basePath = `${fixture.prefix}/${fixture.stem}`;
       assert.equal(
         microVerticalApiBaselineViolation(fixture.stem, contract, {
@@ -2717,11 +2875,7 @@ void test('two generated MicroVertical root contracts execute invariant readines
       await writeText(
         ownerRoot,
         apiIndexFile,
-        apiServiceModule.createApiServiceEntry(
-          'app',
-          generatedDescriptor,
-          generatedSharedApiImport,
-        ),
+        apiServiceModule.createApiServiceEntry(generatedDescriptor, generatedSharedApiImport),
       );
       const clientEntryPath = `src/api/${fixture.id}-client.ts`;
       await writeText(
@@ -2900,7 +3054,7 @@ void test('repository checker respects custom readiness prefixes and diagnoses m
   };
   const ownerPath = `verticals/${inventoryStockId}`;
   const readinessContract = shared
-    .createSharedApi('app', app)
+    .createSharedApi(app)
     .replace(
       /(?<foundation>\.addHttpApi\(warehouseItemsFoundationApi\))[\s\S]*?(?=export const warehouseItemsOperationContexts)/u,
       '$<foundation>;\n\n',
@@ -2913,7 +3067,7 @@ void test('repository checker respects custom readiness prefixes and diagnoses m
   await writeText(
     fixture,
     `${ownerPath}/api/index.ts`,
-    service.createApiServiceEntry('app', app, generatedSharedApiImport),
+    service.createApiServiceEntry(app, generatedSharedApiImport),
   );
   await writeText(
     fixture,
@@ -2936,7 +3090,10 @@ void test('repository checker respects custom readiness prefixes and diagnoses m
     });
   assert.match(check(), /UltraModern API boundary check passed/u);
   const cases = [
-    { expected: /topology must declare this MicroVertical owner/u, verticals: [] },
+    {
+      expected: /topology must declare this MicroVertical owner/u,
+      verticals: [],
+    },
     {
       expected: /topology must declare api\.basePath/u,
       verticals: [
@@ -3375,7 +3532,10 @@ const validateModuleFederationTypes = (input: {
 const publicUrl = 'https://party.example.test';
 const buildMarker = 'party-build';
 interface ApiOnlyAppFixture {
-  readonly deliveryUnit: { readonly buildMarker: string; readonly unitId: string };
+  readonly deliveryUnit: {
+    readonly buildMarker: string;
+    readonly unitId: string;
+  };
   readonly deploy: {
     readonly cloudflare: {
       readonly jsonSmokeChecks: readonly object[];
@@ -3424,7 +3584,9 @@ const mockPublicResponses = (context: TestContext, failedPath?: string) => {
       route === mfManifestPath
         ? { metaData: { publicPath: `${publicUrl}/` } }
         : { marker: { build: buildMarker }, status: 'ready' };
-    return Response.json(body, { headers: { 'access-control-allow-origin': '*' } });
+    return Response.json(body, {
+      headers: { 'access-control-allow-origin': '*' },
+    });
   });
   return requested;
 };
@@ -3535,7 +3697,10 @@ void test('MF proof accepts explicit API-only intent but keeps exposed-app archi
   await mkdir(path.join(fixture, appDir), { recursive: true });
   const configPath = path.join(fixture, appDir, 'module-federation.config.ts');
   const validate = () =>
-    validateModuleFederationTypes({ appDirs: [appDir], workspaceRoot: fixture });
+    validateModuleFederationTypes({
+      appDirs: [appDir],
+      workspaceRoot: fixture,
+    });
   await writeFile(
     configPath,
     '// @ultramodern-mf no-exposes\nexport default { dts: false, exposes: {} };',
@@ -3558,10 +3723,7 @@ void test('Party deployment declares no fake SSR/locale URL while retaining back
   assert.equal(party.cloudflare.routes.locale, undefined);
   assert.equal(party.cloudflare.routes.mfManifest, mfManifestPath);
   assert.equal(party.cloudflare.routes.apiReadiness, readinessPath);
-  assert.equal(
-    party.backendFederation.exposes['./effect-api'].contract,
-    'verticals/party-registry/shared/api.ts',
-  );
+  assert.equal(party.backendFederation.exposes['./effect-api'].contract, partySharedApiPath);
   assert.equal(
     party.backendFederation.exposes['./effect-api'].openapi,
     '/party-registry-api/openapi.json',
@@ -3689,10 +3851,7 @@ void test('proves generated Layer bindings and API aliases without accepting unu
 
 void test('accepts only the trusted final identity terminator in a governed API slot', async () => {
   const identityTerminator = '.pipe(identity)';
-  const source = await readFile(
-    path.join(workspaceRoot, 'verticals/party-registry/shared/api.ts'),
-    'utf-8',
-  );
+  const source = await readFile(path.join(workspaceRoot, partySharedApiPath), 'utf-8');
   assert.ok(source.includes(identityTerminator));
   assert.equal(microVerticalApiBaselineViolation(partyId, source), undefined);
   const mutations = [
@@ -3711,4 +3870,273 @@ void test('accepts only the trusted final identity terminator in a governed API 
       /explicitly compose its readiness foundation API/u,
     );
   }
+});
+
+// Consumer adaptation is compared by governed semantics, not generated byte equality.
+void test('consumer migration preserves native tooling and governed safety', async (context) => {
+  const source = async (relativePath: string) =>
+    await readFile(path.join(workspaceRoot, relativePath), 'utf-8');
+  await context.test(
+    'authenticated cohort and scoped release-age policy remain pinned',
+    async () => {
+      const releaseVersion = '3.9.0-ultramodern.2';
+      const cohort = Schema.decodeUnknownSync(
+        Schema.fromJsonString(
+          Schema.Struct({
+            aliases: Schema.Record(Schema.String, Schema.String),
+            packages: Schema.Array(
+              Schema.Struct({
+                sourceName: Schema.String,
+                targetName: Schema.String,
+                version: Schema.Literal(releaseVersion),
+              }),
+            ),
+            release: Schema.Struct({ version: Schema.Literal(releaseVersion) }),
+            source: Schema.Struct({
+              commit: Schema.Literal('d2c75828230edf92775feca796c0960af754508f'),
+            }),
+          }),
+        ),
+      )(await source('.modernjs/release-cohort.json'));
+      assert.equal(
+        cohort.aliases['@modern-js/ultramodern-create'],
+        '@bleedingdev/modern-js-ultramodern-create',
+      );
+      assert.equal(cohort.aliases['@modern-js/create'], undefined);
+      assert.equal(
+        new Set(cohort.packages.map((entry) => entry.sourceName)).size,
+        cohort.packages.length,
+      );
+      for (const entry of cohort.packages) {
+        assert.equal(cohort.aliases[entry.sourceName], entry.targetName);
+      }
+      const workspace = await source('pnpm-workspace.yaml');
+      for (const line of [
+        'minimumReleaseAge: 1440',
+        'minimumReleaseAgeStrict: true',
+        'minimumReleaseAgeIgnoreMissingTime: false',
+      ]) {
+        assert.equal(workspace.split('\n').filter((candidate) => candidate === line).length, 1);
+      }
+      const exclusions = /^minimumReleaseAgeExclude:\n(?<entries>(?:[ \t]+[^\n]*\n)*)/mu.exec(
+        workspace,
+      )?.groups?.entries;
+      assert.ok(exclusions !== undefined && exclusions.length > 0);
+      const allowed = new Set(
+        cohort.packages.map((entry) => `${entry.targetName}@${entry.version}`),
+      );
+      const declared = exclusions
+        .trim()
+        .split('\n')
+        .map((line) => line.trim().replaceAll(/^-\s*['"]?|['"]$/gu, ''));
+      assert.ok(declared.length > 0);
+      for (const entry of declared) {
+        assert.ok(
+          allowed.has(entry),
+          `Release-age exception must name an exact authenticated package: ${entry}`,
+        );
+      }
+      const validator = await source('scripts/validate-ultramodern-workspace.mts');
+      assert.match(validator, /authenticated release cohort projection/u);
+      assert.ok(validator.includes(cohort.source.commit));
+      assert.doesNotMatch(validator, /['"]@modern-js\/create['"]/u);
+    },
+  );
+  await context.test(
+    'current generator handoff preserves arguments and nonzero failures',
+    async () => {
+      const scratchRoot = path.join(workspaceRoot, '.scratch');
+      await mkdir(scratchRoot, { recursive: true });
+      const fixture = await mkdtemp(path.join(scratchRoot, 'consumer-migration-'));
+      try {
+        const executable = path.join(fixture, 'generator.mjs');
+        await writeFile(
+          executable,
+          `process.stdout.write(JSON.stringify({ args: process.argv.slice(2), root: process.env.ULTRAMODERN_WORKSPACE_ROOT })); process.exitCode = 37;`,
+        );
+        const wrappers = [
+          ['migrate-strict-effect.mts', 'migrate-strict-effect'],
+          ['ultramodern-typecheck.mts', 'typecheck'],
+        ] as const;
+        const wrapperSources = await Promise.all(
+          wrappers.map(async ([file]) => await source(`scripts/${file}`)),
+        );
+        for (const [index, [file, command]] of wrappers.entries()) {
+          const script = wrapperSources[index] ?? '';
+          assert.match(script, /runUltramodernScript/u);
+          assert.doesNotMatch(script, /['"]modern-js-create['"]/u);
+          const runner = await source('scripts/shared/ultramodern-command.mts');
+          assert.match(runner, /'ultramodern-create'/u);
+          assert.doesNotMatch(runner, /['"]modern-js-create['"]/u);
+          assert.match(await source('scripts/ultramodern-command-failure.mts'), /Schema\.TaggedError/u);
+          assert.match(script, /Effect\.runPromiseExit/u);
+          const result = spawnSync(
+            process.execPath,
+            [path.join(workspaceRoot, 'scripts', file), '--fixture-argument'],
+            {
+              cwd: fixture,
+              encoding: 'utf-8',
+              env: {
+                ULTRAMODERN_CREATE_BIN: executable,
+                ULTRAMODERN_WORKSPACE_ROOT: fixture,
+              },
+            },
+          );
+          assert.equal(result.status, 37, result.stderr);
+          assert.deepEqual(JSON.parse(result.stdout), {
+            args: ['ultramodern', command, '--fixture-argument'],
+            root: fixture,
+          });
+          const missing = spawnSync(process.execPath, [path.join(workspaceRoot, 'scripts', file)], {
+            cwd: fixture,
+            encoding: 'utf-8',
+            env: {
+              PATH: fixture,
+              ULTRAMODERN_CREATE_BIN: '',
+              ULTRAMODERN_WORKSPACE_ROOT: fixture,
+            },
+          });
+          assert.equal(missing.status, 1);
+          assert.match(
+            missing.stdout + missing.stderr,
+            /Failed to launch ultramodern-create from PATH/u,
+          );
+        }
+      } finally {
+        await rm(fixture, { force: true, recursive: true });
+      }
+    },
+  );
+  await context.test(
+    'native route, isolated materialization and workerd adaptations survive',
+    async () => {
+      const files = [
+        'generate-tanstack-routes.mts',
+        'materialize-zerops-runtime.mjs',
+        'proof-workerd-ssr.mts',
+      ];
+      const scripts = await Promise.all(files.map(async (file) => await source(`scripts/${file}`)));
+      for (const [index, file] of files.entries()) {
+        const script = scripts[index] ?? '';
+        assert.match(script, /Effect\.gen/u, file);
+        assert.match(script, /FileSystem/u, file);
+        assert.doesNotMatch(
+          script,
+          /import\s*\{[^}]*spawnSync[^}]*\}\s*from\s*['"]node:child_process/u,
+          file,
+        );
+        assert.doesNotMatch(script, /['"]modern-js-create['"]/u, file);
+      }
+      const materializer = await source('scripts/materialize-zerops-runtime.mjs');
+      assert.match(materializer, /Flag\.boolean\('worker'\)/u);
+      assert.match(materializer, /appPackage\.name !== packageName/u);
+      assert.match(materializer, /makeTempDirectoryScoped/u);
+      assert.match(materializer, /removeIncompatiblePlatformDependencies/u);
+      assert.doesNotMatch(materializer, /--skip-build/u);
+      const proof = await source('scripts/proof-workerd-ssr.mts');
+      assert.match(proof, /WorkerdProofError extends Schema\.TaggedError/u);
+      assert.match(proof, /findReleaseMarkers/u);
+      assert.match(proof, /not tied to its executed release identity/u);
+      assert.match(proof, /check\.body \?\? null/u);
+      assert.match(proof, /check\.expect \?\? null/u);
+      assert.match(proof, /Exit\.isFailure\(exit\)/u);
+    },
+  );
+  await context.test(
+    'custom Party contracts remain accepted and forged auth remains rejected',
+    async () => {
+      const principal = await source('verticals/party-registry/api/auth/action-principal.ts');
+      const gateway = await source('verticals/party-registry/src/api/action-gateway.ts');
+      const sharedApi = await source(partySharedApiPath);
+      const handlerRoot = await source('verticals/party-registry/api/index.ts');
+      assert.equal(hasGeneratedOperationPrincipalContract(principal), true);
+      assert.equal(hasGeneratedOperationGatewayContract(gateway, partyId), true);
+      assert.equal(hasValidGovernedHttpCompositionRoot(sharedApi, handlerRoot), true);
+      assert.equal(microVerticalApiBaselineViolation(partyId, sharedApi), undefined);
+      for (const [before, after] of [
+        [
+          'makeMicroverticalHttpPrincipalAuthentication(verifyOperationPrincipal)',
+          'makeMicroverticalHttpPrincipalAuthentication(forgedPrincipal)',
+        ],
+        ["'@app/core-runtime/http/principal-authentication'", "'./counterfeit.ts'"],
+      ]) {
+        assert.ok(principal.includes(before));
+        assert.equal(
+          hasGeneratedOperationPrincipalContract(principal.replace(before, after)),
+          false,
+        );
+      }
+      const audience = "ACTION_GATEWAY_AUDIENCE = 'party-registry'";
+      assert.ok(gateway.includes(audience));
+      assert.equal(
+        hasGeneratedOperationGatewayContract(
+          gateway.replace(audience, "ACTION_GATEWAY_AUDIENCE = 'other-owner'"),
+          partyId,
+        ),
+        false,
+      );
+      // Exercise the complete Core/Party server, client, permission and transport negative matrix.
+      const governed = spawnSync(
+        process.execPath,
+        [
+          '--test',
+          '--test-name-pattern=governed',
+          'scripts/tests/module-entrypoint-boundaries.test.mts',
+        ],
+        {
+          cwd: workspaceRoot,
+          encoding: 'utf-8',
+          env: { PATH: path.dirname(process.execPath) },
+        },
+      );
+      assert.equal(governed.status, 0, governed.stdout + governed.stderr);
+      assert.match(governed.stdout, /governed servers bind/u);
+      assert.match(governed.stdout, /rejects generated governed clients/u);
+    },
+  );
+  await context.test(
+    'manifest-aware bridge accepts TanStack without permitting disguised router capability',
+    () => {
+      const imported =
+        "import { createModuleFederationConfig as createConfig } from '@module-federation/modern-js-v3';";
+      const config = (body: string) => `${imported} export default createConfig(${body});`;
+      const disabled = '{ bridge: { enableBridgeRouter: false } }';
+      const enabled = '{ bridge: { enableBridgeRouter: true } }';
+      assert.equal(moduleFederationBridgeViolation(config(disabled), {}), undefined);
+      assert.equal(
+        moduleFederationBridgeViolation(
+          `${imported} const config = createConfig(${disabled}); export default config;`,
+          {},
+        ),
+        undefined,
+      );
+      assert.equal(
+        moduleFederationBridgeViolation(config(enabled), {
+          dependencies: { 'react-router': '7.18.0' },
+        }),
+        undefined,
+      );
+      assert.equal(
+        moduleFederationBridgeViolation(config(enabled), {
+          devDependencies: { 'react-router-dom': '7.18.0' },
+        }),
+        undefined,
+      );
+      for (const candidate of [
+        config(enabled),
+        config('{}'),
+        config('{ bridge: {} }'),
+        config('{ bridge: { enableBridgeRouter: Boolean(false) } }'),
+        config('{ bridge: { enableBridgeRouter: false, ...override } }'),
+        config('{ bridge: { enableBridgeRouter: false, [key]: true } }'),
+        config('{ bridge: { enableBridgeRouter: false, enableBridgeRouter: true } }'),
+        config('{ bridge: { enableBridgeRouter: false }, ...override }'),
+        config(disabled).replace('import {', 'import type {'),
+        `${imported} function decoy(createConfig) { return createConfig(${disabled}); } export default otherConfig;`,
+        `function createConfig(value) { return value; } export default createConfig(${disabled});`,
+      ]) {
+        assert.notEqual(moduleFederationBridgeViolation(candidate, {}), undefined, candidate);
+      }
+    },
+  );
 });

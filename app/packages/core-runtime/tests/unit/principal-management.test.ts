@@ -170,8 +170,9 @@ effectTest(
       { bindingStatus: 'active', principalKind: 'human', principalStatus: 'active' },
       { bindingStatus: 'active', principalKind: 'service', principalStatus: 'disabled' },
     ] satisfies readonly ApiKeyBindingRecord[];
-    yield* Effect.all(
-      records.map((record) =>
+    yield* Effect.forEach(
+      records,
+      (record) =>
         Effect.gen(function* rejectsIneligibleBindingTarget() {
           const error = yield* Effect.flip(
             setApiKeyBindingStatus({
@@ -185,7 +186,7 @@ effectTest(
           );
           assert.equal(error._tag, 'IdentityTargetInvalidError');
         }),
-      ),
+      { concurrency: 1 },
     );
   }),
 );
@@ -200,7 +201,7 @@ effectTest(
           inserted = value;
           return Option.some({ authBindingId });
         }),
-      loadPrincipal: () => Effect.succeed(Option.some({ kind: 'service', status: 'active' })),
+      loadPrincipal: () => Effect.succeedSome({ kind: 'service', status: 'active' }),
     });
     const result = yield* bindApiKey({
       managed: true,
@@ -221,8 +222,8 @@ effectTest(
   'maps an existing API key binding to a lifecycle conflict',
   Effect.gen(function* mapsExistingBindingToConflict() {
     const transaction = repository({
-      insertApiKeyBinding: () => Effect.succeed(Option.none()),
-      loadPrincipal: () => Effect.succeed(Option.some({ kind: 'service', status: 'active' })),
+      insertApiKeyBinding: () => Effect.succeedNone,
+      loadPrincipal: () => Effect.succeedSome({ kind: 'service', status: 'active' }),
     });
 
     const error = yield* Effect.flip(

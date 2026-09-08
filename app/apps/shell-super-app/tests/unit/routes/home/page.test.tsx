@@ -3,7 +3,8 @@ import { afterEach, beforeEach, expect, rstest, test } from '@rstest/core';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect, Schema } from 'effect';
-import type { ReactNode } from 'react';
+import type { ComponentProps, ReactNode } from 'react';
+
 import {
   AppIdSchema,
   GroupKeySchema,
@@ -15,17 +16,72 @@ import {
   TenantAuthenticationRequiredProblemSchema,
   TenantIdSchema,
 } from '../../../../shared/api.ts';
-import { HomeView } from '../../../../src/routes/[lang]/page.tsx';
 import type { HomePageModel } from '../../../../src/routes/[lang]/page.data.ts';
+import { HomeView } from '../../../../src/routes/[lang]/page.tsx';
+import { ultramodernLocalisedUrls } from '../../../../src/routes/ultramodern-route-metadata.ts';
 
-const { navigateMock, runBrowserEffectMock, signOutMock, switchLegalEntityMock, switchTenantMock } =
-  rstest.hoisted(() => ({
+type LocalizedLinkDoubleProps = Omit<ComponentProps<'a'>, 'href'> & {
+  readonly children?: ReactNode;
+  readonly href?: string | undefined;
+  readonly params?: Readonly<Record<string, string>>;
+  readonly to: string;
+};
+
+const {
+  languageState,
+  localizedLinkCalls,
+  navigateMock,
+  runBrowserEffectMock,
+  signOutMock,
+  switchLegalEntityMock,
+  switchTenantMock,
+} = rstest.hoisted(() => {
+  const recordedLinkCalls: {
+    href: string | undefined;
+    params: Readonly<Record<string, string>> | undefined;
+    to: string;
+  }[] = [];
+  return {
+    languageState: { current: 'en' },
+    localizedLinkCalls: recordedLinkCalls,
     navigateMock: rstest.fn(),
     runBrowserEffectMock: rstest.fn(),
     signOutMock: rstest.fn(),
     switchLegalEntityMock: rstest.fn(),
     switchTenantMock: rstest.fn(),
-  }));
+  };
+});
+
+const localisedUrlPatterns = new Map<string, Readonly<Record<string, string>>>(
+  Object.entries(ultramodernLocalisedUrls).map(
+    ([canonicalPattern, localisedPatterns]): readonly [
+      string,
+      Readonly<Record<string, string>>,
+    ] => [canonicalPattern, { cs: localisedPatterns.cs, en: localisedPatterns.en }],
+  ),
+);
+
+/**
+ * Resolves the destination the framework link would produce, using the
+ * application's own canonical-to-localised route map instead of a hand-written
+ * expectation, so the page is proven to hand over a language-agnostic target.
+ */
+const resolveLocalizedHref = (
+  to: string,
+  params: Readonly<Record<string, string>> | undefined,
+  language: string,
+): string => {
+  const canonicalPattern = to.replaceAll('$', ':');
+  const localisedPattern =
+    localisedUrlPatterns.get(canonicalPattern)?.[language] ?? canonicalPattern;
+  const segments = localisedPattern
+    .split('/')
+    .filter(Boolean)
+    .map((segment) =>
+      segment.startsWith(':') ? encodeURIComponent(params?.[segment.slice(1)] ?? '') : segment,
+    );
+  return `/${[language, ...segments].join('/')}`;
+};
 
 const translations = new Map(
   Object.entries({
@@ -63,14 +119,20 @@ const translations = new Map(
 );
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  Link: ({ children, to, ...props }: { children: ReactNode; to: string }) => (
-    <a href={`/en${to === '/' ? '/' : to}`} {...props}>
-      {children}
-    </a>
-  ),
-  useLocalizedLocation: () => ({ alternates: { cs: '/cs/', en: '/en/' }, canonical: '/en/' }),
+  Link: ({ children, href, params, to, ...props }: LocalizedLinkDoubleProps) => {
+    localizedLinkCalls.push({ href, params, to });
+    return (
+      <a href={resolveLocalizedHref(to, params, languageState.current)} {...props}>
+        {children}
+      </a>
+    );
+  },
+  useLocalizedLocation: () => ({
+    alternates: { cs: '/cs/', en: '/en/' },
+    canonical: '/en/',
+  }),
   useModernI18n: () => ({
-    language: 'en',
+    language: languageState.current,
     t: (key: string) => translations.get(key) ?? key,
   }),
 }));
@@ -105,7 +167,7 @@ const inventoryAppId = Schema.decodeUnknownSync(AppIdSchema)('inventory-app');
 const navigationGroupKey = Schema.decodeUnknownSync(GroupKeySchema)('shell.navigation.modules');
 const inventoryModuleId = Schema.decodeUnknownSync(ModuleIdSchema)('inventory.stock');
 
-const authenticatedModel = (): HomePageModel => ({
+const authenticatedModel = (options?: { readonly moduleEnabled?: boolean }): HomePageModel => ({
   contextState: 'authenticated',
   identity: {
     displayName: 'Ada Lovelace',
@@ -124,7 +186,7 @@ const authenticatedModel = (): HomePageModel => ({
     items: [
       {
         appId: inventoryAppId,
-        enabled: true,
+        enabled: options?.moduleEnabled ?? true,
         groupKey: navigationGroupKey,
         href: '/modules/inventory.stock',
         label: 'Inventory',
@@ -161,6 +223,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  languageState.current = 'en';
+  localizedLinkCalls.length = 0;
   rstest.clearAllMocks();
 });
 
@@ -168,6 +232,34 @@ test('anonymous home exposes only the localized login action', () => {
   render(<HomeView initialModel={{ state: 'anonymous' }} />);
   expect(screen.getByRole('link', { name: 'Login' }).getAttribute('href')).toBe('/en/login');
   expect(screen.queryByRole('banner')).toBeNull();
+});
+
+test('the anonymous login action hands a canonical target to the framework link', () => {
+  render(<HomeView initialModel={{ state: 'anonymous' }} />);
+  const loginCall = localizedLinkCalls.find((call) => call.to === '/login');
+  expect(loginCall).toBeDefined();
+  expect(loginCall?.params).toBeUndefined();
+  expect(loginCall?.href).toBeUndefined();
+});
+
+test('the anonymous login action resolves Czech from the same canonical target', () => {
+  languageState.current = 'cs';
+  render(<HomeView initialModel={{ state: 'anonymous' }} />);
+  expect(localizedLinkCalls.map((call) => call.to)).toContain('/login');
+  expect(screen.getByRole('link', { name: 'Login' }).getAttribute('href')).toBe('/cs/login');
+});
+
+test('the unavailable dashboard exposes no navigable affordance', () => {
+  render(<HomeView initialModel={{ state: 'unavailable' }} />);
+  expect(screen.queryAllByRole('link')).toHaveLength(0);
+  expect(localizedLinkCalls).toHaveLength(0);
+});
+
+test('a disabled module affordance stays non-interactive text', () => {
+  render(<HomeView initialModel={authenticatedModel({ moduleEnabled: false })} />);
+  expect(screen.queryByRole('link', { name: 'Inventory' })).toBeNull();
+  expect(screen.getByText('Inventory')).toBeTruthy();
+  expect(localizedLinkCalls.map((call) => call.to)).not.toContain('/modules/inventory.stock');
 });
 
 test('authenticated home renders server-composed navigation and selected legal context', () => {
@@ -219,7 +311,10 @@ test('logout clears the authenticated composition together', async () => {
   await user.click(screen.getByRole('button', { name: 'Ada Lovelace' }));
   await user.click(await screen.findByRole('menuitem', { name: 'Logout' }));
   await waitFor(() =>
-    expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '/en/login' }),
+    expect(navigateMock).toHaveBeenCalledWith({
+      reloadDocument: true,
+      to: '/en/login',
+    }),
   );
 });
 

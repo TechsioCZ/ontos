@@ -1,16 +1,67 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { afterEach, beforeEach, expect, rstest, test } from '@rstest/core';
-import { Effect, Redacted } from 'effect';
+import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { toaster } from '@techsio/ui-kit/molecules/toast';
-import LoginPage from '../../../../src/routes/[lang]/login/page';
+import { Effect, Redacted } from 'effect';
+import type { ComponentProps, ReactNode } from 'react';
 
-const { navigateMock, runBrowserEffectMock, signInMock } = rstest.hoisted(() => ({
-  navigateMock: rstest.fn(async () => {}),
-  runBrowserEffectMock: rstest.fn(),
-  signInMock: rstest.fn(),
-}));
+import LoginPage from '../../../../src/routes/[lang]/login/page';
+import { ultramodernLocalisedUrls } from '../../../../src/routes/ultramodern-route-metadata.ts';
+
+type LocalizedLinkDoubleProps = Omit<ComponentProps<'a'>, 'href'> & {
+  readonly children?: ReactNode;
+  readonly href?: string | undefined;
+  readonly params?: Readonly<Record<string, string>>;
+  readonly to: string;
+};
+
+const { languageState, localizedLinkCalls, navigateMock, runBrowserEffectMock, signInMock } =
+  rstest.hoisted(() => {
+    const recordedLinkCalls: {
+      href: string | undefined;
+      params: Readonly<Record<string, string>> | undefined;
+      to: string;
+    }[] = [];
+    return {
+      languageState: { current: 'en' },
+      localizedLinkCalls: recordedLinkCalls,
+      navigateMock: rstest.fn(async () => {}),
+      runBrowserEffectMock: rstest.fn(),
+      signInMock: rstest.fn(),
+    };
+  });
+
+const localisedUrlPatterns = new Map<string, Readonly<Record<string, string>>>(
+  Object.entries(ultramodernLocalisedUrls).map(
+    ([canonicalPattern, localisedPatterns]): readonly [
+      string,
+      Readonly<Record<string, string>>,
+    ] => [canonicalPattern, { cs: localisedPatterns.cs, en: localisedPatterns.en }],
+  ),
+);
+
+/**
+ * Resolves the destination the framework link would produce, using the
+ * application's own canonical-to-localised route map instead of a hand-written
+ * expectation, so the page is proven to hand over a language-agnostic target.
+ */
+const resolveLocalizedHref = (
+  to: string,
+  params: Readonly<Record<string, string>> | undefined,
+  language: string,
+): string => {
+  const canonicalPattern = to.replaceAll('$', ':');
+  const localisedPattern =
+    localisedUrlPatterns.get(canonicalPattern)?.[language] ?? canonicalPattern;
+  const segments = localisedPattern
+    .split('/')
+    .filter(Boolean)
+    .map((segment) =>
+      segment.startsWith(':') ? encodeURIComponent(params?.[segment.slice(1)] ?? '') : segment,
+    );
+  return `/${[language, ...segments].join('/')}`;
+};
 
 beforeEach(() => {
   runBrowserEffectMock.mockImplementation(
@@ -43,6 +94,14 @@ const translations = new Map(
 );
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
+  Link: ({ children, href, params, to, ...props }: LocalizedLinkDoubleProps) => {
+    localizedLinkCalls.push({ href, params, to });
+    return (
+      <a href={resolveLocalizedHref(to, params, languageState.current)} {...props}>
+        {children}
+      </a>
+    );
+  },
   useLocalizedLocation: () => ({
     alternates: {
       cs: '/cs/login',
@@ -51,7 +110,7 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
     canonical: '/en/login',
   }),
   useModernI18n: () => ({
-    language: 'en',
+    language: languageState.current,
     t: (key: string) => translations.get(key) ?? key,
   }),
 }));
@@ -76,6 +135,8 @@ const renderLogin = () => render(<LoginPage />);
 
 afterEach(() => {
   cleanup();
+  languageState.current = 'en';
+  localizedLinkCalls.length = 0;
   toaster.remove();
   rstest.unstubAllGlobals();
   rstest.clearAllMocks();
@@ -98,6 +159,25 @@ test('shows the required login controls through the UI kit', () => {
   expect(submit.getAttribute('type')).toBe('submit');
   expect(screen.getByRole('link', { name: '← Back to the home page' }).getAttribute('href')).toBe(
     '/en',
+  );
+});
+
+test('the back link hands the canonical home target to the framework link', () => {
+  renderLogin();
+
+  const homeCall = localizedLinkCalls.find((call) => call.to === '/');
+  expect(homeCall).toBeDefined();
+  expect(homeCall?.params).toBeUndefined();
+  expect(homeCall?.href).toBeUndefined();
+});
+
+test('the back link resolves Czech from the same canonical target', () => {
+  languageState.current = 'cs';
+  renderLogin();
+
+  expect(localizedLinkCalls.map((call) => call.to)).toContain('/');
+  expect(screen.getByRole('link', { name: '← Back to the home page' }).getAttribute('href')).toBe(
+    '/cs',
   );
 });
 

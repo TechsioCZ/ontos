@@ -16,7 +16,7 @@ import {
 } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
-import { outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
+
 import type { ProtectedEntrypointInventory } from './authorization/protected-entrypoint-inventory.mts';
 import type { AuthorizationRolloutContract } from './authorization/rollout-contract.mts';
 import { validateAuthorizationRolloutContract } from './authorization/rollout-contract.mts';
@@ -25,6 +25,7 @@ import type {
   AuthorizationReadinessEvidence,
 } from './check-authorization-readiness.mts';
 import { hashAuthorizationEvidence } from './check-authorization-readiness.mts';
+import { outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
 import type { AuthorizationImpactReport } from './report-fail-closed-authorization-impact.mts';
 
 declare global {
@@ -164,7 +165,10 @@ const InventoryAuthorizationSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal('public') }),
   Schema.Struct({ kind: Schema.Literal('authenticated_principal') }),
   Schema.Struct({ kind: Schema.Literal('owner_local_background') }),
-  Schema.Struct({ kind: Schema.Literal('context_permission'), permission: Schema.String }),
+  Schema.Struct({
+    kind: Schema.Literal('context_permission'),
+    permission: Schema.String,
+  }),
   Schema.Struct({
     kind: Schema.Literal('action_execution'),
     provisioning: Schema.Literals(['explicit', 'tenant_membership_default']),
@@ -387,12 +391,20 @@ export const validateAuthorizationPromotionGate = (
     if (input.environment === 'production') {
       fail('production authorization promotion rejects report-only configuration');
     }
-    return { environment: input.environment, mode: rollout.mode, status: 'observing' };
+    return {
+      environment: input.environment,
+      mode: rollout.mode,
+      status: 'observing',
+    };
   }
   if (!authorizationEvidenceMatches(input, requireAuthorizationEvidence(input))) {
     fail('authorization promotion evidence is missing, stale, mismatched, or unresolved');
   }
-  return { environment: input.environment, mode: rollout.mode, status: 'ready' };
+  return {
+    environment: input.environment,
+    mode: rollout.mode,
+    status: 'ready',
+  };
 };
 
 const INFRASTRUCTURE_PHASES = {
@@ -837,7 +849,12 @@ const makeComparison = (
   }
   return fallbackReason === undefined
     ? { baseRevision: options.baseRevision, headRevision, mode }
-    : { baseRevision: options.baseRevision, headRevision, mode, reason: fallbackReason };
+    : {
+        baseRevision: options.baseRevision,
+        headRevision,
+        mode,
+        reason: fallbackReason,
+      };
 };
 
 interface DeploymentImpactState {

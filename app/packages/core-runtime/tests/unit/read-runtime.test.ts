@@ -257,7 +257,7 @@ void test('uses each denying Policy reference own declared HTTP status', async (
         ),
       );
       assert.equal(error._tag, 'ReadPolicyDenied');
-      assert.equal(Schema.decodeUnknownSync(ReadPolicyDenied)(error).httpStatus, denialStatus);
+      assert.equal(Schema.decodeSync(ReadPolicyDenied)(error).httpStatus, denialStatus);
     }),
   );
 });
@@ -814,7 +814,7 @@ for (const scenario of [
 
 void test('does not release generated search candidates denied by result-level authorization', async () => {
   const legalEntityId = '00000000-0000-4000-8000-000000000004';
-  const candidate = Schema.decodeUnknownSync(ResourceTargetSchema)({
+  const candidate = Schema.decodeSync(ResourceTargetSchema)({
     moduleId: 'inventory.stock',
     resourceId: 'stock-1',
     resourceType: 'inventory.stock.item',
@@ -856,7 +856,7 @@ void test('does not release generated search candidates denied by result-level a
 });
 
 test('authorizes tenant-scoped Party search results without fabricating a Legal Entity', async () => {
-  const candidate = Schema.decodeUnknownSync(ResourceTargetSchema)({
+  const candidate = Schema.decodeSync(ResourceTargetSchema)({
     moduleId: 'party.registry',
     resourceId: 'party-1',
     resourceType: 'party.registry.party',
@@ -900,7 +900,7 @@ test('authorizes tenant-scoped Party search results without fabricating a Legal 
 });
 
 test('fails closed when tenant-scoped Party result authorization becomes unavailable', async () => {
-  const candidate = Schema.decodeUnknownSync(ResourceTargetSchema)({
+  const candidate = Schema.decodeSync(ResourceTargetSchema)({
     moduleId: 'party.registry',
     resourceId: 'party-1',
     resourceType: 'party.registry.party',

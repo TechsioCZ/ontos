@@ -1,5 +1,5 @@
-import type { Client } from 'pg';
 import { Cause, Option, Schema } from 'effect';
+import type { Client } from 'pg';
 
 interface DatabasePrivileges {
   readonly connect: boolean;

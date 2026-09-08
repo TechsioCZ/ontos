@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmod, cp, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execPath } from 'node:process';
@@ -11,7 +19,10 @@ const workflowScript = path.join(workspaceRoot, 'scripts/locki-feature.sh');
 const featureSlug = 'customer-search';
 
 void test('pins pnpm to the npm mise backend for cross-platform sandbox installation', async () => {
-  const miseConfiguration = await readFile(path.join(workspaceRoot, '.mise.toml'), 'utf-8');
+  const miseConfiguration = await readFile(
+    path.join(workspaceRoot, '.mise.toml'),
+    'utf-8'
+  );
   assert.match(miseConfiguration, /\[tool_alias\][\s\S]*pnpm = "npm:pnpm"/u);
   assert.match(miseConfiguration, /\[tools\][\s\S]*pnpm = "11\.25\.0"/u);
 });
@@ -42,9 +53,15 @@ const makeFixture = async (withEnvironment = true): Promise<Fixture> => {
   const logPath = path.join(root, 'commands.log');
   await mkdir(path.join(sourceRoot, 'app/scripts'), { recursive: true });
   await mkdir(binDirectory, { recursive: true });
-  await cp(workflowScript, path.join(sourceRoot, 'app/scripts/locki-feature.sh'));
+  await cp(
+    workflowScript,
+    path.join(sourceRoot, 'app/scripts/locki-feature.sh')
+  );
   if (withEnvironment) {
-    await writeFile(path.join(sourceRoot, 'app/.env'), Buffer.from('OPAQUE-SECRET\0VALUE\n'));
+    await writeFile(
+      path.join(sourceRoot, 'app/.env'),
+      Buffer.from('OPAQUE-SECRET\0VALUE\n')
+    );
   }
   await executable(
     path.join(binDirectory, 'git'),
@@ -57,7 +74,7 @@ if [ "$3" = "cat-file" ]; then
 fi
 if [ "$3" = "diff" ]; then exit 0; fi
 exit 9
-`,
+`
   );
   await executable(
     path.join(binDirectory, 'mise'),
@@ -66,13 +83,13 @@ printf 'mise %s\\n' "$*" >>"$TEST_LOG"
 if [ "\${1-}" = "install" ] && [ -n "\${LOCKI_SANDBOX_ID-}" ]; then exit 18; fi
 if [ "$*" = "exec -- pnpm install --frozen-lockfile" ] && [ "\${ULTRAMODERN_SKIP_CODEX_SKILLS-}" != "1" ]; then exit 19; fi
 if [ "\${FAIL_PREPARATION-}" = "true" ] && [ "\${1-}" = "install" ]; then exit 17; fi
-`,
+`
   );
   await executable(
     path.join(binDirectory, 'docker'),
     `#!/bin/sh
 printf 'docker %s\\n' "$*" >>"$TEST_LOG"
-`,
+`
   );
   await executable(
     path.join(binDirectory, 'locki'),
@@ -103,7 +120,7 @@ case "$command_name" in
   ai) ;;
   *) exit 8 ;;
 esac
-`,
+`
   );
   return { binDirectory, logPath, sourceRoot, targetRoot };
 };
@@ -111,11 +128,14 @@ esac
 const runWorkflow = (
   fixture: Fixture,
   commandArguments: readonly string[],
-  extraEnvironment: Readonly<Record<string, string>> = {},
+  extraEnvironment: Readonly<Record<string, string>> = {}
 ): WorkflowResult => {
   const result = spawnSync(
     '/bin/sh',
-    [path.join(fixture.sourceRoot, 'app/scripts/locki-feature.sh'), ...commandArguments],
+    [
+      path.join(fixture.sourceRoot, 'app/scripts/locki-feature.sh'),
+      ...commandArguments,
+    ],
     {
       encoding: 'utf-8',
       env: {
@@ -125,7 +145,7 @@ const runWorkflow = (
         TEST_SOURCE_ROOT: fixture.sourceRoot,
         TEST_TARGET_ROOT: fixture.targetRoot,
       },
-    },
+    }
   );
   assert.ifError(result.error);
   return { code: result.status, stderr: result.stderr, stdout: result.stdout };
@@ -138,15 +158,18 @@ void test('creates one sandbox from main, copies .env opaquely, and prepares in 
   assert.equal(result.stdout.includes('OPAQUE-SECRET'), false);
   assert.deepEqual(
     await readFile(path.join(fixture.targetRoot, 'app/.env')),
-    await readFile(path.join(fixture.sourceRoot, 'app/.env')),
+    await readFile(path.join(fixture.sourceRoot, 'app/.env'))
   );
   const environmentStat = await stat(path.join(fixture.targetRoot, 'app/.env'));
   assert.equal(environmentStat.mode % 0o1000, 0o600);
   const log = await readFile(fixture.logPath, 'utf-8');
-  assert.match(log, /locki new --from main --branch codex\/customer-search --json/u);
   assert.match(
     log,
-    /locki exec --match sandbox-42 -- sh app\/scripts\/locki-feature\.sh --prepare/u,
+    /locki new --from main --branch codex\/customer-search --json/u
+  );
+  assert.match(
+    log,
+    /locki exec --match sandbox-42 -- sh app\/scripts\/locki-feature\.sh --prepare/u
   );
   assert.equal(log.includes('locki ai'), false);
   const expectedOrder = [
@@ -161,13 +184,18 @@ void test('creates one sandbox from main, copies .env opaquely, and prepares in 
   let previous = -1;
   for (const command of expectedOrder) {
     const index = log.indexOf(command);
-    assert.ok(index > previous, `${command} must follow the previous preparation step`);
+    assert.ok(
+      index > previous,
+      `${command} must follow the previous preparation step`
+    );
     previous = index;
   }
 });
 
 void test('rejects unsafe slugs and alternate options before creating a sandbox', async () => {
-  const assertRejected = async (commandArguments: readonly string[]): Promise<void> => {
+  const assertRejected = async (
+    commandArguments: readonly string[]
+  ): Promise<void> => {
     const fixture = await makeFixture();
     const result = runWorkflow(fixture, commandArguments);
     assert.equal(result.code, 2);
@@ -201,16 +229,21 @@ void test('refuses an app path that resolves outside the returned worktree', asy
   const fixture = await makeFixture();
   const result = runWorkflow(fixture, [featureSlug], { ESCAPE_TARGET: 'true' });
   assert.equal(result.code, 1);
-  assert.match(result.stderr, /Refusing to copy \.env outside the Locki worktree/u);
+  assert.match(
+    result.stderr,
+    /Refusing to copy \.env outside the Locki worktree/u
+  );
   assert.deepEqual(
     await readFile(path.join(fixture.sourceRoot, 'app/.env')),
-    Buffer.from('OPAQUE-SECRET\0VALUE\n'),
+    Buffer.from('OPAQUE-SECRET\0VALUE\n')
   );
 });
 
 void test('preserves a failed sandbox and never launches AI', async () => {
   const fixture = await makeFixture();
-  const result = runWorkflow(fixture, [featureSlug], { FAIL_PREPARATION: 'true' });
+  const result = runWorkflow(fixture, [featureSlug], {
+    FAIL_PREPARATION: 'true',
+  });
   assert.equal(result.code, 1);
   assert.match(result.stdout, /locki exec --match sandbox-42/u);
   assert.match(result.stdout, /locki rm --match sandbox-42/u);
@@ -224,6 +257,7 @@ void test('launches the configured AI only after successful preparation', async 
   assert.equal(result.code, 0, result.stderr);
   const log = await readFile(fixture.logPath, 'utf-8');
   assert.ok(
-    log.indexOf('mise exec -- pnpm db:verify') < log.indexOf('locki ai --match sandbox-42'),
+    log.indexOf('mise exec -- pnpm db:verify') <
+      log.indexOf('locki ai --match sandbox-42')
   );
 });

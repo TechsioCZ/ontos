@@ -7,7 +7,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
+
 import { Schema } from 'effect';
+
 import { getHelpText, runScaffold } from '../cli.mts';
 
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');

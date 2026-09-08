@@ -8,6 +8,7 @@ import {
   makeCoreSearchIngestion,
 } from '../../src/search/ingestion.ts';
 import {
+  CoreSearchProjectionStore,
   createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
 } from '../../src/search/projection.ts';
@@ -66,9 +67,11 @@ void test('declares one immutable Core registration for every closed Party lifec
 effectTest('ingests duplicate and out-of-order post-commit observations idempotently', () => {
   const store = makeInMemoryCoreSearchProjectionStore();
   const ingestion = makeCoreSearchIngestion(store);
-  const runtime = createCoreSearchQueryRuntime(store);
 
   return Effect.gen(function* ingestObservationsIdempotently() {
+    const runtime = yield* createCoreSearchQueryRuntime.pipe(
+      Effect.provideService(CoreSearchProjectionStore, store),
+    );
     yield* ingestion.ingest(observation('2', 'Current title'));
     yield* ingestion.ingest(observation('2', 'Current title'));
     yield* ingestion.ingest(observation('1', 'Stale title'));
@@ -129,10 +132,9 @@ effectTest('rejects undeclared topics and sequence/document identity mismatches'
       },
     },
   ];
-  return Effect.all(
-    invalidObservations.map((invalidObservation) =>
-      Effect.flip(ingestion.ingest(invalidObservation)),
-    ),
+  return Effect.forEach(
+    invalidObservations,
+    (invalidObservation) => Effect.flip(ingestion.ingest(invalidObservation)),
     { concurrency: 'unbounded' },
   ).pipe(
     Effect.tap((failures) =>

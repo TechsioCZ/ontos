@@ -2,6 +2,7 @@ import {
   ActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
+  CoreSearchProjectionStoreLive,
   CoreSearchQueryRuntimeLive,
   ReadRuntimeLive,
   TenantModuleStateServiceLive,
@@ -55,6 +56,7 @@ export const partyRegistryAresSubjectServiceLive = AresSubjectServiceLive.pipe(
 );
 
 const coreSearchQueryRuntimeLive = CoreSearchQueryRuntimeLive.pipe(
+  Layer.provide(CoreSearchProjectionStoreLive),
   Layer.provide(CorePersistenceLive),
 );
 export const partyRegistrySearchProjectionGatewayLive = PartySearchProjectionGatewayLive.pipe(

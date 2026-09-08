@@ -27,7 +27,7 @@ const principal = {
 const verificationFailure = (
   _tag: (typeof OperationPrincipalVerificationErrorSchema.Type)['_tag'],
 ) =>
-  Schema.decodeUnknownSync(OperationPrincipalVerificationErrorSchema)({
+  Schema.decodeSync(OperationPrincipalVerificationErrorSchema)({
     _tag,
     reason: 'Private verifier diagnostic',
   });
@@ -139,7 +139,7 @@ test('mounted HTTP authentication maps verifier classes, challenges unusable cre
             rawBody,
             expectedStatus === 401 ? authenticationProblem() : unavailableProblem(),
           );
-          const body = yield* Schema.decodeUnknownEffect(ProblemResponseSchema)(rawBody);
+          const body = yield* Schema.decodeEffect(ProblemResponseSchema)(rawBody);
           assert.ok(
             Schema.is(
               Schema.TaggedStruct(

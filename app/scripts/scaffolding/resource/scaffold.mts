@@ -1,4 +1,5 @@
 import { Effect } from 'effect';
+
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   MODULE_MANIFEST_IMPORT_SLOT_END,

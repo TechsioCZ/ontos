@@ -1,18 +1,19 @@
-import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import type { HomePageModel } from './page.data.ts';
+
 import { AuthenticatedDashboardLayout } from '../shell-frame';
 import { UltramodernRouteHead } from '../ultramodern-route-head';
 import { useShellControls } from '../use-shell-controls.ts';
+import type { HomePageModel } from './page.data.ts';
 
 interface HomeViewProps {
   readonly initialModel: HomePageModel;
 }
 
 export const HomeView = ({ initialModel }: HomeViewProps) => {
-  const { language, t } = useModernI18n();
+  const { t } = useModernI18n();
   const model = initialModel;
   const controls = useShellControls(model.state === 'authenticated' ? model : undefined);
 
@@ -21,7 +22,7 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
       <>
         <UltramodernRouteHead />
         <main className="shell:flex shell:min-h-screen shell:items-center shell:justify-center shell:bg-(--color-page-bg) shell:p-4">
-          <LinkButton href={`/${language}/login`} size="md" theme="solid" variant="primary">
+          <LinkButton as={LocalizedLink} size="md" theme="solid" to="/login" variant="primary">
             {t('shell.auth.loginLink')}
           </LinkButton>
         </main>

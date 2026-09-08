@@ -59,7 +59,7 @@ void test('installs and verifies transaction-local scope and exposes no transact
 void test('fails closed when transaction settings do not match', async () => {
   const transaction = transactionService(
     () => Effect.void,
-    Effect.succeed(Option.some({ legal_entity_id: '', tenant_id: 'foreign' })),
+    Effect.succeedSome({ legal_entity_id: '', tenant_id: 'foreign' }),
   );
   const error = await runEffectTestPromise(
     Effect.flip(

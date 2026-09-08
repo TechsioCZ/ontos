@@ -1,7 +1,9 @@
 import { isBuiltin } from 'node:module';
+
 import { NodeServices } from '@effect/platform-node';
-import { build } from 'esbuild';
 import { Config, Effect, FileSystem, ManagedRuntime, Path, Schema } from 'effect';
+import { build } from 'esbuild';
+
 import { outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
 
 const TopologySchema = Schema.fromJsonString(
@@ -232,7 +234,13 @@ const materializeOutboxWorkerEffect = ({
             metafile: true,
             outfile: path.join(runtimeDir, WORKER_ENTRY),
             platform: 'node',
-            plugins: [makeProductionDependenciesPlugin({ packages, path, workspaceRoot })],
+            plugins: [
+              makeProductionDependenciesPlugin({
+                packages,
+                path,
+                workspaceRoot,
+              }),
+            ],
             target: 'node26',
           })
         ),

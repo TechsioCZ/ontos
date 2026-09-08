@@ -135,7 +135,7 @@ const services = (
           };
         }),
         Effect.flatMap((result) =>
-          Schema.decodeUnknownEffect(ManagedResultJson)(result).pipe(
+          Schema.decodeEffect(ManagedResultJson)(result).pipe(
             Effect.mapError((cause) =>
               readUnavailable('Managed identities are temporarily unavailable', cause),
             ),
@@ -190,7 +190,7 @@ const services = (
           nextOffset: rows.length > limit ? offset + limit : null,
         })),
         Effect.flatMap((result) =>
-          Schema.decodeUnknownEffect(SelfResultJson)(result).pipe(
+          Schema.decodeEffect(SelfResultJson)(result).pipe(
             Effect.mapError((cause) =>
               readUnavailable('Identity bindings are temporarily unavailable', cause),
             ),

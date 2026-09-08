@@ -1,5 +1,6 @@
 import { Cause, Effect, FileSystem, Predicate, Result, Schema } from 'effect';
 import type { PlatformError } from 'effect';
+
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   ACTION_GENERATOR_HEADER,

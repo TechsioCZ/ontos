@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+
 import { NodeFileSystem, NodeRuntime } from '@effect/platform-node';
 import { Effect, Equal, FileSystem, Layer, Schema } from 'effect';
+import type { PlatformError } from 'effect/PlatformError';
+
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
   ONTOS_MODULE_CONTRACT_PATH,
@@ -16,7 +19,6 @@ import type {
   OntosModuleDeploymentContract,
 } from '../packages/core-runtime/src/index.ts';
 import { deriveOntosModuleDeploymentContract } from './generate-ontos-module-contract.mts';
-import type { PlatformError } from 'effect/PlatformError';
 import {
   MODULE_CONTRACT_GENERATOR_HEADER,
   MODULE_MANIFEST_ACTION_SLOT_END,

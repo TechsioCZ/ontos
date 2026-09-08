@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { validateAuthorizationRolloutContract } from '../authorization/rollout-contract.mts';
 
 const entrypointKey = 'contacts.create-contact';
@@ -23,16 +24,19 @@ const context = {
 };
 
 await test('rollout contract accepts an active configuration bound to the classified inventory', () => {
-  assert.deepEqual(validateAuthorizationRolloutContract(contract, context), contract);
+  assert.deepEqual(
+    validateAuthorizationRolloutContract(contract, context),
+    contract
+  );
 });
 
 await test('the historical baseline revision does not have to equal the self-referential current commit', () => {
   assert.deepEqual(
     validateAuthorizationRolloutContract(
       { ...contract, baselineSourceRevision: 'historical-baseline-revision' },
-      context,
+      context
     ).baselineSourceRevision,
-    'historical-baseline-revision',
+    'historical-baseline-revision'
   );
 });
 
@@ -40,9 +44,9 @@ await test('enforced rollout remains active after the report-only deadline', () 
   assert.equal(
     validateAuthorizationRolloutContract(
       { ...contract, mode: 'enforced' },
-      { ...context, nowEpochMs: Date.parse('2026-11-01T00:00:00.000Z') },
+      { ...context, nowEpochMs: Date.parse('2026-11-01T00:00:00.000Z') }
     ).mode,
-    'enforced',
+    'enforced'
   );
 });
 
@@ -53,15 +57,23 @@ await test('rollout contract rejects expiry, stale inventory binding, extra fiel
         ...context,
         nowEpochMs: Date.parse(expiry),
       }),
-    /inactive or expired/u,
+    /inactive or expired/u
   );
   assert.throws(
-    () => validateAuthorizationRolloutContract(contract, { ...context, inventoryHash: 'other' }),
-    /does not match/u,
+    () =>
+      validateAuthorizationRolloutContract(contract, {
+        ...context,
+        inventoryHash: 'other',
+      }),
+    /does not match/u
   );
   assert.throws(
-    () => validateAuthorizationRolloutContract({ ...contract, arbitrary: true }, context),
-    /malformed/u,
+    () =>
+      validateAuthorizationRolloutContract(
+        { ...contract, arbitrary: true },
+        context
+      ),
+    /malformed/u
   );
   assert.throws(
     () =>
@@ -70,16 +82,19 @@ await test('rollout contract rejects expiry, stale inventory binding, extra fiel
           ...contract,
           compatibilityEligibleEntrypoints: [entrypointKey, entrypointKey],
         },
-        context,
+        context
       ),
-    /duplicates/u,
+    /duplicates/u
   );
   assert.throws(
     () =>
       validateAuthorizationRolloutContract(
-        { ...contract, compatibilityEligibleEntrypoints: ['contacts.new-action'] },
-        context,
+        {
+          ...contract,
+          compatibilityEligibleEntrypoints: ['contacts.new-action'],
+        },
+        context
       ),
-    /unknown entrypoint/u,
+    /unknown entrypoint/u
   );
 });

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { pathToFileURL } from 'node:url';
+
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import {
@@ -14,17 +15,18 @@ import {
 } from 'effect';
 import { Argument, Command } from 'effect/unstable/cli';
 import { Pool } from 'pg';
+
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
-import {
-  toLegalEntityAccessObjectId,
-  toModuleAccessObjectId,
-} from '../packages/core-runtime/src/permissions/context-access.ts';
 import {
   fullyConsistent,
   spiceDbClientSecurity,
 } from '../packages/core-runtime/src/permissions/client.ts';
 import type { SpiceDbConfigValue } from '../packages/core-runtime/src/permissions/config.ts';
 import { loadSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
+import {
+  toLegalEntityAccessObjectId,
+  toModuleAccessObjectId,
+} from '../packages/core-runtime/src/permissions/context-access.ts';
 
 const LEGACY_MODULE_ID = 'crm.core';
 const CONTACTS_MODULE_ID = 'contacts.core';
@@ -109,7 +111,11 @@ const planContactsAuthorizationContextResult = (
   contacts: readonly ContactsAuthorizationRelationship[],
 ): Result.Result<ContactsAuthorizationContextPlan, ContactsAuthorizationMigrationError> => {
   if (legacy.length === 0 && contacts.length === 0) {
-    return Result.succeed({ deleteLegacy: false, state: 'unconfigured', touchContacts: false });
+    return Result.succeed({
+      deleteLegacy: false,
+      state: 'unconfigured',
+      touchContacts: false,
+    });
   }
   if (legacy.length === 0) {
     return Result.succeed({
@@ -126,7 +132,11 @@ const planContactsAuthorizationContextResult = (
         ),
       );
     }
-    return Result.succeed({ deleteLegacy: false, state: 'legacy_only', touchContacts: true });
+    return Result.succeed({
+      deleteLegacy: false,
+      state: 'legacy_only',
+      touchContacts: true,
+    });
   }
   if (!sameRelationshipSet(legacy, contacts)) {
     return Result.fail(migrationFailure('Legacy and Contacts authorization relationships differ'));
@@ -265,10 +275,18 @@ const decodeRelationship = (
     matchesRelationshipSubject(relation, subjectType, 'accessor') &&
     activePrincipalIds.has(subjectId);
   if (isLegalEntity) {
-    return Result.succeed({ relation: 'legal_entity', subjectId, subjectType: 'legal_entity' });
+    return Result.succeed({
+      relation: 'legal_entity',
+      subjectId,
+      subjectType: 'legal_entity',
+    });
   }
   if (isAccessor) {
-    return Result.succeed({ relation: 'accessor', subjectId, subjectType: 'principal' });
+    return Result.succeed({
+      relation: 'accessor',
+      subjectId,
+      subjectType: 'principal',
+    });
   }
   return Result.fail(migrationFailure(OUTSIDE_AUTHORITATIVE_CONTEXT_MESSAGE));
 };
@@ -326,7 +344,10 @@ const toRelationship = (
 ): v1.Relationship =>
   v1.Relationship.create({
     relation: item.relation,
-    resource: v1.ObjectReference.create({ objectId: resourceId, objectType: 'module_access' }),
+    resource: v1.ObjectReference.create({
+      objectId: resourceId,
+      objectType: 'module_access',
+    }),
     subject: v1.SubjectReference.create({
       object: v1.ObjectReference.create({
         objectId: item.subjectId,
@@ -377,7 +398,10 @@ const checkContactsPermission = (
             objectType: 'module_access',
           }),
           subject: v1.SubjectReference.create({
-            object: v1.ObjectReference.create({ objectId: principalId, objectType: 'principal' }),
+            object: v1.ObjectReference.create({
+              objectId: principalId,
+              objectType: 'principal',
+            }),
           }),
         }),
       ),

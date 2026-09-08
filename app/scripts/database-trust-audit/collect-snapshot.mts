@@ -1,5 +1,6 @@
-import type { Client, ClientBase, QueryResult, QueryResultRow } from 'pg';
 import { Effect, Schema } from 'effect';
+import type { Client, ClientBase, QueryResult, QueryResultRow } from 'pg';
+
 import {
   assertDatabaseSessionIdentities,
   assertSameDatabaseTarget,
@@ -81,7 +82,12 @@ interface TablePrivilegeRow {
   readonly delete: boolean;
   readonly insert: boolean;
   readonly insertable: boolean;
-  readonly kind: 'foreign-table' | 'materialized-view' | 'partitioned-table' | 'table' | 'view';
+  readonly kind:
+    | 'foreign-table'
+    | 'materialized-view'
+    | 'partitioned-table'
+    | 'table'
+    | 'view';
   readonly maintain: boolean;
   readonly owner: string;
   readonly owner_bypass_rls: boolean;
@@ -108,7 +114,13 @@ interface ParameterPrivilegeRow {
 }
 
 interface TypePrivilegeRow {
-  readonly kind: 'base' | 'composite' | 'domain' | 'enum' | 'multirange' | 'range';
+  readonly kind:
+    | 'base'
+    | 'composite'
+    | 'domain'
+    | 'enum'
+    | 'multirange'
+    | 'range';
   readonly owner: string;
   readonly schema: string;
   readonly type: string;
@@ -152,20 +164,24 @@ class DatabaseTrustBoundarySnapshotError extends Schema.TaggedError<DatabaseTrus
       'runtime_role_absent',
     ]),
     reason: Schema.String,
-  },
+  }
 ) {
   override get message(): string {
     return this.reason;
   }
 }
 
-type DatabaseSessionIdentityFailure = InstanceType<typeof DatabaseSessionIdentityError>;
-type DatabaseTargetMismatchFailure = InstanceType<typeof DatabaseTargetMismatchError>;
+type DatabaseSessionIdentityFailure = InstanceType<
+  typeof DatabaseSessionIdentityError
+>;
+type DatabaseTargetMismatchFailure = InstanceType<
+  typeof DatabaseTargetMismatchError
+>;
 
 const query = <Row extends QueryResultRow>(
   client: ClientBase,
   statement: string,
-  values: unknown[] = [],
+  values: unknown[] = []
 ): Effect.Effect<QueryResult<Row>, DatabaseTrustBoundarySnapshotError> =>
   Effect.tryPromise({
     catch: () =>
@@ -182,21 +198,25 @@ export const hasTrustedContextValue = (value: string | null): boolean =>
 const probeSettingEffect = Effect.fn('probeSetting')(function* probeSetting(
   client: ClientBase,
   setting: 'ontos.legal_entity_id' | 'ontos.tenant_id',
-  value: string,
+  value: string
 ) {
   yield* query(client, 'begin');
   const settable = yield* Effect.gen(function* probeTrustedContextSetting() {
     yield* query(client, 'select set_config($1, $2, true)', [setting, value]);
-    const current = yield* query<SettingRow>(client, 'select current_setting($1, true) as value', [
-      setting,
-    ]);
+    const current = yield* query<SettingRow>(
+      client,
+      'select current_setting($1, true) as value',
+      [setting]
+    );
     const [currentRow] = current.rows;
     return currentRow?.value === value;
   }).pipe(Effect.catch(() => Effect.succeed(false)));
   yield* query(client, 'rollback');
-  const after = yield* query<SettingRow>(client, 'select current_setting($1, true) as value', [
-    setting,
-  ]);
+  const after = yield* query<SettingRow>(
+    client,
+    'select current_setting($1, true) as value',
+    [setting]
+  );
   const [afterRow] = after.rows;
   return {
     retainedAfterRollback: hasTrustedContextValue(afterRow?.value ?? null),
@@ -204,85 +224,92 @@ const probeSettingEffect = Effect.fn('probeSetting')(function* probeSetting(
   };
 });
 
-export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSnapshotEffect(
-  admin: Client,
-  runtime: Client,
-): Effect.fn.Return<
-  DatabaseTrustBoundarySnapshot,
-  | DatabaseSessionIdentityFailure
-  | DatabaseTargetMismatchFailure
-  | DatabaseTrustBoundarySnapshotError
-> {
-  const targetQuery = `select
+export const collectSnapshot = Effect.fn('collectSnapshot')(
+  function* collectSnapshotEffect(
+    admin: Client,
+    runtime: Client
+  ): Effect.fn.Return<
+    DatabaseTrustBoundarySnapshot,
+    | DatabaseSessionIdentityFailure
+    | DatabaseTargetMismatchFailure
+    | DatabaseTrustBoundarySnapshotError
+  > {
+    const targetQuery = `select
     current_user::text as current_role,
     current_database() as database,
     session_user::text as session_role,
     inet_server_addr()::text as server_address,
     inet_server_port() as server_port`;
-  const [administrativeTarget, runtimeTarget] = yield* Effect.all(
-    [query<DatabaseTargetRow>(admin, targetQuery), query<DatabaseTargetRow>(runtime, targetQuery)],
-    { concurrency: 'unbounded' },
-  );
-  const [administrativeTargetRow] = administrativeTarget.rows;
-  const [runtimeTargetRow] = runtimeTarget.rows;
-  if (administrativeTargetRow === undefined || runtimeTargetRow === undefined) {
-    return yield* new DatabaseTrustBoundarySnapshotError({
-      code: 'database_target_identity_unavailable',
-      reason: 'database target identity is unavailable',
+    const [administrativeTarget, runtimeTarget] = yield* Effect.all(
+      [
+        query<DatabaseTargetRow>(admin, targetQuery),
+        query<DatabaseTargetRow>(runtime, targetQuery),
+      ],
+      { concurrency: 'unbounded' }
+    );
+    const [administrativeTargetRow] = administrativeTarget.rows;
+    const [runtimeTargetRow] = runtimeTarget.rows;
+    if (
+      administrativeTargetRow === undefined ||
+      runtimeTargetRow === undefined
+    ) {
+      return yield* new DatabaseTrustBoundarySnapshotError({
+        code: 'database_target_identity_unavailable',
+        reason: 'database target identity is unavailable',
+      });
+    }
+    const administrativeEndpoint = getEffectiveDatabaseEndpoint(admin);
+    const runtimeEndpoint = getEffectiveDatabaseEndpoint(runtime);
+    yield* Effect.try({
+      catch: (cause) =>
+        cause instanceof DatabaseTargetMismatchError
+          ? cause
+          : new DatabaseTrustBoundarySnapshotError({
+              code: 'database_target_identity_unavailable',
+              reason: 'database target identity is unavailable',
+            }),
+      try: () =>
+        assertSameDatabaseTarget(
+          {
+            ...administrativeEndpoint,
+            database: administrativeTargetRow.database,
+            serverAddress: administrativeTargetRow.server_address,
+            serverPort: administrativeTargetRow.server_port,
+          },
+          {
+            ...runtimeEndpoint,
+            database: runtimeTargetRow.database,
+            serverAddress: runtimeTargetRow.server_address,
+            serverPort: runtimeTargetRow.server_port,
+          }
+        ),
     });
-  }
-  const administrativeEndpoint = getEffectiveDatabaseEndpoint(admin);
-  const runtimeEndpoint = getEffectiveDatabaseEndpoint(runtime);
-  yield* Effect.try({
-    catch: (cause) =>
-      cause instanceof DatabaseTargetMismatchError
-        ? cause
-        : new DatabaseTrustBoundarySnapshotError({
-            code: 'database_target_identity_unavailable',
-            reason: 'database target identity is unavailable',
-          }),
-    try: () =>
-      assertSameDatabaseTarget(
-        {
-          ...administrativeEndpoint,
-          database: administrativeTargetRow.database,
-          serverAddress: administrativeTargetRow.server_address,
-          serverPort: administrativeTargetRow.server_port,
-        },
-        {
-          ...runtimeEndpoint,
-          database: runtimeTargetRow.database,
-          serverAddress: runtimeTargetRow.server_address,
-          serverPort: runtimeTargetRow.server_port,
-        },
-      ),
-  });
-  yield* Effect.try({
-    catch: (cause) =>
-      cause instanceof DatabaseSessionIdentityError
-        ? cause
-        : new DatabaseTrustBoundarySnapshotError({
-            code: 'database_session_identity_unavailable',
-            reason: 'database session identity is unavailable',
-          }),
-    try: () =>
-      assertDatabaseSessionIdentities(
-        {
-          currentRole: administrativeTargetRow.current_role,
-          sessionRole: administrativeTargetRow.session_role,
-        },
-        {
-          currentRole: runtimeTargetRow.current_role,
-          sessionRole: runtimeTargetRow.session_role,
-        },
-      ),
-  });
-  const administrativeRole = administrativeTargetRow.session_role;
-  const runtimeRole = runtimeTargetRow.session_role;
+    yield* Effect.try({
+      catch: (cause) =>
+        cause instanceof DatabaseSessionIdentityError
+          ? cause
+          : new DatabaseTrustBoundarySnapshotError({
+              code: 'database_session_identity_unavailable',
+              reason: 'database session identity is unavailable',
+            }),
+      try: () =>
+        assertDatabaseSessionIdentities(
+          {
+            currentRole: administrativeTargetRow.current_role,
+            sessionRole: administrativeTargetRow.session_role,
+          },
+          {
+            currentRole: runtimeTargetRow.current_role,
+            sessionRole: runtimeTargetRow.session_role,
+          }
+        ),
+    });
+    const administrativeRole = administrativeTargetRow.session_role;
+    const runtimeRole = runtimeTargetRow.session_role;
 
-  const role = yield* query<RoleRow>(
-    admin,
-    `select
+    const role = yield* query<RoleRow>(
+      admin,
+      `select
        rolbypassrls as bypass_rls,
        rolcreatedb as can_create_databases,
        rolcreaterole as can_create_roles,
@@ -293,19 +320,19 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
        rolsuper as superuser
      from pg_catalog.pg_roles
      where rolname = $1`,
-    [runtimeRole],
-  );
-  const [roleRow] = role.rows;
-  if (roleRow === undefined) {
-    return yield* new DatabaseTrustBoundarySnapshotError({
-      code: 'runtime_role_absent',
-      reason: 'runtime role is absent',
-    });
-  }
+      [runtimeRole]
+    );
+    const [roleRow] = role.rows;
+    if (roleRow === undefined) {
+      return yield* new DatabaseTrustBoundarySnapshotError({
+        code: 'runtime_role_absent',
+        reason: 'runtime role is absent',
+      });
+    }
 
-  const memberships = yield* query<MembershipRow>(
-    admin,
-    `with recursive reachable_roles(role_oid) as (
+    const memberships = yield* query<MembershipRow>(
+      admin,
+      `with recursive reachable_roles(role_oid) as (
        select candidate.oid
        from pg_catalog.pg_roles as candidate
        where candidate.rolname = $1
@@ -460,28 +487,28 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
          or candidate.oid in (select role_oid from reachable_roles)
        )
      order by candidate.rolname`,
-    [runtimeRole],
-  );
-  const database = yield* query<DatabasePrivilegeRow>(
-    admin,
-    `select
+      [runtimeRole]
+    );
+    const database = yield* query<DatabasePrivilegeRow>(
+      admin,
+      `select
        current_database() as database,
        has_database_privilege($1, current_database(), 'CONNECT') as connect,
        has_database_privilege($1, current_database(), 'CREATE') as create,
        has_database_privilege($1, current_database(), 'TEMPORARY') as temporary`,
-    [runtimeRole],
-  );
-  const [databaseRow] = database.rows;
-  if (databaseRow === undefined) {
-    return yield* new DatabaseTrustBoundarySnapshotError({
-      code: 'database_privilege_unavailable',
-      reason: 'database privilege row is absent',
-    });
-  }
+      [runtimeRole]
+    );
+    const [databaseRow] = database.rows;
+    if (databaseRow === undefined) {
+      return yield* new DatabaseTrustBoundarySnapshotError({
+        code: 'database_privilege_unavailable',
+        reason: 'database privilege row is absent',
+      });
+    }
 
-  const schemas = yield* query<SchemaPrivilegeRow>(
-    admin,
-    `select
+    const schemas = yield* query<SchemaPrivilegeRow>(
+      admin,
+      `select
        namespace.nspname as schema,
        owner.rolname as owner,
        has_schema_privilege($1, namespace.oid, 'USAGE') as usage,
@@ -491,12 +518,12 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
      where namespace.nspname !~ '^pg_'
        and namespace.nspname <> 'information_schema'
      order by namespace.nspname`,
-    [runtimeRole],
-  );
-  const schemaNames = schemas.rows.map(({ schema }) => schema);
-  const routines = yield* query<RoutinePrivilegeRow>(
-    admin,
-    `select
+      [runtimeRole]
+    );
+    const schemaNames = schemas.rows.map(({ schema }) => schema);
+    const routines = yield* query<RoutinePrivilegeRow>(
+      admin,
+      `select
        namespace.nspname as schema,
        routine.proname as routine,
        pg_get_function_identity_arguments(routine.oid) as identity_arguments,
@@ -517,11 +544,11 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
      join pg_catalog.pg_roles as owner on owner.oid = routine.proowner
      where namespace.nspname = any($2::text[])
      order by namespace.nspname, routine.proname, routine.oid`,
-    [runtimeRole, schemaNames],
-  );
-  const tables = yield* query<TablePrivilegeRow>(
-    admin,
-    `with recursive view_dependencies(view_oid, referenced_oid, effective_owner_oid) as (
+      [runtimeRole, schemaNames]
+    );
+    const tables = yield* query<TablePrivilegeRow>(
+      admin,
+      `with recursive view_dependencies(view_oid, referenced_oid, effective_owner_oid) as (
        select
          rewrite.ev_class,
          dependency.refobjid,
@@ -680,11 +707,11 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
      where relation.relkind in ('r', 'p', 'v', 'm', 'f')
        and namespace.nspname = any($2::text[])
      order by namespace.nspname, relation.relname`,
-    [runtimeRole, schemaNames, administrativeRole],
-  );
-  const types = yield* query<TypePrivilegeRow>(
-    admin,
-    `select
+      [runtimeRole, schemaNames, administrativeRole]
+    );
+    const types = yield* query<TypePrivilegeRow>(
+      admin,
+      `select
        namespace.nspname as schema,
        audited_type.typname as type,
        case audited_type.typtype
@@ -714,11 +741,11 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
        )
        and namespace.nspname = any($1::text[])
      order by namespace.nspname, audited_type.typname`,
-    [schemaNames],
-  );
-  const sequences = yield* query<SequencePrivilegeRow>(
-    admin,
-    `select
+      [schemaNames]
+    );
+    const sequences = yield* query<SequencePrivilegeRow>(
+      admin,
+      `select
        namespace.nspname as schema,
        relation.relname as sequence,
        owner.rolname as owner,
@@ -739,11 +766,11 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
      join pg_catalog.pg_roles as owner on owner.oid = relation.relowner
      where relation.relkind = 'S' and namespace.nspname = any($2::text[])
      order by namespace.nspname, relation.relname`,
-    [runtimeRole, schemaNames],
-  );
-  const parameterPrivileges = yield* query<ParameterPrivilegeRow>(
-    admin,
-    `select
+      [runtimeRole, schemaNames]
+    );
+    const parameterPrivileges = yield* query<ParameterPrivilegeRow>(
+      admin,
+      `select
        parameter.parname as parameter,
        has_parameter_privilege($1, parameter.parname, 'ALTER SYSTEM') as alter_system,
        has_parameter_privilege($1, parameter.parname, 'SET') as set
@@ -751,11 +778,11 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
      where has_parameter_privilege($1, parameter.parname, 'ALTER SYSTEM')
         or has_parameter_privilege($1, parameter.parname, 'SET')
      order by parameter.parname`,
-    [runtimeRole],
-  );
-  const grantOptions = yield* query<GrantOptionRow>(
-    admin,
-    `with recursive reachable_roles(role_oid) as (
+      [runtimeRole]
+    );
+    const grantOptions = yield* query<GrantOptionRow>(
+      admin,
+      `with recursive reachable_roles(role_oid) as (
        select candidate.oid
        from pg_catalog.pg_roles as candidate
        where candidate.rolname = $1
@@ -940,11 +967,11 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
        )
      ) as authority
      order by target.role_name, authority.grant_option`,
-    [runtimeRole, schemaNames],
-  );
-  const defaultPrivileges = yield* query<DefaultPrivilegeRow>(
-    admin,
-    `with recursive reachable_roles(role_oid) as (
+      [runtimeRole, schemaNames]
+    );
+    const defaultPrivileges = yield* query<DefaultPrivilegeRow>(
+      admin,
+      `with recursive reachable_roles(role_oid) as (
        select candidate.oid
        from pg_catalog.pg_roles as candidate
        where candidate.rolname = $1
@@ -1068,131 +1095,133 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
        privilege,
        source,
        grantable`,
-    [runtimeRole, schemaNames, administrativeRole],
-  );
-  const tenant = yield* probeSettingEffect(
-    runtime,
-    'ontos.tenant_id',
-    '00000000-0000-4000-8000-000000000001',
-  );
-  const legalEntity = yield* probeSettingEffect(
-    runtime,
-    'ontos.legal_entity_id',
-    '00000000-0000-4000-8000-000000000002',
-  );
+      [runtimeRole, schemaNames, administrativeRole]
+    );
+    const tenant = yield* probeSettingEffect(
+      runtime,
+      'ontos.tenant_id',
+      '00000000-0000-4000-8000-000000000001'
+    );
+    const legalEntity = yield* probeSettingEffect(
+      runtime,
+      'ontos.legal_entity_id',
+      '00000000-0000-4000-8000-000000000002'
+    );
 
-  return {
-    administrativeRole,
-    database: databaseRow.database,
-    databasePrivileges: {
-      connect: databaseRow.connect,
-      create: databaseRow.create,
-      temporary: databaseRow.temporary,
-    },
-    defaultPrivileges: defaultPrivileges.rows.map((privilege) => ({
-      grantable: privilege.grantable,
-      grantee: privilege.grantee,
-      objectType: privilege.object_type,
-      owner: privilege.owner,
-      privilege: privilege.privilege,
-      schema: privilege.schema,
-      source: privilege.source,
-    })),
-    grantOptions: grantOptions.rows.map(({ grant_option }) => grant_option),
-    memberships: memberships.rows.map((membership) => ({
-      attributes: {
-        bypassRls: membership.bypass_rls,
-        canCreateDatabases: membership.can_create_databases,
-        canCreateRoles: membership.can_create_roles,
-        canLogin: membership.can_login,
-        inherit: membership.inherit,
-        replication: membership.replication,
-        superuser: membership.superuser,
+    return {
+      administrativeRole,
+      database: databaseRow.database,
+      databasePrivileges: {
+        connect: databaseRow.connect,
+        create: databaseRow.create,
+        temporary: databaseRow.temporary,
       },
-      canAdministerRole: membership.can_administer_role,
-      canInheritRole: membership.can_inherit_role,
-      canSetRole: membership.can_set_role,
-      createSchemas: membership.create_schemas,
-      databaseCreate: membership.database_create,
-      ownedRelations: membership.owned_relations,
-      ownedRoutines: membership.owned_routines,
-      ownedSchemas: membership.owned_schemas,
-      ownedTypes: membership.owned_types,
-      parameterPrivileges: membership.parameter_privileges,
-      predefinedRole: membership.predefined_role,
-      relationPrivilegeSchemas: membership.relation_privilege_schemas,
-      role: membership.role,
-      securityDefinerRoutines: membership.security_definer_routines,
-    })),
-    parameterPrivileges: parameterPrivileges.rows.map((privilege) => ({
-      alterSystem: privilege.alter_system,
-      parameter: privilege.parameter,
-      set: privilege.set,
-    })),
-    role: {
-      bypassRls: roleRow.bypass_rls,
-      canCreateDatabases: roleRow.can_create_databases,
-      canCreateRoles: roleRow.can_create_roles,
-      canLogin: roleRow.can_login,
-      inherit: roleRow.inherit,
-      predefinedRole: roleRow.predefined_role,
-      replication: roleRow.replication,
-      superuser: roleRow.superuser,
-    },
-    routines: routines.rows.map((routine) => ({
-      executable: routine.executable,
-      identityArguments: routine.identity_arguments,
-      kind: routine.kind,
-      owner: routine.owner,
-      routine: routine.routine,
-      schema: routine.schema,
-      securityDefiner: routine.security_definer,
-    })),
-    runtimeRole,
-    schemas: schemas.rows,
-    sequences: sequences.rows.map((sequence) => ({
-      owner: sequence.owner,
-      privileges: {
-        select: sequence.select,
-        update: sequence.update,
-        usage: sequence.usage,
+      defaultPrivileges: defaultPrivileges.rows.map((privilege) => ({
+        grantable: privilege.grantable,
+        grantee: privilege.grantee,
+        objectType: privilege.object_type,
+        owner: privilege.owner,
+        privilege: privilege.privilege,
+        schema: privilege.schema,
+        source: privilege.source,
+      })),
+      grantOptions: grantOptions.rows.map(({ grant_option }) => grant_option),
+      memberships: memberships.rows.map((membership) => ({
+        attributes: {
+          bypassRls: membership.bypass_rls,
+          canCreateDatabases: membership.can_create_databases,
+          canCreateRoles: membership.can_create_roles,
+          canLogin: membership.can_login,
+          inherit: membership.inherit,
+          replication: membership.replication,
+          superuser: membership.superuser,
+        },
+        canAdministerRole: membership.can_administer_role,
+        canInheritRole: membership.can_inherit_role,
+        canSetRole: membership.can_set_role,
+        createSchemas: membership.create_schemas,
+        databaseCreate: membership.database_create,
+        ownedRelations: membership.owned_relations,
+        ownedRoutines: membership.owned_routines,
+        ownedSchemas: membership.owned_schemas,
+        ownedTypes: membership.owned_types,
+        parameterPrivileges: membership.parameter_privileges,
+        predefinedRole: membership.predefined_role,
+        relationPrivilegeSchemas: membership.relation_privilege_schemas,
+        role: membership.role,
+        securityDefinerRoutines: membership.security_definer_routines,
+      })),
+      parameterPrivileges: parameterPrivileges.rows.map((privilege) => ({
+        alterSystem: privilege.alter_system,
+        parameter: privilege.parameter,
+        set: privilege.set,
+      })),
+      role: {
+        bypassRls: roleRow.bypass_rls,
+        canCreateDatabases: roleRow.can_create_databases,
+        canCreateRoles: roleRow.can_create_roles,
+        canLogin: roleRow.can_login,
+        inherit: roleRow.inherit,
+        predefinedRole: roleRow.predefined_role,
+        replication: roleRow.replication,
+        superuser: roleRow.superuser,
       },
-      schema: sequence.schema,
-      sequence: sequence.sequence,
-    })),
-    tables: tables.rows.map((table) => ({
-      deletable: table.deletable,
-      insertable: table.insertable,
-      kind: table.kind,
-      owner: table.owner,
-      ownerBypassRls: table.owner_bypass_rls,
-      ownerContextPrivileged: table.owner_context_privileged,
-      ownerContextRlsBypass: table.owner_context_rls_bypass,
-      ownerSuperuser: table.owner_superuser,
-      privileges: {
-        delete: table.delete,
-        insert: table.insert,
-        maintain: table.maintain,
-        references: table.references,
-        select: table.select,
-        trigger: table.trigger,
-        truncate: table.truncate,
-        update: table.update,
+      routines: routines.rows.map((routine) => ({
+        executable: routine.executable,
+        identityArguments: routine.identity_arguments,
+        kind: routine.kind,
+        owner: routine.owner,
+        routine: routine.routine,
+        schema: routine.schema,
+        securityDefiner: routine.security_definer,
+      })),
+      runtimeRole,
+      schemas: schemas.rows,
+      sequences: sequences.rows.map((sequence) => ({
+        owner: sequence.owner,
+        privileges: {
+          select: sequence.select,
+          update: sequence.update,
+          usage: sequence.usage,
+        },
+        schema: sequence.schema,
+        sequence: sequence.sequence,
+      })),
+      tables: tables.rows.map((table) => ({
+        deletable: table.deletable,
+        insertable: table.insertable,
+        kind: table.kind,
+        owner: table.owner,
+        ownerBypassRls: table.owner_bypass_rls,
+        ownerContextPrivileged: table.owner_context_privileged,
+        ownerContextRlsBypass: table.owner_context_rls_bypass,
+        ownerSuperuser: table.owner_superuser,
+        privileges: {
+          delete: table.delete,
+          insert: table.insert,
+          maintain: table.maintain,
+          references: table.references,
+          select: table.select,
+          trigger: table.trigger,
+          truncate: table.truncate,
+          update: table.update,
+        },
+        rlsEnabled: table.rls_enabled,
+        rlsForced: table.rls_forced,
+        schema: table.schema,
+        securityInvoker: table.security_invoker,
+        table: table.table,
+        updatable: table.updatable,
+      })),
+      trustedContext: {
+        legalEntitySettingRetainedAfterRollback:
+          legalEntity.retainedAfterRollback,
+        legalEntitySettingSettable: legalEntity.settable,
+        tenantSettingRetainedAfterRollback: tenant.retainedAfterRollback,
+        tenantSettingSettable: tenant.settable,
+        transactionLocal: true,
       },
-      rlsEnabled: table.rls_enabled,
-      rlsForced: table.rls_forced,
-      schema: table.schema,
-      securityInvoker: table.security_invoker,
-      table: table.table,
-      updatable: table.updatable,
-    })),
-    trustedContext: {
-      legalEntitySettingRetainedAfterRollback: legalEntity.retainedAfterRollback,
-      legalEntitySettingSettable: legalEntity.settable,
-      tenantSettingRetainedAfterRollback: tenant.retainedAfterRollback,
-      tenantSettingSettable: tenant.settable,
-      transactionLocal: true,
-    },
-    types: types.rows,
-  };
-});
+      types: types.rows,
+    };
+  }
+);

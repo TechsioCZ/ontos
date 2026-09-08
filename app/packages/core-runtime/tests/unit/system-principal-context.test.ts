@@ -1,6 +1,6 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -19,7 +19,7 @@ const resolverFor = (record: {
   readonly tenantStatus: 'active' | 'suspended';
 }) =>
   systemPrincipalContextResolverFromRepository({
-    load: () => Effect.succeed(Option.some(record)),
+    load: () => Effect.succeedSome(record),
   });
 
 void test('constructs one immutable trusted system context from a branded registration', async () => {
@@ -41,7 +41,7 @@ void test('constructs one immutable trusted system context from a branded regist
     principalId,
     tenantId,
   });
-  assert.deepEqual(Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(context), context);
+  assert.deepEqual(Schema.decodeSync(TrustedPrincipalContextSchema)(context), context);
   assert.deepEqual(await runEffectTestPromise(decodeTrustedPrincipalContext(context)), context);
   await assert.rejects(runEffectTestPromise(decodeTrustedPrincipalContext({ ...context })));
 });
@@ -141,7 +141,7 @@ void test('enforces mode-specific trusted context cross-field invariants', () =>
     assert.doesNotThrow(() => Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(context));
   }
   assert.throws(() =>
-    Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+    Schema.decodeSync(TrustedPrincipalContextSchema)({
       authContextRef: 'better-auth-api-key:key-id',
       authMethod: 'api_key',
       principalId,
@@ -149,7 +149,7 @@ void test('enforces mode-specific trusted context cross-field invariants', () =>
     }),
   );
   assert.throws(() =>
-    Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+    Schema.decodeSync(TrustedPrincipalContextSchema)({
       authBindingId: binding,
       authContextRef: 'better-auth-session:nested',
       authMethod: 'support_impersonation',

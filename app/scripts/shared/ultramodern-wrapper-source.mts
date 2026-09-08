@@ -18,7 +18,7 @@ const withoutComments = (source: string): string => {
 const hasSharedUltramodernDispatch = (source: string): boolean =>
   source.includes("Config.string('ULTRAMODERN_CREATE_BIN')") &&
   source.includes("['ultramodern', options.command, ...forwardedArgs]") &&
-  source.includes("executable: 'modern-js-create'") &&
+  source.includes("executable: 'ultramodern-create'") &&
   source.includes('ChildProcess.make(launch.executable, launch.args,') &&
   source.includes('resolveUltramodernInvocation(options).pipe(') &&
   source.includes('Effect.flatMap(launchUltramodern)');
@@ -33,7 +33,7 @@ export const hasUltramodernSkillsDispatch = (source: string, implementation: str
     wrapper.includes("['ultramodern', ...skillArgs]") &&
     wrapper.includes('ultramodernLaunch(createBin, ultramodernArgs, workspaceRoot, path.sep)') &&
     wrapper.includes("Config.string('ULTRAMODERN_CREATE_BIN')") &&
-    runner.includes("executable: 'modern-js-create'") &&
+    runner.includes("executable: 'ultramodern-create'") &&
     runner.includes('ChildProcess.make(launch.executable, launch.args,')
   );
 };

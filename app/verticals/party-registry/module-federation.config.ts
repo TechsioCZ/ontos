@@ -15,9 +15,14 @@ const runtimeVersion = packageVersion('@modern-js/runtime/package.json');
 const reactVersion = packageVersion('react/package.json');
 const reactDomVersion = packageVersion('react-dom/package.json');
 
-const tsgoCompilerInstance = resolveEffectTsgoCompiler({ from: import.meta.url });
+const tsgoCompilerInstance = resolveEffectTsgoCompiler({
+  from: import.meta.url,
+});
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] =
   createModuleFederationConfig({
+    bridge: {
+      enableBridgeRouter: false,
+    },
     dts: {
       displayErrorInTerminal: true,
       generateTypes: { compilerInstance: tsgoCompilerInstance },
@@ -61,8 +66,16 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
         singleton: true,
         treeShaking: false,
       },
-      react: { requiredVersion: reactVersion, singleton: true, treeShaking: false },
-      'react-dom': { requiredVersion: reactDomVersion, singleton: true, treeShaking: false },
+      react: {
+        requiredVersion: reactVersion,
+        singleton: true,
+        treeShaking: false,
+      },
+      'react-dom': {
+        requiredVersion: reactDomVersion,
+        singleton: true,
+        treeShaking: false,
+      },
       'react-dom/client': {
         requiredVersion: reactDomVersion,
         singleton: true,

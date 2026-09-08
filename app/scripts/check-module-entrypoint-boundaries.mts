@@ -17,6 +17,7 @@ import {
 } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+
 import {
   gatewayContextAuthorizationEntrypoints,
   shellGatewayContextContract,
@@ -32,6 +33,10 @@ import type {
   ProtectedEntrypointInventoryEntry,
 } from './authorization/protected-entrypoint-inventory.mts';
 import {
+  hasCompleteGeneratedModuleApiSeam,
+  hasGeneratedGovernedServerContract,
+} from './generated-governed-http-boundary.mts';
+import {
   toPascalCase,
   generatedApiGroup,
   generatedProviderIdentities,
@@ -45,10 +50,6 @@ import {
   hasGeneratedProviderReadContract,
   hasGeneratedProviderRegistration,
 } from './generated-module-api-boundary.mts';
-import {
-  hasCompleteGeneratedModuleApiSeam,
-  hasGeneratedGovernedServerContract,
-} from './generated-governed-http-boundary.mts';
 
 const SOURCE_EXTENSIONS = new Set(['.js', '.jsx', '.mjs', '.mts', '.ts', '.tsx']);
 const ACTION_EXTENSION = '.action.ts';

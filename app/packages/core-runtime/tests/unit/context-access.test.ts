@@ -258,8 +258,9 @@ effectTest(
     ];
     const [failingClient] = failures;
     assert.ok(failingClient);
-    yield* Effect.all(
-      failures.map((client) =>
+    yield* Effect.forEach(
+      failures,
+      (client) =>
         makeContextAccess(client)
           .legalEntities(input)
           .pipe(
@@ -267,7 +268,7 @@ effectTest(
               assert.deepEqual(result, [{ decision: 'unavailable', key: legalEntityId }]),
             ),
           ),
-      ),
+      { concurrency: 1 },
     );
     assert.deepEqual(
       yield* makeContextAccess(failingClient).legalEntities({

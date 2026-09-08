@@ -3,7 +3,7 @@
   "profile": "cloudflare-ssr-mf-effect-v1",
   "generator": {
     "package": "@modern-js/create",
-    "version": "3.8.1-ultramodern.2"
+    "version": "3.9.0-ultramodern.2"
   },
   "workspace": {
     "packageScope": "app",
@@ -12,13 +12,14 @@
       "version": "11.25.0"
     },
     "node": {
-      "version": "26.5.0",
+      "version": "26.7.0",
       "engineRange": ">=26"
     }
   },
   "packageSource": {
     "strategy": "install",
-    "modernPackageVersion": "3.8.2-ultramodern.12",
+    "modernPackageVersion": "3.9.0-ultramodern.2",
+    "registry": "https://registry.npmjs.org",
     "aliasScope": "bleedingdev",
     "aliasPackageNamePrefix": "modern-js-"
   },
@@ -216,7 +217,11 @@
           "exposes": [
             "./PageContacts"
           ],
-          "ssr": true
+          "ssr": true,
+          "dts": {
+            "compilerInstance": "effect-tsgo",
+            "tsConfigPath": "./tsconfig.mf-types.json"
+          }
         },
         "backendFederation": {
           "role": "microvertical-server",
@@ -264,9 +269,9 @@
               "ssr": {
                 "workerEntry": ".output/server/index.mjs",
                 "workerManifest": ".output/server/modern-worker-manifest.json",
+                "effectBffBundle": ".output/worker/__modern_bff_effect.js",
                 "routeManifest": ".output/server/route.json",
                 "ssrBundle": ".output/worker/index.js",
-                "effectBffBundle": ".output/worker/__modern_bff_effect.js",
                 "assetsBinding": "ASSETS"
               },
               "zephyr": {
@@ -304,8 +309,8 @@
           "compatibility": {
             "contractVersion": "microvertical-server-effect-v1",
             "packageName": "@app/party-registry",
-            "effectVersion": "4.0.0-beta.107",
-            "moduleFederationVersion": "2.8.0"
+            "effectVersion": "4.0.0-rc.112",
+            "moduleFederationVersion": "2.9.0"
           },
           "cache": {
             "cloudflareSnapshot": "immutable",
@@ -556,9 +561,9 @@
             "ssr": {
               "workerEntry": ".output/server/index.mjs",
               "workerManifest": ".output/server/modern-worker-manifest.json",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js",
               "routeManifest": ".output/server/route.json",
               "ssrBundle": ".output/worker/index.js",
-              "effectBffBundle": ".output/worker/__modern_bff_effect.js",
               "assetsBinding": "ASSETS"
             },
             "zephyr": {
@@ -608,7 +613,7 @@
     ]
   },
   "tooling": {
-    "command": "modern-js-create ultramodern",
+    "command": "ultramodern-create ultramodern",
     "wrappers": {
       "validate": "scripts/validate-ultramodern-workspace.mts",
       "typecheck": "scripts/ultramodern-typecheck.mts",

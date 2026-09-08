@@ -5,6 +5,7 @@ import {
 } from '@app/core-runtime/testing/effect-runtime';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import {
+  CoreSearchProjectionStoreLive,
   CoreSearchQueryRuntimeLive,
   loadDatabaseConnectionPair,
   ReadRuntime,
@@ -341,6 +342,7 @@ test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims
         );
         const searchLayer = PartySearchProjectionGatewayLive.pipe(
           Layer.provide(CoreSearchQueryRuntimeLive),
+          Layer.provide(CoreSearchProjectionStoreLive),
         );
         const searchContext = yield* Layer.build(searchLayer).pipe(
           Effect.provideContext(fixtureContext),

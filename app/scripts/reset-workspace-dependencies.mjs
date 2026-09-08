@@ -18,20 +18,25 @@ const main = Effect.gen(function* resetWorkspaceDependenciesEffect() {
         fileSystem
           .stat(path.join(scopeDirectory, entry))
           .pipe(Effect.map((info) => info.type === 'Directory')),
-      { concurrency: 'unbounded' },
+      { concurrency: 'unbounded' }
     );
     dependencyDirectories.push(
-      ...packageDirectories.map((entry) => path.join(scopeDirectory, entry, 'node_modules')),
+      ...packageDirectories.map((entry) =>
+        path.join(scopeDirectory, entry, 'node_modules')
+      )
     );
   }
 
   yield* Effect.forEach(
     dependencyDirectories,
-    (directory) => fileSystem.remove(directory, { force: true, recursive: true }),
-    { concurrency: 'unbounded', discard: true },
+    (directory) =>
+      fileSystem.remove(directory, { force: true, recursive: true }),
+    { concurrency: 'unbounded', discard: true }
   );
 
-  yield* Console.log(`Removed ${dependencyDirectories.length} workspace dependency directories`);
+  yield* Console.log(
+    `Removed ${dependencyDirectories.length} workspace dependency directories`
+  );
 });
 
 await Effect.runPromise(main.pipe(Effect.provide(NodeServices.layer)));

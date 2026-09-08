@@ -43,7 +43,7 @@ void test('uses one canonical tenant module state schema', async () => {
   const decodedStates = await Promise.all(
     TENANT_MODULE_STATES.map(
       async (state) =>
-        await runEffectTestPromise(Schema.decodeUnknownEffect(TenantModuleStateSchema)(state)),
+        await runEffectTestPromise(Schema.decodeEffect(TenantModuleStateSchema)(state)),
     ),
   );
   assert.deepEqual(decodedStates, TENANT_MODULE_STATES);
@@ -162,7 +162,7 @@ void test('declares the generated Core Action contract and bounded business payl
 
   assert.deepEqual(
     await runEffectTestPromise(
-      Schema.decodeUnknownEffect(descriptor.payloadSchema)({
+      Schema.decodeEffect(descriptor.payloadSchema)({
         expectedState: 'inactive',
         moduleKey: 'testing.module',
         newState: 'active',
@@ -178,7 +178,7 @@ void test('declares the generated Core Action contract and bounded business payl
   );
   await assert.rejects(
     runEffectTestPromise(
-      Schema.decodeUnknownEffect(descriptor.payloadSchema)({
+      Schema.decodeEffect(descriptor.payloadSchema)({
         moduleKey: 'testing.module',
         newState: 'active',
         reason: 'x'.repeat(501),

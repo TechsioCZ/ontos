@@ -1,5 +1,15 @@
 import { createHash } from 'node:crypto';
-import { Clock, Context, DateTime, Effect, Option, Predicate, Result, Schema } from 'effect';
+
+import { Clock, DateTime, Effect, Option, Predicate, Result, Schema } from 'effect';
+
+import { CoreSearchProjectionStore } from './projection-store.ts';
+import type { CoreSearchProjectionStoreService } from './projection-store.ts';
+import type { CoreSearchQueryRuntimeService } from './query-runtime.ts';
+
+export { CoreSearchProjectionStore } from './projection-store.ts';
+export { CoreSearchQueryRuntime } from './query-runtime.ts';
+export type { CoreSearchProjectionStoreService } from './projection-store.ts';
+export type { CoreSearchQueryRuntimeService } from './query-runtime.ts';
 
 const boundedText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const stableKey = Schema.String.check(
@@ -34,8 +44,16 @@ export const CoreSearchFacetSchema = Schema.Struct({
 export type CoreSearchFacet = typeof CoreSearchFacetSchema.Type;
 
 export const CoreSearchMetadataFieldSchema = Schema.Union([
-  Schema.Struct({ key: stableKey, kind: Schema.Literal('boolean'), value: Schema.Boolean }),
-  Schema.Struct({ key: stableKey, kind: Schema.Literal('string'), value: boundedText }),
+  Schema.Struct({
+    key: stableKey,
+    kind: Schema.Literal('boolean'),
+    value: Schema.Boolean,
+  }),
+  Schema.Struct({
+    key: stableKey,
+    kind: Schema.Literal('string'),
+    value: boundedText,
+  }),
   Schema.Struct({
     key: stableKey,
     kind: Schema.Literal('strings'),
@@ -126,7 +144,10 @@ export const CoreSearchProjectionReplacementSchema = Schema.Struct({
 export type CoreSearchProjectionReplacement = typeof CoreSearchProjectionReplacementSchema.Type;
 
 export const CoreSearchProjectionMutationSchema = Schema.Union([
-  Schema.Struct({ document: CoreSearchProjectionDocumentSchema, kind: Schema.Literal('upsert') }),
+  Schema.Struct({
+    document: CoreSearchProjectionDocumentSchema,
+    kind: Schema.Literal('upsert'),
+  }),
   Schema.Struct({
     kind: Schema.Literal('delete'),
     projectionVersion,
@@ -160,52 +181,6 @@ export const CoreSearchProjectionUnavailable =
     'CoreSearchProjectionUnavailable',
     projectionUnavailableFields,
   );
-type CoreSearchProjectionUnavailableInstance = InstanceType<typeof CoreSearchProjectionUnavailable>;
-
-export interface CoreSearchProjectionStoreService {
-  /** Applies one idempotent versioned lifecycle observation. */
-  readonly apply: (
-    input: UnparsedCoreSearchInput,
-  ) => Effect.Effect<void, CoreSearchProjectionInvalid | CoreSearchProjectionUnavailableInstance>;
-  /** Candidate access is Core-private: the query runtime strips searchable evidence before return. */
-  readonly queryCandidates: (
-    input: CoreSearchQuery,
-  ) => Effect.Effect<
-    readonly CoreSearchProjectionDocument[],
-    CoreSearchProjectionUnavailableInstance
-  >;
-  /**
-   * Replaces one tenant/module/resource projection as one physical rebuild unit. Implementations
-   * must leave the prior unit intact when validation or persistence fails.
-   */
-  readonly replace: (
-    input: UnparsedCoreSearchInput,
-  ) => Effect.Effect<void, CoreSearchProjectionInvalid | CoreSearchProjectionUnavailableInstance>;
-}
-
-/** Production persistence implements this Core-owned port; business modules never own an index. */
-const defineContextService = Context.Service;
-export const CoreSearchProjectionStore = defineContextService<CoreSearchProjectionStoreService>(
-  '@app/core-runtime/search/projection/CoreSearchProjectionStore',
-);
-type CoreSearchProjectionStorePort =
-  typeof CoreSearchProjectionStore extends Context.Service<infer _Identifier, infer Store>
-    ? Store
-    : never;
-
-export interface CoreSearchQueryRuntimeService {
-  readonly search: (
-    input: UnparsedCoreSearchInput,
-  ) => Effect.Effect<
-    readonly CoreSearchProjectionHit[],
-    CoreSearchProjectionInvalid | CoreSearchProjectionUnavailableInstance
-  >;
-}
-
-export const CoreSearchQueryRuntime = defineContextService<CoreSearchQueryRuntimeService>(
-  '@app/core-runtime/search/projection/CoreSearchQueryRuntime',
-);
-
 const projectionUnitKeyCodec = Schema.fromJsonString(
   Schema.Tuple([Schema.String, Schema.String, Schema.String]),
 );
@@ -217,7 +192,10 @@ const normalize = (value: string): string => value.normalize('NFKC').toLocaleLow
 
 const invalid = (reason: string, cause?: unknown): CoreSearchProjectionInvalid => {
   if (cause === undefined) {
-    return new CoreSearchProjectionInvalid({ code: 'core_search_projection_invalid', reason });
+    return new CoreSearchProjectionInvalid({
+      code: 'core_search_projection_invalid',
+      reason,
+    });
   }
   return new CoreSearchProjectionInvalid({
     cause,
@@ -656,9 +634,12 @@ const matchDocument = (
     : { ...hit, matchedSubjectRef: alias.ref };
 };
 
-export const createCoreSearchQueryRuntime = (
-  store: CoreSearchProjectionStorePort,
-): CoreSearchQueryRuntimeService => {
+export const createCoreSearchQueryRuntime: Effect.Effect<
+  CoreSearchQueryRuntimeService,
+  never,
+  CoreSearchProjectionStore
+> = Effect.gen(function* createCoreSearchQueryRuntimeService() {
+  const store = yield* CoreSearchProjectionStore;
   const search: CoreSearchQueryRuntimeService['search'] = Effect.fn(
     'CoreSearchQueryRuntime.search',
   )(function* searchCoreSearchProjection(input: UnparsedCoreSearchInput) {
@@ -694,4 +675,4 @@ export const createCoreSearchQueryRuntime = (
     );
   });
   return Object.freeze({ search });
-};
+});

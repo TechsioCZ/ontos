@@ -374,9 +374,9 @@ const grantFixtureResourceAccess = Effect.fn('LiveOperations.grantResourceAccess
 /** Real Core persistence and SpiceDB. Call only against a disposable local database. */
 const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperationFixture')(
   function* makeLiveOperationFixtureEffect(input: LiveOperationFixtureConfiguration) {
-    const configuration = yield* Schema.decodeUnknownEffect(
-      LiveOperationFixtureConfigurationSchema,
-    )(input).pipe(
+    const configuration = yield* Schema.decodeEffect(LiveOperationFixtureConfigurationSchema)(
+      input,
+    ).pipe(
       Effect.mapError((cause) =>
         fixtureFailure('Invalid live operation fixture configuration', cause),
       ),

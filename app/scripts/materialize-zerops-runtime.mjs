@@ -640,7 +640,7 @@ const materializeCommand = Command.make(
     appId: Flag.string('app'),
     packageDir: Flag.string('package-dir'),
     packageName: Flag.string('package'),
-    worker: Flag.boolean('worker'),
+    worker: Flag.boolean('worker').pipe(Flag.withDefault(false)),
   },
   ({ appId, packageDir, packageName, worker }) =>
     Effect.gen(function* materializeCommandEffect() {

@@ -38,13 +38,13 @@ void test('identity administration and support starts declare independent tenant
   const originalPrincipalId = '00000000-0000-4000-8000-000000000003';
   const managedPermissions = [
     bindManagedApiKeyAction.descriptor.tenantPermission?.(
-      Schema.decodeUnknownSync(bindManagedApiKeyAction.descriptor.payloadSchema)({
+      Schema.decodeSync(bindManagedApiKeyAction.descriptor.payloadSchema)({
         principalId,
         providerSubjectId: 'provider-key-id',
       }),
     ),
     changePrincipalStatusAction.descriptor.tenantPermission?.(
-      Schema.decodeUnknownSync(changePrincipalStatusAction.descriptor.payloadSchema)({
+      Schema.decodeSync(changePrincipalStatusAction.descriptor.payloadSchema)({
         expectedStatus: 'active',
         newStatus: 'disabled',
         principalId,
@@ -52,13 +52,13 @@ void test('identity administration and support starts declare independent tenant
       }),
     ),
     createNonHumanPrincipalAction.descriptor.tenantPermission?.(
-      Schema.decodeUnknownSync(createNonHumanPrincipalAction.descriptor.payloadSchema)({
+      Schema.decodeSync(createNonHumanPrincipalAction.descriptor.payloadSchema)({
         displayName: 'Inventory service',
         kind: 'service',
       }),
     ),
     setManagedApiKeyBindingStatusAction.descriptor.tenantPermission?.(
-      Schema.decodeUnknownSync(setManagedApiKeyBindingStatusAction.descriptor.payloadSchema)({
+      Schema.decodeSync(setManagedApiKeyBindingStatusAction.descriptor.payloadSchema)({
         authBindingId,
         expectedStatus: 'active',
         newStatus: 'disabled',
@@ -78,7 +78,7 @@ void test('identity administration and support starts declare independent tenant
   };
   assert.equal(
     recordSupportImpersonationAction.descriptor.tenantPermission?.(
-      Schema.decodeUnknownSync(recordSupportImpersonationAction.descriptor.payloadSchema)({
+      Schema.decodeSync(recordSupportImpersonationAction.descriptor.payloadSchema)({
         ...supportPayload,
         checkpoint: 'requested',
       }),
@@ -87,7 +87,7 @@ void test('identity administration and support starts declare independent tenant
   );
   assert.equal(
     recordSupportImpersonationAction.descriptor.tenantPermission?.(
-      Schema.decodeUnknownSync(recordSupportImpersonationAction.descriptor.payloadSchema)({
+      Schema.decodeSync(recordSupportImpersonationAction.descriptor.payloadSchema)({
         ...supportPayload,
         checkpoint: 'stopped',
         sessionRef: 'better-auth-session:safe-session-reference',

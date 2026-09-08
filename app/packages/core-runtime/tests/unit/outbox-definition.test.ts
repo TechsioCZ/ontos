@@ -75,7 +75,7 @@ void test(
       assert.equal('handler' in worker, false);
       assert.deepEqual(Object.keys(worker), ['descriptor']);
 
-      const payload = yield* Schema.decodeUnknownEffect(payloadSchema)({ messageKey: 'message-1' });
+      const payload = yield* Schema.decodeEffect(payloadSchema)({ messageKey: 'message-1' });
       yield* getOutboxWorkerHandler(worker)(payload, {
         attemptNumber: 1,
         claimId: 'claim-1',

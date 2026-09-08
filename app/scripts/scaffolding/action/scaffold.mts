@@ -1,4 +1,6 @@
 import { Effect, FileSystem } from 'effect';
+
+import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   ACTION_GENERATOR_HEADER,
   CORE_ACTION_CATALOG_IMPORT_SLOT_END,
@@ -33,7 +35,6 @@ import {
   updateMutation,
   withCoreDependency,
 } from '../shared.mts';
-import { createCodesmithGenerator } from '../generator-adapter.mts';
 import type { ActionScaffoldConfig, OntosVerticalMetadata } from '../shared.mts';
 
 const CORE_RUNTIME_DIRECTORY = 'core-runtime';

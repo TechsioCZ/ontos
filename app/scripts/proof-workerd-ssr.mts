@@ -126,7 +126,19 @@ const CompactConfigSchema = Schema.Struct({
     Schema.Struct({ apps: Schema.optionalKey(Schema.Array(RawAppSchema)) }),
   ),
 });
-const ApiResponseSchema = Schema.Struct({ marker: ApiReleaseMarkerSchema });
+const containsApiReleaseMarker = Schema.is(Schema.Struct({ marker: ApiReleaseMarkerSchema }));
+const isJsonScalar = Schema.is(
+  Schema.Union([Schema.Null, Schema.Boolean, Schema.Number, Schema.String]),
+);
+const findReleaseMarkers = (value: Schema.Json): readonly ApiReleaseMarker[] => {
+  if (isJsonScalar(value)) {
+    return [];
+  }
+  return [
+    ...(containsApiReleaseMarker(value) ? [value.marker] : []),
+    ...Object.values(value).flatMap(findReleaseMarkers),
+  ];
+};
 const ServiceBindingFaultCommandSchema = Schema.Struct({
   appId: AppIdSchema,
   failed: Schema.Boolean,
@@ -648,18 +660,20 @@ const responseEvidence = (
     });
     const bytes = Buffer.from(arrayBuffer);
     const source = bytes.toString('utf-8');
-    const body = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ApiResponseSchema))(
-      source,
-    ).pipe(
+    const body = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(source).pipe(
       Effect.mapError((cause) => proofError(`${app.id} API response is not valid JSON`, cause)),
     );
-    const { marker } = body;
-    yield* ensure(
-      marker.appId === app.id &&
-        marker.build === app.envelope?.identity.buildMarker &&
-        marker.version === app.envelope.identity.releaseVersion,
-      `${app.id} API response is not tied to its executed release identity: ${source.slice(0, 1000)}`,
+    const marker = findReleaseMarkers(body).find(
+      (candidate) =>
+        candidate.appId === app.id &&
+        candidate.build === app.envelope?.identity.buildMarker &&
+        candidate.version === app.envelope.identity.releaseVersion,
     );
+    if (marker === undefined) {
+      return yield* proofError(
+        `${app.id} API response is not tied to its executed release identity`,
+      );
+    }
     yield* ensure(response.ok, `${app.id} API response returned HTTP ${response.status}`);
     return {
       bodyBase64: bytes.toString('base64'),
@@ -670,22 +684,48 @@ const responseEvidence = (
     };
   });
 
-const resolveApiSmokeChecks = (app: App, shell: App): readonly SmokeCheck[] => {
-  const shellChecks =
-    app.apiPrefix?.startsWith('/') === true
-      ? shell.jsonSmokeChecks.filter(
-          (check) => check.route === app.apiPrefix || check.route.startsWith(`${app.apiPrefix}/`),
-        )
-      : [];
-  const uniqueChecks = new Map<string, SmokeCheck>();
-  for (const check of [...app.jsonSmokeChecks, ...shellChecks]) {
-    const key = [(check.method ?? 'GET').toUpperCase(), check.route, check.id ?? ''].join('\u0000');
-    if (!uniqueChecks.has(key)) {
-      uniqueChecks.set(key, check);
+const encodeSmokeCheckIdentity = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      body: Schema.Json,
+      expect: Schema.Json,
+      id: Schema.optional(Schema.String),
+      method: Schema.String,
+      route: Schema.String,
+    }),
+  ),
+);
+
+const resolveApiSmokeChecks = (
+  app: App,
+  shell: App,
+): Effect.Effect<readonly SmokeCheck[], WorkerdProofError> =>
+  Effect.gen(function* resolveApiSmokeChecksEffect() {
+    const shellChecks =
+      app.apiPrefix?.startsWith('/') === true
+        ? shell.jsonSmokeChecks.filter(
+            (check) => check.route === app.apiPrefix || check.route.startsWith(`${app.apiPrefix}/`),
+          )
+        : [];
+    const uniqueChecks = new Map<string, SmokeCheck>();
+    for (const check of [...app.jsonSmokeChecks, ...shellChecks]) {
+      const key = yield* encodeSmokeCheckIdentity({
+        body: check.body ?? null,
+        expect: check.expect ?? null,
+        id: check.id,
+        method: (check.method ?? 'GET').toUpperCase(),
+        route: check.route,
+      }).pipe(
+        Effect.mapError((cause) =>
+          proofError(`${app.id} smoke identity could not be encoded`, cause),
+        ),
+      );
+      if (!uniqueChecks.has(key)) {
+        uniqueChecks.set(key, check);
+      }
     }
-  }
-  return [...uniqueChecks.values()];
-};
+    return [...uniqueChecks.values()];
+  });
 
 const runApiCheck = (
   app: App,
@@ -754,7 +794,7 @@ const runAppApiProofs = (
   executionByAppId: ReadonlyMap<string, ExecutionEvidence>,
 ): Effect.Effect<readonly ApiProof[], WorkerdProofError> =>
   Effect.gen(function* runAppApiProofsEffect() {
-    const checks = resolveApiSmokeChecks(app, shell);
+    const checks = yield* resolveApiSmokeChecks(app, shell);
     yield* ensure(checks.length > 0, `${app.id} has no real Cloudflare API smoke check`);
     const appWorkerName = yield* workerName(app);
     const shellWorkerName = yield* workerName(shell);

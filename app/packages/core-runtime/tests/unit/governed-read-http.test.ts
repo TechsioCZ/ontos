@@ -158,7 +158,7 @@ const registration = defineRead(
   () => ({ kind: 'module', moduleId: 'core.shell' }),
 );
 
-const principal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   authBindingId: '00000000-0000-4000-8000-000000000002',
   authContextRef: 'better-auth-session:governed-http-test',
   authMethod: 'session',

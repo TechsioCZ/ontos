@@ -447,7 +447,9 @@ const main = Effect.gen(function* databaseAccessBoundaryMain() {
       { concurrency: 1, discard: true },
     );
     return yield* Effect.fail(
-      new DatabaseAccessBoundaryCheckFailed({ violationCount: violations.length }),
+      new DatabaseAccessBoundaryCheckFailed({
+        violationCount: violations.length,
+      }),
     );
   }
   return yield* Console.log('Database access boundaries verified');

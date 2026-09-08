@@ -1,4 +1,5 @@
 import { Effect, FileSystem, Schema } from 'effect';
+
 import {
   discoverOntosModuleEffect,
   ensureUniqueMutationPaths,
@@ -262,6 +263,11 @@ export const planSearchProviderAccessScaffold = (
     yield* trySync(() => ensureUniqueMutationPaths(mutations));
     return {
       mutations,
-      result: { contractPath, manifestPath: vertical.manifestPath, providerPath, serverPath },
+      result: {
+        contractPath,
+        manifestPath: vertical.manifestPath,
+        providerPath,
+        serverPath,
+      },
     };
   });

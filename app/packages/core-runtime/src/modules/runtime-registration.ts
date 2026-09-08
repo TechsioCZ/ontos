@@ -198,7 +198,7 @@ export const extractVerticalRuntimeSafeDescriptors = (
         .map(({ descriptor }) =>
           Object.freeze(
             Result.getOrThrow(
-              Schema.decodeUnknownResult(OntosActionContractSchema)({
+              Schema.decodeResult(OntosActionContractSchema)({
                 actionKey: descriptor.actionKey,
                 auditProfile: descriptor.auditProfile,
                 entrypoint: descriptor.entrypoint,

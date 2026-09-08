@@ -121,7 +121,7 @@ const loadClaimCorrelationId = Effect.fnUntraced(function* loadClaimCorrelationI
 export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepositoryService => ({
   claimNext: (registrations, claimOwner, now) => {
     if (registrations.length === 0) {
-      return Effect.succeed(Option.none());
+      return Effect.succeedNone;
     }
     const byWorkerKey = new Map(
       registrations.map((registration) => [registration.descriptor.workerKey, registration]),

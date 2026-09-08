@@ -1,4 +1,3 @@
-import { runPinnedKnip } from './quality-audit-test-support.mts';
 import assert from 'node:assert/strict';
 import {
   mkdirSync,
@@ -12,11 +11,14 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+
 import { NodeServices } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
-import { runQualityAudit } from '../quality-audit.mts';
+
 import { runEffectTestPromise } from '../../packages/core-runtime/src/testing/effect-runtime.ts';
 import { buildKnipModel, KnipConfigSchema } from '../../quality-audit/knip-model.mts';
+import { runQualityAudit } from '../quality-audit.mts';
+import { runPinnedKnip } from './quality-audit-test-support.mts';
 
 const rspackPackageName = '@rspack/core';
 const fixtureModuleSource = 'module.exports = {};';
@@ -58,7 +60,11 @@ const fixture = async () => {
     root,
     packageFile,
     await stringify({
-      dependencies: { 'drizzle-orm': '1.0.0-rc.4', effect: '4.0.0-beta.107', jose: '6.2.5' },
+      dependencies: {
+        'drizzle-orm': '1.0.0-rc.4',
+        effect: '4.0.0-beta.107',
+        jose: '6.2.5',
+      },
       name: 'knip-consumer-controls',
       private: true,
       type: 'module',
@@ -208,7 +214,10 @@ await test('real pinned Knip models exact consumers and preserves neighboring fi
             node: false,
             project: [sourcePattern, configurationFiles, 'tools/**/*.{ts,mts}'],
           },
-          'verticals/*': { entry: [indexFile, configurationFiles], project: ['**/*.{ts,mts}'] },
+          'verticals/*': {
+            entry: [indexFile, configurationFiles],
+            project: ['**/*.{ts,mts}'],
+          },
         },
       }),
     );
@@ -346,7 +355,10 @@ await test('runner calibrates only the proven resolver record and retains the di
             node: false,
             project: [sourcePattern, configurationFiles, 'tools/**/*.{ts,mts}'],
           },
-          'verticals/*': { entry: [indexFile, configurationFiles], project: ['**/*.{ts,mts}'] },
+          'verticals/*': {
+            entry: [indexFile, configurationFiles],
+            project: ['**/*.{ts,mts}'],
+          },
         },
       }),
     );

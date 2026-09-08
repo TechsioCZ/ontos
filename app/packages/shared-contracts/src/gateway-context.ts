@@ -236,7 +236,7 @@ export const issueGatewayContext = (
   payload: GatewayContextRequest,
   options: GatewayContextClientOptions = {},
 ): GatewayContextClientEffect<GatewayContextResponse> =>
-  Schema.decodeUnknownEffect(GatewayContextRequestSchema)(payload).pipe(
+  Schema.decodeEffect(GatewayContextRequestSchema)(payload).pipe(
     Effect.flatMap((decodedPayload) =>
       gatewayContextClient.pipe(
         Effect.flatMap((client) =>

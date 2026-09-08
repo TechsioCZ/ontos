@@ -132,7 +132,10 @@ const validateDecodedContract = (
       contract,
       context,
     );
-    return yield* encodeContract({ ...contract, compatibilityEligibleEntrypoints });
+    return yield* encodeContract({
+      ...contract,
+      compatibilityEligibleEntrypoints,
+    });
   });
 
 const decodeContract = (

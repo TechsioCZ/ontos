@@ -1,9 +1,13 @@
 {
   "extends": "../../tsconfig.base.json",
   "include": [
+    "src/components/page-contacts.tsx",
+    "src/modern-app-env.d.ts",
     "src/federation-entry.tsx",
     "src/federation/page-contacts.tsx",
-    "shared/api.ts",
-    "src/modern-app-env.d.ts"
-  ]
+    "shared/api.ts"
+  ],
+  "compilerOptions": {
+    "skipLibCheck": true
+  }
 }

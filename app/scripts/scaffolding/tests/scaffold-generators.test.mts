@@ -1,21 +1,12 @@
-import { runEffectTestPromise } from '../../../packages/core-runtime/src/testing/effect-runtime.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import nodeTest from 'node:test';
-import { Clock, ConfigProvider, Predicate, Redacted } from 'effect';
-import { defineAction } from '../../../packages/core-runtime/src/actions/definition.ts';
-import { GatewayAssertionRedemptionService } from '../../../packages/core-runtime/src/auth/gateway-assertion-redemption.ts';
-import { defineSystemModuleEntrypoint } from '../../../packages/core-runtime/src/modules/module-entrypoint.ts';
-import { makeActionTestHarness } from '../../../packages/core-runtime/src/testing/actions.ts';
-import { TrustedPrincipalContextSchema } from '../../../packages/core-runtime/src/actions/principal-context.ts';
-import type { TrustedPrincipalContext } from '../../../packages/core-runtime/src/actions/principal-context.ts';
-import type { GatewayPrincipalVerifierLive } from '../../../packages/gateway-principal-verifier/src/server.ts';
-import type { bindActionHttpRunner as ActionHttpRunnerBinding } from '../../../verticals/party-registry/api/action-http-runner.ts';
+import { pathToFileURL } from 'node:url';
+
 import {
   defineEffectBff,
   Effect,
@@ -29,19 +20,34 @@ import {
   Layer,
   Schema,
 } from '@modern-js/plugin-bff/effect-edge';
-import {
-  GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
-  GATEWAY_ASSERTION_TTL_SECONDS,
-} from '../../../packages/shared-contracts/src/gateway-context.ts';
+import { Clock, ConfigProvider, Predicate, Redacted } from 'effect';
 import { SignJWT, exportJWK, generateKeyPair, generateSecret, importJWK } from 'jose';
 import type { JWK } from 'jose';
+
+import type { GatewayIssuerConfigValue } from '../../../apps/shell-super-app/api/auth/gateway-issuer-config.ts';
 import {
   issueGatewayContextAssertion,
   makeGatewayIssuerLayer,
 } from '../../../apps/shell-super-app/api/auth/gateway-issuer.ts';
-import type { GatewayIssuerConfigValue } from '../../../apps/shell-super-app/api/auth/gateway-issuer-config.ts';
-import { getHelpText, runScaffold } from '../cli.mts';
+import { defineAction } from '../../../packages/core-runtime/src/actions/definition.ts';
+import { TrustedPrincipalContextSchema } from '../../../packages/core-runtime/src/actions/principal-context.ts';
+import type { TrustedPrincipalContext } from '../../../packages/core-runtime/src/actions/principal-context.ts';
+import { GatewayAssertionRedemptionService } from '../../../packages/core-runtime/src/auth/gateway-assertion-redemption.ts';
+import { defineSystemModuleEntrypoint } from '../../../packages/core-runtime/src/modules/module-entrypoint.ts';
+import { makeActionTestHarness } from '../../../packages/core-runtime/src/testing/actions.ts';
+import { runEffectTestPromise } from '../../../packages/core-runtime/src/testing/effect-runtime.ts';
+import type { GatewayPrincipalVerifierLive } from '../../../packages/gateway-principal-verifier/src/server.ts';
+import {
+  GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
+  GATEWAY_ASSERTION_TTL_SECONDS,
+} from '../../../packages/shared-contracts/src/gateway-context.ts';
+import type { bindActionHttpRunner as ActionHttpRunnerBinding } from '../../../verticals/party-registry/api/action-http-runner.ts';
 import { hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
+import {
+  assertPublishedOutboxDependencyUsage,
+  publishedOutboxContractExports,
+} from '../../published-outbox-contracts.mts';
+import { getHelpText, runScaffold } from '../cli.mts';
 import type { ScaffoldCommand } from '../cli.mts';
 import {
   GOVERNED_HTTP_API_ADDITION_SLOT_END,
@@ -58,10 +64,6 @@ import {
   readGeneratedSlotEntries,
 } from '../shared.mts';
 import type { JsonValue } from '../shared.mts';
-import {
-  assertPublishedOutboxDependencyUsage,
-  publishedOutboxContractExports,
-} from '../../published-outbox-contracts.mts';
 
 interface Fixture {
   readonly root: string;
@@ -272,7 +274,9 @@ const problemFields = {
   title: Schema.String,
   type: Schema.String,
 };
-const asProblemDetails = HttpApiSchema.asJson({ contentType: 'application/problem+json' });
+const asProblemDetails = HttpApiSchema.asJson({
+  contentType: 'application/problem+json',
+});
 const ActionAuthenticationProblemSchema = Schema.TaggedStruct(
   'ActionAuthenticationProblem',
   problemFields,
@@ -315,7 +319,9 @@ const generatedPrincipalErrorHandlers = {
   ActionPrincipalScopeError: failActionAuthentication,
   ActionPrincipalUnavailableError: failActionVerificationUnavailable,
 };
-const GeneratedBindingResultSchema = Schema.Struct({ accepted: Schema.Literal(true) });
+const GeneratedBindingResultSchema = Schema.Struct({
+  accepted: Schema.Literal(true),
+});
 const generatedBindingAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -328,7 +334,10 @@ const generatedBindingAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'core.test.generated-action-http',
       moduleKey: 'core.shell',
       role: 'action',
@@ -354,13 +363,13 @@ const InventoryLocaleSchema = Schema.Struct({
 });
 
 const decodeFixturePackage = (source: string) =>
-  Schema.decodeUnknownSync(FixturePackageSchema, { onExcessProperty: 'preserve' })(
-    JSON.parse(source),
-  );
+  Schema.decodeUnknownSync(FixturePackageSchema, {
+    onExcessProperty: 'preserve',
+  })(JSON.parse(source));
 const decodeInventoryLocale = (source: string) =>
-  Schema.decodeUnknownSync(InventoryLocaleSchema, { onExcessProperty: 'preserve' })(
-    JSON.parse(source),
-  );
+  Schema.decodeUnknownSync(InventoryLocaleSchema, {
+    onExcessProperty: 'preserve',
+  })(JSON.parse(source));
 
 const inventorySlug = 'inventory-stock';
 const shellAppId = 'shell-super-app';
@@ -489,7 +498,7 @@ const json = (value: JsonValue): string => `${JSON.stringify(value, null, 2)}\n`
 const inventoryHandlerRootFile = 'verticals/inventory-stock/api/index.ts';
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
 const require = createRequire(import.meta.url);
-const createEntry = require.resolve('@modern-js/create');
+const createEntry = require.resolve('@modern-js/ultramodern-create');
 const esbuildPath = require.resolve('esbuild/bin/esbuild', {
   paths: [path.dirname(createEntry)],
 });
@@ -502,7 +511,10 @@ const makeGatewayKey = async (
   configuration: GatewayIssuerConfigValue;
   publicJwk: JWK;
 }> => {
-  const pair = await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true });
+  const pair = await generateKeyPair('EdDSA', {
+    crv: 'Ed25519',
+    extractable: true,
+  });
   const privateJwk = await exportJWK(pair.privateKey);
   const publicJwk = await exportJWK(pair.publicKey);
   return {
@@ -911,7 +923,9 @@ test('documents every command and treats --help as a write-free operation', asyn
 
 test('search-provider access updates only generated access metadata and fails atomically on drift', async () => {
   await withFixture(async (fixture) => {
-    await mkdir(path.join(fixture.root, 'verticals/retired/node_modules'), { recursive: true });
+    await mkdir(path.join(fixture.root, 'verticals/retired/node_modules'), {
+      recursive: true,
+    });
     await addInventoryItemResourceType(fixture);
     await run(fixture, scaffoldCommand.searchProvider, [
       scaffoldFlag.vertical,
@@ -1056,8 +1070,12 @@ test('generated read clients fetch mounted owner URLs and support separately dep
       scaffoldFlag.resource,
       'item',
     ]);
-    await mkdir(path.join(fixture.root, 'node_modules/@app'), { recursive: true });
-    await mkdir(path.join(fixture.root, 'node_modules/@modern-js'), { recursive: true });
+    await mkdir(path.join(fixture.root, 'node_modules/@app'), {
+      recursive: true,
+    });
+    await mkdir(path.join(fixture.root, 'node_modules/@modern-js'), {
+      recursive: true,
+    });
     await symlink(
       path.join(appRoot, sharedContractsPackagePath),
       path.join(fixture.root, sharedContractsNodeModulePath),
@@ -1537,7 +1555,9 @@ test('governed contribution generators patch owner contracts and lazy adapters a
     );
     assert.match(searchContract, /HttpApiGroup\.make\('inventoryItemsSearch'\)/u);
 
-    await mkdir(path.join(fixture.root, 'node_modules', '@app'), { recursive: true });
+    await mkdir(path.join(fixture.root, 'node_modules', '@app'), {
+      recursive: true,
+    });
     await mkdir(path.dirname(path.join(fixture.root, pluginBffNodeModulePath)), {
       recursive: true,
     });
@@ -2625,7 +2645,9 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
       scaffoldFlag.vertical,
       'billing',
     ]);
-    await mkdir(path.join(fixture.root, 'node_modules', '@app'), { recursive: true });
+    await mkdir(path.join(fixture.root, 'node_modules', '@app'), {
+      recursive: true,
+    });
     await symlink(
       path.join(appRoot, 'packages/core-runtime'),
       path.join(fixture.root, 'node_modules/@app/core-runtime'),
@@ -2808,7 +2830,9 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
         retiringAssertion.token,
         {
           ...environment,
-          ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [current.publicJwk] }),
+          ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
+            keys: [current.publicJwk],
+          }),
         },
         1_700_000_000 + GATEWAY_ASSERTION_TTL_SECONDS + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS + 1,
       ),
@@ -3083,7 +3107,10 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
       assert.equal(
         generatedBindingResponse.status,
         200,
-        JSON.stringify({ body: generatedBindingBody, snapshot: harness.snapshot() }),
+        JSON.stringify({
+          body: generatedBindingBody,
+          snapshot: harness.snapshot(),
+        }),
       );
       assert.deepEqual(generatedBindingBody, { accepted: true });
       assert.equal(harness.snapshot().invocations.length, 1);
@@ -3661,7 +3688,10 @@ test('rejects Action generation when a vertical app identity is duplicated', asy
       billingPackagePath,
       json({
         ...billingPackage,
-        modernjs: { ...billingPackage.modernjs, appId: inventoryVertical.appId },
+        modernjs: {
+          ...billingPackage.modernjs,
+          appId: inventoryVertical.appId,
+        },
       }),
       'utf-8',
     );
@@ -4588,7 +4618,9 @@ test('renders a newly generated federated page with English and Czech owner reso
       '--page',
       'customers',
     ]);
-    await mkdir(path.join(fixture.root, 'node_modules', '@modern-js'), { recursive: true });
+    await mkdir(path.join(fixture.root, 'node_modules', '@modern-js'), {
+      recursive: true,
+    });
     await Promise.all(
       ['react', 'react-dom'].map(
         async (packageName) =>
@@ -5488,7 +5520,10 @@ test('rejects page generation when an owning locale has no truthful starter tran
       packagePath,
       json({
         ...packageJson,
-        exports: { ...packageJson.exports, './locales/de': './locales/de/inventory.json' },
+        exports: {
+          ...packageJson.exports,
+          './locales/de': './locales/de/inventory.json',
+        },
       }),
       'utf-8',
     );

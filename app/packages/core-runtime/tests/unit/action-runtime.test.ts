@@ -688,15 +688,13 @@ test('uses a resolver-branded recovery only for the exact support-stop Action an
   const recoveryPrincipal = await runEffectTestPromise(
     supportRecoveryPrincipalContextResolverFromRepository({
       load: () =>
-        Effect.succeed(
-          Option.some({
-            bindingPrincipalId: principal.principalId,
-            bindingTenantId: principal.tenantId,
-            principalKind: 'human' as const,
-            principalTenantId: principal.tenantId,
-            tenantId: principal.tenantId,
-          }),
-        ),
+        Effect.succeedSome({
+          bindingPrincipalId: principal.principalId,
+          bindingTenantId: principal.tenantId,
+          principalKind: 'human' as const,
+          principalTenantId: principal.tenantId,
+          tenantId: principal.tenantId,
+        }),
     }).resolveStoppedImpersonation({
       originalAuthBindingId: principal.authBindingId,
       originalPrincipalId: principal.principalId,

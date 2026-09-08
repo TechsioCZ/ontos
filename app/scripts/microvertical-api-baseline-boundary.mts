@@ -224,13 +224,19 @@ const directCallChain = (expression: Expression | undefined): DirectCallChain | 
     return undefined;
   }
   let current = unwrapExpression(expression);
-  const methods: { readonly arguments: readonly Expression[]; readonly name: string }[] = [];
+  const methods: {
+    readonly arguments: readonly Expression[];
+    readonly name: string;
+  }[] = [];
   while (
     isCallExpression(current) &&
     isPropertyAccessExpression(current.expression) &&
     !isIdentifier(current.expression.expression)
   ) {
-    methods.unshift({ arguments: current.arguments, name: current.expression.name.text });
+    methods.unshift({
+      arguments: current.arguments,
+      name: current.expression.name.text,
+    });
     current = unwrapExpression(current.expression.expression);
   }
   if (!isCallExpression(current)) {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import {
   makeProtectedEntrypointInventory,
   serializeProtectedEntrypointInventory,
@@ -27,29 +28,33 @@ const entries = [
 
 void test('inventory normalization, hashing, and serialization are deterministic', () => {
   const left = makeProtectedEntrypointInventory('revision', entries);
-  const right = makeProtectedEntrypointInventory('revision', [entries[1], entries[0]]);
+  const right = makeProtectedEntrypointInventory('revision', [
+    entries[1],
+    entries[0],
+  ]);
   assert.equal(
     serializeProtectedEntrypointInventory(left),
-    serializeProtectedEntrypointInventory(right),
+    serializeProtectedEntrypointInventory(right)
   );
   assert.match(left.inventoryHash, /^[a-f0-9]{64}$/u);
   assert.deepEqual(
     left.entries.map((entry) => entry.surface),
-    ['action', 'route'],
+    ['action', 'route']
   );
 });
 
 void test('inventory rejects duplicate and unsafe entrypoint identities', () => {
   assert.throws(
-    () => makeProtectedEntrypointInventory('revision', [...entries, entries[0]]),
-    /duplicate protected entrypoint/u,
+    () =>
+      makeProtectedEntrypointInventory('revision', [...entries, entries[0]]),
+    /duplicate protected entrypoint/u
   );
   assert.throws(
     () =>
       makeProtectedEntrypointInventory('revision', [
         { ...entries[0], entrypointKey: 'tenant@example.com' },
       ]),
-    /stable, non-sensitive identifier/u,
+    /stable, non-sensitive identifier/u
   );
 });
 
@@ -66,16 +71,19 @@ void test('inventory rejects malformed and excess authorization classification d
           authorization: authorizationWithExcessData,
         },
       ]),
-    /classification is invalid/u,
+    /classification is invalid/u
   );
   assert.throws(
     () =>
       makeProtectedEntrypointInventory('revision', [
         {
           ...entries[0],
-          authorization: { kind: 'context_permission', permission: 'tenant@example.com' },
+          authorization: {
+            kind: 'context_permission',
+            permission: 'tenant@example.com',
+          },
         },
       ]),
-    /classification is invalid/u,
+    /classification is invalid/u
   );
 });

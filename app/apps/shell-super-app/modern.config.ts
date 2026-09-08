@@ -7,7 +7,7 @@ import {
 } from '../../packages/shared-contracts/tooling/modern-config.ts';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { appTools, defineConfig, presetUltramodern } from '@modern-js/app-tools';
+import { appTools, defineConfig, presetUltramodern, ultramodernReleaseEnvelopePlugin } from '@modern-js/app-tools';
 import type { AppTools, AppToolsUserConfig, CliPlugin } from '@modern-js/app-tools';
 import { getBuildConfigEnvironment, withBuildConfigEnvironment } from '@modern-js/app-tools/config';
 import { bffPlugin } from '@modern-js/plugin-bff';
@@ -296,6 +296,7 @@ export default defineConfig(
         },
         plugins: [
           appTools(),
+          ultramodernReleaseEnvelopePlugin(),
           bffPlugin(),
           tanstackRouterPlugin(),
           i18nPlugin({

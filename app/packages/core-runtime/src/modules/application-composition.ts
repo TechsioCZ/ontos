@@ -393,7 +393,7 @@ export const validateApplicationCompositionCandidate = Effect.fnUntraced(functio
       ),
     ),
   );
-  const observed = yield* Schema.decodeUnknownEffect(candidateEvidenceSchema)(evidence).pipe(
+  const observed = yield* Schema.decodeEffect(candidateEvidenceSchema)(evidence).pipe(
     Effect.catchTag('SchemaError', () =>
       Effect.fail(
         new ApplicationCompositionValidationError({

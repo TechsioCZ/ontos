@@ -29,12 +29,12 @@ export const resolveUltramodernInvocation = <E,>(options: CommandOptions<E>) =>
     );
     const forwardedArgs = yield* stdio.args;
     const args = ['ultramodern', options.command, ...forwardedArgs];
-    const nodeExecutable = options.nodeExecutable ?? 'node';
+    const nodeExecutable = options.nodeExecutable ?? process.execPath;
     const launch = Option.match(createBin, {
       onNone: () => ({
         args,
-        executable: 'modern-js-create',
-        target: 'modern-js-create from PATH',
+        executable: 'ultramodern-create',
+        target: 'ultramodern-create from PATH',
       }),
       onSome: (bin) => ({
         args: [bin, ...args],

@@ -174,7 +174,7 @@ void test('validates decoded DateTime and Option results through their encoded r
     archivedAt: Schema.OptionFromNullOr(Schema.DateTimeUtcFromString),
     createdAt: Schema.DateTimeUtcFromString,
   });
-  const decoded = Schema.decodeUnknownSync(resultSchema)({
+  const decoded = Schema.decodeSync(resultSchema)({
     archivedAt: null,
     createdAt: '2026-09-07T10:30:00.000Z',
   });

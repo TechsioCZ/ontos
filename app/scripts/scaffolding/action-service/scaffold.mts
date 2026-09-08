@@ -1,3 +1,6 @@
+import { Effect } from 'effect';
+
+import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   ACTION_SERVICE_GENERATOR_HEADER,
   createMutationEffect,
@@ -7,8 +10,6 @@ import {
   toCamelCase,
   tryScaffold,
 } from '../shared.mts';
-import { createCodesmithGenerator } from '../generator-adapter.mts';
-import { Effect } from 'effect';
 import type {
   ActionServiceScaffoldConfig,
   ActionServiceScaffoldResult,

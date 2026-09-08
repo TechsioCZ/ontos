@@ -1,6 +1,6 @@
 import { Effect, Equal, FileSystem, Schema } from 'effect';
+
 import { createCodesmithGenerator } from '../generator-adapter.mts';
-import { tailwindPrefixForNamespace } from '../tailwind-prefix.mts';
 import {
   MODULE_MANIFEST_COMPONENT_SLOT_END,
   MODULE_MANIFEST_COMPONENT_SLOT_START,
@@ -40,6 +40,7 @@ import type {
   ScaffoldPlan,
   OntosVerticalMetadata,
 } from '../shared.mts';
+import { tailwindPrefixForNamespace } from '../tailwind-prefix.mts';
 
 interface PageVerticalMetadata extends OntosVerticalMetadata {
   readonly locales: readonly string[];

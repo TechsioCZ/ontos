@@ -628,7 +628,7 @@ export const makePostgresCoreSearchProjectionStore = (
     const transactionBody = (transaction: CoreTransaction) =>
       transactionOperations.queryCandidatesTransaction(transaction, input);
     const documents = yield* runTransaction(transactionBody);
-    return yield* Schema.decodeUnknownEffect(Schema.Array(CoreSearchProjectionDocumentSchema))(
+    return yield* Schema.decodeEffect(Schema.Array(CoreSearchProjectionDocumentSchema))(
       documents,
     ).pipe(Effect.mapError(unavailable));
   });
@@ -652,12 +652,8 @@ export const CoreSearchProjectionStoreLive = Layer.effect(
   }),
 );
 
-/** Fully composed production query layer; owner adapters never import Core database capabilities. */
+/** Query layer exposes its store requirement for composition at the application boundary. */
 export const CoreSearchQueryRuntimeLive = Layer.effect(
   CoreSearchQueryRuntime,
-  Effect.gen(function* createCoreSearchQueryRuntimeLive() {
-    const database = yield* CoreDatabase;
-    const store = makePostgresCoreSearchProjectionStore(database);
-    return createCoreSearchQueryRuntime(store);
-  }),
+  createCoreSearchQueryRuntime,
 );

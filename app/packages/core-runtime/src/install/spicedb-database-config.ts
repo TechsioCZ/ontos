@@ -75,24 +75,22 @@ export const parseSpiceDbDatabaseBootstrapConfig = (
     Schema.decodeUnknownResult(SpiceDbDatabaseBootstrapEnvironmentSchema)(environment),
   );
   const admin = Result.getOrThrow(
-    Schema.decodeUnknownResult(PostgreSqlUrlSchema)(source.DATABASE_ADMIN_URL),
+    Schema.decodeResult(PostgreSqlUrlSchema)(source.DATABASE_ADMIN_URL),
   );
   const spicedb = Result.getOrThrow(
-    Schema.decodeUnknownResult(PostgreSqlUrlSchema)(source.SPICEDB_DATABASE_URL),
+    Schema.decodeResult(PostgreSqlUrlSchema)(source.SPICEDB_DATABASE_URL),
   );
   const pair = Result.getOrThrow(
-    Schema.decodeUnknownResult(SpiceDbDatabasePairSchema)({
+    Schema.decodeResult(SpiceDbDatabasePairSchema)({
       admin,
       spicedb,
       spicedbUser: decodeURIComponent(
-        Result.getOrThrow(
-          Schema.decodeUnknownResult(PercentEncodedUriComponentSchema)(spicedb.username),
-        ),
+        Result.getOrThrow(Schema.decodeResult(PercentEncodedUriComponentSchema)(spicedb.username)),
       ),
     }),
   );
   const encodedPassword = Result.getOrThrow(
-    Schema.decodeUnknownResult(PercentEncodedUriComponentSchema)(pair.spicedb.password),
+    Schema.decodeResult(PercentEncodedUriComponentSchema)(pair.spicedb.password),
   );
 
   return makeSpiceDbDatabaseBootstrapConfig({

@@ -112,6 +112,9 @@ const reactDomVersion = packageVersion('react-dom');
 
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] =
   createModuleFederationConfig({
+    bridge: {
+      enableBridgeRouter: false,
+    },
     dts: {
       consumeTypes: true,
       generateTypes: false,

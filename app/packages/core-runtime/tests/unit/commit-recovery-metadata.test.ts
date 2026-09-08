@@ -81,9 +81,7 @@ test('committed error schema requires and preserves the recovery invocation iden
     invocationId: '40000000-0000-4000-8000-000000000001',
     reason: 'This idempotency key already committed successfully',
   } as const;
-  const decoded = await runEffectTestPromise(
-    Schema.decodeUnknownEffect(ActionAlreadyCommitted)(encoded),
-  );
+  const decoded = await runEffectTestPromise(Schema.decodeEffect(ActionAlreadyCommitted)(encoded));
   assert.deepEqual(
     await runEffectTestPromise(decoded.pipe(Schema.encodeEffect(ActionAlreadyCommitted))),
     encoded,

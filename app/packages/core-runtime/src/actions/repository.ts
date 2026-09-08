@@ -859,8 +859,9 @@ export const makeActionRepository = (): ActionRepositoryService => {
     }
 
     if (input.evidence.outboxMessages.length > 0) {
-      const persistedOutboxMessages = yield* Effect.all(
-        input.evidence.outboxMessages.map((collected) => {
+      const persistedOutboxMessages = yield* Effect.forEach(
+        input.evidence.outboxMessages,
+        (collected) => {
           const persistedDomainEvent = persistedDomainEvents[collected.domainEventIndex];
           if (persistedDomainEvent === undefined) {
             return Effect.fail(
@@ -879,7 +880,7 @@ export const makeActionRepository = (): ActionRepositoryService => {
             tenantId: input.principal.tenantId,
             topic: collected.message.topic,
           });
-        }),
+        },
         { concurrency: 1 },
       );
       yield* transaction

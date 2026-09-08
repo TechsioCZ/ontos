@@ -114,7 +114,7 @@ export const parseOutboxPollingConfig = ({
 
   return decoded.pipe(
     Effect.flatMap((value) =>
-      Schema.decodeUnknownEffect(ClaimOwner)(value.claimOwner).pipe(
+      Schema.decodeEffect(ClaimOwner)(value.claimOwner).pipe(
         Effect.map((claimOwner) => Object.freeze({ ...value, claimOwner })),
       ),
     ),

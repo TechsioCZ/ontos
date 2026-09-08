@@ -4,5 +4,5 @@ import type { GovernedContributionScaffoldConfig } from '../shared.mts';
 
 export default createCodesmithGenerator(
   (workspaceRoot: string, config: GovernedContributionScaffoldConfig) =>
-    planGovernedContributionScaffold(workspaceRoot, 'module-api', config),
+    planGovernedContributionScaffold(workspaceRoot, 'module-api', config)
 );

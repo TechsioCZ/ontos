@@ -3,8 +3,9 @@ import type { GeneratorCore } from '@modern-js/codesmith';
 import { Effect, FileSystem, flow, Option, Path, Predicate, Result, Schema } from 'effect';
 import { format } from 'oxfmt';
 import ultraciteOxfmt from 'ultracite/oxfmt';
-import { scaffoldingRuntime } from '../scaffolding-runtime.mts';
+
 import { ONTOS_MODULE_CONTRACT_SCHEMA_VERSION } from '../../packages/core-runtime/src/index.ts';
+import { scaffoldingRuntime } from '../scaffolding-runtime.mts';
 
 /* eslint-disable unicorn/prefer-number-coercion -- The schema version is parsed as a base-10 integer by contract. expires: 2026-12-31. */
 export const ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION = Number.parseInt(
@@ -392,7 +393,10 @@ const scaffoldFailureFromUnknown = (cause: unknown, fallback: string): ScaffoldF
 };
 
 export const tryScaffold = <Value,>(message: string, evaluate: () => Value) =>
-  Effect.try({ catch: (cause) => scaffoldFailureFromUnknown(cause, message), try: evaluate });
+  Effect.try({
+    catch: (cause) => scaffoldFailureFromUnknown(cause, message),
+    try: evaluate,
+  });
 
 export const raiseScaffoldFailure = (message: string, cause?: unknown): never =>
   scaffoldingRuntime.runSync(Effect.die(scaffoldFailure(message, cause)));
@@ -1283,7 +1287,10 @@ const formatGeneratedMutationContent = (
     const formatted = yield* Effect.tryPromise({
       catch: (cause) => scaffoldFailure(`failed to format generated source ${filePath}`, cause),
       try: async () =>
-        await format(filePath, content, { extends: [ultraciteOxfmt], singleQuote: true }),
+        await format(filePath, content, {
+          extends: [ultraciteOxfmt],
+          singleQuote: true,
+        }),
     });
     if (formatted.errors.length > 0) {
       return yield* scaffoldFailure(
@@ -1366,7 +1373,9 @@ export const withCoreDependency = (vertical: VerticalMetadata): Mutation | undef
   const dependencies: MutableJsonObject =
     dependenciesValue === undefined
       ? {}
-      : { ...asJsonObject(dependenciesValue, `vertical ${vertical.slug} dependencies`) };
+      : {
+          ...asJsonObject(dependenciesValue, `vertical ${vertical.slug} dependencies`),
+        };
   const current = dependencies[CORE_RUNTIME_PACKAGE];
   if (current !== undefined && current !== WORKSPACE_DEPENDENCY_VERSION) {
     return raiseScaffoldFailure(
@@ -1395,7 +1404,9 @@ export const withExactDependencies = (
   const dependencies: MutableJsonObject =
     dependenciesValue === undefined
       ? {}
-      : { ...asJsonObject(dependenciesValue, `vertical ${vertical.slug} dependencies`) };
+      : {
+          ...asJsonObject(dependenciesValue, `vertical ${vertical.slug} dependencies`),
+        };
   let changed = false;
   for (const [name, version] of Object.entries(required)) {
     const current = dependencies[name];

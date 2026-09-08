@@ -13,6 +13,7 @@ import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+
 import { getHelpText, runScaffold } from '../cli.mts';
 import type { JsonValue } from '../shared.mts';
 
@@ -194,7 +195,10 @@ await test('retire-contribution help is write-free and documents the narrow kind
   const result = await runScaffold(RETIRE_CONTRIBUTION_COMMAND, ['--help'], {
     workspaceRoot: path.join(tmpdir(), 'retire-help-missing'),
   });
-  assert.deepEqual(result, { help: getHelpText(RETIRE_CONTRIBUTION_COMMAND), kind: 'help' });
+  assert.deepEqual(result, {
+    help: getHelpText(RETIRE_CONTRIBUTION_COMMAND),
+    kind: 'help',
+  });
   assert.match(result.help, /--kind <action\|api\|page>/u);
 });
 

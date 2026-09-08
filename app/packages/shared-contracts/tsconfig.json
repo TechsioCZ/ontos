@@ -9,7 +9,9 @@
     "noEmit": false,
     "outDir": "../../node_modules/.cache/tsgo/declarations/packages__shared-contracts",
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__shared-contracts.tsbuildinfo",
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
   "include": [
     "src"

@@ -1,5 +1,5 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { DateTime, Effect, Exit, Option, Schema, flow } from 'effect';
+import { DateTime, Effect, Exit, Schema, flow } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { supportRecoveryPrincipalContextResolverFromRepository } from '../../src/auth/support-recovery-principal-context.ts';
@@ -141,7 +141,7 @@ effectTest(
           kind: 'system' as const,
           principalStatus: 'active' as const,
           tenantStatus: 'active' as const,
-        }).pipe(Effect.map(Option.some)),
+        }).pipe(Effect.asSome),
     }).resolve({
       principalId: principal.principalId,
       registration: registerSystemWorkload({ jobKey: 'operation-scope-test' }),
@@ -190,7 +190,7 @@ effectTest(
           principalKind: 'human' as const,
           principalTenantId: principal.tenantId,
           tenantId: principal.tenantId,
-        }).pipe(Effect.map(Option.some)),
+        }).pipe(Effect.asSome),
     }).resolveStoppedImpersonation({
       originalAuthBindingId: principal.authBindingId,
       originalPrincipalId: principal.principalId,

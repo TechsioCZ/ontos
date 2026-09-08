@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import type { ProtectedEntrypointInventory } from '../authorization/protected-entrypoint-inventory.mts';
 import {
   checkAuthorizationReadiness,
@@ -19,7 +20,10 @@ const contactsOwner = 'contacts.core';
 const inventory: ProtectedEntrypointInventory = {
   entries: [
     {
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       deployment: 'contacts',
       entrypointKey: contactsCreateCustomerEntrypoint,
       owner: contactsOwner,
@@ -67,7 +71,7 @@ const negativeSmoke: AuthorizationNegativeSmokeEvidence = {
       credential,
       outcome: 'denied' as const,
       scenario,
-    })),
+    }))
   ),
   schemaVersion: 1,
   sourceRevision: inventory.sourceRevision,
@@ -158,7 +162,7 @@ void test('readiness rejects unapproved contexts and unresolved or stale impact 
         ...ready,
         context: { ...ready.context, approvalStatus: 'pending' },
       }),
-    /unapproved/u,
+    /unapproved/u
   );
   assert.throws(
     () =>
@@ -166,7 +170,7 @@ void test('readiness rejects unapproved contexts and unresolved or stale impact 
         ...ready,
         impact: { ...ready.impact, totalWouldDeny: 1 },
       }),
-    /stale or unresolved/u,
+    /stale or unresolved/u
   );
   assert.throws(
     () =>
@@ -174,7 +178,7 @@ void test('readiness rejects unapproved contexts and unresolved or stale impact 
         ...ready,
         impact: { ...ready.impact, sourceRevision: 'other' },
       }),
-    /stale or unresolved/u,
+    /stale or unresolved/u
   );
 });
 
@@ -191,16 +195,19 @@ void test('readiness rejects missing relationships, module state, worker ownersh
           ...ready,
           observation: { ...ready.observation, [key]: [] },
         }),
-      /incomplete/u,
+      /incomplete/u
     );
   }
   assert.throws(
     () =>
       checkAuthorizationReadiness({
         ...ready,
-        observation: { ...ready.observation, replayMigrationHash: 'f'.repeat(64) },
+        observation: {
+          ...ready.observation,
+          replayMigrationHash: 'f'.repeat(64),
+        },
       }),
-    /stale/u,
+    /stale/u
   );
 });
 
@@ -211,15 +218,18 @@ void test('readiness rejects incorrect issuer/audience topology, short observati
         ...ready,
         observation: { ...ready.observation, gatewayAudiences: ['other'] },
       }),
-    /issuer or audience/u,
+    /issuer or audience/u
   );
   assert.throws(
     () =>
       checkAuthorizationReadiness({
         ...ready,
-        observation: { ...ready.observation, gatewayIssuer: 'http://insecure.test' },
+        observation: {
+          ...ready.observation,
+          gatewayIssuer: 'http://insecure.test',
+        },
       }),
-    /issuer or audience/u,
+    /issuer or audience/u
   );
   assert.throws(
     () =>
@@ -233,14 +243,17 @@ void test('readiness rejects incorrect issuer/audience topology, short observati
           },
         },
       }),
-    /observation/u,
+    /observation/u
   );
   assert.throws(
     () =>
       checkAuthorizationReadiness({
         ...ready,
-        negativeSmoke: { ...negativeSmoke, scenarios: negativeSmoke.scenarios.slice(1) },
+        negativeSmoke: {
+          ...negativeSmoke,
+          scenarios: negativeSmoke.scenarios.slice(1),
+        },
       }),
-    /smoke evidence is incomplete/u,
+    /smoke evidence is incomplete/u
   );
 });

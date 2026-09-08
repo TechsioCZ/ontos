@@ -1,10 +1,20 @@
-import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import { Effect, Schema } from 'effect';
+
 import {
+  CoreSearchProjectionInvalid,
+  CoreSearchProjectionStore,
+  CoreSearchProjectionUnavailable,
+  CoreSearchQueryRuntime,
   createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
+} from '../../src/search/projection.ts';
+import type {
+  CoreSearchProjectionHit,
+  CoreSearchProjectionStoreService,
 } from '../../src/search/projection.ts';
 
 const effectTest = <A, E>(name: string, body: () => Effect.Effect<A, E>): void => {
@@ -63,7 +73,9 @@ effectTest(
   'a projection rebuild floor prevents unseen stale resources and rejects divergent equal-version rebuilds',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = createCoreSearchQueryRuntime(store);
+    const runtime = runEffectTestSync(
+      createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store)),
+    );
     const rebuild = {
       documents: [],
       moduleId: partyRef.moduleId,
@@ -74,7 +86,11 @@ effectTest(
     return Effect.gen(function* testProjectionRebuildFloor() {
       yield* store.replace(rebuild);
       yield* store.apply({ document: party(), kind: 'upsert' });
-      yield* store.replace({ ...rebuild, documents: [party()], rebuildVersion: '1' });
+      yield* store.replace({
+        ...rebuild,
+        documents: [party()],
+        rebuildVersion: '1',
+      });
       assert.deepEqual(
         yield* runtime.search({
           includeArchived: false,
@@ -88,7 +104,10 @@ effectTest(
       yield* store.replace(rebuild);
       const divergent = yield* Effect.flip(store.replace({ ...rebuild, documents: [party()] }));
       assert.equal(divergent._tag, 'CoreSearchProjectionInvalid');
-      yield* store.apply({ document: party({ projectionVersion: '3' }), kind: 'upsert' });
+      yield* store.apply({
+        document: party({ projectionVersion: '3' }),
+        kind: 'upsert',
+      });
       yield* store.replace(rebuild);
       const searchResults = yield* runtime.search({
         includeArchived: false,
@@ -106,12 +125,18 @@ effectTest(
   'Core Search identifies alias-only matches while canonical evidence takes precedence',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = createCoreSearchQueryRuntime(store);
+    const runtime = runEffectTestSync(
+      createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store)),
+    );
     return Effect.gen(function* testAliasMatches() {
       yield* store.apply({
         document: party({
           aliases: [
-            { kind: 'resource', ref: aliasRef, searchableText: ['Former Company', 'Acme'] },
+            {
+              kind: 'resource',
+              ref: aliasRef,
+              searchableText: ['Former Company', 'Acme'],
+            },
           ],
           matchedRef: aliasRef,
         }),
@@ -151,7 +176,9 @@ effectTest(
           },
         ],
       },
-      { temporalSearchableText: [{ validFrom: 'not-a-date', value: 'private' }] },
+      {
+        temporalSearchableText: [{ validFrom: 'not-a-date', value: 'private' }],
+      },
       {
         temporalSearchableText: [
           { validFrom: '2026-02-01', validTo: '2026-02-01', value: 'private' },
@@ -164,7 +191,11 @@ effectTest(
             ref: aliasRef,
             searchableText: [],
             temporalSearchableText: [
-              { validFrom: '2026-02-01', validTo: '2026-01-01', value: 'private' },
+              {
+                validFrom: '2026-02-01',
+                validTo: '2026-01-01',
+                value: 'private',
+              },
             ],
           },
         ],
@@ -183,10 +214,9 @@ effectTest(
         })),
       },
     ];
-    return Effect.all(
-      invalidEvidence.map((evidence) =>
-        Effect.flip(store.apply({ document: party(evidence), kind: 'upsert' })),
-      ),
+    return Effect.forEach(
+      invalidEvidence,
+      (evidence) => Effect.flip(store.apply({ document: party(evidence), kind: 'upsert' })),
       { concurrency: 'unbounded' },
     ).pipe(
       Effect.tap((failures) =>
@@ -204,7 +234,9 @@ effectTest(
   'Core Search honors half-open evidence periods for canonical and subject aliases',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = createCoreSearchQueryRuntime(store);
+    const runtime = runEffectTestSync(
+      createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store)),
+    );
     return Effect.gen(function* testHalfOpenEvidencePeriods() {
       yield* store.apply({
         document: party({
@@ -223,7 +255,10 @@ effectTest(
             },
           ],
           temporalSearchableText: [
-            { validFrom: '2026-02-01T00:00:00Z', value: 'current-private@example.test' },
+            {
+              validFrom: '2026-02-01T00:00:00Z',
+              value: 'current-private@example.test',
+            },
             {
               validFrom: '2000-01-01T00:00:00Z',
               validTo: '2100-01-01T00:00:00Z',
@@ -259,7 +294,9 @@ effectTest(
 
 effectTest('Core Search rebuilds one owned projection atomically and isolates tenants', () => {
   const store = makeInMemoryCoreSearchProjectionStore();
-  const runtime = createCoreSearchQueryRuntime(store);
+  const runtime = runEffectTestSync(
+    createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store)),
+  );
 
   return Effect.gen(function* testOwnedProjectionRebuild() {
     yield* store.replace({
@@ -301,7 +338,13 @@ effectTest('Core Search rebuilds one owned projection atomically and isolates te
     assert.doesNotMatch(encodeJson(result), /private@example\.test/u);
 
     yield* store.replace({
-      documents: [party({ archived: true, projectionVersion: '2', title: 'Replacement' })],
+      documents: [
+        party({
+          archived: true,
+          projectionVersion: '2',
+          title: 'Replacement',
+        }),
+      ],
       moduleId: 'party.registry',
       rebuildVersion: '2',
       resourceType: 'party.registry.party',
@@ -322,7 +365,9 @@ effectTest(
   'Core Search applies typed Legal Entity and role facets without returning match evidence',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = createCoreSearchQueryRuntime(store);
+    const runtime = runEffectTestSync(
+      createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store)),
+    );
     const counterpartyRef = {
       moduleId: 'party.registry',
       resourceId: '40000000-0000-4000-8000-000000000001',
@@ -336,7 +381,13 @@ effectTest(
             archived: false,
             facets: [],
             matchedSubjectRef: aliasRef,
-            metadata: [{ key: 'current-roles', kind: 'strings', value: ['CUSTOMER', 'SUPPLIER'] }],
+            metadata: [
+              {
+                key: 'current-roles',
+                kind: 'strings',
+                value: ['CUSTOMER', 'SUPPLIER'],
+              },
+            ],
             projectionVersion: '1',
             ref: counterpartyRef,
             searchableText: ['Acme', 'private@example.test'],
@@ -378,7 +429,13 @@ effectTest(
           archived: false,
           facets: [],
           matchedSubjectRef: aliasRef,
-          metadata: [{ key: 'current-roles', kind: 'strings', value: ['CUSTOMER', 'SUPPLIER'] }],
+          metadata: [
+            {
+              key: 'current-roles',
+              kind: 'strings',
+              value: ['CUSTOMER', 'SUPPLIER'],
+            },
+          ],
           ref: counterpartyRef,
           selectedLegalEntityId: legalEntityId,
           subjectRef: partyRef,
@@ -416,7 +473,9 @@ effectTest(
   'Core Search rejects malformed or cross-owner rebuild documents without partial replacement',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = createCoreSearchQueryRuntime(store);
+    const runtime = runEffectTestSync(
+      createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store)),
+    );
     return Effect.gen(function* testMalformedRebuildDocuments() {
       yield* store.replace({
         documents: [party()],
@@ -450,8 +509,13 @@ effectTest(
 
 effectTest('Core Search makes duplicate and out-of-order lifecycle observations harmless', () => {
   const store = makeInMemoryCoreSearchProjectionStore();
-  const runtime = createCoreSearchQueryRuntime(store);
-  const versionTwo = party({ projectionVersion: '2', title: 'Current title' });
+  const runtime = runEffectTestSync(
+    createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store)),
+  );
+  const versionTwo = party({
+    projectionVersion: '2',
+    title: 'Current title',
+  });
   return Effect.gen(function* testDuplicateLifecycleObservations() {
     yield* store.apply({ document: versionTwo, kind: 'upsert' });
     yield* store.apply({ document: versionTwo, kind: 'upsert' });
@@ -459,7 +523,11 @@ effectTest('Core Search makes duplicate and out-of-order lifecycle observations 
       document: party({ projectionVersion: '1', title: 'Stale title' }),
       kind: 'upsert',
     });
-    yield* store.apply({ kind: 'delete', projectionVersion: '3', ref: partyRef });
+    yield* store.apply({
+      kind: 'delete',
+      projectionVersion: '3',
+      ref: partyRef,
+    });
     yield* store.apply({ document: versionTwo, kind: 'upsert' });
 
     assert.deepEqual(
@@ -473,4 +541,90 @@ effectTest('Core Search makes duplicate and out-of-order lifecycle observations 
       [],
     );
   });
+});
+
+effectTest('native projection services preserve keys and provided identity', () => {
+  const store = makeInMemoryCoreSearchProjectionStore();
+  const runtime = runEffectTestSync(
+    createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store)),
+  );
+  return Effect.gen(function* testNativeServiceIdentity() {
+    assert.equal(
+      CoreSearchProjectionStore.key,
+      '@app/core-runtime/search/projection/CoreSearchProjectionStore',
+    );
+    assert.equal(
+      CoreSearchQueryRuntime.key,
+      '@app/core-runtime/search/projection/CoreSearchQueryRuntime',
+    );
+    assert.strictEqual(yield* CoreSearchProjectionStore, store);
+    assert.strictEqual(yield* CoreSearchQueryRuntime, runtime);
+  }).pipe(
+    Effect.provideService(CoreSearchProjectionStore, store),
+    Effect.provideService(CoreSearchQueryRuntime, runtime),
+  );
+});
+
+effectTest('native projection services compose store writes with query reads', () => {
+  const store = makeInMemoryCoreSearchProjectionStore();
+  return Effect.gen(function* testNativeProjectionComposition() {
+    const providedStore = yield* CoreSearchProjectionStore;
+    const runtime = yield* CoreSearchQueryRuntime;
+    yield* providedStore.apply({ document: party(), kind: 'upsert' });
+    const hits = yield* runtime.search({
+      includeArchived: false,
+      moduleId: partyRef.moduleId,
+      query: 'acme',
+      resourceType: partyRef.resourceType,
+      tenantId,
+    });
+    assert.equal(hits.length, 1);
+    assert.deepEqual(hits[0]?.ref, partyRef);
+  }).pipe(
+    Effect.provideServiceEffect(CoreSearchQueryRuntime, createCoreSearchQueryRuntime),
+    Effect.provideService(CoreSearchProjectionStore, store),
+  );
+});
+
+const searchThroughNativeService = (
+  input: Parameters<CoreSearchProjectionStoreService['apply']>[0],
+): Effect.Effect<
+  readonly CoreSearchProjectionHit[],
+  CoreSearchProjectionInvalid | InstanceType<typeof CoreSearchProjectionUnavailable>,
+  CoreSearchQueryRuntime
+> =>
+  Effect.gen(function* searchNativeProjection() {
+    const runtime = yield* CoreSearchQueryRuntime;
+    return yield* runtime.search(input);
+  });
+
+effectTest('native projection services retain invalid and unavailable failures', () => {
+  const unavailable = new CoreSearchProjectionUnavailable({
+    code: 'core_search_projection_unavailable',
+    reason: 'Projection test store unavailable',
+  });
+  const store: CoreSearchProjectionStoreService = {
+    ...makeInMemoryCoreSearchProjectionStore(),
+    queryCandidates: () => Effect.fail(unavailable),
+  };
+  return Effect.gen(function* testNativeProjectionFailures() {
+    const providedStore = yield* CoreSearchProjectionStore;
+    const invalid = yield* Effect.flip(providedStore.apply({ kind: 'invalid' }));
+    assert.ok(Schema.is(CoreSearchProjectionInvalid)(invalid));
+    const invalidQuery = yield* Effect.flip(searchThroughNativeService({}));
+    assert.ok(Schema.is(CoreSearchProjectionInvalid)(invalidQuery));
+    const failedQuery = yield* Effect.flip(
+      searchThroughNativeService({
+        includeArchived: false,
+        moduleId: partyRef.moduleId,
+        query: 'acme',
+        resourceType: partyRef.resourceType,
+        tenantId,
+      }),
+    );
+    assert.strictEqual(failedQuery, unavailable);
+  }).pipe(
+    Effect.provideServiceEffect(CoreSearchQueryRuntime, createCoreSearchQueryRuntime),
+    Effect.provideService(CoreSearchProjectionStore, store),
+  );
 });

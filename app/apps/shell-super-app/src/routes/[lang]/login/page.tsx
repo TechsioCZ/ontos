@@ -1,16 +1,17 @@
-import { Effect, Match, Option, Predicate, Schema } from 'effect';
-import type { Cause } from 'effect';
-import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
+import { Effect, Match, Option, Predicate, Schema } from 'effect';
+import type { Cause } from 'effect';
 import { useRef, useState } from 'react';
+
+import { SignInPayloadSchema } from '../../../../shared/api.ts';
 import { signIn } from '../../../api/auth-client.ts';
 import type { ShellAuthenticationClientError } from '../../../api/auth-client.ts';
 import { runBrowserEffect } from '../../../runtime/browser-effect-runtime.ts';
-import { SignInPayloadSchema } from '../../../../shared/api.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 
 interface LoginValidation {
@@ -140,7 +141,7 @@ const LoginPage = () => {
       <UltramodernRouteHead />
       <main className="shell:flex shell:min-h-screen shell:items-center shell:justify-center shell:bg-(--color-page-bg) shell:px-4 shell:py-10 shell:text-(--color-page-fg) shell:md:px-20 shell:md:pt-[120px] shell:md:pb-10">
         <section className="shell:flex shell:w-full shell:max-w-[360px] shell:flex-col">
-          <Link className="shell:self-center" href={`/${language}`}>
+          <Link as={LocalizedLink} className="shell:self-center" to="/">
             {t('shell.login.back')}
           </Link>
           <div className="shell:mt-6">

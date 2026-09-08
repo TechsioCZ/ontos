@@ -3,6 +3,7 @@
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 import { Cause, Config, Effect, Exit } from 'effect';
 
 const appDirectory = fileURLToPath(new URL('../', import.meta.url));
@@ -38,15 +39,20 @@ const run = Effect.fn('run')(
   function* runEffect(command, commandArguments, cwd = appDirectory) {
     const child = yield* Effect.acquireRelease(
       Effect.try({
-        catch: (cause) => new MigratorError(`${command} failed to start`, cause),
+        catch: (cause) =>
+          new MigratorError(`${command} failed to start`, cause),
         try: () => spawn(command, commandArguments, { cwd, stdio: 'inherit' }),
       }),
-      stopChild,
+      stopChild
     );
 
     yield* Effect.callback((resume) => {
       const onError = (cause) => {
-        resume(Effect.fail(new MigratorError(`${command} failed while running`, cause)));
+        resume(
+          Effect.fail(
+            new MigratorError(`${command} failed while running`, cause)
+          )
+        );
       };
       /**
        * @param {number | null} code - Numeric process exit code.
@@ -58,7 +64,9 @@ const run = Effect.fn('run')(
           return;
         }
         const outcome = signal ?? `code ${String(code)}`;
-        resume(Effect.fail(new MigratorError(`${command} exited with ${outcome}`)));
+        resume(
+          Effect.fail(new MigratorError(`${command} exited with ${outcome}`))
+        );
       };
 
       child.once('error', onError);
@@ -68,7 +76,7 @@ const run = Effect.fn('run')(
         child.off('exit', onExit);
       });
     });
-  },
+  }
 );
 
 /** @param {string} relativePath - Application-relative script path. */
@@ -83,7 +91,7 @@ const migrate = (relativeDirectory, config) => {
   return run(
     path.join(workingDirectory, 'node_modules', '.bin', 'drizzle-kit'),
     ['migrate', '--config', config],
-    workingDirectory,
+    workingDirectory
   );
 };
 
@@ -107,21 +115,29 @@ const serveReadiness = Effect.fn('serveReadiness')(
       Effect.sync(() =>
         createServer((request, response) => {
           if (request.url === '/ready') {
-            response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+            response.writeHead(200, {
+              'content-type': 'text/plain; charset=utf-8',
+            });
             response.end('ready\n');
             return;
           }
           response.writeHead(404).end();
-        }),
+        })
       ),
-      closeServer,
+      closeServer
     );
 
     yield* Effect.callback((resume) => {
       const onError = (cause) =>
-        resume(Effect.fail(new MigratorError('The migration readiness server failed', cause)));
+        resume(
+          Effect.fail(
+            new MigratorError('The migration readiness server failed', cause)
+          )
+        );
       const onListening = () => {
-        console.log(`Migration verification complete; readiness listening on port ${String(port)}`);
+        console.log(
+          `Migration verification complete; readiness listening on port ${String(port)}`
+        );
       };
       const onSignal = () => resume(Effect.void);
 
@@ -138,7 +154,7 @@ const serveReadiness = Effect.fn('serveReadiness')(
         process.off('SIGTERM', onSignal);
       });
     });
-  },
+  }
 );
 
 const main = Effect.scoped(
@@ -147,12 +163,14 @@ const main = Effect.scoped(
     yield* migrate('packages/core-runtime', 'drizzle.config.ts');
     yield* migrate('apps/shell-super-app', 'drizzle.auth.config.ts');
     yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
-    yield* runAppScript('verticals/party-registry/scripts/prepare-contacts-migration.mts');
+    yield* runAppScript(
+      'verticals/party-registry/scripts/prepare-contacts-migration.mts'
+    );
     yield* migrate('verticals/party-registry', 'drizzle.contacts.config.ts');
     yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
     yield* runAppScript('scripts/verify-application-db-schema.mts');
     yield* serveReadiness(yield* migratorPort);
-  }).pipe(Effect.tapCause((cause) => Effect.logError(Cause.pretty(cause)))),
+  }).pipe(Effect.tapCause((cause) => Effect.logError(Cause.pretty(cause))))
 );
 
 const exit = await Effect.runPromiseExit(main);

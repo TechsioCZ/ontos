@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+
 import { NodeServices } from '@effect/platform-node';
 import {
   Effect,
@@ -18,6 +19,7 @@ import {
 import { Command, Flag } from 'effect/unstable/cli';
 import { HttpApi } from 'effect/unstable/httpapi';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
   ONTOS_MODULE_CONTRACT_PATH,
@@ -123,7 +125,9 @@ const ReferenceTopologyTextSchema = Schema.fromJsonString(ReferenceTopologySchem
 const ContractJsonTextSchema = Schema.fromJsonString(OntosModuleDeploymentContractSchema, {
   space: 2,
 });
-const JsonDocumentTextSchema = Schema.fromJsonString(Schema.Unknown, { space: 2 });
+const JsonDocumentTextSchema = Schema.fromJsonString(Schema.Unknown, {
+  space: 2,
+});
 const JsonStringTextSchema = Schema.fromJsonString(Schema.String);
 
 const canonicalSlugPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
@@ -140,8 +144,10 @@ const failure = (message: string, cause?: unknown): OntosModuleContractGeneratio
   new OntosModuleContractGenerationError({ cause, message });
 
 const repositoryEsbuildPath = (): string => {
-  const createEntry = require.resolve('@modern-js/create');
-  return require.resolve('esbuild/bin/esbuild', { paths: [path.dirname(createEntry)] });
+  const createEntry = require.resolve('@modern-js/ultramodern-create');
+  return require.resolve('esbuild/bin/esbuild', {
+    paths: [path.dirname(createEntry)],
+  });
 };
 
 const assertPlainTarget = (value: string, label: string, pattern: RegExp) =>
@@ -206,7 +212,10 @@ const loadOwnerValues = (workspaceRoot: string, verticalDirectory: string, verti
       const platformPath = yield* Path.Path;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const temporaryDirectory = yield* fileSystem
-        .makeTempDirectoryScoped({ directory: verticalDirectory, prefix: '.ontos-contract-' })
+        .makeTempDirectoryScoped({
+          directory: verticalDirectory,
+          prefix: '.ontos-contract-',
+        })
         .pipe(
           Effect.mapError((cause) =>
             failure('unable to create the module contract temporary directory', cause),
@@ -511,7 +520,10 @@ const generateOntosModuleContractEffect = (input: GenerateInput) =>
       input.target,
     ).pipe(Effect.mapError(() => failure('target must be dist or cloudflare-dist')));
     const verticalDirectory = platformPath.join(workspaceRoot, 'verticals', vertical);
-    const contract = yield* deriveOntosModuleDeploymentContractEffect({ vertical, workspaceRoot });
+    const contract = yield* deriveOntosModuleDeploymentContractEffect({
+      vertical,
+      workspaceRoot,
+    });
     const encodedContract = yield* Schema.encodeEffect(ContractJsonTextSchema)(contract).pipe(
       Effect.mapError((cause) => failure('unable to encode the OntOS module contract', cause)),
     );
@@ -564,12 +576,11 @@ const generateOntosModuleContractEffect = (input: GenerateInput) =>
     return { bytes, etag, path: outputPath };
   });
 
-export const generateOntosModuleContract: (
-  input: GenerateInput,
-) => Promise<{ readonly bytes: number; readonly etag: string; readonly path: string }> = flow(
-  generateOntosModuleContractEffect,
-  moduleContractRuntime.runPromise,
-);
+export const generateOntosModuleContract: (input: GenerateInput) => Promise<{
+  readonly bytes: number;
+  readonly etag: string;
+  readonly path: string;
+}> = flow(generateOntosModuleContractEffect, moduleContractRuntime.runPromise);
 
 const verticalFlag = Flag.string('vertical');
 const targetFlag = Flag.choice('target', ['cloudflare-dist', 'dist']);

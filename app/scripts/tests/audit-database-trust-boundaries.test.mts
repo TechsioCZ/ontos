@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+
 import { Cause } from 'effect';
 import { Client } from 'pg';
+
 import {
   assertDatabaseSessionIdentities,
   assertSameDatabaseTarget,
@@ -153,11 +155,13 @@ const hardenedSnapshot = {
   },
 } as const satisfies DatabaseTrustBoundarySnapshot;
 
-const buildHardenedReport = (overrides: Partial<DatabaseTrustBoundarySnapshot> = {}) =>
-  buildDatabaseTrustBoundaryReport({ ...hardenedSnapshot, ...overrides });
+const buildHardenedReport = (
+  overrides: Partial<DatabaseTrustBoundarySnapshot> = {}
+) => buildDatabaseTrustBoundaryReport({ ...hardenedSnapshot, ...overrides });
 
-const findingCodes = (report: ReturnType<typeof buildDatabaseTrustBoundaryReport>) =>
-  report.findings.map(({ code }) => code);
+const findingCodes = (
+  report: ReturnType<typeof buildDatabaseTrustBoundaryReport>
+) => report.findings.map(({ code }) => code);
 
 const reversed = <Value extends object>(values: readonly Value[]): Value[] => {
   const [head, ...tail] = values;
@@ -173,19 +177,28 @@ void test('builds deterministic current-state evidence and identifies the materi
 
   assert.deepEqual(
     report.schemas.map(({ schema }) => schema),
-    ['auth', 'contacts', 'core'],
+    ['auth', 'contacts', 'core']
   );
   assert.deepEqual(
     report.tables.map(({ schema, table }) => `${schema}.${table}`),
-    ['auth.user', 'contacts.customers', 'core.tenants'],
+    ['auth.user', 'contacts.customers', 'core.tenants']
   );
   assert.deepEqual(
-    report.defaultPrivileges.map(({ grantee, schema, source }) => `${source}:${grantee}:${schema}`),
-    ['inherited:analytics_reader:null', 'public:PUBLIC:auth', 'direct:ontos_runtime:contacts'],
+    report.defaultPrivileges.map(
+      ({ grantee, schema, source }) => `${source}:${grantee}:${schema}`
+    ),
+    [
+      'inherited:analytics_reader:null',
+      'public:PUBLIC:auth',
+      'direct:ontos_runtime:contacts',
+    ]
   );
   assert.deepEqual(
     report.findings.map(({ code, severity }) => `${severity}:${code}`),
-    ['high:runtime_role_can_forge_trusted_context', 'high:runtime_role_has_cross_schema_dml'],
+    [
+      'high:runtime_role_can_forge_trusted_context',
+      'high:runtime_role_has_cross_schema_dml',
+    ]
   );
   assert.deepEqual(report.summary, {
     auditedSchemaCount: 3,
@@ -216,7 +229,7 @@ void test('orders audit evidence by code units rather than locale collation', ()
 
   assert.deepEqual(
     report.types.map(({ schema, type }) => `${schema}.${type}`),
-    ['zeta.status', 'ärea.status'],
+    ['zeta.status', 'ärea.status']
   );
 });
 
@@ -239,7 +252,7 @@ void test('totally orders default privileges from distinct creator roles', () =>
 
   assert.deepEqual(
     report.defaultPrivileges.map(({ owner }) => owner),
-    ['alpha_owner', 'zeta_owner'],
+    ['alpha_owner', 'zeta_owner']
   );
 });
 
@@ -248,13 +261,15 @@ void test('extracts typed audit failures from an Effect cause', () => {
 
   assert.equal(
     getDatabaseTrustBoundaryFailureMessage(
-      Cause.fail(new DatabaseTrustBoundaryAuditError({ reason })),
+      Cause.fail(new DatabaseTrustBoundaryAuditError({ reason }))
     ),
-    reason,
+    reason
   );
   assert.equal(
-    getDatabaseTrustBoundaryFailureMessage(Cause.die(new Error('driver defect'))),
-    'Database trust-boundary audit failed',
+    getDatabaseTrustBoundaryFailureMessage(
+      Cause.die(new Error('driver defect'))
+    ),
+    'Database trust-boundary audit failed'
   );
 });
 
@@ -298,7 +313,10 @@ void test('reports privilege escalation paths without embedding credentials or c
     'runtime_role_can_forge_trusted_context',
     'runtime_role_has_cross_schema_dml',
   ]);
-  assert.doesNotMatch(JSON.stringify(report), /postgresql:|password|secret|tenant-id|entity-id/iu);
+  assert.doesNotMatch(
+    JSON.stringify(report),
+    /postgresql:|password|secret|tenant-id|entity-id/iu
+  );
 });
 
 void test('flags database-level CREATE even when no existing schema is writable', () => {
@@ -332,7 +350,9 @@ void test('classifies reachable predefined PostgreSQL roles as privileged', () =
     ],
   });
 
-  assert.deepEqual(findingCodes(report), ['runtime_role_can_assume_privileged_role']);
+  assert.deepEqual(findingCodes(report), [
+    'runtime_role_can_assume_privileged_role',
+  ]);
 });
 
 void test('classifies a directly authenticated predefined PostgreSQL role as privileged', () => {
@@ -346,10 +366,14 @@ void test('classifies a directly authenticated predefined PostgreSQL role as pri
 
 void test('flags effective configuration parameter authority', () => {
   const report = buildHardenedReport({
-    parameterPrivileges: [{ alterSystem: false, parameter: 'session_replication_role', set: true }],
+    parameterPrivileges: [
+      { alterSystem: false, parameter: 'session_replication_role', set: true },
+    ],
   });
 
-  assert.deepEqual(findingCodes(report), ['runtime_role_has_parameter_authority']);
+  assert.deepEqual(findingCodes(report), [
+    'runtime_role_has_parameter_authority',
+  ]);
   assert.equal(report.summary.parameterPrivilegeCount, 1);
 });
 
@@ -406,7 +430,7 @@ void test('flags selectable privileged owner-context views but accepts security 
   const ownerContextReport = buildDatabaseTrustBoundaryReport(base);
   assert.deepEqual(
     ownerContextReport.findings.map(({ code }) => code),
-    ['runtime_role_can_use_privileged_owner_view'],
+    ['runtime_role_can_use_privileged_owner_view']
   );
   assert.equal(ownerContextReport.summary.privilegedOwnerViewCount, 1);
 
@@ -415,18 +439,28 @@ void test('flags selectable privileged owner-context views but accepts security 
     tables: [
       {
         ...ownerContextView,
-        privileges: { ...ownerContextView.privileges, select: false, update: true },
+        privileges: {
+          ...ownerContextView.privileges,
+          select: false,
+          update: true,
+        },
       },
     ],
   });
-  assert.deepEqual(findingCodes(writableReport), ['runtime_role_can_use_privileged_owner_view']);
+  assert.deepEqual(findingCodes(writableReport), [
+    'runtime_role_can_use_privileged_owner_view',
+  ]);
 
   const readOnlyReport = buildDatabaseTrustBoundaryReport({
     ...base,
     tables: [
       {
         ...ownerContextView,
-        privileges: { ...ownerContextView.privileges, select: false, update: true },
+        privileges: {
+          ...ownerContextView.privileges,
+          select: false,
+          update: true,
+        },
         updatable: false,
       },
     ],
@@ -460,7 +494,9 @@ void test('flags owner-context views that bypass RLS through owner-matched depen
     },
   });
 
-  assert.deepEqual(findingCodes(report), ['runtime_role_can_use_privileged_owner_view']);
+  assert.deepEqual(findingCodes(report), [
+    'runtime_role_can_use_privileged_owner_view',
+  ]);
   assert.equal(report.summary.privilegedOwnerViewCount, 1);
 });
 
@@ -484,7 +520,9 @@ void test('flags privileged owners in nested owner-context views', () => {
     },
   });
 
-  assert.deepEqual(findingCodes(report), ['runtime_role_can_use_privileged_owner_view']);
+  assert.deepEqual(findingCodes(report), [
+    'runtime_role_can_use_privileged_owner_view',
+  ]);
 });
 
 void test('flags ownership of an audited relation as DDL authority', () => {
@@ -591,7 +629,9 @@ void test('flags direct sequence mutation authority', () => {
     ],
   });
 
-  assert.deepEqual(findingCodes(report), ['runtime_role_has_sequence_mutation_authority']);
+  assert.deepEqual(findingCodes(report), [
+    'runtime_role_has_sequence_mutation_authority',
+  ]);
 });
 
 void test('classifies every assumable role and escalates relation authority', () => {
@@ -671,28 +711,35 @@ void test('treats ADMIN OPTION as an escalation path when SET OPTION is false', 
 void test('traverses SET OPTION descendants after every ADMIN OPTION role', async () => {
   const source = await readFile(
     new URL('../database-trust-audit/collect-snapshot.mts', import.meta.url),
-    'utf-8',
+    'utf-8'
   );
 
   assert.equal(
-    source.match(/where membership\.admin_option or membership\.set_option/gu)?.length,
-    3,
+    source.match(/where membership\.admin_option or membership\.set_option/gu)
+      ?.length,
+    3
   );
   assert.match(
     source,
-    /candidate\.oid in \(select role_oid from reachable_roles\) as can_set_role/u,
+    /candidate\.oid in \(select role_oid from reachable_roles\) as can_set_role/u
   );
   assert.doesNotMatch(
     source,
-    /or pg_has_role\(\$1, grantee\.oid, 'SET'\)\s+or grantee\.oid in \(select role_oid from administrable_roles\)/u,
+    /or pg_has_role\(\$1, grantee\.oid, 'SET'\)\s+or grantee\.oid in \(select role_oid from administrable_roles\)/u
   );
-  assert.match(source, /view_dependencies\(view_oid, referenced_oid, effective_owner_oid\)/u);
+  assert.match(
+    source,
+    /view_dependencies\(view_oid, referenced_oid, effective_owner_oid\)/u
+  );
   assert.match(source, /target_roles\(role_oid, role_name\)/u);
-  assert.match(source, /format\('role:%I:%s', target\.role_name, authority\.grant_option\)/u);
+  assert.match(
+    source,
+    /format\('role:%I:%s', target\.role_name, authority\.grant_option\)/u
+  );
   assert.match(source, /pg_has_role\(effective_owner\.oid, \$3, 'USAGE'\)/u);
   assert.match(
     source,
-    /pg_has_role\(\s*dependency\.effective_owner_oid,\s*referenced_relation\.relowner,\s*'USAGE'\s*\)/u,
+    /pg_has_role\(\s*dependency\.effective_owner_oid,\s*referenced_relation\.relowner,\s*'USAGE'\s*\)/u
   );
 });
 
@@ -744,7 +791,9 @@ void test('does not inherit cluster attributes without SET ROLE or ADMIN OPTION'
     ],
   });
 
-  assert.deepEqual(findingCodes(report), ['runtime_role_can_assume_other_role']);
+  assert.deepEqual(findingCodes(report), [
+    'runtime_role_can_assume_other_role',
+  ]);
 });
 
 void test('uses node-postgres effective query-parameter socket endpoints', () => {
@@ -763,24 +812,24 @@ void test('requires direct, distinct live database session identities', () => {
   assert.doesNotThrow(() =>
     assertDatabaseSessionIdentities(
       { currentRole: 'ontos_admin', sessionRole: 'ontos_admin' },
-      { currentRole: 'ontos_runtime', sessionRole: 'ontos_runtime' },
-    ),
+      { currentRole: 'ontos_runtime', sessionRole: 'ontos_runtime' }
+    )
   );
   assert.throws(
     () =>
       assertDatabaseSessionIdentities(
         { currentRole: 'ontos_admin', sessionRole: 'ontos_admin' },
-        { currentRole: 'ontos_admin', sessionRole: 'ontos_admin' },
+        { currentRole: 'ontos_admin', sessionRole: 'ontos_admin' }
       ),
-    /distinct authenticated PostgreSQL roles/u,
+    /distinct authenticated PostgreSQL roles/u
   );
   assert.throws(
     () =>
       assertDatabaseSessionIdentities(
         { currentRole: 'startup_role', sessionRole: 'ontos_runtime' },
-        { currentRole: 'ontos_runtime', sessionRole: 'ontos_runtime' },
+        { currentRole: 'ontos_runtime', sessionRole: 'ontos_runtime' }
       ),
-    /current_user must equal session_user/u,
+    /current_user must equal session_user/u
   );
 });
 
@@ -798,11 +847,15 @@ void test('rejects evidence collected from different servers or databases', () =
   assert.doesNotThrow(() => assertSameDatabaseTarget(target, { ...target }));
   assert.throws(
     () => assertSameDatabaseTarget(target, { ...target, database: 'other' }),
-    /same PostgreSQL server and database/u,
+    /same PostgreSQL server and database/u
   );
   assert.throws(
-    () => assertSameDatabaseTarget(target, { ...target, serverAddress: alternateServerAddress }),
-    /same PostgreSQL server and database/u,
+    () =>
+      assertSameDatabaseTarget(target, {
+        ...target,
+        serverAddress: alternateServerAddress,
+      }),
+    /same PostgreSQL server and database/u
   );
   assert.throws(
     () =>
@@ -818,9 +871,9 @@ void test('rejects evidence collected from different servers or databases', () =
           configuredHost: '/var/run/postgresql-b',
           serverAddress: null,
           serverPort: null,
-        },
+        }
       ),
-    /same PostgreSQL server and database/u,
+    /same PostgreSQL server and database/u
   );
 });
 
@@ -839,6 +892,6 @@ void test('treats transaction-local context retention as a critical boundary fai
     [
       'high:runtime_role_can_forge_trusted_context',
       'critical:trusted_context_survives_transaction',
-    ],
+    ]
   );
 });

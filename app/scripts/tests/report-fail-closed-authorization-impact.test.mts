@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { reduceAuthorizationImpact } from '../report-fail-closed-authorization-impact.mts';
 
 const inventoryHash = 'a'.repeat(64);
@@ -32,7 +33,10 @@ const event = (changed: EvidenceFixtureOverride = {}) => ({
 });
 
 await test('impact reduction is deterministic and aggregates sanitized evidence', () => {
-  const report = reduceAuthorizationImpact([event({ timestamp: observationEndedAt }), event()]);
+  const report = reduceAuthorizationImpact([
+    event({ timestamp: observationEndedAt }),
+    event(),
+  ]);
   assert.equal(report.totalWouldDeny, 2);
   assert.equal(report.aggregates[0]?.count, 2);
   assert.deepEqual(report.observation, {
@@ -43,11 +47,18 @@ await test('impact reduction is deterministic and aggregates sanitized evidence'
 
 await test('impact reduction rejects mixed build evidence and sensitive extra fields', () => {
   assert.throws(
-    () => reduceAuthorizationImpact([event(), event({ sourceRevision: 'other' })]),
-    /mixes/u,
+    () =>
+      reduceAuthorizationImpact([event(), event({ sourceRevision: 'other' })]),
+    /mixes/u
   );
-  assert.throws(() => reduceAuthorizationImpact([event({ principalId: 'secret' })]), /prohibited/u);
-  assert.throws(() => reduceAuthorizationImpact([event({ tenantId: 'secret' })]), /prohibited/u);
+  assert.throws(
+    () => reduceAuthorizationImpact([event({ principalId: 'secret' })]),
+    /prohibited/u
+  );
+  assert.throws(
+    () => reduceAuthorizationImpact([event({ tenantId: 'secret' })]),
+    /prohibited/u
+  );
 });
 
 await test('a bounded empty observation produces a zero-impact report', () => {
@@ -63,15 +74,22 @@ await test('a bounded empty observation produces a zero-impact report', () => {
 
 await test('impact reduction rejects sensitive values smuggled into allowed evidence fields', () => {
   assert.throws(
-    () => reduceAuthorizationImpact([event({ entrypointKey: 'tenant@example.com' })]),
-    prohibitedValuePattern,
+    () =>
+      reduceAuthorizationImpact([
+        event({ entrypointKey: 'tenant@example.com' }),
+      ]),
+    prohibitedValuePattern
   );
   assert.throws(
-    () => reduceAuthorizationImpact([event({ denialReason: 'principal-a2000000' })]),
-    prohibitedValuePattern,
+    () =>
+      reduceAuthorizationImpact([
+        event({ denialReason: 'principal-a2000000' }),
+      ]),
+    prohibitedValuePattern
   );
   assert.throws(
-    () => reduceAuthorizationImpact([event({ policyClass: 'raw-relation-tuple' })]),
-    prohibitedValuePattern,
+    () =>
+      reduceAuthorizationImpact([event({ policyClass: 'raw-relation-tuple' })]),
+    prohibitedValuePattern
   );
 });

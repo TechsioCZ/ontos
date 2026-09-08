@@ -611,7 +611,11 @@ const exportedConsts = (tokens: readonly GovernedClientToken[]): readonly Export
           index + 1,
           tokens.length,
         );
-        declarations.push({ end: nextExport ?? tokens.length, name, start: index });
+        declarations.push({
+          end: nextExport ?? tokens.length,
+          name,
+          start: index,
+        });
       }
     }
   }

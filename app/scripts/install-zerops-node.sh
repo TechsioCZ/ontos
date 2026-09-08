@@ -1,9 +1,9 @@
 #!/bin/sh
 set -eu
 
-node_version='26.5.0'
+node_version='26.7.0'
 node_archive="node-v${node_version}-linux-x64-musl.tar.gz"
-node_checksum='00f1398411a4216c5a6ecaad3b825a0da5ec00e79ee8c173ab65a094d97b9ad8'
+node_checksum='84fc4e29e5f86022a40bac50a28a1b9275dd1f32eebbf4db499e2573ff822124'
 node_root="${ZEROPS_NODE_ROOT:-${HOME:-/var/www}}"
 node_directory="${node_root}/.local/node-${node_version}"
 temporary_directory="$(mktemp -d)"

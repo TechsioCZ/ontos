@@ -315,39 +315,36 @@ Effect.gen(function* preparePermissionFixture() {
 }).pipe(effectCallback, before);
 
 Effect.gen(function* cleanPermissionFixture() {
+  // Preserve the adapter's eager starts and ordered awaiting before closing the client.
+  const actionCleanups: PromiseLike<v1.DeleteRelationshipsResponse>[] = [];
+  for (const actionKey of relationshipActionKeys) {
+    actionCleanups.push(
+      adminClient.promises.deleteRelationships(
+        v1.DeleteRelationshipsRequest.create({
+          relationshipFilter: v1.RelationshipFilter.create({
+            optionalResourceId: toSpiceDbActionObjectId(actionKey),
+            resourceType: 'action',
+          }),
+        }),
+      ),
+    );
+  }
+  const tenantCleanups: PromiseLike<v1.DeleteRelationshipsResponse>[] = [];
+  for (const membershipTenantId of [tenantId, otherTenantId]) {
+    tenantCleanups.push(
+      adminClient.promises.deleteRelationships(
+        v1.DeleteRelationshipsRequest.create({
+          relationshipFilter: v1.RelationshipFilter.create({
+            optionalResourceId: membershipTenantId,
+            resourceType: 'tenant',
+          }),
+        }),
+      ),
+    );
+  }
   const relationshipCleanupExit = yield* Effect.exit(
-    Effect.all(
-      [...relationshipActionKeys].map((actionKey) =>
-        promiseEffect(
-          adminClient.promises.deleteRelationships(
-            v1.DeleteRelationshipsRequest.create({
-              relationshipFilter: v1.RelationshipFilter.create({
-                optionalResourceId: toSpiceDbActionObjectId(actionKey),
-                resourceType: 'action',
-              }),
-            }),
-          ),
-        ),
-      ),
-      { discard: true },
-    ).pipe(
-      Effect.andThen(
-        Effect.all(
-          [tenantId, otherTenantId].map((membershipTenantId) =>
-            promiseEffect(
-              adminClient.promises.deleteRelationships(
-                v1.DeleteRelationshipsRequest.create({
-                  relationshipFilter: v1.RelationshipFilter.create({
-                    optionalResourceId: membershipTenantId,
-                    resourceType: 'tenant',
-                  }),
-                }),
-              ),
-            ),
-          ),
-          { discard: true },
-        ),
-      ),
+    Effect.forEach(actionCleanups, promiseEffect, { discard: true }).pipe(
+      Effect.andThen(Effect.forEach(tenantCleanups, promiseEffect, { discard: true })),
       Effect.ensuring(Effect.sync(() => adminClient.close())),
     ),
   );
@@ -671,10 +668,9 @@ effectTest(
         ),
         transport: transport(key, moduleStateKey),
       };
-      const results = yield* Effect.all(
-        [1, 2].map(() =>
-          runWithLivePermission(database, (runtime) => Effect.flip(runtime.runAction(input))),
-        ),
+      const results = yield* Effect.forEach(
+        [1, 2],
+        () => runWithLivePermission(database, (runtime) => Effect.flip(runtime.runAction(input))),
         { concurrency: 'unbounded' },
       );
       const [invocation] = yield* database.executor

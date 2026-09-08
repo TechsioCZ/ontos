@@ -1,14 +1,16 @@
-import { runPinnedKnip } from './quality-audit-test-support.mts';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+
 import { NodeServices } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
+
 import { runEffectTestPromise } from '../../packages/core-runtime/src/testing/effect-runtime.ts';
 import { buildKnipModel } from '../../quality-audit/knip-model.mts';
 import { buildKnipRuntimeEvidence } from '../../quality-audit/knip-runtime-model.mts';
+import { runPinnedKnip } from './quality-audit-test-support.mts';
 
 const shellRoot = 'apps/shell';
 const layoutFile = `${shellRoot}/src/routes/layout.tsx`;
@@ -145,7 +147,10 @@ await test('runtime consumers require the exact CSS, shell, deployment and compi
       root,
       compilerConfig,
       await stringify({
-        compilerOptions: { plugins: [{ name: pluginName }], types: [pluginName] },
+        compilerOptions: {
+          plugins: [{ name: pluginName }],
+          types: [pluginName],
+        },
       }),
     );
     write(
