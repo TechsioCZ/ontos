@@ -69,6 +69,7 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
       if (port === undefined || port.length === 0 || port !== topologyPort) {
         return yield* Effect.fail(failure(`Owner port disagrees with topology for ${vertical.id}`));
       }
+      const ownerServiceHostname = vertical.id.replaceAll('-', '');
       const service = ownerSection
         .trimEnd()
         .replace(`setup: '${vertical.id}'`, `setup: '${delivery.id}'`)
@@ -97,7 +98,7 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
         )
         .replace(
           `        PORT: '${port}'`,
-          `        PORT: '${port}'\n        OUTBOX_WORKER_HEALTH_PORT: '${port}'\n        DATABASE_URL: \${${vertical.id}_DATABASE_URL}`,
+          `        PORT: '${port}'\n        OUTBOX_WORKER_HEALTH_PORT: '${port}'\n        DATABASE_URL: \${${ownerServiceHostname}_DATABASE_URL}`,
         );
       services.push(service);
     }
