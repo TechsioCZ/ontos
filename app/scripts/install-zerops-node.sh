@@ -29,7 +29,13 @@ mkdir -p "${node_directory}"
 tar -xzf "${archive_path}" -C "${node_directory}" --strip-components=1
 
 if [ "${1:-}" = '--with-pnpm' ]; then
-  PATH="${node_directory}/bin:${PATH}" "${node_directory}/bin/npm" install --global --prefix "${node_directory}" pnpm@11.25.0
+  pnpm_version="${2:?pnpm version is required after --with-pnpm}"
+  PATH="${node_directory}/bin:${PATH}" "${node_directory}/bin/npm" install --global --prefix "${node_directory}" "pnpm@${pnpm_version}"
+  installed_pnpm_version="$(PATH="${node_directory}/bin:${PATH}" "${node_directory}/bin/pnpm" --version)"
+  if [ "${installed_pnpm_version}" != "${pnpm_version}" ]; then
+    printf 'Expected pnpm %s, installed %s\n' "${pnpm_version}" "${installed_pnpm_version}" >&2
+    exit 1
+  fi
 fi
 
 "${node_directory}/bin/node" --version
