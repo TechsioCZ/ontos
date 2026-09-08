@@ -2635,12 +2635,8 @@ it.live(
           yield* writeText(formatRoot, helper.relativePath, helper.content);
           yield* writeText(formatRoot, checker.relativePath, checker.content);
           expect(checker.content).toMatch(/microVerticalApiBaselineViolation/u);
-          expect(
-            runNode([path.join(formatRoot, checker.relativePath)], {
-              env: { ULTRAMODERN_WORKSPACE_ROOT: workspaceRoot },
-            }),
-            moduleFormat,
-          ).toMatch(/UltraModern API boundary check passed/u);
+          // Execute against the owned workspace below; parallel tests create transient source
+          // bundles in the real workspace that can disappear between enumeration and reads.
 
           const generatorModulePath = publishedGeneratorModulePath(moduleFormat);
           const descriptorSource: unknown =
