@@ -3556,3 +3556,29 @@ void test('proves generated Layer bindings and API aliases without accepting unu
     );
   }
 });
+
+void test('accepts only the trusted final identity terminator in a governed API slot', async () => {
+  const identityTerminator = '.pipe(identity)';
+  const source = await readFile(
+    path.join(workspaceRoot, 'verticals/party-registry/shared/api.ts'),
+    'utf-8',
+  );
+  assert.ok(source.includes(identityTerminator));
+  assert.equal(microVerticalApiBaselineViolation(partyId, source), undefined);
+  const mutations = [
+    source.replace(
+      "import { Brand, identity } from 'effect';",
+      "import { Brand } from 'effect';\nimport { identity } from './counterfeit.ts';",
+    ),
+    source.replace(identityTerminator, '.pipe(unrelatedIdentity)'),
+    source.replace(identityTerminator, '.pipe(() => HttpApi.make("DiscardedApi"))'),
+    source.replace(identityTerminator, '.pipe(identity).addHttpApi(partyRegistryFoundationApi)'),
+  ];
+  for (const mutated of mutations) {
+    assert.notEqual(mutated, source);
+    assert.match(
+      microVerticalApiBaselineViolation(partyId, mutated) ?? '',
+      /explicitly compose its readiness foundation API/u,
+    );
+  }
+});

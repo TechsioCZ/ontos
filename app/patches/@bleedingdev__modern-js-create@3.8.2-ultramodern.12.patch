@@ -4162,10 +4162,10 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..b31f281e7ab5bbea289fc2aae117fe39
        assert(
 diff --git a/templates/workspace-scripts/microvertical-api-baseline-boundary.mts b/templates/workspace-scripts/microvertical-api-baseline-boundary.mts
 new file mode 100644
-index 0000000000000000000000000000000000000000..62593c6b1698de0e285d3d3b3f72545372e2abe3
+index 0000000000000000000000000000000000000000..d39b20299baf434ed109fea7d93c586cc99f421e
 --- /dev/null
 +++ b/templates/workspace-scripts/microvertical-api-baseline-boundary.mts
-@@ -0,0 +1,674 @@
+@@ -0,0 +1,686 @@
 +import {
 +  isAsExpression,
 +  isCallExpression,
@@ -4523,6 +4523,7 @@ index 0000000000000000000000000000000000000000..62593c6b1698de0e285d3d3b3f725453
 +};
 +
 +const rootComposesFoundation = (
++  sourceFile: SourceFile,
 +  declaration: VariableDeclaration | undefined,
 +  stem: string,
 +  foundationName: string,
@@ -4536,8 +4537,14 @@ index 0000000000000000000000000000000000000000..62593c6b1698de0e285d3d3b3f725453
 +    stringLiteral(chain.base.arguments[0]) === `${pascalCaseStem(stem)}Api` &&
 +    chain.methods.length > 0 &&
 +    chain.methods.every(
-+      (method) =>
-+        (method.name === 'add' || method.name === 'addHttpApi') && method.arguments.length === 1,
++      (method, index) =>
++        method.arguments.length === 1 &&
++        (method.name === 'add' ||
++          method.name === 'addHttpApi' ||
++          (index === chain.methods.length - 1 &&
++            method.name === 'pipe' &&
++            identifierName(method.arguments[0]) === 'identity' &&
++            importsExactBindings(sourceFile, 'effect', ['identity']))),
 +    ) &&
 +    first?.name === 'addHttpApi' &&
 +    identifierName(first.arguments[0]) === foundationName
@@ -4759,7 +4766,12 @@ index 0000000000000000000000000000000000000000..62593c6b1698de0e285d3d3b3f725453
 +    return 'MicroVertical readiness foundation API must directly compose its exact readiness endpoint and foundation identity';
 +  }
 +  if (
-+    !rootComposesFoundation(exportedConst(sourceFile, `${exportStem}Api`), stem, foundationName)
++    !rootComposesFoundation(
++      sourceFile,
++      exportedConst(sourceFile, `${exportStem}Api`),
++      stem,
++      foundationName,
++    )
 +  ) {
 +    return 'MicroVertical root API must explicitly compose its readiness foundation API';
 +  }
