@@ -6370,6 +6370,12 @@ if (hasDeliveryUnits) {
       ),
     'Zerops Node services must install pinned Node during container initialization without a custom runtime image',
   );
+  const installZeropsBuildToolchain = `sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm ${packageManagerPnpmVersion}`;
+  assert(
+    zeropsYaml.split(installZeropsBuildToolchain).length - 1 ===
+      fullStackVerticals.length + 2 + workerDeliveryCount,
+    'Every Zerops Node build must install the packageManager-pinned pnpm version in its cache key',
+  );
   assert(
     zeropsYaml.includes(
       sourceFragment(
