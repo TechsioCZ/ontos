@@ -1,0 +1,1158 @@
+diff --git a/dist/rules/sort-array-includes.js b/dist/rules/sort-array-includes.js
+index 79f4ec229c..585fa165d1 100644
+--- a/dist/rules/sort-array-includes.js
++++ b/dist/rules/sort-array-includes.js
+@@ -18,7 +18,7 @@ import { buildAstListeners } from '../utils/build-ast-listeners.js'
+ import { createEslintRule } from '../utils/create-eslint-rule.js'
+ import { additionalCustomGroupMatchOptionsJsonSchema } from './sort-arrays/types.js'
+ import { sortArray } from './sort-arrays/sort-array.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Cache computed groups by modifiers and selectors for performance.
+  */
+diff --git a/dist/rules/sort-arrays/compute-array-elements.js b/dist/rules/sort-arrays/compute-array-elements.js
+index 9ab801256a..3dd907cf62 100644
+--- a/dist/rules/sort-arrays/compute-array-elements.js
++++ b/dist/rules/sort-arrays/compute-array-elements.js
+@@ -1,5 +1,5 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes array elements for the given expression.
+  *
+diff --git a/dist/rules/sort-arrays/compute-node-name.js b/dist/rules/sort-arrays/compute-node-name.js
+index 592c8740bc..f8aecb3362 100644
+--- a/dist/rules/sort-arrays/compute-node-name.js
++++ b/dist/rules/sort-arrays/compute-node-name.js
+@@ -1,4 +1,4 @@
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the name of an array member.
+  *
+diff --git a/dist/rules/sort-arrays/sort-array.js b/dist/rules/sort-arrays/sort-array.js
+index e063c8f44d..80d37a5b03 100644
+--- a/dist/rules/sort-arrays/sort-array.js
++++ b/dist/rules/sort-arrays/sort-array.js
+@@ -19,7 +19,7 @@ import { allSelectors } from './types.js'
+ import { computeNodeName } from './compute-node-name.js'
+ import { computeMatchedContextOptions } from './compute-matched-context-options.js'
+ import { computeArrayElements } from './compute-array-elements.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ function sortArray({
+   cachedGroupsByModifiersAndSelectors,
+   mustHaveMatchedContextOptions,
+diff --git a/dist/rules/sort-arrays.js b/dist/rules/sort-arrays.js
+index 3852050c16..7e83dfa31e 100644
+--- a/dist/rules/sort-arrays.js
++++ b/dist/rules/sort-arrays.js
+@@ -18,7 +18,7 @@ import { buildAstListeners } from '../utils/build-ast-listeners.js'
+ import { createEslintRule } from '../utils/create-eslint-rule.js'
+ import { additionalCustomGroupMatchOptionsJsonSchema } from './sort-arrays/types.js'
+ import { sortArray } from './sort-arrays/sort-array.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Cache computed groups by modifiers and selectors for performance.
+  */
+diff --git a/dist/rules/sort-classes/compute-dependencies-by-sorting-node.js b/dist/rules/sort-classes/compute-dependencies-by-sorting-node.js
+index 4340686505..fb4576f808 100644
+--- a/dist/rules/sort-classes/compute-dependencies-by-sorting-node.js
++++ b/dist/rules/sort-classes/compute-dependencies-by-sorting-node.js
+@@ -3,7 +3,7 @@ import { matches } from '../../utils/matches.js'
+ import { computeDependenciesBySortingNode as computeDependenciesBySortingNode$1 } from '../../utils/compute-dependencies-by-sorting-node.js'
+ import { computeParentNodesWithTypes } from '../../utils/compute-parent-nodes-with-types.js'
+ import { computeIdentifierNameDetails } from './compute-identifier-name-details.js'
+-import { AST_NODE_TYPES, AST_TOKEN_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES, AST_TOKEN_TYPES } from '@typescript-eslint/types'
+ function computeDependenciesBySortingNode({
+   ignoreCallbackDependenciesPatterns,
+   sortingNodes,
+diff --git a/dist/rules/sort-classes/compute-dependencies.js b/dist/rules/sort-classes/compute-dependencies.js
+index 3e000595fb..ced91e7496 100644
+--- a/dist/rules/sort-classes/compute-dependencies.js
++++ b/dist/rules/sort-classes/compute-dependencies.js
+@@ -1,7 +1,7 @@
+ import { matches } from '../../utils/matches.js'
+ import { computeIdentifierNameDetails } from './compute-identifier-name-details.js'
+ import { computeDependencyName } from './compute-dependency-name.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the dependencies of a class member AST node.
+  *
+diff --git a/dist/rules/sort-classes/compute-identifier-name-details.js b/dist/rules/sort-classes/compute-identifier-name-details.js
+index 91b71a1476..40f3f4ee87 100644
+--- a/dist/rules/sort-classes/compute-identifier-name-details.js
++++ b/dist/rules/sort-classes/compute-identifier-name-details.js
+@@ -1,5 +1,5 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the name details of an identifier.
+  *
+diff --git a/dist/rules/sort-classes/compute-matched-context-options.js b/dist/rules/sort-classes/compute-matched-context-options.js
+index 64e9f7ee25..3fc513ba30 100644
+--- a/dist/rules/sort-classes/compute-matched-context-options.js
++++ b/dist/rules/sort-classes/compute-matched-context-options.js
+@@ -1,7 +1,7 @@
+ import { passesAllNamesMatchPatternFilter } from '../../utils/context-matching/passes-all-names-match-pattern-filter.js'
+ import { passesAstSelectorFilter } from '../../utils/context-matching/passes-ast-selector-filter.js'
+ import { computeMethodOrPropertyNameDetails } from './node-info/compute-method-or-property-name-details.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the matched context options for a given class node.
+  *
+diff --git a/dist/rules/sort-classes/compute-overload-signature-groups.js b/dist/rules/sort-classes/compute-overload-signature-groups.js
+index 8824b0a12f..c40da3eaba 100644
+--- a/dist/rules/sort-classes/compute-overload-signature-groups.js
++++ b/dist/rules/sort-classes/compute-overload-signature-groups.js
+@@ -1,7 +1,7 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+ import { isSortable } from '../../utils/is-sortable.js'
+ import { OverloadSignatureGroup } from '../../utils/overload-signature/overload-signature-group.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Returns a list of groups of overload signatures.
+  *
+diff --git a/dist/rules/sort-classes/is-known-class-element.js b/dist/rules/sort-classes/is-known-class-element.js
+index 8105ef40fe..8f5bbef6b4 100644
+--- a/dist/rules/sort-classes/is-known-class-element.js
++++ b/dist/rules/sort-classes/is-known-class-element.js
+@@ -1,5 +1,5 @@
+ import '../../utils/assert-is-never.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Checks whether a class element is supported by the sort-classes rule.
+  *
+diff --git a/dist/rules/sort-classes/node-info/common-modifiers.js b/dist/rules/sort-classes/node-info/common-modifiers.js
+index c5504f4ebd..d002c0efe3 100644
+--- a/dist/rules/sort-classes/node-info/common-modifiers.js
++++ b/dist/rules/sort-classes/node-info/common-modifiers.js
+@@ -1,6 +1,6 @@
+ import { UnreachableCaseError } from '../../../utils/unreachable-case-error.js'
+ import '../../../utils/assert-is-never.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ function computeAccessibilityModifier({ hasPrivateHash, node }) {
+   if (hasPrivateHash) {
+     return ['private']
+diff --git a/dist/rules/sort-classes/node-info/compute-method-details.js b/dist/rules/sort-classes/node-info/compute-method-details.js
+index af38f82777..a06f4d7cc8 100644
+--- a/dist/rules/sort-classes/node-info/compute-method-details.js
++++ b/dist/rules/sort-classes/node-info/compute-method-details.js
+@@ -9,7 +9,7 @@ import {
+   computeStaticModifier,
+ } from './common-modifiers.js'
+ import { computeMethodOrPropertyNameDetails } from './compute-method-or-property-name-details.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes details related to a method.
+  *
+diff --git a/dist/rules/sort-classes/node-info/compute-method-or-property-name-details.js b/dist/rules/sort-classes/node-info/compute-method-or-property-name-details.js
+index 599c80cd25..c5824426e1 100644
+--- a/dist/rules/sort-classes/node-info/compute-method-or-property-name-details.js
++++ b/dist/rules/sort-classes/node-info/compute-method-or-property-name-details.js
+@@ -1,5 +1,5 @@
+ import { computeIdentifierNameDetails } from '../compute-identifier-name-details.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the name details of a method or property node.
+  *
+diff --git a/dist/rules/sort-classes/node-info/is-function-expression.js b/dist/rules/sort-classes/node-info/is-function-expression.js
+index c8eb4f405e..0877ab6aec 100644
+--- a/dist/rules/sort-classes/node-info/is-function-expression.js
++++ b/dist/rules/sort-classes/node-info/is-function-expression.js
+@@ -1,4 +1,4 @@
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Checks whether a node is a function expression or an arrow function
+  * expression.
+diff --git a/dist/rules/sort-classes/sort-class.js b/dist/rules/sort-classes/sort-class.js
+index ab75d20907..cc218036bd 100644
+--- a/dist/rules/sort-classes/sort-class.js
++++ b/dist/rules/sort-classes/sort-class.js
+@@ -41,7 +41,7 @@ import { computePropertyDetails } from './node-info/compute-property-details.js'
+ import { computeAccessorDetails } from './node-info/compute-accessor-details.js'
+ import { computeMethodDetails } from './node-info/compute-method-details.js'
+ import { isKnownClassElement } from './is-known-class-element.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Cache computed groups by modifiers and selectors for performance.
+  */
+diff --git a/dist/rules/sort-classes.js b/dist/rules/sort-classes.js
+index 831f893a16..576709a748 100644
+--- a/dist/rules/sort-classes.js
++++ b/dist/rules/sort-classes.js
+@@ -31,7 +31,7 @@ import {
+   additionalCustomGroupMatchOptionsJsonSchema,
+ } from './sort-classes/types.js'
+ import { defaultOptions, sortClass } from './sort-classes/sort-class.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var sort_classes_default = createEslintRule({
+   meta: {
+     schema: {
+diff --git a/dist/rules/sort-decorators.js b/dist/rules/sort-decorators.js
+index dfcd8e5d39..8f9a8b2ee5 100644
+--- a/dist/rules/sort-decorators.js
++++ b/dist/rules/sort-decorators.js
+@@ -29,7 +29,7 @@ import { complete } from '../utils/complete.js'
+ import { createEslintRule } from '../utils/create-eslint-rule.js'
+ import { getNodeDecorators } from '../utils/get-node-decorators.js'
+ import { getDecoratorName } from '../utils/get-decorator-name.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var ORDER_ERROR_ID = 'unexpectedDecoratorsOrder'
+ var GROUP_ORDER_ERROR_ID = 'unexpectedDecoratorsGroupOrder'
+ var EXTRA_SPACING_ERROR_ID = 'extraSpacingBetweenDecorators'
+diff --git a/dist/rules/sort-enums/compute-dependencies-by-sorting-node.js b/dist/rules/sort-enums/compute-dependencies-by-sorting-node.js
+index 6210ed9f7b..aac8e7fd54 100644
+--- a/dist/rules/sort-enums/compute-dependencies-by-sorting-node.js
++++ b/dist/rules/sort-enums/compute-dependencies-by-sorting-node.js
+@@ -1,7 +1,7 @@
+ import { computeDependenciesBySortingNode as computeDependenciesBySortingNode$1 } from '../../utils/compute-dependencies-by-sorting-node.js'
+ import { computeParentNodesWithTypes } from '../../utils/compute-parent-nodes-with-types.js'
+ import { doesSortingNodeHaveOneOfDependencyNames } from '../../utils/does-sorting-node-have-one-of-dependency-names.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ function computeDependenciesBySortingNode({
+   sortingNodes,
+   sourceCode,
+diff --git a/dist/rules/sort-enums/compute-dependencies.js b/dist/rules/sort-enums/compute-dependencies.js
+index ba822be2d7..c52275c945 100644
+--- a/dist/rules/sort-enums/compute-dependencies.js
++++ b/dist/rules/sort-enums/compute-dependencies.js
+@@ -1,4 +1,4 @@
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Extract dependencies from an enum.
+  *
+diff --git a/dist/rules/sort-enums/compute-expression-number-value.js b/dist/rules/sort-enums/compute-expression-number-value.js
+index 99cb641d3d..c015ea2b74 100644
+--- a/dist/rules/sort-enums/compute-expression-number-value.js
++++ b/dist/rules/sort-enums/compute-expression-number-value.js
+@@ -1,4 +1,4 @@
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Extracts a numeric value from an AST expression node.
+  *
+diff --git a/dist/rules/sort-enums/compute-node-name.js b/dist/rules/sort-enums/compute-node-name.js
+index 9b3fc7c0d8..02bfaf629b 100644
+--- a/dist/rules/sort-enums/compute-node-name.js
++++ b/dist/rules/sort-enums/compute-node-name.js
+@@ -1,4 +1,4 @@
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the name of an enum member node.
+  *
+diff --git a/dist/rules/sort-enums/sort-enum.js b/dist/rules/sort-enums/sort-enum.js
+index 5f67268981..48ca40376e 100644
+--- a/dist/rules/sort-enums/sort-enum.js
++++ b/dist/rules/sort-enums/sort-enum.js
+@@ -29,7 +29,7 @@ import { computeExpressionNumberValue } from './compute-expression-number-value.
+ import { computeNodeName } from './compute-node-name.js'
+ import { computeMatchedContextOptions } from './compute-matched-context-options.js'
+ import { computeDependencies } from './compute-dependencies.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var defaultOptions = {
+   useExperimentalDependencyDetection: true,
+   fallbackSort: { type: 'unsorted' },
+diff --git a/dist/rules/sort-enums.js b/dist/rules/sort-enums.js
+index 17bdf99938..6dba46cdf5 100644
+--- a/dist/rules/sort-enums.js
++++ b/dist/rules/sort-enums.js
+@@ -27,7 +27,7 @@ import {
+   additionalCustomGroupMatchOptionsJsonSchema,
+ } from './sort-enums/types.js'
+ import { defaultOptions, sortEnum } from './sort-enums/sort-enum.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var sort_enums_default = createEslintRule({
+   meta: {
+     schema: {
+diff --git a/dist/rules/sort-export-attributes.js b/dist/rules/sort-export-attributes.js
+index b39aedf042..938a171a23 100644
+--- a/dist/rules/sort-export-attributes.js
++++ b/dist/rules/sort-export-attributes.js
+@@ -8,7 +8,7 @@ import { buildAstListeners } from '../utils/build-ast-listeners.js'
+ import { createEslintRule } from '../utils/create-eslint-rule.js'
+ import { sortImportOrExportAttributes } from './sort-import-attributes/sort-import-or-export-attributes.js'
+ import { jsonSchema } from './sort-import-attributes.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var ORDER_ERROR_ID = 'unexpectedExportAttributesOrder'
+ var GROUP_ORDER_ERROR_ID = 'unexpectedExportAttributesGroupOrder'
+ var EXTRA_SPACING_ERROR_ID = 'extraSpacingBetweenExportAttributes'
+diff --git a/dist/rules/sort-exports.js b/dist/rules/sort-exports.js
+index 10485817eb..0e3bb50790 100644
+--- a/dist/rules/sort-exports.js
++++ b/dist/rules/sort-exports.js
+@@ -35,7 +35,7 @@ import {
+   allModifiers,
+   allSelectors,
+ } from './sort-exports/types.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Cache computed groups by modifiers and selectors for performance.
+  */
+diff --git a/dist/rules/sort-heritage-clauses/compute-node-name.js b/dist/rules/sort-heritage-clauses/compute-node-name.js
+index d67bd3abe3..00b011c5f0 100644
+--- a/dist/rules/sort-heritage-clauses/compute-node-name.js
++++ b/dist/rules/sort-heritage-clauses/compute-node-name.js
+@@ -1,4 +1,4 @@
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Extracts the name from a heritage clause expression.
+  *
+diff --git a/dist/rules/sort-heritage-clauses/sort-heritage-clause.js b/dist/rules/sort-heritage-clauses/sort-heritage-clause.js
+index 137849c1ba..48025567e3 100644
+--- a/dist/rules/sort-heritage-clauses/sort-heritage-clause.js
++++ b/dist/rules/sort-heritage-clauses/sort-heritage-clause.js
+@@ -22,7 +22,7 @@ import {
+ } from './types.js'
+ import { computeNodeName } from './compute-node-name.js'
+ import { computeMatchedContextOptions } from './compute-matched-context-options.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var defaultOptions = {
+   fallbackSort: { type: 'unsorted' },
+   newlinesInside: 'newlinesBetween',
+diff --git a/dist/rules/sort-heritage-clauses.js b/dist/rules/sort-heritage-clauses.js
+index 255ac05bde..0518b75320 100644
+--- a/dist/rules/sort-heritage-clauses.js
++++ b/dist/rules/sort-heritage-clauses.js
+@@ -26,7 +26,7 @@ import {
+   defaultOptions,
+   sortHeritageClause,
+ } from './sort-heritage-clauses/sort-heritage-clause.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var sort_heritage_clauses_default = createEslintRule({
+   meta: {
+     schema: {
+diff --git a/dist/rules/sort-import-attributes/compute-node-name.js b/dist/rules/sort-import-attributes/compute-node-name.js
+index 9c8a989e40..b40d684b54 100644
+--- a/dist/rules/sort-import-attributes/compute-node-name.js
++++ b/dist/rules/sort-import-attributes/compute-node-name.js
+@@ -1,5 +1,5 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Extracts the name of an import attribute for sorting purposes.
+  *
+diff --git a/dist/rules/sort-import-attributes.js b/dist/rules/sort-import-attributes.js
+index c6b8959f1f..6d107302f6 100644
+--- a/dist/rules/sort-import-attributes.js
++++ b/dist/rules/sort-import-attributes.js
+@@ -17,7 +17,7 @@ import {
+ import { buildAstListeners } from '../utils/build-ast-listeners.js'
+ import { createEslintRule } from '../utils/create-eslint-rule.js'
+ import { sortImportOrExportAttributes } from './sort-import-attributes/sort-import-or-export-attributes.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var ORDER_ERROR_ID = 'unexpectedImportAttributesOrder'
+ var GROUP_ORDER_ERROR_ID = 'unexpectedImportAttributesGroupOrder'
+ var EXTRA_SPACING_ERROR_ID = 'extraSpacingBetweenImportAttributes'
+diff --git a/dist/rules/sort-imports/compute-dependencies.js b/dist/rules/sort-imports/compute-dependencies.js
+index 5982968376..5da84aa816 100644
+--- a/dist/rules/sort-imports/compute-dependencies.js
++++ b/dist/rules/sort-imports/compute-dependencies.js
+@@ -1,5 +1,5 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the dependencies of an import-like AST node.
+  *
+diff --git a/dist/rules/sort-imports/compute-dependency-names.js b/dist/rules/sort-imports/compute-dependency-names.js
+index 9248e7658d..7c0670e3a6 100644
+--- a/dist/rules/sort-imports/compute-dependency-names.js
++++ b/dist/rules/sort-imports/compute-dependency-names.js
+@@ -1,5 +1,5 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the dependency names of an import-like AST node.
+  *
+diff --git a/dist/rules/sort-imports/compute-node-name.js b/dist/rules/sort-imports/compute-node-name.js
+index 6ca311c474..2d477cf8f5 100644
+--- a/dist/rules/sort-imports/compute-node-name.js
++++ b/dist/rules/sort-imports/compute-node-name.js
+@@ -1,5 +1,5 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the name of an import-like AST node.
+  *
+diff --git a/dist/rules/sort-imports/compute-specifier-modifiers.js b/dist/rules/sort-imports/compute-specifier-modifiers.js
+index f948b386b3..2d171472c1 100644
+--- a/dist/rules/sort-imports/compute-specifier-modifiers.js
++++ b/dist/rules/sort-imports/compute-specifier-modifiers.js
+@@ -1,4 +1,4 @@
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the specifier modifiers of an import-like AST node.
+  *
+diff --git a/dist/rules/sort-imports/compute-specifier-name.js b/dist/rules/sort-imports/compute-specifier-name.js
+index acb8a82401..eb47acf975 100644
+--- a/dist/rules/sort-imports/compute-specifier-name.js
++++ b/dist/rules/sort-imports/compute-specifier-name.js
+@@ -1,5 +1,5 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ function computeSpecifierName({ sourceCode, node }) {
+   switch (node.type) {
+     case AST_NODE_TYPES.TSImportEqualsDeclaration:
+diff --git a/dist/rules/sort-imports/is-non-external-reference-ts-import-equals.js b/dist/rules/sort-imports/is-non-external-reference-ts-import-equals.js
+index f78378394e..2af4de4357 100644
+--- a/dist/rules/sort-imports/is-non-external-reference-ts-import-equals.js
++++ b/dist/rules/sort-imports/is-non-external-reference-ts-import-equals.js
+@@ -1,4 +1,4 @@
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Determines whether the given AST node is a non-external-reference TS import
+  * equals declaration.
+diff --git a/dist/rules/sort-imports/is-side-effect-import.js b/dist/rules/sort-imports/is-side-effect-import.js
+index dbb5f5168d..703558e7ab 100644
+--- a/dist/rules/sort-imports/is-side-effect-import.js
++++ b/dist/rules/sort-imports/is-side-effect-import.js
+@@ -1,5 +1,5 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Determines whether the given AST node is a side-effect import.
+  *
+diff --git a/dist/rules/sort-imports.js b/dist/rules/sort-imports.js
+index 1b827e2f88..f6dae75e0b 100644
+--- a/dist/rules/sort-imports.js
++++ b/dist/rules/sort-imports.js
+@@ -57,7 +57,7 @@ import { computeSpecifierName } from './sort-imports/compute-specifier-name.js'
+ import { computeDependencies } from './sort-imports/compute-dependencies.js'
+ import { isSideEffectImport } from './sort-imports/is-side-effect-import.js'
+ import { computeNodeName } from './sort-imports/compute-node-name.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Cache computed groups by modifiers and selectors for performance.
+  */
+diff --git a/dist/rules/sort-interfaces.js b/dist/rules/sort-interfaces.js
+index 622f22a87b..6ea763c739 100644
+--- a/dist/rules/sort-interfaces.js
++++ b/dist/rules/sort-interfaces.js
+@@ -8,7 +8,7 @@ import { buildAstListeners } from '../utils/build-ast-listeners.js'
+ import { createEslintRule } from '../utils/create-eslint-rule.js'
+ import { sortObjectTypeElements } from './sort-object-types/sort-object-type-elements.js'
+ import { defaultOptions, jsonSchema } from './sort-object-types.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var ORDER_ERROR_ID = 'unexpectedInterfacePropertiesOrder'
+ var GROUP_ORDER_ERROR_ID = 'unexpectedInterfacePropertiesGroupOrder'
+ var EXTRA_SPACING_ERROR_ID = 'extraSpacingBetweenInterfaceMembers'
+diff --git a/dist/rules/sort-intersection-types.js b/dist/rules/sort-intersection-types.js
+index 0d53136389..febd11cc49 100644
+--- a/dist/rules/sort-intersection-types.js
++++ b/dist/rules/sort-intersection-types.js
+@@ -8,7 +8,7 @@ import { buildAstListeners } from '../utils/build-ast-listeners.js'
+ import { createEslintRule } from '../utils/create-eslint-rule.js'
+ import { sortUnionOrIntersectionTypes } from './sort-union-or-intersection-types/sort-union-or-intersection-types.js'
+ import { buildJsonSchema } from './sort-union-or-intersection-types/build-json-schema.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Cache computed groups by modifiers and selectors for performance.
+  */
+diff --git a/dist/rules/sort-jsx-props/compute-matched-context-options.js b/dist/rules/sort-jsx-props/compute-matched-context-options.js
+index 336e3ffcee..8555494c73 100644
+--- a/dist/rules/sort-jsx-props/compute-matched-context-options.js
++++ b/dist/rules/sort-jsx-props/compute-matched-context-options.js
+@@ -2,7 +2,7 @@ import { matches } from '../../utils/matches.js'
+ import { passesAllNamesMatchPatternFilter } from '../../utils/context-matching/passes-all-names-match-pattern-filter.js'
+ import { passesAstSelectorFilter } from '../../utils/context-matching/passes-ast-selector-filter.js'
+ import { computeNodeName } from './compute-node-name.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the matched context options for a given JSX element node.
+  *
+diff --git a/dist/rules/sort-jsx-props/compute-node-name.js b/dist/rules/sort-jsx-props/compute-node-name.js
+index 94d97b0250..b95a285644 100644
+--- a/dist/rules/sort-jsx-props/compute-node-name.js
++++ b/dist/rules/sort-jsx-props/compute-node-name.js
+@@ -1,5 +1,5 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the name of a JSX attribute node.
+  *
+diff --git a/dist/rules/sort-jsx-props/sort-jsx-object.js b/dist/rules/sort-jsx-props/sort-jsx-object.js
+index 2a08d6021d..3b16ffb49f 100644
+--- a/dist/rules/sort-jsx-props/sort-jsx-object.js
++++ b/dist/rules/sort-jsx-props/sort-jsx-object.js
+@@ -26,7 +26,7 @@ import {
+ } from './types.js'
+ import { computeNodeName } from './compute-node-name.js'
+ import { computeMatchedContextOptions } from './compute-matched-context-options.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Cache computed groups by modifiers and selectors for performance.
+  */
+diff --git a/dist/rules/sort-jsx-props.js b/dist/rules/sort-jsx-props.js
+index ad5f069892..aade3f4534 100644
+--- a/dist/rules/sort-jsx-props.js
++++ b/dist/rules/sort-jsx-props.js
+@@ -25,7 +25,7 @@ import {
+   defaultOptions,
+   sortJsxObject,
+ } from './sort-jsx-props/sort-jsx-object.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var sort_jsx_props_default = createEslintRule({
+   meta: {
+     schema: {
+diff --git a/dist/rules/sort-maps/compute-matched-context-options.js b/dist/rules/sort-maps/compute-matched-context-options.js
+index 0c0f0b693c..c1c25a539a 100644
+--- a/dist/rules/sort-maps/compute-matched-context-options.js
++++ b/dist/rules/sort-maps/compute-matched-context-options.js
+@@ -1,7 +1,7 @@
+ import { passesAllNamesMatchPatternFilter } from '../../utils/context-matching/passes-all-names-match-pattern-filter.js'
+ import { passesAstSelectorFilter } from '../../utils/context-matching/passes-ast-selector-filter.js'
+ import { computeNodeName } from './compute-node-name.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the matched context options for a given map node.
+  *
+diff --git a/dist/rules/sort-maps/compute-node-name.js b/dist/rules/sort-maps/compute-node-name.js
+index 0f3540ada6..b83dff2bf4 100644
+--- a/dist/rules/sort-maps/compute-node-name.js
++++ b/dist/rules/sort-maps/compute-node-name.js
+@@ -1,4 +1,4 @@
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Extracts the name of a Map element for sorting purposes.
+  *
+diff --git a/dist/rules/sort-maps/sort-potential-map.js b/dist/rules/sort-maps/sort-potential-map.js
+index 2ca140ba39..5123b14f88 100644
+--- a/dist/rules/sort-maps/sort-potential-map.js
++++ b/dist/rules/sort-maps/sort-potential-map.js
+@@ -21,7 +21,7 @@ import {
+ } from './types.js'
+ import { computeNodeName } from './compute-node-name.js'
+ import { computeMatchedContextOptions } from './compute-matched-context-options.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var defaultOptions = {
+   fallbackSort: { type: 'unsorted' },
+   newlinesInside: 'newlinesBetween',
+diff --git a/dist/rules/sort-maps.js b/dist/rules/sort-maps.js
+index b52e1053ca..790c016f52 100644
+--- a/dist/rules/sort-maps.js
++++ b/dist/rules/sort-maps.js
+@@ -26,7 +26,7 @@ import {
+   defaultOptions,
+   sortPotentialMap,
+ } from './sort-maps/sort-potential-map.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var sort_maps_default = createEslintRule({
+   meta: {
+     schema: {
+diff --git a/dist/rules/sort-modules/compute-dependencies-by-sorting-node.js b/dist/rules/sort-modules/compute-dependencies-by-sorting-node.js
+index 788761427a..a34db37618 100644
+--- a/dist/rules/sort-modules/compute-dependencies-by-sorting-node.js
++++ b/dist/rules/sort-modules/compute-dependencies-by-sorting-node.js
+@@ -4,7 +4,7 @@ import { computeParentNodesWithTypes } from '../../utils/compute-parent-nodes-wi
+ import { doesSortingNodeHaveOneOfDependencyNames } from '../../utils/does-sorting-node-have-one-of-dependency-names.js'
+ import { isPropertyOrAccessorNode } from './is-property-or-accessor-node.js'
+ import { isArrowFunctionNode } from './is-arrow-function-node.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ function computeDependenciesBySortingNode({
+   dependencyDetection,
+   sortingNodes,
+diff --git a/dist/rules/sort-modules/compute-dependencies.js b/dist/rules/sort-modules/compute-dependencies.js
+index 27dbc05f9a..f62b19ebf8 100644
+--- a/dist/rules/sort-modules/compute-dependencies.js
++++ b/dist/rules/sort-modules/compute-dependencies.js
+@@ -1,7 +1,7 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+ import { isArrowFunctionNode } from './is-arrow-function-node.js'
+ import { getEnumMembers } from '../../utils/get-enum-members.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the dependencies of a given AST node.
+  *
+diff --git a/dist/rules/sort-modules/compute-node-details.js b/dist/rules/sort-modules/compute-node-details.js
+index 7f0d8e50a0..9de9f69078 100644
+--- a/dist/rules/sort-modules/compute-node-details.js
++++ b/dist/rules/sort-modules/compute-node-details.js
+@@ -2,7 +2,7 @@ import { getNodeDecorators } from '../../utils/get-node-decorators.js'
+ import { isPropertyOrAccessorNode } from './is-property-or-accessor-node.js'
+ import { isArrowFunctionNode } from './is-arrow-function-node.js'
+ import { computeDependencies } from './compute-dependencies.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Compute details about a module-related node.
+  *
+diff --git a/dist/rules/sort-modules/compute-overload-signature-groups.js b/dist/rules/sort-modules/compute-overload-signature-groups.js
+index f6c11d1af9..00ac7a87eb 100644
+--- a/dist/rules/sort-modules/compute-overload-signature-groups.js
++++ b/dist/rules/sort-modules/compute-overload-signature-groups.js
+@@ -1,6 +1,6 @@
+ import { isSortable } from '../../utils/is-sortable.js'
+ import { OverloadSignatureGroup } from '../../utils/overload-signature/overload-signature-group.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Returns a list of groups of overload signatures.
+  *
+diff --git a/dist/rules/sort-modules/is-arrow-function-node.js b/dist/rules/sort-modules/is-arrow-function-node.js
+index f9590605b9..691c7eae4f 100644
+--- a/dist/rules/sort-modules/is-arrow-function-node.js
++++ b/dist/rules/sort-modules/is-arrow-function-node.js
+@@ -1,5 +1,5 @@
+ import { isPropertyOrAccessorNode } from './is-property-or-accessor-node.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Checks whether a node is a property or accessor node with an
+  * ArrowFunctionExpression value.
+diff --git a/dist/rules/sort-modules/is-property-or-accessor-node.js b/dist/rules/sort-modules/is-property-or-accessor-node.js
+index c85be07fbf..285322fabd 100644
+--- a/dist/rules/sort-modules/is-property-or-accessor-node.js
++++ b/dist/rules/sort-modules/is-property-or-accessor-node.js
+@@ -1,4 +1,4 @@
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Checks whether a node is a PropertyDefinition or AccessorProperty.
+  *
+diff --git a/dist/rules/sort-modules.js b/dist/rules/sort-modules.js
+index c5516f62f9..f7a9c5359a 100644
+--- a/dist/rules/sort-modules.js
++++ b/dist/rules/sort-modules.js
+@@ -50,7 +50,7 @@ import { computeDependenciesBySortingNode } from './sort-modules/compute-depende
+ import { buildComparatorByOptionsComputer } from './sort-modules/build-comparator-by-options-computer.js'
+ import { computeOverloadSignatureGroups } from './sort-modules/compute-overload-signature-groups.js'
+ import { computeNodeDetails } from './sort-modules/compute-node-details.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Cache computed groups by modifiers and selectors for performance.
+  */
+diff --git a/dist/rules/sort-named-exports/compute-node-name.js b/dist/rules/sort-named-exports/compute-node-name.js
+index 022b1f12ce..6742fa5c3d 100644
+--- a/dist/rules/sort-named-exports/compute-node-name.js
++++ b/dist/rules/sort-named-exports/compute-node-name.js
+@@ -1,5 +1,5 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the name of an export specifier node.
+  *
+diff --git a/dist/rules/sort-named-exports.js b/dist/rules/sort-named-exports.js
+index 5ee52bc084..fc10141cc8 100644
+--- a/dist/rules/sort-named-exports.js
++++ b/dist/rules/sort-named-exports.js
+@@ -27,7 +27,7 @@ import {
+   defaultOptions,
+   sortNamedExport,
+ } from './sort-named-exports/sort-named-export.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var sort_named_exports_default = createEslintRule({
+   meta: {
+     schema: {
+diff --git a/dist/rules/sort-named-imports/compute-matched-context-options.js b/dist/rules/sort-named-imports/compute-matched-context-options.js
+index 0ea41e17b2..efcb07cf1b 100644
+--- a/dist/rules/sort-named-imports/compute-matched-context-options.js
++++ b/dist/rules/sort-named-imports/compute-matched-context-options.js
+@@ -1,7 +1,7 @@
+ import { passesAllNamesMatchPatternFilter } from '../../utils/context-matching/passes-all-names-match-pattern-filter.js'
+ import { passesAstSelectorFilter } from '../../utils/context-matching/passes-ast-selector-filter.js'
+ import { computeNodeName } from './compute-node-name.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the matched context options for a given named import node.
+  *
+diff --git a/dist/rules/sort-named-imports/compute-node-name.js b/dist/rules/sort-named-imports/compute-node-name.js
+index 0c2b193921..0fb85dff29 100644
+--- a/dist/rules/sort-named-imports/compute-node-name.js
++++ b/dist/rules/sort-named-imports/compute-node-name.js
+@@ -1,5 +1,5 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the name of an import specifier node.
+  *
+diff --git a/dist/rules/sort-named-imports/sort-named-import.js b/dist/rules/sort-named-imports/sort-named-import.js
+index b9ec4578fa..cd8730f7b0 100644
+--- a/dist/rules/sort-named-imports/sort-named-import.js
++++ b/dist/rules/sort-named-imports/sort-named-import.js
+@@ -26,7 +26,7 @@ import {
+ import { computeNodeName } from './compute-node-name.js'
+ import { computeMatchedContextOptions } from './compute-matched-context-options.js'
+ import { computeImportKindModifier } from './compute-import-kind-modifier.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Cache computed groups by modifiers and selectors for performance.
+  */
+diff --git a/dist/rules/sort-named-imports.js b/dist/rules/sort-named-imports.js
+index 704064a4c2..15d95d690f 100644
+--- a/dist/rules/sort-named-imports.js
++++ b/dist/rules/sort-named-imports.js
+@@ -27,7 +27,7 @@ import {
+   defaultOptions,
+   sortNamedImport,
+ } from './sort-named-imports/sort-named-import.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var sort_named_imports_default = createEslintRule({
+   meta: {
+     schema: {
+diff --git a/dist/rules/sort-object-types/compute-matched-context-options.js b/dist/rules/sort-object-types/compute-matched-context-options.js
+index c13175b319..961e63db0e 100644
+--- a/dist/rules/sort-object-types/compute-matched-context-options.js
++++ b/dist/rules/sort-object-types/compute-matched-context-options.js
+@@ -4,7 +4,7 @@ import { passesAstSelectorFilter } from '../../utils/context-matching/passes-ast
+ import { passesDeclarationMatchesPatternFilter } from './passes-declaration-matches-pattern-filter.js'
+ import { passesDeclarationCommentMatchesFilter } from './passes-declaration-comment-matches-filter.js'
+ import { computeNodeName } from './compute-node-name.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the matched context options for the given nodes.
+  *
+diff --git a/dist/rules/sort-object-types/compute-node-name.js b/dist/rules/sort-object-types/compute-node-name.js
+index 74929882d1..9bcd042fc0 100644
+--- a/dist/rules/sort-object-types/compute-node-name.js
++++ b/dist/rules/sort-object-types/compute-node-name.js
+@@ -1,5 +1,5 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the name of an object-type-like node.
+  *
+diff --git a/dist/rules/sort-object-types/compute-node-parent-name.js b/dist/rules/sort-object-types/compute-node-parent-name.js
+index 2c508490f4..36b9d3f45b 100644
+--- a/dist/rules/sort-object-types/compute-node-parent-name.js
++++ b/dist/rules/sort-object-types/compute-node-parent-name.js
+@@ -1,5 +1,5 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the name of an object-type-like parent node.
+  *
+diff --git a/dist/rules/sort-object-types/is-member-optional.js b/dist/rules/sort-object-types/is-member-optional.js
+index a7be1025aa..2420c1f8c5 100644
+--- a/dist/rules/sort-object-types/is-member-optional.js
++++ b/dist/rules/sort-object-types/is-member-optional.js
+@@ -1,5 +1,5 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Checks if a TypeScript type member is marked as optional.
+  *
+diff --git a/dist/rules/sort-object-types/is-node-function-type.js b/dist/rules/sort-object-types/is-node-function-type.js
+index 2ae7b6e3ab..e3e817b06b 100644
+--- a/dist/rules/sort-object-types/is-node-function-type.js
++++ b/dist/rules/sort-object-types/is-node-function-type.js
+@@ -1,4 +1,4 @@
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Determines if an AST node represents a function type.
+  *
+diff --git a/dist/rules/sort-object-types/passes-declaration-comment-matches-filter.js b/dist/rules/sort-object-types/passes-declaration-comment-matches-filter.js
+index b5eeb291b9..a38e4b0ea1 100644
+--- a/dist/rules/sort-object-types/passes-declaration-comment-matches-filter.js
++++ b/dist/rules/sort-object-types/passes-declaration-comment-matches-filter.js
+@@ -1,7 +1,7 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+ import { objectTypeParentTypes } from './types.js'
+ import { matchesScopedExpressions } from '../../utils/scoped-regex/matches-scoped-expressions.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Checks if the object passes the declaration comment matches filter.
+  *
+diff --git a/dist/rules/sort-object-types/sort-object-type-elements.js b/dist/rules/sort-object-types/sort-object-type-elements.js
+index 31ac275a42..bbfa204052 100644
+--- a/dist/rules/sort-object-types/sort-object-type-elements.js
++++ b/dist/rules/sort-object-types/sort-object-type-elements.js
+@@ -23,7 +23,7 @@ import { isNodeOnSingleLine } from '../../utils/is-node-on-single-line.js'
+ import { isNodeFunctionType } from './is-node-function-type.js'
+ import { isMemberOptional } from './is-member-optional.js'
+ import { defaultOptions } from '../sort-object-types.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Cache computed groups by modifiers and selectors for performance.
+  */
+diff --git a/dist/rules/sort-object-types/types.js b/dist/rules/sort-object-types/types.js
+index 5aa6fa3498..db0d7def1d 100644
+--- a/dist/rules/sort-object-types/types.js
++++ b/dist/rules/sort-object-types/types.js
+@@ -3,7 +3,7 @@ import {
+   buildCustomGroupModifiersJsonSchema,
+   buildCustomGroupSelectorJsonSchema,
+ } from '../../utils/json-schemas/common-groups-json-schemas.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var objectTypeParentTypes = [
+   AST_NODE_TYPES.TSTypeAliasDeclaration,
+   AST_NODE_TYPES.TSInterfaceDeclaration,
+diff --git a/dist/rules/sort-object-types.js b/dist/rules/sort-object-types.js
+index 87fcb7609d..71bb95b430 100644
+--- a/dist/rules/sort-object-types.js
++++ b/dist/rules/sort-object-types.js
+@@ -24,7 +24,7 @@ import {
+ } from './sort-object-types/types.js'
+ import { scopedRegexJsonSchema } from '../utils/json-schemas/scoped-regex-json-schema.js'
+ import { sortObjectTypeElements } from './sort-object-types/sort-object-type-elements.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var ORDER_ERROR_ID = 'unexpectedObjectTypesOrder'
+ var GROUP_ORDER_ERROR_ID = 'unexpectedObjectTypesGroupOrder'
+ var EXTRA_SPACING_ERROR_ID = 'extraSpacingBetweenObjectTypeMembers'
+diff --git a/dist/rules/sort-objects/compute-dependencies.js b/dist/rules/sort-objects/compute-dependencies.js
+index 20e0962c46..a842dca4de 100644
+--- a/dist/rules/sort-objects/compute-dependencies.js
++++ b/dist/rules/sort-objects/compute-dependencies.js
+@@ -1,4 +1,4 @@
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ function computeDependencies(node) {
+   if (node.value.type !== AST_NODE_TYPES.AssignmentPattern) {
+     return []
+diff --git a/dist/rules/sort-objects/compute-dependency-names.js b/dist/rules/sort-objects/compute-dependency-names.js
+index 4bd80e8318..c62f84ce15 100644
+--- a/dist/rules/sort-objects/compute-dependency-names.js
++++ b/dist/rules/sort-objects/compute-dependency-names.js
+@@ -1,5 +1,5 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ function computeDependencyNames(pattern) {
+   let currentPattern = pattern
+   while (currentPattern.type === AST_NODE_TYPES.AssignmentPattern) {
+diff --git a/dist/rules/sort-objects/compute-matched-context-options.js b/dist/rules/sort-objects/compute-matched-context-options.js
+index 2b2807a2e5..9ee3eebd43 100644
+--- a/dist/rules/sort-objects/compute-matched-context-options.js
++++ b/dist/rules/sort-objects/compute-matched-context-options.js
+@@ -7,7 +7,7 @@ import { computePropertyOrVariableDeclaratorName } from './compute-property-or-v
+ import { passesCallingFunctionNamePatternFilter } from './passes-calling-function-name-pattern-filter.js'
+ import { passesDeclarationMatchesPatternFilter } from './passes-declaration-matches-pattern-filter.js'
+ import { passesDeclarationCommentMatchesFilter } from './passes-declaration-comment-matches-filter.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the matched context options for a given object node.
+  *
+diff --git a/dist/rules/sort-objects/compute-node-value.js b/dist/rules/sort-objects/compute-node-value.js
+index 12b33e9fb8..e9e6b6e218 100644
+--- a/dist/rules/sort-objects/compute-node-value.js
++++ b/dist/rules/sort-objects/compute-node-value.js
+@@ -1,4 +1,4 @@
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ function computeNodeValue({ isDestructuredObject, sourceCode, property }) {
+   switch (property.value.type) {
+     case AST_NODE_TYPES.ArrowFunctionExpression:
+diff --git a/dist/rules/sort-objects/compute-property-or-variable-declarator-name.js b/dist/rules/sort-objects/compute-property-or-variable-declarator-name.js
+index 36705b8435..f4dcebb491 100644
+--- a/dist/rules/sort-objects/compute-property-or-variable-declarator-name.js
++++ b/dist/rules/sort-objects/compute-property-or-variable-declarator-name.js
+@@ -1,5 +1,5 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Compute the name for a property-like node.
+  *
+diff --git a/dist/rules/sort-objects/is-style-component.js b/dist/rules/sort-objects/is-style-component.js
+index 1147a008e8..b20666fd2f 100644
+--- a/dist/rules/sort-objects/is-style-component.js
++++ b/dist/rules/sort-objects/is-style-component.js
+@@ -1,4 +1,4 @@
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Checks if a node represents a style component.
+  *
+diff --git a/dist/rules/sort-objects/passes-calling-function-name-pattern-filter.js b/dist/rules/sort-objects/passes-calling-function-name-pattern-filter.js
+index c3fad546bb..89fc35e91b 100644
+--- a/dist/rules/sort-objects/passes-calling-function-name-pattern-filter.js
++++ b/dist/rules/sort-objects/passes-calling-function-name-pattern-filter.js
+@@ -1,5 +1,5 @@
+ import { matchesScopedExpressions } from '../../utils/scoped-regex/matches-scoped-expressions.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Checks if the object passes the calling function name pattern filter.
+  *
+diff --git a/dist/rules/sort-objects/passes-declaration-comment-matches-filter.js b/dist/rules/sort-objects/passes-declaration-comment-matches-filter.js
+index 9e7017b8ee..7853b7d2da 100644
+--- a/dist/rules/sort-objects/passes-declaration-comment-matches-filter.js
++++ b/dist/rules/sort-objects/passes-declaration-comment-matches-filter.js
+@@ -1,7 +1,7 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+ import { matchesScopedExpressions } from '../../utils/scoped-regex/matches-scoped-expressions.js'
+ import { objectParentTypes } from './types.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Checks if the object passes the declaration comment matches filter.
+  *
+diff --git a/dist/rules/sort-objects/passes-declaration-matches-pattern-filter.js b/dist/rules/sort-objects/passes-declaration-matches-pattern-filter.js
+index 87e39954ba..760f03bf51 100644
+--- a/dist/rules/sort-objects/passes-declaration-matches-pattern-filter.js
++++ b/dist/rules/sort-objects/passes-declaration-matches-pattern-filter.js
+@@ -1,6 +1,6 @@
+ import { matchesScopedExpressions } from '../../utils/scoped-regex/matches-scoped-expressions.js'
+ import { computePropertyOrVariableDeclaratorName } from './compute-property-or-variable-declarator-name.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var allowedTypes = [AST_NODE_TYPES.VariableDeclarator, AST_NODE_TYPES.Property]
+ /**
+  * Checks whether the node parent names match the given pattern.
+diff --git a/dist/rules/sort-objects/sort-object.js b/dist/rules/sort-objects/sort-object.js
+index 950c4e1944..84437c9e78 100644
+--- a/dist/rules/sort-objects/sort-object.js
++++ b/dist/rules/sort-objects/sort-object.js
+@@ -34,7 +34,7 @@ import { computeDependencyNames } from './compute-dependency-names.js'
+ import { computeDependencies } from './compute-dependencies.js'
+ import { isStyleComponent } from './is-style-component.js'
+ import { computeNodeValue } from './compute-node-value.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Cache computed groups by modifiers and selectors for performance.
+  */
+diff --git a/dist/rules/sort-objects/types.js b/dist/rules/sort-objects/types.js
+index ae92ba15ee..7b9b2266ec 100644
+--- a/dist/rules/sort-objects/types.js
++++ b/dist/rules/sort-objects/types.js
+@@ -3,7 +3,7 @@ import {
+   buildCustomGroupModifiersJsonSchema,
+   buildCustomGroupSelectorJsonSchema,
+ } from '../../utils/json-schemas/common-groups-json-schemas.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var ORDER_ERROR_ID = 'unexpectedObjectsOrder'
+ var GROUP_ORDER_ERROR_ID = 'unexpectedObjectsGroupOrder'
+ var EXTRA_SPACING_ERROR_ID = 'extraSpacingBetweenObjectMembers'
+diff --git a/dist/rules/sort-objects.js b/dist/rules/sort-objects.js
+index 9c3f70e535..146fca40e8 100644
+--- a/dist/rules/sort-objects.js
++++ b/dist/rules/sort-objects.js
+@@ -29,7 +29,7 @@ import {
+   additionalSortOptionsJsonSchema,
+ } from './sort-objects/types.js'
+ import { defaultOptions, sortObject } from './sort-objects/sort-object.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var sort_objects_default = createEslintRule({
+   meta: {
+     schema: {
+diff --git a/dist/rules/sort-sets.js b/dist/rules/sort-sets.js
+index f82c1da54f..2ea5e1d727 100644
+--- a/dist/rules/sort-sets.js
++++ b/dist/rules/sort-sets.js
+@@ -8,7 +8,7 @@ import { buildAstListeners } from '../utils/build-ast-listeners.js'
+ import { createEslintRule } from '../utils/create-eslint-rule.js'
+ import { sortArray } from './sort-arrays/sort-array.js'
+ import { defaultOptions, jsonSchema } from './sort-array-includes.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Cache computed groups by modifiers and selectors for performance.
+  */
+diff --git a/dist/rules/sort-switch-case/is-condition-expression.js b/dist/rules/sort-switch-case/is-condition-expression.js
+index d17aaf0dde..349f3024e3 100644
+--- a/dist/rules/sort-switch-case/is-condition-expression.js
++++ b/dist/rules/sort-switch-case/is-condition-expression.js
+@@ -1,4 +1,4 @@
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Checks if an expression is condition-shaped.
+  *
+diff --git a/dist/rules/sort-switch-case.js b/dist/rules/sort-switch-case.js
+index 3b2369dd72..f6fe23e8a5 100644
+--- a/dist/rules/sort-switch-case.js
++++ b/dist/rules/sort-switch-case.js
+@@ -18,7 +18,7 @@ import { isSortable } from '../utils/is-sortable.js'
+ import { complete } from '../utils/complete.js'
+ import { createEslintRule } from '../utils/create-eslint-rule.js'
+ import { isConditionExpression } from './sort-switch-case/is-condition-expression.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var ORDER_ERROR_ID = 'unexpectedSwitchCaseOrder'
+ var defaultOptions = {
+   fallbackSort: { type: 'unsorted' },
+diff --git a/dist/rules/sort-union-or-intersection-types/compute-node-name.js b/dist/rules/sort-union-or-intersection-types/compute-node-name.js
+index 3d547f8d57..846f47e6cd 100644
+--- a/dist/rules/sort-union-or-intersection-types/compute-node-name.js
++++ b/dist/rules/sort-union-or-intersection-types/compute-node-name.js
+@@ -1,4 +1,4 @@
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the name of a union/intersection member.
+  *
+diff --git a/dist/rules/sort-union-or-intersection-types/sort-union-or-intersection-types.js b/dist/rules/sort-union-or-intersection-types/sort-union-or-intersection-types.js
+index 70728334a5..eec0edd691 100644
+--- a/dist/rules/sort-union-or-intersection-types/sort-union-or-intersection-types.js
++++ b/dist/rules/sort-union-or-intersection-types/sort-union-or-intersection-types.js
+@@ -18,7 +18,7 @@ import { allSelectors } from '../sort-union-types/types.js'
+ import { computeNodeName } from './compute-node-name.js'
+ import { computeMatchedContextOptions } from './compute-matched-context-options.js'
+ import { typeContainsCallableType } from './type-contains-callable-type.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ function sortUnionOrIntersectionTypes({
+   cachedGroupsByModifiersAndSelectors,
+   tokenValueToIgnoreBefore,
+diff --git a/dist/rules/sort-union-or-intersection-types/type-contains-callable-type.js b/dist/rules/sort-union-or-intersection-types/type-contains-callable-type.js
+index db6f128c0a..c64832c977 100644
+--- a/dist/rules/sort-union-or-intersection-types/type-contains-callable-type.js
++++ b/dist/rules/sort-union-or-intersection-types/type-contains-callable-type.js
+@@ -1,5 +1,5 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Checks if a type node contains a callable type (function or constructor).
+  *
+diff --git a/dist/rules/sort-union-types.js b/dist/rules/sort-union-types.js
+index a18fa14eb6..afbcd84e40 100644
+--- a/dist/rules/sort-union-types.js
++++ b/dist/rules/sort-union-types.js
+@@ -8,7 +8,7 @@ import { buildAstListeners } from '../utils/build-ast-listeners.js'
+ import { createEslintRule } from '../utils/create-eslint-rule.js'
+ import { sortUnionOrIntersectionTypes } from './sort-union-or-intersection-types/sort-union-or-intersection-types.js'
+ import { buildJsonSchema } from './sort-union-or-intersection-types/build-json-schema.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Cache computed groups by modifiers and selectors for performance.
+  */
+diff --git a/dist/rules/sort-variable-declarations/compute-dependencies.js b/dist/rules/sort-variable-declarations/compute-dependencies.js
+index 1bfb9fc53a..e6ccbe7431 100644
+--- a/dist/rules/sort-variable-declarations/compute-dependencies.js
++++ b/dist/rules/sort-variable-declarations/compute-dependencies.js
+@@ -1,5 +1,5 @@
+ import { isNodeImmediatelyCalled } from '../../utils/is-node-immediately-called.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the dependencies of a variable declaration node.
+  *
+diff --git a/dist/rules/sort-variable-declarations/compute-node-name.js b/dist/rules/sort-variable-declarations/compute-node-name.js
+index 783093d4d8..c32a79c0ae 100644
+--- a/dist/rules/sort-variable-declarations/compute-node-name.js
++++ b/dist/rules/sort-variable-declarations/compute-node-name.js
+@@ -1,5 +1,5 @@
+ import { UnreachableCaseError } from '../../utils/unreachable-case-error.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Computes the name of a variable declaration.
+  *
+diff --git a/dist/rules/sort-variable-declarations.js b/dist/rules/sort-variable-declarations.js
+index 6e5ef6b495..a3b16ae144 100644
+--- a/dist/rules/sort-variable-declarations.js
++++ b/dist/rules/sort-variable-declarations.js
+@@ -30,7 +30,7 @@ import {
+ } from './sort-variable-declarations/sort-variable-declaration.js'
+ import { buildAstListeners } from '../utils/build-ast-listeners.js'
+ import { createEslintRule } from '../utils/create-eslint-rule.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ var sort_variable_declarations_default = createEslintRule({
+   meta: {
+     schema: {
+diff --git a/dist/utils/compute-dependencies-outside-functions-by-sorting-node.js b/dist/utils/compute-dependencies-outside-functions-by-sorting-node.js
+index 83b7b1345b..a7aaf976b9 100644
+--- a/dist/utils/compute-dependencies-outside-functions-by-sorting-node.js
++++ b/dist/utils/compute-dependencies-outside-functions-by-sorting-node.js
+@@ -1,7 +1,7 @@
+ import { computeDependenciesBySortingNode } from './compute-dependencies-by-sorting-node.js'
+ import { computeParentNodesWithTypes } from './compute-parent-nodes-with-types.js'
+ import { isNodeImmediatelyCalled } from './is-node-immediately-called.js'
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ function computeDependenciesOutsideFunctionsBySortingNode({
+   sortingNodes,
+   sourceCode,
+diff --git a/dist/utils/create-eslint-rule.js b/dist/utils/create-eslint-rule.js
+index 7253d86e12..d10e38bf9f 100644
+--- a/dist/utils/create-eslint-rule.js
++++ b/dist/utils/create-eslint-rule.js
+@@ -1,4 +1,4 @@
+-import { ESLintUtils } from '@typescript-eslint/utils'
++import * as ESLintUtils from '@typescript-eslint/utils/eslint-utils'
+ /**
+  * Factory function for creating ESLint rules with consistent structure and
+  * documentation.
+diff --git a/dist/utils/get-node-range.js b/dist/utils/get-node-range.js
+index 1ac032221d..c2773c1618 100644
+--- a/dist/utils/get-node-range.js
++++ b/dist/utils/get-node-range.js
+@@ -1,7 +1,7 @@
+ import { getEslintDisabledRules } from './get-eslint-disabled-rules.js'
+ import { isPartitionComment } from './is-partition-comment.js'
+ import { getCommentsBefore } from './get-comments-before.js'
+-import { ASTUtils } from '@typescript-eslint/utils'
++import * as ASTUtils from '@typescript-eslint/utils/ast-utils'
+ /**
+  * Determines the complete range of a node including its associated comments.
+  *
+diff --git a/dist/utils/is-node-immediately-called.js b/dist/utils/is-node-immediately-called.js
+index dc4ded4e3e..9c10c2ecf0 100644
+--- a/dist/utils/is-node-immediately-called.js
++++ b/dist/utils/is-node-immediately-called.js
+@@ -1,4 +1,4 @@
+-import { AST_NODE_TYPES } from '@typescript-eslint/utils'
++import { AST_NODE_TYPES } from '@typescript-eslint/types'
+ /**
+  * Checks whether a node is the callee of a call or `new` expression.
+  *

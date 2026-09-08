@@ -81,6 +81,7 @@ allowBuilds:
   sharp: true
   workerd: true
 patchedDependencies:
+  'eslint-plugin-perfectionist@5.10.1': patches/eslint-plugin-perfectionist@5.10.1.patch
   '@vercel/nft@0.29.2': patches/@vercel__nft@0.29.2.patch
   '@better-fetch/fetch@1.3.1': patches/@better-fetch__fetch@1.3.1.patch
   '@module-federation/dts-plugin@2.9.0': patches/@module-federation__dts-plugin@2.9.0.patch
@@ -90,3 +91,7 @@ patchedDependencies:
   msgpackr@2.1.0: patches/msgpackr@2.1.0.patch
   zod@4.5.4: patches/zod@4.5.4.patch
   drizzle-orm@1.0.0-rc.5-ab785fc: patches/drizzle-orm-rc5-declarations.patch
+packageExtensions:
+  'eslint-plugin-perfectionist@5.10.1':
+    dependencies:
+      '@typescript-eslint/types': 8.69.0

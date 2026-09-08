@@ -129,8 +129,7 @@
     "fallow": "3.22.0",
     "@modern-js/ultramodern-create": "npm:@bleedingdev/modern-js-ultramodern-create@3.9.0-ultramodern.2",
     "cross-env": "10.1.0",
-    "@effect/opentelemetry": "4.0.0-rc.112",
-    "eslint": "10.10.0"
+    "@effect/opentelemetry": "4.0.0-rc.112"
   },
   "engines": {
     "node": ">=26",

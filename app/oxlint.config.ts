@@ -3,7 +3,17 @@ import core from 'ultracite/oxlint/core';
 import { jsPluginSettings, selectJsPlugins } from 'ultracite/oxlint/js-plugins';
 import react from 'ultracite/oxlint/react';
 
-const jsPlugins = selectJsPlugins(['github', 'sonarjs', 'react-doctor']);
+const selectedJsPlugins = selectJsPlugins(['github', 'sonarjs', 'react-doctor']);
+const jsPlugins = {
+  ...selectedJsPlugins,
+  // Load GitHub's published rule-only entrypoint, not its ESLint configuration aggregator.
+  // The aggregator eagerly imports eslint-plugin-import and the ESLint runner; the rules do not.
+  jsPlugins: selectedJsPlugins.jsPlugins.map((plugin) =>
+    plugin.name === 'github'
+      ? { ...plugin, specifier: 'eslint-plugin-github/lib/plugin.js' }
+      : plugin,
+  ),
+};
 
 const antiSlopRules = {
   'anti-slop/no-chained-type-assertions': 'error',
