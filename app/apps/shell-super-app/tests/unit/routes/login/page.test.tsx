@@ -4,68 +4,35 @@ import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect, Redacted } from 'effect';
-import type { ComponentProps, ReactNode } from 'react';
 
 import LoginPage from '../../../../src/routes/[lang]/login/page';
-import { ultramodernLocalisedUrls } from '../../../../src/routes/ultramodern-route-metadata.ts';
+import type {
+  LocalizedLinkCall,
+  LocalizedLinkDoubleProps,
+} from '../../../support/localized-link-double.tsx';
+import { renderLocalizedLinkDouble } from '../../../support/localized-link-double.tsx';
 
-type LocalizedLinkDoubleProps = Omit<ComponentProps<'a'>, 'href'> & {
-  readonly children?: ReactNode;
-  readonly href?: string | undefined;
-  readonly params?: Readonly<Record<string, string>>;
-  readonly to: string;
-};
-
-const { languageState, localizedLinkCalls, navigateMock, runBrowserEffectMock, signInMock } =
-  rstest.hoisted(() => {
-    const recordedLinkCalls: {
-      href: string | undefined;
-      params: Readonly<Record<string, string>> | undefined;
-      to: string;
-    }[] = [];
-    return {
-      languageState: { current: 'en' },
-      localizedLinkCalls: recordedLinkCalls,
-      navigateMock: rstest.fn(async () => {}),
-      runBrowserEffectMock: rstest.fn(),
-      signInMock: rstest.fn(),
-    };
-  });
-
-const localisedUrlPatterns = new Map<string, Readonly<Record<string, string>>>(
-  Object.entries(ultramodernLocalisedUrls).map(
-    ([canonicalPattern, localisedPatterns]): readonly [
-      string,
-      Readonly<Record<string, string>>,
-    ] => [canonicalPattern, { cs: localisedPatterns.cs, en: localisedPatterns.en }],
-  ),
-);
-
-/**
- * Resolves the destination the framework link would produce, using the
- * application's own canonical-to-localised route map instead of a hand-written
- * expectation, so the page is proven to hand over a language-agnostic target.
- */
-const resolveLocalizedHref = (
-  to: string,
-  params: Readonly<Record<string, string>> | undefined,
-  language: string,
-): string => {
-  const canonicalPattern = to.replaceAll('$', ':');
-  const localisedPattern =
-    localisedUrlPatterns.get(canonicalPattern)?.[language] ?? canonicalPattern;
-  const segments = localisedPattern
-    .split('/')
-    .filter(Boolean)
-    .map((segment) =>
-      segment.startsWith(':') ? encodeURIComponent(params?.[segment.slice(1)] ?? '') : segment,
-    );
-  return `/${[language, ...segments].join('/')}`;
-};
+const {
+  languageState,
+  localizedLinkCalls,
+  navigateMock,
+  runBrowserEffectMock,
+  signInMock,
+} = rstest.hoisted(() => {
+  const recordedLinkCalls: LocalizedLinkCall[] = [];
+  return {
+    languageState: { current: 'en' },
+    localizedLinkCalls: recordedLinkCalls,
+    navigateMock: rstest.fn(async () => {}),
+    runBrowserEffectMock: rstest.fn(),
+    signInMock: rstest.fn(),
+  };
+});
 
 beforeEach(() => {
   runBrowserEffectMock.mockImplementation(
-    async (effect: Effect.Effect<unknown, unknown>) => await runEffectTestPromise(effect),
+    async (effect: Effect.Effect<unknown, unknown>) =>
+      await runEffectTestPromise(effect)
   );
   signInMock.mockReturnValue(
     Effect.succeed({
@@ -75,7 +42,7 @@ beforeEach(() => {
         principalId: 'principal-1',
         tenantId: 'tenant-1',
       },
-    }),
+    })
   );
 });
 
@@ -90,18 +57,15 @@ const translations = new Map(
     'shell.login.title': 'Login',
     'shell.login.toast.description': 'Fill in both required fields.',
     'shell.login.toast.title': 'Login details are incomplete',
-  }),
+  })
 );
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  Link: ({ children, href, params, to, ...props }: LocalizedLinkDoubleProps) => {
-    localizedLinkCalls.push({ href, params, to });
-    return (
-      <a href={resolveLocalizedHref(to, params, languageState.current)} {...props}>
-        {children}
-      </a>
-    );
-  },
+  Link: (props: LocalizedLinkDoubleProps) =>
+    renderLocalizedLinkDouble(props, {
+      calls: localizedLinkCalls,
+      language: languageState,
+    }),
   useLocalizedLocation: () => ({
     alternates: {
       cs: '/cs/login',
@@ -128,7 +92,8 @@ rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
 }));
 
 const getLogin = () => screen.getByRole('textbox', { name: 'Login *' });
-const getPassword = () => screen.getByLabelText(/^Password/u, { selector: 'input' });
+const getPassword = () =>
+  screen.getByLabelText(/^Password/u, { selector: 'input' });
 const getSubmit = () => screen.getByRole('button', { name: 'Login' });
 
 const renderLogin = () => render(<LoginPage />);
@@ -157,9 +122,11 @@ test('shows the required login controls through the UI kit', () => {
   expect(password.getAttribute('autocomplete')).toBe('current-password');
   expect(password.hasAttribute('required')).toBe(true);
   expect(submit.getAttribute('type')).toBe('submit');
-  expect(screen.getByRole('link', { name: '← Back to the home page' }).getAttribute('href')).toBe(
-    '/en',
-  );
+  expect(
+    screen
+      .getByRole('link', { name: '← Back to the home page' })
+      .getAttribute('href')
+  ).toBe('/en');
 });
 
 test('the back link hands the canonical home target to the framework link', () => {
@@ -176,9 +143,11 @@ test('the back link resolves Czech from the same canonical target', () => {
   renderLogin();
 
   expect(localizedLinkCalls.map((call) => call.to)).toContain('/');
-  expect(screen.getByRole('link', { name: '← Back to the home page' }).getAttribute('href')).toBe(
-    '/cs',
-  );
+  expect(
+    screen
+      .getByRole('link', { name: '← Back to the home page' })
+      .getAttribute('href')
+  ).toBe('/cs');
 });
 
 interface LoginValidationCase {
@@ -258,14 +227,26 @@ test.each(validationCases)(
     await submitLogin(login, password);
 
     const incompleteToasts = loginInvalid || passwordInvalid ? 1 : 0;
-    expect(getLogin().getAttribute('aria-invalid')).toBe(loginInvalid ? 'true' : null);
-    expect(getPassword().getAttribute('aria-invalid')).toBe(passwordInvalid ? 'true' : null);
-    expect(screen.queryAllByText('Enter your login.')).toHaveLength(loginInvalid ? 1 : 0);
-    expect(screen.queryAllByText('Enter your password.')).toHaveLength(passwordInvalid ? 1 : 0);
-    expect(screen.queryAllByText('Login details are incomplete')).toHaveLength(incompleteToasts);
-    expect(screen.queryAllByText('Fill in both required fields.')).toHaveLength(incompleteToasts);
+    expect(getLogin().getAttribute('aria-invalid')).toBe(
+      loginInvalid ? 'true' : null
+    );
+    expect(getPassword().getAttribute('aria-invalid')).toBe(
+      passwordInvalid ? 'true' : null
+    );
+    expect(screen.queryAllByText('Enter your login.')).toHaveLength(
+      loginInvalid ? 1 : 0
+    );
+    expect(screen.queryAllByText('Enter your password.')).toHaveLength(
+      passwordInvalid ? 1 : 0
+    );
+    expect(screen.queryAllByText('Login details are incomplete')).toHaveLength(
+      incompleteToasts
+    );
+    expect(screen.queryAllByText('Fill in both required fields.')).toHaveLength(
+      incompleteToasts
+    );
     expect(document.activeElement).toBe(focusTargets[focus]());
-  },
+  }
 );
 
 test('creates one Toast per repeated invalid submission', async () => {
@@ -312,7 +293,7 @@ test('submits valid values through the Shell authentication client and navigates
         email: 'admin',
         password: Redacted.make('secret'),
       },
-      { locale: 'en' },
+      { locale: 'en' }
     );
     expect(runBrowserEffectMock).toHaveBeenCalledTimes(1);
     expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });

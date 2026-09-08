@@ -3,7 +3,6 @@ import { afterEach, beforeEach, expect, rstest, test } from '@rstest/core';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect, Schema } from 'effect';
-import type { ComponentProps, ReactNode } from 'react';
 
 import {
   AppIdSchema,
@@ -18,14 +17,11 @@ import {
 } from '../../../../shared/api.ts';
 import type { HomePageModel } from '../../../../src/routes/[lang]/page.data.ts';
 import { HomeView } from '../../../../src/routes/[lang]/page.tsx';
-import { ultramodernLocalisedUrls } from '../../../../src/routes/ultramodern-route-metadata.ts';
-
-type LocalizedLinkDoubleProps = Omit<ComponentProps<'a'>, 'href'> & {
-  readonly children?: ReactNode;
-  readonly href?: string | undefined;
-  readonly params?: Readonly<Record<string, string>>;
-  readonly to: string;
-};
+import type {
+  LocalizedLinkCall,
+  LocalizedLinkDoubleProps,
+} from '../../../support/localized-link-double.tsx';
+import { renderLocalizedLinkDouble } from '../../../support/localized-link-double.tsx';
 
 const {
   languageState,
@@ -36,11 +32,7 @@ const {
   switchLegalEntityMock,
   switchTenantMock,
 } = rstest.hoisted(() => {
-  const recordedLinkCalls: {
-    href: string | undefined;
-    params: Readonly<Record<string, string>> | undefined;
-    to: string;
-  }[] = [];
+  const recordedLinkCalls: LocalizedLinkCall[] = [];
   return {
     languageState: { current: 'en' },
     localizedLinkCalls: recordedLinkCalls,
@@ -51,37 +43,6 @@ const {
     switchTenantMock: rstest.fn(),
   };
 });
-
-const localisedUrlPatterns = new Map<string, Readonly<Record<string, string>>>(
-  Object.entries(ultramodernLocalisedUrls).map(
-    ([canonicalPattern, localisedPatterns]): readonly [
-      string,
-      Readonly<Record<string, string>>,
-    ] => [canonicalPattern, { cs: localisedPatterns.cs, en: localisedPatterns.en }],
-  ),
-);
-
-/**
- * Resolves the destination the framework link would produce, using the
- * application's own canonical-to-localised route map instead of a hand-written
- * expectation, so the page is proven to hand over a language-agnostic target.
- */
-const resolveLocalizedHref = (
-  to: string,
-  params: Readonly<Record<string, string>> | undefined,
-  language: string,
-): string => {
-  const canonicalPattern = to.replaceAll('$', ':');
-  const localisedPattern =
-    localisedUrlPatterns.get(canonicalPattern)?.[language] ?? canonicalPattern;
-  const segments = localisedPattern
-    .split('/')
-    .filter(Boolean)
-    .map((segment) =>
-      segment.startsWith(':') ? encodeURIComponent(params?.[segment.slice(1)] ?? '') : segment,
-    );
-  return `/${[language, ...segments].join('/')}`;
-};
 
 const translations = new Map(
   Object.entries({
@@ -115,18 +76,15 @@ const translations = new Map(
     'shell.modules.unavailable': 'Module access unavailable',
     'shell.search.label': 'Search this legal entity',
     'shell.search.submit': 'Search',
-  }),
+  })
 );
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  Link: ({ children, href, params, to, ...props }: LocalizedLinkDoubleProps) => {
-    localizedLinkCalls.push({ href, params, to });
-    return (
-      <a href={resolveLocalizedHref(to, params, languageState.current)} {...props}>
-        {children}
-      </a>
-    );
-  },
+  Link: (props: LocalizedLinkDoubleProps) =>
+    renderLocalizedLinkDouble(props, {
+      calls: localizedLinkCalls,
+      language: languageState,
+    }),
   useLocalizedLocation: () => ({
     alternates: { cs: '/cs/', en: '/en/' },
     canonical: '/en/',
@@ -153,21 +111,30 @@ rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
 }));
 
 const principalId = Schema.decodeUnknownSync(PrincipalIdSchema)(
-  '00000000-0000-4000-8000-000000000001',
+  '00000000-0000-4000-8000-000000000001'
 );
-const tenantId1 = Schema.decodeUnknownSync(TenantIdSchema)('00000000-0000-4000-8000-000000000101');
-const tenantId2 = Schema.decodeUnknownSync(TenantIdSchema)('00000000-0000-4000-8000-000000000102');
+const tenantId1 = Schema.decodeUnknownSync(TenantIdSchema)(
+  '00000000-0000-4000-8000-000000000101'
+);
+const tenantId2 = Schema.decodeUnknownSync(TenantIdSchema)(
+  '00000000-0000-4000-8000-000000000102'
+);
 const legalEntityId1 = Schema.decodeUnknownSync(LegalEntityIdSchema)(
-  '00000000-0000-4000-8000-000000000201',
+  '00000000-0000-4000-8000-000000000201'
 );
 const legalEntityId2 = Schema.decodeUnknownSync(LegalEntityIdSchema)(
-  '00000000-0000-4000-8000-000000000202',
+  '00000000-0000-4000-8000-000000000202'
 );
 const inventoryAppId = Schema.decodeUnknownSync(AppIdSchema)('inventory-app');
-const navigationGroupKey = Schema.decodeUnknownSync(GroupKeySchema)('shell.navigation.modules');
-const inventoryModuleId = Schema.decodeUnknownSync(ModuleIdSchema)('inventory.stock');
+const navigationGroupKey = Schema.decodeUnknownSync(GroupKeySchema)(
+  'shell.navigation.modules'
+);
+const inventoryModuleId =
+  Schema.decodeUnknownSync(ModuleIdSchema)('inventory.stock');
 
-const authenticatedModel = (options?: { readonly moduleEnabled?: boolean }): HomePageModel => ({
+const authenticatedModel = (options?: {
+  readonly moduleEnabled?: boolean;
+}): HomePageModel => ({
   contextState: 'authenticated',
   identity: {
     displayName: 'Ada Lovelace',
@@ -214,11 +181,16 @@ const authenticatedModel = (options?: { readonly moduleEnabled?: boolean }): Hom
 beforeEach(() => {
   navigateMock.mockResolvedValue(undefined);
   runBrowserEffectMock.mockImplementation(
-    async (effect: Effect.Effect<unknown, unknown>) => await runEffectTestPromise(effect),
+    async (effect: Effect.Effect<unknown, unknown>) =>
+      await runEffectTestPromise(effect)
   );
   signOutMock.mockReturnValue(Effect.succeed({ signedOut: true }));
-  switchTenantMock.mockReturnValue(Effect.succeed({ selectedTenantId: tenantId2 }));
-  switchLegalEntityMock.mockReturnValue(Effect.succeed({ selectedLegalEntityId: legalEntityId2 }));
+  switchTenantMock.mockReturnValue(
+    Effect.succeed({ selectedTenantId: tenantId2 })
+  );
+  switchLegalEntityMock.mockReturnValue(
+    Effect.succeed({ selectedLegalEntityId: legalEntityId2 })
+  );
 });
 
 afterEach(() => {
@@ -230,7 +202,9 @@ afterEach(() => {
 
 test('anonymous home exposes only the localized login action', () => {
   render(<HomeView initialModel={{ state: 'anonymous' }} />);
-  expect(screen.getByRole('link', { name: 'Login' }).getAttribute('href')).toBe('/en/login');
+  expect(screen.getByRole('link', { name: 'Login' }).getAttribute('href')).toBe(
+    '/en/login'
+  );
   expect(screen.queryByRole('banner')).toBeNull();
 });
 
@@ -246,7 +220,9 @@ test('the anonymous login action resolves Czech from the same canonical target',
   languageState.current = 'cs';
   render(<HomeView initialModel={{ state: 'anonymous' }} />);
   expect(localizedLinkCalls.map((call) => call.to)).toContain('/login');
-  expect(screen.getByRole('link', { name: 'Login' }).getAttribute('href')).toBe('/cs/login');
+  expect(screen.getByRole('link', { name: 'Login' }).getAttribute('href')).toBe(
+    '/cs/login'
+  );
 });
 
 test('the unavailable dashboard exposes no navigable affordance', () => {
@@ -256,17 +232,21 @@ test('the unavailable dashboard exposes no navigable affordance', () => {
 });
 
 test('a disabled module affordance stays non-interactive text', () => {
-  render(<HomeView initialModel={authenticatedModel({ moduleEnabled: false })} />);
+  render(
+    <HomeView initialModel={authenticatedModel({ moduleEnabled: false })} />
+  );
   expect(screen.queryByRole('link', { name: 'Inventory' })).toBeNull();
   expect(screen.getByText('Inventory')).toBeTruthy();
-  expect(localizedLinkCalls.map((call) => call.to)).not.toContain('/modules/inventory.stock');
+  expect(localizedLinkCalls.map((call) => call.to)).not.toContain(
+    '/modules/inventory.stock'
+  );
 });
 
 test('authenticated home renders server-composed navigation and selected legal context', () => {
   render(<HomeView initialModel={authenticatedModel()} />);
-  expect(screen.getByRole('link', { name: 'Inventory' }).getAttribute('href')).toBe(
-    '/en/modules/inventory.stock',
-  );
+  expect(
+    screen.getByRole('link', { name: 'Inventory' }).getAttribute('href')
+  ).toBe('/en/modules/inventory.stock');
   expect(screen.getByText('Read only')).toBeTruthy();
   expect(screen.getByText(legalEntityId1)).toBeTruthy();
   expect(screen.queryByText('inventory.stock')).toBeNull();
@@ -278,23 +258,32 @@ test('successful tenant switch performs a full document reload', async () => {
   await user.click(screen.getByRole('combobox', { name: 'Current tenant' }));
   await user.click(await screen.findByRole('option', { name: 'Zeta tenant' }));
   await waitFor(() =>
-    expect(switchTenantMock).toHaveBeenCalledWith({ tenantId: tenantId2 }, { locale: 'en' }),
+    expect(switchTenantMock).toHaveBeenCalledWith(
+      { tenantId: tenantId2 },
+      { locale: 'en' }
+    )
   );
-  await waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' }));
+  await waitFor(() =>
+    expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' })
+  );
 });
 
 test('successful legal-entity switch performs a full document reload', async () => {
   const user = userEvent.setup();
   render(<HomeView initialModel={authenticatedModel()} />);
-  await user.click(screen.getByRole('combobox', { name: 'Current legal entity' }));
+  await user.click(
+    screen.getByRole('combobox', { name: 'Current legal entity' })
+  );
   await user.click(await screen.findByRole('option', { name: 'Beta company' }));
   await waitFor(() =>
     expect(switchLegalEntityMock).toHaveBeenCalledWith(
       { legalEntityId: legalEntityId2 },
-      { locale: 'en' },
-    ),
+      { locale: 'en' }
+    )
   );
-  await waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' }));
+  await waitFor(() =>
+    expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' })
+  );
 });
 
 test('search submission navigates to the localized Shell search route', async () => {
@@ -314,12 +303,12 @@ test('logout clears the authenticated composition together', async () => {
     expect(navigateMock).toHaveBeenCalledWith({
       reloadDocument: true,
       to: '/en/login',
-    }),
+    })
   );
 });
 
 const tenantAuthenticationRequired = Schema.decodeUnknownSync(
-  TenantAuthenticationRequiredProblemSchema,
+  TenantAuthenticationRequiredProblemSchema
 )({
   _tag: 'TenantAuthenticationRequiredProblem',
   detail: 'The tenant session expired.',
@@ -327,7 +316,9 @@ const tenantAuthenticationRequired = Schema.decodeUnknownSync(
   title: 'Tenant authentication required',
   type: 'https://ontos.dev/problems/tenant-authentication-required',
 });
-const tenantAccessForbidden = Schema.decodeUnknownSync(TenantAccessForbiddenProblemSchema)({
+const tenantAccessForbidden = Schema.decodeUnknownSync(
+  TenantAccessForbiddenProblemSchema
+)({
   _tag: 'TenantAccessForbiddenProblem',
   detail: 'The principal cannot use this tenant.',
   status: 403,
@@ -335,7 +326,7 @@ const tenantAccessForbidden = Schema.decodeUnknownSync(TenantAccessForbiddenProb
   type: 'https://ontos.dev/problems/tenant-access-forbidden',
 });
 const legalEntityAccessForbidden = Schema.decodeUnknownSync(
-  LegalEntityAccessForbiddenProblemSchema,
+  LegalEntityAccessForbiddenProblemSchema
 )({
   _tag: 'LegalEntityAccessForbiddenProblem',
   detail: 'The principal cannot use this legal entity.',
@@ -403,7 +394,15 @@ const switchFailureCases: SwitchFailureCase[] = [
 
 test.each(switchFailureCases)(
   'settles $name into its own selector without leaving it pending',
-  async ({ comboboxName, failedText, failure, optionName, pendingText, reloads, switchMock }) => {
+  async ({
+    comboboxName,
+    failedText,
+    failure,
+    optionName,
+    pendingText,
+    reloads,
+    switchMock,
+  }) => {
     switchMock.mockReturnValue(Effect.fail(failure));
     const user = userEvent.setup();
     render(<HomeView initialModel={authenticatedModel()} />);
@@ -414,7 +413,10 @@ test.each(switchFailureCases)(
 
     if (reloads) {
       await waitFor(() =>
-        expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' }),
+        expect(navigateMock).toHaveBeenCalledWith({
+          reloadDocument: true,
+          to: '.',
+        })
       );
       await waitFor(() => expect(screen.queryByText(pendingText)).toBeNull());
       expect(screen.queryByText(failedText)).toBeNull();
@@ -424,8 +426,10 @@ test.each(switchFailureCases)(
       expect(screen.queryByText(pendingText)).toBeNull();
     }
 
-    expect(screen.getByRole('combobox', { name: comboboxName }).hasAttribute('disabled')).toBe(
-      false,
-    );
-  },
+    expect(
+      screen
+        .getByRole('combobox', { name: comboboxName })
+        .hasAttribute('disabled')
+    ).toBe(false);
+  }
 );
